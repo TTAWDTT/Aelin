@@ -67,10 +67,14 @@ export const Navbar = () => {
     <HeroUINavbar maxWidth="xl" position="sticky">
       <NavbarContent className="basis-1/5 sm:basis-full" justify="start">
         <NavbarBrand className="gap-3 max-w-fit">
-          <NextLink className="flex justify-start items-center gap-1" href="/">
+          <Link
+            as={NextLink}
+            className="flex items-center justify-start gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-zinc-100/70 dark:hover:bg-white/5"
+            href="/"
+          >
             <Logo />
             <p className="font-bold text-inherit">Aelin</p>
-          </NextLink>
+          </Link>
         </NavbarBrand>
         <div className="hidden lg:flex gap-4 justify-start ml-2">
           {siteConfig.navItems.map((item) => {
