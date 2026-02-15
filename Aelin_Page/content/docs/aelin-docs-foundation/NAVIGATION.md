@@ -1,0 +1,24 @@
+# Aelin Docs 导航（可直接映射为网站侧边栏）
+
+- Getting Started
+  - /welcome
+  - /quick-start
+- Concepts
+  - /how-it-works
+- Features
+  - /features/agent-chat
+  - /features/web-search-memory
+  - /features/tracking
+  - /features/proactive
+  - /features/device
+- Guides
+  - /guides/configure-llm
+  - /guides/tracking-flow
+  - /guides/run-multi-platform
+- Reference
+  - /reference/api
+  - /reference/storage
+  - /reference/faq
+  - /reference/known-issues
+- Release Notes
+  - /release-notes/2026-q1

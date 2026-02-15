@@ -7,10 +7,10 @@ import {
   NavbarItem,
   NavbarMenuItem,
 } from "@heroui/navbar";
-import { Button } from "@heroui/button";
 import { Kbd } from "@heroui/kbd";
 import { Link } from "@heroui/link";
 import { Input } from "@heroui/input";
+import { Avatar } from "@heroui/avatar";
 import NextLink from "next/link";
 import { useRouter } from "next/router";
 import clsx from "clsx";
@@ -22,9 +22,7 @@ import {
   TwitterIcon,
   GithubIcon,
   DiscordIcon,
-  HeartFilledIcon,
   SearchIcon,
-  Logo,
 } from "@/components/icons";
 
 export const Navbar = () => {
@@ -72,7 +70,12 @@ export const Navbar = () => {
             className="flex items-center justify-start gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-zinc-100/70 dark:hover:bg-white/5"
             href="/"
           >
-            <Logo />
+            <Avatar
+              className="h-7 w-7"
+              isBordered
+              name="Aelin"
+              src="/logo.ico"
+            />
             <p className="font-bold text-inherit">Aelin</p>
           </Link>
         </NavbarBrand>
@@ -117,20 +120,6 @@ export const Navbar = () => {
           <ThemeSwitch />
         </NavbarItem>
         <NavbarItem className="hidden lg:flex">{searchInput}</NavbarItem>
-        <NavbarItem className="hidden md:flex">
-          <Button
-            isExternal
-            as={Link}
-            className="bg-zinc-100 text-sm font-medium text-zinc-700 hover:bg-zinc-200/70 dark:bg-white/10 dark:text-white/90 dark:hover:bg-white/15"
-            href={siteConfig.links.sponsor}
-            startContent={
-              <HeartFilledIcon className="text-zinc-500 dark:text-white/70" />
-            }
-            variant="light"
-          >
-            Sponsor
-          </Button>
-        </NavbarItem>
       </NavbarContent>
 
       <NavbarContent className="sm:hidden basis-1 pl-4" justify="end">
@@ -144,9 +133,9 @@ export const Navbar = () => {
       <NavbarMenu>
         {searchInput}
         <div className="mx-4 mt-2 flex flex-col gap-2">
-          {siteConfig.navMenuItems.map((item, index) => (
-            <NavbarMenuItem key={`${item}-${index}`}>
-              <Link href="#" size="lg">
+          {siteConfig.navMenuItems.map((item) => (
+            <NavbarMenuItem key={item.href}>
+              <Link as={NextLink} href={item.href} size="lg">
                 {item.label}
               </Link>
             </NavbarMenuItem>

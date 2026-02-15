@@ -19,10 +19,10 @@ import remarkGfm from "remark-gfm";
 
 import DefaultLayout from "@/layouts/default";
 import {
-  buildDocsTree,
   findDocBySlug,
   getAllDocs,
   getAllDocSlugs,
+  getDocsTree,
   type DocRecord,
   type DocTreeNode,
 } from "@/lib/docs";
@@ -37,6 +37,7 @@ const DOC_EXTENSIONS = [".md", ".mdx"];
 const SIDEBAR_WIDTH_EXPANDED_PX = 280;
 const SIDEBAR_WIDTH_COLLAPSED_PX = 56;
 const TOP_OFFSET_PX = 56;
+const HIDDEN_OVERVIEW_DOCS = new Set(["README.md", "NAVIGATION.md"]);
 
 function encodePath(pathname: string): string {
   return pathname
@@ -423,17 +424,21 @@ export default function DocsPage({
 
   const rootFiles = useMemo(
     () =>
-      tree.filter((node) => node.type === "file") as Extract<
-        DocTreeNode,
-        { type: "file" }
-      >[],
+      (
+        tree.filter((node) => node.type === "file") as Extract<
+          DocTreeNode,
+          { type: "file" }
+        >[]
+      ).filter((node) => !HIDDEN_OVERVIEW_DOCS.has(node.relPath)),
     [tree],
   );
 
   const defaultExpandedKeys = useMemo(() => {
     const relPath = currentDoc?.relPath ?? "";
     const firstSegment = relPath.split("/")[0] ?? "";
-    const hasSection = topLevelFolders.some((folder) => folder.name === firstSegment);
+    const hasSection = topLevelFolders.some(
+      (folder) => folder.name === firstSegment,
+    );
 
     return hasSection ? [firstSegment] : [];
   }, [currentDoc?.relPath, topLevelFolders]);
@@ -561,7 +566,7 @@ export const getStaticProps: GetStaticProps<DocsPageProps> = async ({
   params,
 }) => {
   const docs = getAllDocs();
-  const tree = buildDocsTree(docs);
+  const tree = getDocsTree();
   const slugParam = params?.slug;
   const requestedSlug = Array.isArray(slugParam) ? slugParam : [];
   const currentDoc = findDocBySlug(docs, requestedSlug);
@@ -580,4 +585,3 @@ export const getStaticProps: GetStaticProps<DocsPageProps> = async ({
     },
   };
 };
-

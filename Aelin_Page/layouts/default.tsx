@@ -3,6 +3,7 @@ import { Link } from "@heroui/link";
 import { Head } from "./head";
 
 import { Navbar } from "@/components/navbar";
+import { SakuraOverlay } from "@/components/sakura-overlay";
 
 export default function DefaultLayout({
   children,
@@ -12,6 +13,7 @@ export default function DefaultLayout({
   return (
     <div className="relative flex flex-col h-screen">
       <Head />
+      <SakuraOverlay />
       <Navbar />
       <main className="container mx-auto max-w-7xl px-6 flex-grow pt-14">
         {children}

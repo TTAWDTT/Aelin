@@ -28,9 +28,21 @@ export type DocTreeNode =
       title: string;
     };
 
+type DocsSnapshot = {
+  docs: DocRecord[];
+  slugs: string[][];
+  tree: DocTreeNode[];
+};
+
 const DOC_EXTENSIONS = new Set([".md", ".mdx"]);
-const DOCS_ROOT = path.resolve(process.cwd(), "..", "docs");
-const FOUNDATION_ROOT = path.join(DOCS_ROOT, "aelin-docs-foundation");
+const FOUNDATION_ROOT = path.resolve(
+  process.cwd(),
+  "content",
+  "docs",
+  "aelin-docs-foundation",
+);
+
+let cachedSnapshot: DocsSnapshot | null = null;
 
 function toPosixPath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
@@ -144,22 +156,52 @@ function sortTree(nodes: DocTreeNode[]): DocTreeNode[] {
   return nodes;
 }
 
+function createSnapshot(): DocsSnapshot {
+  if (!fs.existsSync(FOUNDATION_ROOT)) {
+    return {
+      docs: [],
+      slugs: [],
+      tree: [],
+    };
+  }
+
+  const docs = readDocsRecursively(FOUNDATION_ROOT).sort((a, b) =>
+    a.relPath.localeCompare(b.relPath, "zh-CN"),
+  );
+
+  return {
+    docs,
+    slugs: docs.map((doc) => doc.slug),
+    tree: buildDocsTree(docs),
+  };
+}
+
+function getSnapshot(): DocsSnapshot {
+  if (process.env.NODE_ENV !== "production") {
+    return createSnapshot();
+  }
+
+  if (!cachedSnapshot) {
+    cachedSnapshot = createSnapshot();
+  }
+
+  return cachedSnapshot;
+}
+
 export function getDocsRootPath(): string {
   return FOUNDATION_ROOT;
 }
 
 export function getAllDocs(): DocRecord[] {
-  if (!fs.existsSync(FOUNDATION_ROOT)) {
-    return [];
-  }
-
-  return readDocsRecursively(FOUNDATION_ROOT).sort((a, b) =>
-    a.relPath.localeCompare(b.relPath, "zh-CN"),
-  );
+  return getSnapshot().docs;
 }
 
 export function getAllDocSlugs(): string[][] {
-  return getAllDocs().map((doc) => doc.slug);
+  return getSnapshot().slugs;
+}
+
+export function getDocsTree(): DocTreeNode[] {
+  return getSnapshot().tree;
 }
 
 export function findDocBySlug(
@@ -227,3 +269,4 @@ export function buildDocsTree(docs: DocRecord[]): DocTreeNode[] {
 
   return sortTree(root);
 }
+
