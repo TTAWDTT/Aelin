@@ -19,14 +19,42 @@
   align-items: start;
 }
 
+.docs-sidebar-fixed {
+  position: fixed;
+  top: var(--docs-top);
+  width: var(--docs-sidebar-w);
+  height: calc(100vh - var(--docs-top));
+  padding-top: 0.25rem;
+  padding-right: 0.75rem;
+  border-right: 1px solid rgb(0 0 0 / 0.06);
+  background: rgb(255 255 255);
+}
+
+.dark .docs-sidebar-fixed {
+  border-right-color: rgb(255 255 255 / 0.08);
+  background: rgb(9 9 11);
+}
+
+.docs-sidebar-scroll {
+  height: calc(100vh - var(--docs-top) - 5.75rem);
+}
+
+.docs-main {
+  padding-left: calc(var(--docs-sidebar-w) + 1.25rem);
+}
+
+.dark .docs-main {
+  color: rgb(250 250 250);
+}
+
 .docs-markdown {
-  color: hsl(var(--heroui-default-700));
+  color: rgb(39 39 42);
   line-height: 1.8;
   font-size: 1rem;
 }
 
 .dark .docs-markdown {
-  color: hsl(var(--heroui-default-200));
+  color: rgb(250 250 250);
 }
 
 .docs-markdown h1,
@@ -35,7 +63,7 @@
 .docs-markdown h4 {
   margin-top: 2rem;
   margin-bottom: 0.6rem;
-  color: hsl(var(--heroui-default-900));
+  color: rgb(9 9 11);
   font-weight: 700;
   line-height: 1.25;
 }
@@ -44,7 +72,7 @@
 .dark .docs-markdown h2,
 .dark .docs-markdown h3,
 .dark .docs-markdown h4 {
-  color: hsl(var(--heroui-default-50));
+  color: rgb(255 255 255);
 }
 
 .docs-markdown h1 {
@@ -81,41 +109,50 @@
 }
 
 .docs-markdown a {
-  color: hsl(var(--heroui-default-900));
+  color: rgb(9 9 11);
   text-decoration: underline;
   text-underline-offset: 0.2rem;
 }
 
 .dark .docs-markdown a {
-  color: hsl(var(--heroui-default-100));
+  color: rgb(255 255 255);
 }
 
 .docs-markdown blockquote {
-  border-left: 3px solid hsl(var(--heroui-default-300));
+  border-left: 3px solid rgb(161 161 170);
   padding-left: 0.85rem;
-  color: hsl(var(--heroui-default-600));
+  color: rgb(63 63 70);
 }
 
 .dark .docs-markdown blockquote {
-  border-left-color: hsl(var(--heroui-default-500));
-  color: hsl(var(--heroui-default-300));
+  border-left-color: rgb(255 255 255 / 0.25);
+  color: rgb(250 250 250);
 }
 
 .docs-markdown pre {
   margin: 1.2rem 0;
   padding: 1rem;
-  border: 1px solid hsl(var(--heroui-default-200));
+  border: 1px solid rgb(0 0 0 / 0.08);
   border-radius: 0.75rem;
-  background: hsl(var(--heroui-default-100) / 0.5);
+  background: rgb(244 244 245);
   overflow-x: auto;
+}
+
+.dark .docs-markdown pre {
+  border-color: rgb(255 255 255 / 0.12);
+  background: rgb(255 255 255 / 0.06);
 }
 
 .docs-markdown code {
   padding: 0.1rem 0.3rem;
   border-radius: 0.35rem;
-  background: hsl(var(--heroui-default-100));
+  background: rgb(244 244 245);
   font-family: var(--font-mono);
   font-size: 0.88em;
+}
+
+.dark .docs-markdown code {
+  background: rgb(255 255 255 / 0.08);
 }
 
 .docs-markdown pre code {
@@ -128,22 +165,35 @@
   max-width: 100%;
   height: auto;
   margin: 1.2rem auto;
-  border: 1px solid hsl(var(--heroui-default-200));
+  border: 1px solid rgb(0 0 0 / 0.08);
   border-radius: 0.9rem;
+}
+
+.dark .docs-markdown img {
+  border-color: rgb(255 255 255 / 0.12);
 }
 
 .docs-markdown table {
   width: 100%;
   margin: 1rem 0;
   border-collapse: collapse;
-  border: 1px solid hsl(var(--heroui-default-200));
+  border: 1px solid rgb(0 0 0 / 0.08);
   border-radius: 0.75rem;
   overflow: hidden;
+}
+
+.dark .docs-markdown table {
+  border-color: rgb(255 255 255 / 0.12);
 }
 
 .docs-markdown th,
 .docs-markdown td {
   padding: 0.6rem 0.75rem;
-  border-bottom: 1px solid hsl(var(--heroui-default-200));
+  border-bottom: 1px solid rgb(0 0 0 / 0.08);
   text-align: left;
+}
+
+.dark .docs-markdown th,
+.dark .docs-markdown td {
+  border-bottom-color: rgb(255 255 255 / 0.12);
 }
