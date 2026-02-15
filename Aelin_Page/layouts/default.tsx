@@ -13,7 +13,7 @@ export default function DefaultLayout({
     <div className="relative flex flex-col h-screen">
       <Head />
       <Navbar />
-      <main className="container mx-auto max-w-7xl px-6 flex-grow pt-16">
+      <main className="container mx-auto max-w-7xl px-6 flex-grow pt-14">
         {children}
       </main>
       <footer className="w-full flex items-center justify-center py-3">
@@ -23,8 +23,8 @@ export default function DefaultLayout({
           href="https://www.heroui.com"
           title="heroui.com homepage"
         >
-          <span className="text-default-600">Powered by</span>
-          <p className="text-primary">HeroUI</p>
+          <span className="text-zinc-600 dark:text-zinc-200">Powered by</span>
+          <p className="text-zinc-900 dark:text-white">HeroUI</p>
         </Link>
       </footer>
     </div>
