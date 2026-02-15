@@ -11,9 +11,10 @@ import { Button } from "@heroui/button";
 import { Kbd } from "@heroui/kbd";
 import { Link } from "@heroui/link";
 import { Input } from "@heroui/input";
-import { link as linkStyles } from "@heroui/theme";
 import NextLink from "next/link";
+import { useRouter } from "next/router";
 import clsx from "clsx";
+import { useCallback } from "react";
 
 import { siteConfig } from "@/config/site";
 import { ThemeSwitch } from "@/components/theme-switch";
@@ -27,12 +28,14 @@ import {
 } from "@/components/icons";
 
 export const Navbar = () => {
+  const router = useRouter();
+
   const searchInput = (
     <Input
       aria-label="Search"
       classNames={{
-        inputWrapper: "bg-default-100",
-        input: "text-sm",
+        inputWrapper: "bg-zinc-100 dark:bg-white/10",
+        input: "text-sm text-zinc-900 dark:text-white",
       }}
       endContent={
         <Kbd className="hidden lg:inline-block" keys={["command"]}>
@@ -42,10 +45,22 @@ export const Navbar = () => {
       labelPlacement="outside"
       placeholder="Search..."
       startContent={
-        <SearchIcon className="text-base text-default-400 pointer-events-none flex-shrink-0" />
+        <SearchIcon className="text-base text-zinc-400 pointer-events-none flex-shrink-0" />
       }
       type="search"
     />
+  );
+
+  const navLinkClassName = useCallback(
+    (isActive: boolean) =>
+      clsx(
+        "inline-flex items-center rounded-md px-2 py-1 text-sm font-medium transition-all duration-150 ease-out will-change-transform",
+        "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 hover:-translate-y-px hover:shadow-[0_10px_20px_-16px_rgba(0,0,0,0.55)]",
+        "dark:text-white/90 dark:hover:bg-white/10 dark:hover:text-white dark:hover:shadow-[0_10px_20px_-16px_rgba(0,0,0,0.85)]",
+        isActive &&
+          "bg-zinc-100 text-zinc-950 shadow-[0_10px_20px_-16px_rgba(0,0,0,0.55)] dark:bg-white/10 dark:text-white dark:shadow-[0_10px_20px_-16px_rgba(0,0,0,0.85)]",
+      ),
+    [],
   );
 
   return (
@@ -58,20 +73,26 @@ export const Navbar = () => {
           </NextLink>
         </NavbarBrand>
         <div className="hidden lg:flex gap-4 justify-start ml-2">
-          {siteConfig.navItems.map((item) => (
-            <NavbarItem key={item.href}>
-                <NextLink
-                  className={clsx(
-                    linkStyles({ color: "foreground" }),
-                    "data-[active=true]:font-medium",
-                  )}
-                  color="foreground"
+          {siteConfig.navItems.map((item) => {
+            const path = router.asPath.split("?")[0] ?? "/";
+            const isActive =
+              item.href === "/"
+                ? path === "/"
+                : path === item.href || path.startsWith(`${item.href}/`);
+
+            return (
+              <NavbarItem key={item.href}>
+                <Link
+                  aria-current={isActive ? "page" : undefined}
+                  as={NextLink}
+                  className={navLinkClassName(isActive)}
                   href={item.href}
                 >
-                {item.label}
-              </NextLink>
-            </NavbarItem>
-          ))}
+                  {item.label}
+                </Link>
+              </NavbarItem>
+            );
+          })}
         </div>
       </NavbarContent>
 
@@ -81,13 +102,13 @@ export const Navbar = () => {
       >
         <NavbarItem className="hidden sm:flex gap-2">
           <Link isExternal href={siteConfig.links.twitter} title="Twitter">
-            <TwitterIcon className="text-default-500" />
+            <TwitterIcon className="text-zinc-500 transition-colors hover:text-zinc-900 dark:text-white/70 dark:hover:text-white" />
           </Link>
           <Link isExternal href={siteConfig.links.discord} title="Discord">
-            <DiscordIcon className="text-default-500" />
+            <DiscordIcon className="text-zinc-500 transition-colors hover:text-zinc-900 dark:text-white/70 dark:hover:text-white" />
           </Link>
           <Link isExternal href={siteConfig.links.github} title="GitHub">
-            <GithubIcon className="text-default-500" />
+            <GithubIcon className="text-zinc-500 transition-colors hover:text-zinc-900 dark:text-white/70 dark:hover:text-white" />
           </Link>
           <ThemeSwitch />
         </NavbarItem>
@@ -96,12 +117,12 @@ export const Navbar = () => {
           <Button
             isExternal
             as={Link}
-            className="text-sm font-normal text-default-600 bg-default-100"
+            className="bg-zinc-100 text-sm font-medium text-zinc-700 hover:bg-zinc-200/70 dark:bg-white/10 dark:text-white/90 dark:hover:bg-white/15"
             href={siteConfig.links.sponsor}
             startContent={
-              <HeartFilledIcon className="text-default-500 dark:text-default-200" />
+              <HeartFilledIcon className="text-zinc-500 dark:text-white/70" />
             }
-            variant="flat"
+            variant="light"
           >
             Sponsor
           </Button>
@@ -110,7 +131,7 @@ export const Navbar = () => {
 
       <NavbarContent className="sm:hidden basis-1 pl-4" justify="end">
         <Link isExternal href={siteConfig.links.github}>
-          <GithubIcon className="text-default-500" />
+          <GithubIcon className="text-zinc-500 dark:text-white/70" />
         </Link>
         <ThemeSwitch />
         <NavbarMenuToggle />
@@ -121,10 +142,7 @@ export const Navbar = () => {
         <div className="mx-4 mt-2 flex flex-col gap-2">
           {siteConfig.navMenuItems.map((item, index) => (
             <NavbarMenuItem key={`${item}-${index}`}>
-              <Link
-                href="#"
-                size="lg"
-              >
+              <Link href="#" size="lg">
                 {item.label}
               </Link>
             </NavbarMenuItem>
