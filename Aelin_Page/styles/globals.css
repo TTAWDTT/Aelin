@@ -36,7 +36,7 @@
 }
 
 .docs-sidebar-scroll {
-  height: calc(100vh - var(--docs-top) - 5.75rem);
+  height: calc(100vh - var(--docs-top) - 2.75rem);
 }
 
 .docs-main {

@@ -1,16 +1,9 @@
 import type { GetStaticPaths, GetStaticProps } from "next";
 
 import clsx from "clsx";
-import Head from "next/head";
 import NextLink from "next/link";
-import {
-  memo,
-  type CSSProperties,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { memo, type CSSProperties, useCallback, useMemo, useState } from "react";
+import { Accordion, AccordionItem } from "@heroui/accordion";
 import { Button } from "@heroui/button";
 import {
   Drawer,
@@ -20,7 +13,6 @@ import {
 } from "@heroui/drawer";
 import { Link } from "@heroui/link";
 import { ScrollShadow } from "@heroui/scroll-shadow";
-import { Tab, Tabs } from "@heroui/tabs";
 import { useDisclosure } from "@heroui/use-disclosure";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -45,7 +37,6 @@ const DOC_EXTENSIONS = [".md", ".mdx"];
 const SIDEBAR_WIDTH_EXPANDED_PX = 280;
 const SIDEBAR_WIDTH_COLLAPSED_PX = 56;
 const TOP_OFFSET_PX = 56;
-const ROOT_TAB_KEY = "__root__";
 
 function encodePath(pathname: string): string {
   return pathname
@@ -211,10 +202,10 @@ const DirectoryTree = memo(function DirectoryTree({
   const files = nodes.filter((node) => node.type === "file");
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {folders.map((folder) => (
         <div key={folder.key}>
-          <p className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600 dark:text-zinc-100">
+          <p className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600 dark:text-white">
             {titleCase(formatLabel(folder.name))}
           </p>
           <div className="space-y-1 pl-2">
@@ -239,7 +230,7 @@ const DirectoryTree = memo(function DirectoryTree({
               "block rounded-md px-3 py-1.5 text-sm transition-colors",
               isActive
                 ? "bg-zinc-100 font-semibold text-zinc-950 dark:bg-white/10 dark:text-white"
-                : "text-zinc-700 hover:bg-zinc-100/70 dark:text-zinc-50 dark:hover:bg-white/5",
+                : "text-zinc-700 hover:bg-zinc-100/70 dark:text-white/90 dark:hover:bg-white/5",
             )}
             href={toDocHref(node.slug)}
             onPress={onNavigate}
@@ -262,19 +253,19 @@ const DocContent = memo(function DocContent({
   return (
     <article className="mx-auto max-w-4xl">
       <header className="border-b border-zinc-200/80 pb-5 dark:border-white/10">
-        <p className="mb-2 text-xs font-medium uppercase tracking-[0.08em] text-zinc-600 dark:text-zinc-100">
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.08em] text-zinc-600 dark:text-white">
           {currentDoc.relPath}
         </p>
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-950 dark:text-white md:text-[2.25rem]">
           {currentDoc.title}
         </h1>
         {currentDoc.description ? (
-          <p className="mt-3 max-w-3xl text-base text-zinc-700 dark:text-zinc-50">
+          <p className="mt-3 max-w-3xl text-base text-zinc-700 dark:text-white/90">
             {currentDoc.description}
           </p>
         ) : null}
         {currentDoc.date ? (
-          <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-100">
+          <p className="mt-3 text-sm text-zinc-600 dark:text-white/80">
             Updated {currentDoc.date}
           </p>
         ) : null}
@@ -323,16 +314,96 @@ const DocContent = memo(function DocContent({
   );
 });
 
+function DocsNav({
+  tree,
+  rootFiles,
+  topLevelFolders,
+  activePath,
+  defaultExpandedKeys,
+  onNavigate,
+}: {
+  tree: DocTreeNode[];
+  rootFiles: Extract<DocTreeNode, { type: "file" }>[];
+  topLevelFolders: Extract<DocTreeNode, { type: "folder" }>[];
+  activePath: string;
+  defaultExpandedKeys: string[];
+  onNavigate?: () => void;
+}) {
+  return (
+    <ScrollShadow className="docs-sidebar-scroll px-1 py-1">
+      {rootFiles.length ? (
+        <div className="pb-3">
+          <p className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-600 dark:text-white">
+            Overview
+          </p>
+          <div className="pl-1">
+            <DirectoryTree
+              activePath={activePath}
+              nodes={rootFiles}
+              onNavigate={onNavigate}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      <Accordion
+        defaultExpandedKeys={defaultExpandedKeys}
+        selectionBehavior="toggle"
+        selectionMode="multiple"
+        showDivider={false}
+        variant="light"
+        itemClasses={{
+          trigger:
+            "px-2 py-2 rounded-md hover:bg-zinc-100/70 dark:hover:bg-white/5",
+          title:
+            "text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-700 dark:text-white",
+          indicator: "text-zinc-500 dark:text-white/70",
+          content: "px-0 pb-2 pt-1",
+        }}
+      >
+        {topLevelFolders.map((folder) => (
+          <AccordionItem
+            key={folder.name}
+            aria-label={folder.name}
+            title={titleCase(formatLabel(folder.name))}
+          >
+            <div className="pl-1">
+              <DirectoryTree
+                activePath={activePath}
+                nodes={folder.children}
+                onNavigate={onNavigate}
+              />
+            </div>
+          </AccordionItem>
+        ))}
+      </Accordion>
+
+      {!rootFiles.length && !topLevelFolders.length ? (
+        <div className="px-2 text-sm text-zinc-600 dark:text-white/80">
+          {tree.length ? (
+            <DirectoryTree
+              activePath={activePath}
+              nodes={tree}
+              onNavigate={onNavigate}
+            />
+          ) : (
+            "No docs found."
+          )}
+        </div>
+      ) : null}
+    </ScrollShadow>
+  );
+}
+
 export default function DocsPage({
   tree,
   currentDoc,
   docPaths,
 }: DocsPageProps) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [selectedTabKey, setSelectedTabKey] = useState<string>(ROOT_TAB_KEY);
   const mobileNav = useDisclosure();
-
   const docPathSet = useMemo(() => new Set(docPaths), [docPaths]);
+
   const sidebarWidth = isSidebarCollapsed
     ? SIDEBAR_WIDTH_COLLAPSED_PX
     : SIDEBAR_WIDTH_EXPANDED_PX;
@@ -359,71 +430,16 @@ export default function DocsPage({
     [tree],
   );
 
-  const availableTabs = useMemo(() => {
-    const tabs: { key: string; title: string }[] = [];
-
-    if (rootFiles.length) {
-      tabs.push({ key: ROOT_TAB_KEY, title: "Overview" });
-    }
-
-    for (const folder of topLevelFolders) {
-      tabs.push({
-        key: folder.name,
-        title: titleCase(formatLabel(folder.name)),
-      });
-    }
-
-    return tabs.length ? tabs : [{ key: ROOT_TAB_KEY, title: "Docs" }];
-  }, [rootFiles.length, topLevelFolders]);
-
-  const activeDocTabKey = useMemo(() => {
+  const defaultExpandedKeys = useMemo(() => {
     const relPath = currentDoc?.relPath ?? "";
     const firstSegment = relPath.split("/")[0] ?? "";
+    const hasSection = topLevelFolders.some((folder) => folder.name === firstSegment);
 
-    if (
-      firstSegment &&
-      topLevelFolders.some((folder) => folder.name === firstSegment)
-    ) {
-      return firstSegment;
-    }
-
-    return availableTabs[0]?.key ?? ROOT_TAB_KEY;
-  }, [availableTabs, currentDoc?.relPath, topLevelFolders]);
-
-  useEffect(() => {
-    setSelectedTabKey(activeDocTabKey);
-  }, [activeDocTabKey]);
-
-  const getNodesForTabKey = useCallback(
-    (key: string): DocTreeNode[] => {
-      if (key === ROOT_TAB_KEY) {
-        return rootFiles;
-      }
-
-      const match = topLevelFolders.find((folder) => folder.name === key);
-
-      return match?.children ?? tree;
-    },
-    [rootFiles, topLevelFolders, tree],
-  );
-
-  const tabsClassNames = useMemo(
-    () =>
-      ({
-        tabList:
-          "w-full gap-1 rounded-lg bg-transparent p-0 border-b border-zinc-200/80 dark:border-white/10",
-        tab: "h-8 px-2 text-xs font-medium text-zinc-700 data-[selected=true]:text-zinc-950 dark:text-zinc-50 dark:data-[selected=true]:text-white",
-        cursor: "bg-zinc-950 dark:bg-white",
-        panel: "pt-3",
-      }) as const,
-    [],
-  );
+    return hasSection ? [firstSegment] : [];
+  }, [currentDoc?.relPath, topLevelFolders]);
 
   return (
     <DefaultLayout>
-      <Head>
-        <title>Aelin</title>
-      </Head>
       <section
         className="docs-shell docs-layout w-full pb-10 pt-0"
         style={
@@ -457,29 +473,15 @@ export default function DocsPage({
           </div>
           <div className="mt-3">
             {!isSidebarCollapsed ? (
-              <Tabs
-                aria-label="Docs sections"
-                classNames={tabsClassNames}
-                color="default"
-                radius="md"
-                selectedKey={selectedTabKey}
-                size="sm"
-                variant="underlined"
-                onSelectionChange={(key) => setSelectedTabKey(String(key))}
-              >
-                {availableTabs.map((tab) => (
-                  <Tab key={tab.key} title={tab.title}>
-                    <ScrollShadow className="docs-sidebar-scroll px-1 py-1">
-                      <DirectoryTree
-                        activePath={currentDoc?.relPath ?? ""}
-                        nodes={getNodesForTabKey(tab.key)}
-                      />
-                    </ScrollShadow>
-                  </Tab>
-                ))}
-              </Tabs>
+              <DocsNav
+                activePath={currentDoc?.relPath ?? ""}
+                defaultExpandedKeys={defaultExpandedKeys}
+                rootFiles={rootFiles}
+                topLevelFolders={topLevelFolders}
+                tree={tree}
+              />
             ) : (
-              <div className="px-2 text-[11px] font-medium text-zinc-500 dark:text-zinc-200">
+              <div className="px-2 text-[11px] font-medium text-zinc-500 dark:text-white/80">
                 Expand
               </div>
             )}
@@ -505,28 +507,14 @@ export default function DocsPage({
                     Aelin
                   </DrawerHeader>
                   <DrawerBody>
-                    <Tabs
-                      aria-label="Docs sections"
-                      classNames={tabsClassNames}
-                      color="default"
-                      radius="md"
-                      selectedKey={selectedTabKey}
-                      size="sm"
-                      variant="underlined"
-                      onSelectionChange={(key) => setSelectedTabKey(String(key))}
-                    >
-                      {availableTabs.map((tab) => (
-                        <Tab key={tab.key} title={tab.title}>
-                          <ScrollShadow className="max-h-[70vh] px-1 py-1">
-                            <DirectoryTree
-                              activePath={currentDoc?.relPath ?? ""}
-                              nodes={getNodesForTabKey(tab.key)}
-                              onNavigate={onClose}
-                            />
-                          </ScrollShadow>
-                        </Tab>
-                      ))}
-                    </Tabs>
+                    <DocsNav
+                      activePath={currentDoc?.relPath ?? ""}
+                      defaultExpandedKeys={defaultExpandedKeys}
+                      rootFiles={rootFiles}
+                      topLevelFolders={topLevelFolders}
+                      tree={tree}
+                      onNavigate={onClose}
+                    />
                   </DrawerBody>
                 </>
               )}
@@ -542,7 +530,7 @@ export default function DocsPage({
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-white">
                 Docs Not Found
               </h1>
-              <p className="mt-3 text-zinc-700 dark:text-zinc-50">
+              <p className="mt-3 text-zinc-700 dark:text-white/90">
                 未找到可展示的文档，请确认上一级目录存在{" "}
                 <code className="rounded bg-zinc-100 px-1 py-0.5 text-[0.9em] text-zinc-950 dark:bg-white/10 dark:text-white">
                   docs/aelin-docs-foundation
@@ -592,3 +580,4 @@ export const getStaticProps: GetStaticProps<DocsPageProps> = async ({
     },
   };
 };
+
