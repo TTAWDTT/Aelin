@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+@plugin '../hero.ts';
+
+@source '../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans: "font", sans-serif;
+  --font-mono: "monospace", monospace;
+}
+
+.docs-shell {
+  min-height: calc(100vh - 8rem);
+}
+
+.docs-layout {
+  align-items: start;
+}
+
+.docs-markdown {
+  color: hsl(var(--heroui-default-700));
+  line-height: 1.8;
+  font-size: 1rem;
+}
+
+.dark .docs-markdown {
+  color: hsl(var(--heroui-default-200));
+}
+
+.docs-markdown h1,
+.docs-markdown h2,
+.docs-markdown h3,
+.docs-markdown h4 {
+  margin-top: 2rem;
+  margin-bottom: 0.6rem;
+  color: hsl(var(--heroui-default-900));
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.dark .docs-markdown h1,
+.dark .docs-markdown h2,
+.dark .docs-markdown h3,
+.dark .docs-markdown h4 {
+  color: hsl(var(--heroui-default-50));
+}
+
+.docs-markdown h1 {
+  font-size: 1.8rem;
+}
+
+.docs-markdown h2 {
+  font-size: 1.45rem;
+}
+
+.docs-markdown h3 {
+  font-size: 1.2rem;
+}
+
+.docs-markdown h4 {
+  font-size: 1rem;
+}
+
+.docs-markdown p,
+.docs-markdown ul,
+.docs-markdown ol,
+.docs-markdown blockquote {
+  margin-top: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+
+.docs-markdown ul,
+.docs-markdown ol {
+  padding-left: 1.35rem;
+}
+
+.docs-markdown li {
+  margin-top: 0.35rem;
+}
+
+.docs-markdown a {
+  color: hsl(var(--heroui-default-900));
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.dark .docs-markdown a {
+  color: hsl(var(--heroui-default-100));
+}
+
+.docs-markdown blockquote {
+  border-left: 3px solid hsl(var(--heroui-default-300));
+  padding-left: 0.85rem;
+  color: hsl(var(--heroui-default-600));
+}
+
+.dark .docs-markdown blockquote {
+  border-left-color: hsl(var(--heroui-default-500));
+  color: hsl(var(--heroui-default-300));
+}
+
+.docs-markdown pre {
+  margin: 1.2rem 0;
+  padding: 1rem;
+  border: 1px solid hsl(var(--heroui-default-200));
+  border-radius: 0.75rem;
+  background: hsl(var(--heroui-default-100) / 0.5);
+  overflow-x: auto;
+}
+
+.docs-markdown code {
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.35rem;
+  background: hsl(var(--heroui-default-100));
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.docs-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.docs-markdown img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.2rem auto;
+  border: 1px solid hsl(var(--heroui-default-200));
+  border-radius: 0.9rem;
+}
+
+.docs-markdown table {
+  width: 100%;
+  margin: 1rem 0;
+  border-collapse: collapse;
+  border: 1px solid hsl(var(--heroui-default-200));
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.docs-markdown th,
+.docs-markdown td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid hsl(var(--heroui-default-200));
+  text-align: left;
+}
