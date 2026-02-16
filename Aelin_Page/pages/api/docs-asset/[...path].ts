@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 
 import { getDocsRootPath } from "@/lib/docs";
@@ -8,16 +8,16 @@ import { getDocsRootPath } from "@/lib/docs";
 const DOCS_ROOT = getDocsRootPath();
 
 const MIME_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
   ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
-  ".txt": "text/plain; charset=utf-8",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
   ".json": "application/json; charset=utf-8",
   ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".webp": "image/webp",
 };
 
 function isPathInside(rootPath: string, targetPath: string): boolean {
@@ -30,11 +30,13 @@ function isPathInside(rootPath: string, targetPath: string): boolean {
   );
 }
 
-export default function docsAssetHandler(
+export default async function docsAssetHandler(
   req: NextApiRequest,
   res: NextApiResponse,
 ) {
-  if (!fs.existsSync(DOCS_ROOT)) {
+  try {
+    await fs.access(DOCS_ROOT);
+  } catch {
     res.status(404).json({ message: "docs directory not found" });
 
     return;
@@ -60,7 +62,17 @@ export default function docsAssetHandler(
     return;
   }
 
-  if (!fs.existsSync(absolutePath) || fs.statSync(absolutePath).isDirectory()) {
+  let stat: Awaited<ReturnType<typeof fs.stat>>;
+
+  try {
+    stat = await fs.stat(absolutePath);
+  } catch {
+    res.status(404).json({ message: "asset not found" });
+
+    return;
+  }
+
+  if (stat.isDirectory()) {
     res.status(404).json({ message: "asset not found" });
 
     return;
@@ -68,9 +80,23 @@ export default function docsAssetHandler(
 
   const extension = path.extname(absolutePath).toLowerCase();
   const mimeType = MIME_BY_EXTENSION[extension] ?? "application/octet-stream";
-  const fileBuffer = fs.readFileSync(absolutePath);
+  const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+  const ifNoneMatch = req.headers["if-none-match"];
+
+  if (ifNoneMatch === etag) {
+    res.status(304).end();
+
+    return;
+  }
+
+  const fileBuffer = await fs.readFile(absolutePath);
 
   res.setHeader("Content-Type", mimeType);
-  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.setHeader(
+    "Cache-Control",
+    "public, max-age=86400, stale-while-revalidate=604800",
+  );
+  res.setHeader("ETag", etag);
+  res.setHeader("Last-Modified", stat.mtime.toUTCString());
   res.status(200).send(fileBuffer);
 }
