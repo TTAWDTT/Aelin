@@ -15,10 +15,11 @@ export const fontMono = FontMono({
 export const fontChinese = localFont({
   src: [
     {
-      path: '../public/fonts/LXGWWenKai-Medium.ttf',
-      weight: '400',
-      style: 'normal',
+      path: "../public/fonts/LXGWWenKai-Medium.ttf",
+      weight: "400",
+      style: "normal",
     },
   ],
   display: "swap",
+  variable: "--font-cn-heading",
 });

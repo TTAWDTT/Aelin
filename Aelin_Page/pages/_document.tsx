@@ -1,7 +1,7 @@
 import { Html, Head, Main, NextScript } from "next/document";
 import clsx from "clsx";
 
-import { fontSans } from "@/config/fonts";
+import { fontChinese, fontSans } from "@/config/fonts";
 
 export default function Document() {
   return (
@@ -11,6 +11,7 @@ export default function Document() {
         className={clsx(
           "min-h-screen bg-background font-sans antialiased",
           fontSans.variable,
+          fontChinese.variable,
         )}
       >
         <Main />

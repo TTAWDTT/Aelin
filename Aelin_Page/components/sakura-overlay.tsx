@@ -1,4 +1,5 @@
-import type { CSSProperties } from "react";
+import { useRouter } from "next/router";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 type SakuraPetal = {
   delay: string;
@@ -17,10 +18,10 @@ function unitRand(index: number, seed: number): number {
   return raw - Math.floor(raw);
 }
 
-function buildPetal(index: number): SakuraPetal {
+function buildPetal(index: number, speedFactor = 1): SakuraPetal {
   const left = 2 + unitRand(index, 12.9898) * 96;
   const size = 10 + unitRand(index, 37.719) * 12;
-  const duration = 9 + unitRand(index, 78.233) * 10;
+  const duration = (9 + unitRand(index, 78.233) * 10) * speedFactor;
   const delay = -1 * unitRand(index, 19.241) * duration;
   const drift = 40 + unitRand(index, 51.911) * 140;
   const opacity = 0.32 + unitRand(index, 91.337) * 0.38;
@@ -39,15 +40,62 @@ function buildPetal(index: number): SakuraPetal {
   };
 }
 
-const PETAL_COUNT = 56;
-const PETALS = Array.from({ length: PETAL_COUNT }, (_, index) =>
-  buildPetal(index),
-);
+function pickPetalCount(viewportWidth: number, isDocsPage: boolean): number {
+  if (isDocsPage) {
+    if (viewportWidth < 640) return 8;
+    if (viewportWidth < 1024) return 14;
+
+    return 24;
+  }
+
+  if (viewportWidth < 640) return 16;
+  if (viewportWidth < 1024) return 28;
+
+  return 48;
+}
 
 export function SakuraOverlay() {
+  const router = useRouter();
+  const isDocsPage = router.pathname.startsWith("/docs");
+
+  const [petalCount, setPetalCount] = useState(48);
+  const [isVisible, setIsVisible] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const updateCount = () =>
+      setPetalCount(pickPetalCount(window.innerWidth, isDocsPage));
+
+    updateCount();
+    window.addEventListener("resize", updateCount);
+
+    return () => window.removeEventListener("resize", updateCount);
+  }, [isDocsPage]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const onVisibility = () =>
+      setIsVisible(document.visibilityState === "visible");
+
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  const petals = useMemo(() => {
+    const speedFactor = isDocsPage ? 1.3 : 1;
+
+    return Array.from({ length: petalCount }, (_, index) =>
+      buildPetal(index, speedFactor),
+    );
+  }, [isDocsPage, petalCount]);
+
   return (
     <div aria-hidden className="sakura-layer">
-      {PETALS.map((petal, index) => (
+      {petals.map((petal, index) => (
         <span
           key={`${petal.left}-${petal.duration}-${index}`}
           className="sakura-petal"
@@ -61,6 +109,7 @@ export function SakuraOverlay() {
               "--sakura-rotation": petal.rotation,
               "--sakura-scale": petal.scale,
               "--sakura-size": petal.size,
+              animationPlayState: isVisible ? "running" : "paused",
             } as CSSProperties
           }
         />

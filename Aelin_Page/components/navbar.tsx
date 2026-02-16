@@ -66,13 +66,14 @@ export const Navbar = () => {
       <NavbarContent className="basis-1/5 sm:basis-full" justify="start">
         <NavbarBrand className="gap-3 max-w-fit">
           <Link
+            prefetch
             as={NextLink}
             className="flex items-center justify-start gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-zinc-100/70 dark:hover:bg-white/5"
             href="/"
           >
             <Avatar
-              className="h-7 w-7"
               isBordered
+              className="h-7 w-7"
               name="Aelin"
               src="/logo.ico"
             />
@@ -90,6 +91,7 @@ export const Navbar = () => {
             return (
               <NavbarItem key={item.href}>
                 <Link
+                  prefetch
                   aria-current={isActive ? "page" : undefined}
                   as={NextLink}
                   className={navLinkClassName(isActive)}
@@ -135,7 +137,7 @@ export const Navbar = () => {
         <div className="mx-4 mt-2 flex flex-col gap-2">
           {siteConfig.navMenuItems.map((item) => (
             <NavbarMenuItem key={item.href}>
-              <Link as={NextLink} href={item.href} size="lg">
+              <Link prefetch as={NextLink} href={item.href} size="lg">
                 {item.label}
               </Link>
             </NavbarMenuItem>
