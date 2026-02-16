@@ -1,6 +1,6 @@
-import { FC, useState, useEffect } from "react";
+import { type FC, useEffect, useState } from "react";
 import { VisuallyHidden } from "@react-aria/visually-hidden";
-import { SwitchProps, useSwitch } from "@heroui/switch";
+import { type SwitchProps, useSwitch } from "@heroui/switch";
 import { useTheme } from "next-themes";
 import clsx from "clsx";
 
@@ -37,7 +37,7 @@ export const ThemeSwitch: FC<ThemeSwitchProps> = ({
 
   useEffect(() => {
     setIsMounted(true);
-  }, [isMounted]);
+  }, []);
 
   // Prevent Hydration Mismatch
   if (!isMounted) return <div className="w-6 h-6" />;
@@ -47,7 +47,7 @@ export const ThemeSwitch: FC<ThemeSwitchProps> = ({
       aria-label={isSelected ? "Switch to dark mode" : "Switch to light mode"}
       {...getBaseProps({
         className: clsx(
-          "px-px transition-opacity hover:opacity-80 cursor-pointer",
+          "theme-switch-shell px-px transition-opacity hover:opacity-90 cursor-pointer",
           className,
           classNames?.base,
         ),
@@ -70,16 +70,25 @@ export const ThemeSwitch: FC<ThemeSwitchProps> = ({
               "pt-px",
               "px-0",
               "mx-0",
+              "theme-switch-wrapper",
             ],
             classNames?.wrapper,
           ),
         })}
       >
-        {isSelected ? (
-          <MoonFilledIcon size={22} />
-        ) : (
-          <SunFilledIcon size={22} />
-        )}
+        <span
+          key={isSelected ? "moon" : "sun"}
+          className={clsx(
+            "theme-switch-glyph",
+            isSelected ? "theme-switch-glyph-dark" : "theme-switch-glyph-light",
+          )}
+        >
+          {isSelected ? (
+            <MoonFilledIcon size={22} />
+          ) : (
+            <SunFilledIcon size={22} />
+          )}
+        </span>
       </div>
     </Component>
   );

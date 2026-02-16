@@ -18,12 +18,7 @@ import { useCallback } from "react";
 
 import { siteConfig } from "@/config/site";
 import { ThemeSwitch } from "@/components/theme-switch";
-import {
-  TwitterIcon,
-  GithubIcon,
-  DiscordIcon,
-  SearchIcon,
-} from "@/components/icons";
+import { GithubIcon, SearchIcon } from "@/components/icons";
 
 export const Navbar = () => {
   const router = useRouter();
@@ -62,7 +57,11 @@ export const Navbar = () => {
   );
 
   return (
-    <HeroUINavbar maxWidth="xl" position="sticky">
+    <HeroUINavbar
+      className="navbar-surface border-b border-zinc-200/70 bg-white/58 backdrop-blur-md dark:border-white/15 dark:bg-black/44"
+      maxWidth="xl"
+      position="sticky"
+    >
       <NavbarContent className="basis-1/5 sm:basis-full" justify="start">
         <NavbarBrand className="gap-3 max-w-fit">
           <Link
@@ -110,12 +109,6 @@ export const Navbar = () => {
         justify="end"
       >
         <NavbarItem className="hidden sm:flex gap-2">
-          <Link isExternal href={siteConfig.links.twitter} title="Twitter">
-            <TwitterIcon className="text-zinc-500 transition-colors hover:text-zinc-900 dark:text-white/70 dark:hover:text-white" />
-          </Link>
-          <Link isExternal href={siteConfig.links.discord} title="Discord">
-            <DiscordIcon className="text-zinc-500 transition-colors hover:text-zinc-900 dark:text-white/70 dark:hover:text-white" />
-          </Link>
           <Link isExternal href={siteConfig.links.github} title="GitHub">
             <GithubIcon className="text-zinc-500 transition-colors hover:text-zinc-900 dark:text-white/70 dark:hover:text-white" />
           </Link>
