@@ -251,17 +251,6 @@ const Toc = memo(function Toc({
   );
 });
 
-const DocLoadingOverlay = memo(function DocLoadingOverlay() {
-  return (
-    <div aria-live="polite" className="docs-loading-overlay" role="status">
-      <div className="docs-loading-chip">
-        <span aria-hidden className="docs-loading-spinner" />
-        <span>Loading...</span>
-      </div>
-    </div>
-  );
-});
-
 const DocContent = memo(function DocContent({
   currentDoc,
 }: {
@@ -789,9 +778,8 @@ export default function DocsPage({
           <div className="docs-content-wrap">
             <div
               className={clsx(
-                "transition-[opacity,transform,filter] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                isRouteLoading &&
-                  "pointer-events-none opacity-60 translate-y-[2px] saturate-90",
+                "transition-opacity duration-150",
+                isRouteLoading && "pointer-events-none",
               )}
             >
               {currentDoc ? (
@@ -817,7 +805,6 @@ export default function DocsPage({
                 </article>
               )}
             </div>
-            {isRouteLoading ? <DocLoadingOverlay /> : null}
           </div>
         </div>
       </section>
