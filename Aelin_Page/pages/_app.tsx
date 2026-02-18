@@ -15,26 +15,45 @@ export default function App({ Component, pageProps }: AppProps) {
   const [routeAnimState, setRouteAnimState] = useState<"entering" | "leaving">(
     "entering",
   );
-  const routeDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const routeShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const routeSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   useEffect(() => {
-    const onRouteStart = () => {
-      if (routeDoneTimerRef.current) {
-        clearTimeout(routeDoneTimerRef.current);
-        routeDoneTimerRef.current = null;
+    const clearRouteTimers = () => {
+      if (routeShowTimerRef.current) {
+        clearTimeout(routeShowTimerRef.current);
+        routeShowTimerRef.current = null;
       }
-      setIsRouteTransitioning(true);
+      if (routeSafetyTimerRef.current) {
+        clearTimeout(routeSafetyTimerRef.current);
+        routeSafetyTimerRef.current = null;
+      }
+    };
+
+    const onRouteStart = () => {
+      clearRouteTimers();
       setRouteAnimState("leaving");
+      routeShowTimerRef.current = setTimeout(() => {
+        setIsRouteTransitioning(true);
+        routeShowTimerRef.current = null;
+      }, 120);
+      routeSafetyTimerRef.current = setTimeout(() => {
+        setIsRouteTransitioning(false);
+        setRouteAnimState("entering");
+        routeSafetyTimerRef.current = null;
+      }, 8000);
     };
     const onRouteDone = () => {
+      clearRouteTimers();
       setRouteAnimState("entering");
-      routeDoneTimerRef.current = setTimeout(() => {
-        setIsRouteTransitioning(false);
-        routeDoneTimerRef.current = null;
-      }, 220);
+      setIsRouteTransitioning(false);
     };
     const onHashChangeDone = () => {
+      clearRouteTimers();
       setIsRouteTransitioning(false);
+      setRouteAnimState("entering");
     };
 
     router.events.on("routeChangeStart", onRouteStart);
@@ -43,10 +62,7 @@ export default function App({ Component, pageProps }: AppProps) {
     router.events.on("hashChangeComplete", onHashChangeDone);
 
     return () => {
-      if (routeDoneTimerRef.current) {
-        clearTimeout(routeDoneTimerRef.current);
-        routeDoneTimerRef.current = null;
-      }
+      clearRouteTimers();
       router.events.off("routeChangeStart", onRouteStart);
       router.events.off("routeChangeComplete", onRouteDone);
       router.events.off("routeChangeError", onRouteDone);
@@ -65,28 +81,24 @@ export default function App({ Component, pageProps }: AppProps) {
                 ? "route-loading-screen route-loading-screen-active"
                 : "route-loading-screen"
             }
+            style={{ display: isRouteTransitioning ? "flex" : "none" }}
           >
             <div className="route-loading-card">
               <Image
                 unoptimized
                 alt="Aelin loading"
                 className="route-loading-gif"
-                height={132}
+                height={144}
                 src="/love.gif"
-                width={132}
+                width={144}
               />
               <p className="route-loading-text">Aelin is loading...</p>
-              <span aria-hidden className="route-loading-dots" />
             </div>
           </div>
           <div
             key={router.asPath.split("#")[0]}
             aria-hidden={isRouteTransitioning}
-            className={
-              isRouteTransitioning
-                ? "route-page-shell route-page-shell-dimmed"
-                : "route-page-shell"
-            }
+            className="route-page-shell"
             data-route-state={routeAnimState}
           >
             <Component {...pageProps} />
