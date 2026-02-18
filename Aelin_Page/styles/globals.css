@@ -29,41 +29,98 @@
 }
 
 .route-page-shell[data-route-state="leaving"] {
-  opacity: 0.72;
+  opacity: 1;
 }
 
 .route-page-shell[data-route-state="entering"] {
   animation: route-page-enter var(--motion-base) var(--motion-emphasized);
 }
 
-.route-curtain {
+.route-page-shell-dimmed {
+  opacity: 0.35;
+}
+
+.route-loading-screen {
   position: fixed;
   inset: 0;
-  z-index: 18;
-  pointer-events: none;
+  z-index: 60;
+  pointer-events: auto;
   opacity: 0;
-  backdrop-filter: blur(0);
-  background: radial-gradient(
-    circle at 50% -10%,
-    rgb(255 255 255 / 0.35),
-    transparent 55%
-  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(
+      circle at 50% 38%,
+      rgb(255 255 255) 0%,
+      rgb(252 252 252) 56%,
+      rgb(247 247 247) 100%
+    );
   transition:
     opacity var(--motion-fast) var(--motion-emphasized),
-    backdrop-filter var(--motion-fast) var(--motion-emphasized);
+    visibility var(--motion-fast) var(--motion-emphasized);
+  visibility: hidden;
 }
 
-.route-curtain-active {
+.route-loading-screen-active {
   opacity: 1;
-  backdrop-filter: blur(1.4px);
+  visibility: visible;
 }
 
-.dark .route-curtain {
-  background: radial-gradient(
-    circle at 50% -10%,
-    rgb(0 0 0 / 0.4),
-    transparent 58%
-  );
+.route-loading-gif {
+  width: 144px;
+  height: 144px;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+  animation: route-loading-float 900ms ease-in-out infinite alternate;
+}
+
+.route-loading-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 1rem 1.15rem 0.8rem;
+  border: 1px solid rgb(0 0 0 / 0.06);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.78);
+  box-shadow:
+    0 24px 48px -28px rgb(0 0 0 / 0.24),
+    0 4px 12px -8px rgb(0 0 0 / 0.12);
+  backdrop-filter: blur(4px);
+}
+
+.route-loading-text {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: rgb(82 82 91);
+}
+
+.route-loading-dots {
+  width: 44px;
+  height: 3px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      90deg,
+      rgb(113 113 122 / 0.26),
+      rgb(39 39 42 / 0.76),
+      rgb(113 113 122 / 0.26)
+    );
+  background-size: 180% 100%;
+  animation: route-loading-dots 820ms ease-in-out infinite;
+}
+
+.dark .route-loading-screen {
+  background:
+    radial-gradient(
+      circle at 50% 38%,
+      rgb(255 255 255) 0%,
+      rgb(253 253 253) 58%,
+      rgb(248 248 248) 100%
+    );
 }
 
 .app-shell {
@@ -602,6 +659,26 @@
   }
 }
 
+@keyframes route-loading-float {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes route-loading-dots {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
 @keyframes theme-icon-pop {
   0% {
     opacity: 0.45;
@@ -631,7 +708,12 @@
     animation: none;
   }
 
-  .route-curtain,
+  .route-loading-gif,
+  .route-loading-dots {
+    animation: none;
+  }
+
+  .route-loading-screen,
   .route-page-shell,
   .app-shell,
   .app-shell::before,

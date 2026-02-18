@@ -1,7 +1,7 @@
 import type { AppProps } from "next/app";
 
-import clsx from "clsx";
 import { HeroUIProvider } from "@heroui/system";
+import Image from "next/image";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { useRouter } from "next/router";
 import { useEffect, useRef, useState } from "react";
@@ -16,60 +16,6 @@ export default function App({ Component, pageProps }: AppProps) {
     "entering",
   );
   const routeDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production") {
-      void router.prefetch("/docs");
-    }
-
-    void fetch("/api/docs-manifest")
-      .then(async (response) => {
-        if (!response.ok) return;
-        const payload = (await response.json()) as {
-          searchEntries?: Array<{ slug?: string[] }>;
-        };
-
-        const warmTargets = (payload.searchEntries ?? [])
-          .slice(0, 4)
-          .map((entry) => {
-            const slug = entry.slug ?? [];
-
-            if (!slug.length) return "/docs";
-
-            return `/docs/${slug.map((segment) => encodeURIComponent(segment)).join("/")}`;
-          });
-
-        if (process.env.NODE_ENV === "production") {
-          await Promise.allSettled(
-            warmTargets.map((href) => router.prefetch(href)),
-          );
-        }
-      })
-      .catch(() => undefined);
-  }, [router]);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "development") {
-      return;
-    }
-
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const warmupDocsPage = () => {
-      void fetch("/docs", {
-        cache: "no-store",
-        credentials: "same-origin",
-      }).catch(() => undefined);
-    };
-
-    timeoutId = setTimeout(warmupDocsPage, 60);
-
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     const onRouteStart = () => {
@@ -87,10 +33,14 @@ export default function App({ Component, pageProps }: AppProps) {
         routeDoneTimerRef.current = null;
       }, 220);
     };
+    const onHashChangeDone = () => {
+      setIsRouteTransitioning(false);
+    };
 
     router.events.on("routeChangeStart", onRouteStart);
     router.events.on("routeChangeComplete", onRouteDone);
     router.events.on("routeChangeError", onRouteDone);
+    router.events.on("hashChangeComplete", onHashChangeDone);
 
     return () => {
       if (routeDoneTimerRef.current) {
@@ -100,6 +50,7 @@ export default function App({ Component, pageProps }: AppProps) {
       router.events.off("routeChangeStart", onRouteStart);
       router.events.off("routeChangeComplete", onRouteDone);
       router.events.off("routeChangeError", onRouteDone);
+      router.events.off("hashChangeComplete", onHashChangeDone);
     };
   }, [router.events]);
 
@@ -108,15 +59,34 @@ export default function App({ Component, pageProps }: AppProps) {
       <NextThemesProvider attribute="class" defaultTheme="light">
         <div className="route-motion-root">
           <div
-            aria-hidden="true"
-            className={clsx(
-              "route-curtain",
-              isRouteTransitioning && "route-curtain-active",
-            )}
-          />
+            aria-hidden={!isRouteTransitioning}
+            className={
+              isRouteTransitioning
+                ? "route-loading-screen route-loading-screen-active"
+                : "route-loading-screen"
+            }
+          >
+            <div className="route-loading-card">
+              <Image
+                unoptimized
+                alt="Aelin loading"
+                className="route-loading-gif"
+                height={132}
+                src="/love.gif"
+                width={132}
+              />
+              <p className="route-loading-text">Aelin is loading...</p>
+              <span aria-hidden className="route-loading-dots" />
+            </div>
+          </div>
           <div
             key={router.asPath.split("#")[0]}
-            className="route-page-shell"
+            aria-hidden={isRouteTransitioning}
+            className={
+              isRouteTransitioning
+                ? "route-page-shell route-page-shell-dimmed"
+                : "route-page-shell"
+            }
             data-route-state={routeAnimState}
           >
             <Component {...pageProps} />
