@@ -78,6 +78,16 @@ export default async function docsAssetHandler(
     return;
   }
 
+  // Resolve symlinks to prevent path traversal via symlink chains
+  const realRoot = await fs.realpath(DOCS_ROOT);
+  const realFile = await fs.realpath(absolutePath);
+
+  if (!isPathInside(realRoot, realFile)) {
+    res.status(400).json({ message: "path out of docs root" });
+
+    return;
+  }
+
   const extension = path.extname(absolutePath).toLowerCase();
   const mimeType = MIME_BY_EXTENSION[extension] ?? "application/octet-stream";
   const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;

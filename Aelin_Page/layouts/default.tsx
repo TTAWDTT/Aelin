@@ -8,15 +8,19 @@ import { SakuraOverlay } from "@/components/sakura-overlay";
 
 export default function DefaultLayout({
   children,
+  title,
+  description,
 }: {
   children: React.ReactNode;
+  title?: string;
+  description?: string;
 }) {
   const router = useRouter();
   const showSakura = !router.pathname.startsWith("/docs");
 
   return (
     <div className="app-shell relative flex h-screen flex-col">
-      <Head />
+      <Head description={description} title={title} />
       {showSakura ? <SakuraOverlay /> : null}
       <Navbar />
       <main className="container mx-auto max-w-7xl flex-grow px-6 pt-14">

@@ -1,8 +1,6 @@
-import type { GetServerSideProps } from "next";
+import type { GetStaticProps } from "next";
 
 import { Code } from "@heroui/code";
-import { Snippet } from "@heroui/snippet";
-import { createRoot, type Root } from "react-dom/client";
 import { memo, useEffect, useRef } from "react";
 
 import DefaultLayout from "@/layouts/default";
@@ -19,79 +17,38 @@ const AboutContent = memo(function AboutContent({
 }) {
   const contentRef = useRef<HTMLElement | null>(null);
 
+  // Lightweight event-delegation for copy buttons (no React roots needed)
   useEffect(() => {
-    const contentElement = contentRef.current;
+    const el = contentRef.current;
 
-    if (!contentElement) return;
+    if (!el) return;
 
-    const roots: Root[] = [];
-    const preBlocks = Array.from(contentElement.querySelectorAll("pre"));
+    const handler = (e: MouseEvent) => {
+      const btn = (e.target as HTMLElement).closest(".docs-code-copy");
 
-    for (const preBlock of preBlocks) {
-      const codeElement = preBlock.querySelector("code");
+      if (!btn || !(btn instanceof HTMLButtonElement)) return;
 
-      if (!codeElement) continue;
+      const block = btn.closest(".docs-code-block");
+      const code = block?.querySelector("pre code");
 
-      const codeText = (codeElement.textContent ?? "").replace(/\r\n/g, "\n");
+      if (!code) return;
 
-      if (!codeText.trim()) continue;
-
-      const normalizedCode = codeText.replace(/\n$/, "");
-      const lines = normalizedCode.split("\n");
-      const languageToken =
-        codeElement.className
-          .split(/\s+/)
-          .find((token) => token.startsWith("language-")) ?? "";
-      const language = languageToken.replace(/^language-/, "");
-      const mountNode = document.createElement("div");
-      const root = createRoot(mountNode);
-
-      preBlock.replaceWith(mountNode);
-      root.render(
-        <Snippet
-          fullWidth
-          className="docs-heroui-snippet my-5"
-          classNames={{
-            content: "w-full",
-            pre: "w-full overflow-x-auto whitespace-pre text-[13px] leading-6",
-          }}
-          codeString={normalizedCode}
-          color="warning"
-          hideSymbol={!language}
-          radius="md"
-          symbol={language ? language.toUpperCase() : undefined}
-          variant="flat"
-        >
-          {lines}
-        </Snippet>,
-      );
-      roots.push(root);
-    }
-
-    const inlineCodeElements = Array.from(
-      contentElement.querySelectorAll("code"),
-    ).filter((codeElement) => !codeElement.closest("pre"));
-
-    for (const inlineCodeElement of inlineCodeElements) {
-      const codeText = inlineCodeElement.textContent ?? "";
-
-      if (!codeText.trim()) continue;
-
-      const mountNode = document.createElement("span");
-      const root = createRoot(mountNode);
-
-      inlineCodeElement.replaceWith(mountNode);
-      root.render(
-        <Code color="warning" radius="sm" size="sm">
-          {codeText}
-        </Code>,
-      );
-      roots.push(root);
-    }
-
-    return () => {
-      roots.forEach((root) => root.unmount());
+      navigator.clipboard
+        .writeText(code.textContent ?? "")
+        .then(() => {
+          btn.textContent = "Copied!";
+          setTimeout(() => {
+            btn.textContent = "Copy";
+          }, 2000);
+        })
+        .catch(() => {
+          /* clipboard write failed — ignore */
+        });
     };
+
+    el.addEventListener("click", handler);
+
+    return () => el.removeEventListener("click", handler);
   }, [aboutPage.contentHtml, aboutPage.relPath]);
 
   return (
@@ -127,7 +84,10 @@ const AboutContent = memo(function AboutContent({
 
 export default function AboutPage({ aboutPage }: AboutPageProps) {
   return (
-    <DefaultLayout>
+    <DefaultLayout
+      description={aboutPage?.description}
+      title={aboutPage?.title ?? "About"}
+    >
       <section className="docs-shell w-full pb-10 pt-0">
         {aboutPage ? (
           <AboutContent aboutPage={aboutPage} />
@@ -150,9 +110,7 @@ export default function AboutPage({ aboutPage }: AboutPageProps) {
   );
 }
 
-export const getServerSideProps: GetServerSideProps<
-  AboutPageProps
-> = async () => {
+export const getStaticProps: GetStaticProps<AboutPageProps> = async () => {
   return {
     props: {
       aboutPage: getAboutPageData(),

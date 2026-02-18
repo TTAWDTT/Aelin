@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/clear-next-cache.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint --fix"
+    "lint": "eslint --fix",
+    "clean": "node scripts/clear-next-cache.mjs"
   },
   "dependencies": {
     "@heroui/accordion": "2.2.28",

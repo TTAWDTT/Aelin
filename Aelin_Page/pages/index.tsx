@@ -1,4 +1,3 @@
-import { type GetStaticProps } from "next";
 import { Link } from "@heroui/link";
 import { button as buttonStyles } from "@heroui/theme";
 import Image from "next/image";
@@ -11,21 +10,8 @@ import { GithubIcon } from "@/components/icons";
 import { subtitle, title } from "@/components/primitives";
 import { fontChinese } from "@/config/fonts";
 import DefaultLayout from "@/layouts/default";
-import { getAllDocSlugs } from "@/lib/docs";
 
-type IndexPageProps = {
-  docPrefetchHrefs: string[];
-};
-
-function toDocHref(slug: string[]): string {
-  if (!slug.length) {
-    return "/docs";
-  }
-
-  return `/docs/${slug.map((segment) => encodeURIComponent(segment)).join("/")}`;
-}
-
-export default function IndexPage({ docPrefetchHrefs }: IndexPageProps) {
+export default function IndexPage() {
   const router = useRouter();
   const shouldPrefetch = process.env.NODE_ENV === "production";
 
@@ -34,53 +20,7 @@ export default function IndexPage({ docPrefetchHrefs }: IndexPageProps) {
       void router.prefetch("/docs");
     }
     void fetch("/api/docs-manifest").catch(() => undefined);
-
-    let cancelled = false;
-    let idleId: number | undefined;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    if (process.env.NODE_ENV !== "production") {
-      return;
-    }
-
-    const additionalHrefs = docPrefetchHrefs.filter((href) => href !== "/docs");
-
-    const prefetchAllDocs = async () => {
-      for (const href of additionalHrefs) {
-        if (cancelled) {
-          break;
-        }
-
-        try {
-          await router.prefetch(href);
-        } catch {
-          // Ignore transient prefetch failures.
-        }
-      }
-    };
-
-    const runPrefetch = () => {
-      void prefetchAllDocs();
-    };
-
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      idleId = window.requestIdleCallback(runPrefetch, { timeout: 2000 });
-    } else {
-      timeoutId = setTimeout(runPrefetch, 800);
-    }
-
-    return () => {
-      cancelled = true;
-
-      if (typeof window !== "undefined" && idleId !== undefined) {
-        window.cancelIdleCallback(idleId);
-      }
-
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [docPrefetchHrefs, router, shouldPrefetch]);
+  }, [router, shouldPrefetch]);
 
   return (
     <DefaultLayout>
@@ -127,16 +67,3 @@ export default function IndexPage({ docPrefetchHrefs }: IndexPageProps) {
     </DefaultLayout>
   );
 }
-
-export const getStaticProps: GetStaticProps<IndexPageProps> = async () => {
-  const slugs = getAllDocSlugs();
-  const docPrefetchHrefs = ["/docs"].concat(
-    slugs.map((slug) => toDocHref(slug)),
-  );
-
-  return {
-    props: {
-      docPrefetchHrefs,
-    },
-  };
-};

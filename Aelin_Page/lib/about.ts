@@ -3,8 +3,18 @@ import path from "node:path";
 
 import matter from "gray-matter";
 import { imageSize } from "image-size";
-import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
+
+import {
+  encodePath,
+  escapeHtmlAttribute,
+  getDescriptionFromContent,
+  getTitleFromContent,
+  normalizeDate,
+  preprocessObsidianMarkdown,
+  sanitizeHtml,
+  splitPathAndSuffix,
+} from "./markdown-utils";
 
 export type AboutPageData = {
   title: string;
@@ -16,72 +26,6 @@ export type AboutPageData = {
 
 const ABOUT_ROOT = path.resolve(process.cwd(), "content", "about");
 const ABOUT_ENTRY = path.resolve(ABOUT_ROOT, "about.md");
-
-function encodePath(pathname: string): string {
-  return pathname
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-}
-
-function getTitleFromContent(content: string): string {
-  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
-
-  return heading ?? "";
-}
-
-function getDescriptionFromContent(content: string): string {
-  const lines = content
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  for (const line of lines) {
-    if (line.startsWith("#")) continue;
-    if (line.startsWith("![")) continue;
-    if (line.startsWith("---")) continue;
-    if (line.startsWith("```")) continue;
-
-    return line.replace(/[*_`>#-]/g, "").trim();
-  }
-
-  return "";
-}
-
-function normalizeDate(rawDate: unknown): string {
-  if (rawDate instanceof Date) {
-    return rawDate.toISOString().slice(0, 10);
-  }
-
-  if (typeof rawDate === "string") {
-    return rawDate;
-  }
-
-  return "";
-}
-
-function splitPathAndSuffix(rawUrl: string): {
-  pathname: string;
-  suffix: string;
-} {
-  const queryIndex = rawUrl.indexOf("?");
-  const hashIndex = rawUrl.indexOf("#");
-  const splitIndex =
-    queryIndex === -1
-      ? hashIndex
-      : hashIndex === -1
-        ? queryIndex
-        : Math.min(queryIndex, hashIndex);
-
-  if (splitIndex === -1) {
-    return { pathname: rawUrl, suffix: "" };
-  }
-
-  return {
-    pathname: rawUrl.slice(0, splitIndex),
-    suffix: rawUrl.slice(splitIndex),
-  };
-}
 
 function resolveAboutRelativePath(
   currentDocPath: string,
@@ -107,22 +51,6 @@ function resolveAboutRelativePath(
   if (!safeParts.length) return null;
 
   return safeParts.join("/");
-}
-
-function preprocessObsidianMarkdown(markdown: string): string {
-  return markdown.replace(
-    /!\[\[([^\]\|]+?)(?:\|([^\]]+))?\]\]/g,
-    (_match, rawTarget: string, rawAlt?: string) => {
-      const target = rawTarget
-        .trim()
-        .replace(/\\/g, "/")
-        .replace(/^\/+/, "")
-        .replace(/^\.\//, "");
-      const alt = (rawAlt ?? "").trim();
-
-      return `![${alt}](${target})`;
-    },
-  );
 }
 
 function resolveAboutHref(href: string, currentDocPath: string): string {
@@ -167,20 +95,34 @@ function resolveImageAbsolutePath(
   return path.resolve(ABOUT_ROOT, resolvedPath);
 }
 
-function escapeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 function renderMarkdownToHtml(
   markdown: string,
   currentDocPath: string,
 ): string {
   const normalizedMarkdown = preprocessObsidianMarkdown(markdown);
   const renderer = new marked.Renderer();
+
+  renderer.code = ({ text, lang }) => {
+    const language = (lang || "").trim();
+    const displayLang = language ? language.toUpperCase() : "";
+    const langLabel = displayLang
+      ? `<span class="docs-code-lang">${escapeHtmlAttribute(displayLang)}</span>`
+      : "";
+
+    return [
+      `<div class="docs-code-block">`,
+      `<div class="docs-code-header">`,
+      langLabel,
+      `<button class="docs-code-copy" type="button" aria-label="Copy code">Copy</button>`,
+      `</div>`,
+      `<pre class="docs-code-pre"><code>${text}</code></pre>`,
+      `</div>`,
+    ].join("");
+  };
+
+  renderer.codespan = ({ text }) => {
+    return `<code class="docs-inline-code">${text}</code>`;
+  };
 
   renderer.link = ({ href = "", title = null, tokens }) => {
     const resolvedHref = resolveAboutHref(href, currentDocPath);
@@ -238,9 +180,7 @@ function renderMarkdownToHtml(
     renderer,
   }) as string;
 
-  return DOMPurify.sanitize(rawHtml, {
-    USE_PROFILES: { html: true },
-  });
+  return sanitizeHtml(rawHtml);
 }
 
 export function getAboutRootPath(): string {

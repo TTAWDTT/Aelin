@@ -1,4 +1,4 @@
-import type { GetServerSideProps } from "next";
+import type { GetStaticPaths, GetStaticProps } from "next";
 
 import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
@@ -23,15 +23,14 @@ import {
   DrawerHeader,
 } from "@heroui/drawer";
 import { Link } from "@heroui/link";
-import { Snippet } from "@heroui/snippet";
 import { ScrollShadow } from "@heroui/scroll-shadow";
 import { useDisclosure } from "@heroui/use-disclosure";
-import { createRoot, type Root } from "react-dom/client";
 
 import DefaultLayout from "@/layouts/default";
 import {
   findDocBySlug,
   getAllDocs,
+  getAllDocSlugs,
   getDocsSearchEntries,
   getDocsTree,
   type DocHeading,
@@ -257,79 +256,38 @@ const DocContent = memo(function DocContent({
 }) {
   const contentRef = useRef<HTMLElement | null>(null);
 
+  // Lightweight event-delegation for copy buttons (no React roots needed)
   useEffect(() => {
-    const contentElement = contentRef.current;
+    const el = contentRef.current;
 
-    if (!contentElement) return;
+    if (!el) return;
 
-    const roots: Root[] = [];
-    const preBlocks = Array.from(contentElement.querySelectorAll("pre"));
+    const handler = (e: MouseEvent) => {
+      const btn = (e.target as HTMLElement).closest(".docs-code-copy");
 
-    for (const preBlock of preBlocks) {
-      const codeElement = preBlock.querySelector("code");
+      if (!btn || !(btn instanceof HTMLButtonElement)) return;
 
-      if (!codeElement) continue;
+      const block = btn.closest(".docs-code-block");
+      const code = block?.querySelector("pre code");
 
-      const codeText = (codeElement.textContent ?? "").replace(/\r\n/g, "\n");
+      if (!code) return;
 
-      if (!codeText.trim()) continue;
-
-      const normalizedCode = codeText.replace(/\n$/, "");
-      const lines = normalizedCode.split("\n");
-      const languageToken =
-        codeElement.className
-          .split(/\s+/)
-          .find((token) => token.startsWith("language-")) ?? "";
-      const language = languageToken.replace(/^language-/, "");
-      const mountNode = document.createElement("div");
-      const root = createRoot(mountNode);
-
-      preBlock.replaceWith(mountNode);
-      root.render(
-        <Snippet
-          fullWidth
-          className="docs-heroui-snippet my-5"
-          classNames={{
-            content: "w-full",
-            pre: "w-full overflow-x-auto whitespace-pre text-[13px] leading-6",
-          }}
-          codeString={normalizedCode}
-          color="warning"
-          hideSymbol={!language}
-          radius="md"
-          symbol={language ? language.toUpperCase() : undefined}
-          variant="flat"
-        >
-          {lines}
-        </Snippet>,
-      );
-      roots.push(root);
-    }
-
-    const inlineCodeElements = Array.from(
-      contentElement.querySelectorAll("code"),
-    ).filter((codeElement) => !codeElement.closest("pre"));
-
-    for (const inlineCodeElement of inlineCodeElements) {
-      const codeText = inlineCodeElement.textContent ?? "";
-
-      if (!codeText.trim()) continue;
-
-      const mountNode = document.createElement("span");
-      const root = createRoot(mountNode);
-
-      inlineCodeElement.replaceWith(mountNode);
-      root.render(
-        <Code color="warning" radius="sm" size="sm">
-          {codeText}
-        </Code>,
-      );
-      roots.push(root);
-    }
-
-    return () => {
-      roots.forEach((root) => root.unmount());
+      navigator.clipboard
+        .writeText(code.textContent ?? "")
+        .then(() => {
+          btn.textContent = "Copied!";
+          setTimeout(() => {
+            btn.textContent = "Copy";
+          }, 2000);
+        })
+        .catch(() => {
+          /* clipboard write failed — ignore */
+        });
     };
+
+    el.addEventListener("click", handler);
+
+    return () => el.removeEventListener("click", handler);
   }, [currentDoc.contentHtml, currentDoc.relPath]);
 
   return (
@@ -668,7 +626,10 @@ export default function DocsPage({
   }, [currentDoc?.relPath, topLevelFolders]);
 
   return (
-    <DefaultLayout>
+    <DefaultLayout
+      description={currentDoc?.description}
+      title={currentDoc?.title ?? "Docs"}
+    >
       {currentDoc ? (
         <DocsClientEffects
           headings={currentDoc.headings ?? []}
@@ -811,7 +772,19 @@ export default function DocsPage({
   );
 }
 
-export const getServerSideProps: GetServerSideProps<DocsPageProps> = async ({
+export const getStaticPaths: GetStaticPaths = async () => {
+  const slugs = getAllDocSlugs();
+  const paths = [{ params: { slug: [] as string[] } }].concat(
+    slugs.map((slug) => ({ params: { slug } })),
+  );
+
+  return {
+    paths,
+    fallback: "blocking",
+  };
+};
+
+export const getStaticProps: GetStaticProps<DocsPageProps> = async ({
   params,
 }) => {
   const docs = getAllDocs();
