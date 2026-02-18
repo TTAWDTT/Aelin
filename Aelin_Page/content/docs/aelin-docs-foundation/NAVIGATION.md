@@ -1,24 +1,24 @@
 # Aelin Docs 导航（可直接映射为网站侧边栏）
 
 - Getting Started
-  - /welcome
-  - /quick-start
+  - `/welcome`：快速理解 Aelin 的定位与核心价值
+  - `/quick-start`：在最短时间内跑通第一个完整闭环
 - Concepts
-  - /how-it-works
+  - `/what-is-Aelin`：Aelin 的起点、设计思路与产品方向
 - Features
-  - /features/agent-chat
-  - /features/web-search-memory
-  - /features/tracking
-  - /features/proactive
-  - /features/device
+  - `/features/agent-chat`：对话体验、Answer-first 与会话管理
+  - `/features/web-search-memory`：本地记忆与网络检索的协同机制
+  - `/features/tracking`：长期跟踪与持续更新
+  - `/features/proactive`：主动提醒与防打扰策略
+  - `/features/device`：设备状态感知与可控动作
 - Guides
-  - /guides/configure-llm
-  - /guides/tracking-flow
-  - /guides/run-multi-platform
+  - `/guides/configure-llm`：LLM 提供商配置与连通性验证
+  - `/guides/tracking-flow`：从一次提问到长期跟踪的完整路径
+  - `/guides/run-multi-platform`：Web / Desktop / Mobile 运行方式
 - Reference
-  - /reference/api
-  - /reference/storage
-  - /reference/faq
-  - /reference/known-issues
+  - `/reference/api`：核心接口分组总览
+  - `/reference/storage`：数据存储与记忆分层
+  - `/reference/faq`：高频问题速查
+  - `/reference/known-issues`：已知限制与规避建议
 - Release Notes
-  - /release-notes/2026-q1
+  - `/release-notes/2026-q1`：版本里程碑与后续计划
