@@ -95,6 +95,8 @@ function isDocsRoute(url: unknown): url is string {
   return typeof url === "string" && url.startsWith("/docs");
 }
 
+const SHOULD_PREFETCH = process.env.NODE_ENV === "production";
+
 const DirectoryTree = memo(function DirectoryTree({
   nodes,
   activePath,
@@ -131,7 +133,6 @@ const DirectoryTree = memo(function DirectoryTree({
         return (
           <Link
             key={node.key}
-            prefetch
             as={NextLink}
             className={clsx(
               "block rounded-md px-3 py-1.5 text-sm transition-colors",
@@ -140,6 +141,7 @@ const DirectoryTree = memo(function DirectoryTree({
                 : "text-zinc-700 hover:bg-zinc-100/70 dark:text-white/90 dark:hover:bg-white/5",
             )}
             href={toDocHref(node.slug)}
+            prefetch={SHOULD_PREFETCH}
             onClick={handleNavigate}
             onPress={handleNavigate}
           >
@@ -192,10 +194,10 @@ const SearchResultList = memo(function SearchResultList({
         return (
           <Link
             key={item.relPath}
-            prefetch
             as={NextLink}
             className="block rounded-md px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100/70 dark:text-white/90 dark:hover:bg-white/5"
             href={toDocHref(item.slug)}
+            prefetch={SHOULD_PREFETCH}
             onClick={handleNavigate}
             onPress={handleNavigate}
           >

@@ -7,9 +7,7 @@ import {
   NavbarItem,
   NavbarMenuItem,
 } from "@heroui/navbar";
-import { Kbd } from "@heroui/kbd";
 import { Link } from "@heroui/link";
-import { Input } from "@heroui/input";
 import { Avatar } from "@heroui/avatar";
 import NextLink from "next/link";
 import { useRouter } from "next/router";
@@ -18,31 +16,11 @@ import { useCallback } from "react";
 
 import { siteConfig } from "@/config/site";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { GithubIcon, SearchIcon } from "@/components/icons";
+import { GithubIcon } from "@/components/icons";
 
 export const Navbar = () => {
   const router = useRouter();
-
-  const searchInput = (
-    <Input
-      aria-label="Search"
-      classNames={{
-        inputWrapper: "bg-zinc-100 dark:bg-white/10",
-        input: "text-sm text-zinc-900 dark:text-white",
-      }}
-      endContent={
-        <Kbd className="hidden lg:inline-block" keys={["command"]}>
-          K
-        </Kbd>
-      }
-      labelPlacement="outside"
-      placeholder="Search..."
-      startContent={
-        <SearchIcon className="text-base text-zinc-400 pointer-events-none flex-shrink-0" />
-      }
-      type="search"
-    />
-  );
+  const shouldPrefetch = process.env.NODE_ENV === "production";
 
   const navLinkClassName = useCallback(
     (isActive: boolean) =>
@@ -65,10 +43,10 @@ export const Navbar = () => {
       <NavbarContent className="basis-1/5 sm:basis-full" justify="start">
         <NavbarBrand className="gap-3 max-w-fit">
           <Link
-            prefetch
             as={NextLink}
             className="flex items-center justify-start gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-zinc-100/70 dark:hover:bg-white/5"
             href="/"
+            prefetch={shouldPrefetch}
           >
             <Avatar
               isBordered
@@ -90,11 +68,11 @@ export const Navbar = () => {
             return (
               <NavbarItem key={item.href}>
                 <Link
-                  prefetch
                   aria-current={isActive ? "page" : undefined}
                   as={NextLink}
                   className={navLinkClassName(isActive)}
                   href={item.href}
+                  prefetch={shouldPrefetch}
                 >
                   {item.label}
                 </Link>
@@ -114,7 +92,6 @@ export const Navbar = () => {
           </Link>
           <ThemeSwitch />
         </NavbarItem>
-        <NavbarItem className="hidden lg:flex">{searchInput}</NavbarItem>
       </NavbarContent>
 
       <NavbarContent className="sm:hidden basis-1 pl-4" justify="end">
@@ -126,11 +103,15 @@ export const Navbar = () => {
       </NavbarContent>
 
       <NavbarMenu>
-        {searchInput}
         <div className="mx-4 mt-2 flex flex-col gap-2">
           {siteConfig.navMenuItems.map((item) => (
             <NavbarMenuItem key={item.href}>
-              <Link prefetch as={NextLink} href={item.href} size="lg">
+              <Link
+                as={NextLink}
+                href={item.href}
+                prefetch={shouldPrefetch}
+                size="lg"
+              >
                 {item.label}
               </Link>
             </NavbarMenuItem>

@@ -18,7 +18,10 @@ export default function App({ Component, pageProps }: AppProps) {
   const routeDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    void router.prefetch("/docs");
+    if (process.env.NODE_ENV === "production") {
+      void router.prefetch("/docs");
+    }
+
     void fetch("/api/docs-manifest")
       .then(async (response) => {
         if (!response.ok) return;
@@ -36,9 +39,11 @@ export default function App({ Component, pageProps }: AppProps) {
             return `/docs/${slug.map((segment) => encodeURIComponent(segment)).join("/")}`;
           });
 
-        await Promise.allSettled(
-          warmTargets.map((href) => router.prefetch(href)),
-        );
+        if (process.env.NODE_ENV === "production") {
+          await Promise.allSettled(
+            warmTargets.map((href) => router.prefetch(href)),
+          );
+        }
       })
       .catch(() => undefined);
   }, [router]);

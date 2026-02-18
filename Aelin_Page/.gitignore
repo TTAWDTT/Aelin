@@ -26,6 +26,7 @@ yarn-error.log*
 .dev-*.log
 .dev-*.out.log
 .dev-*.err.log
+/.generated/
 
 # local env files
 .env*.local
