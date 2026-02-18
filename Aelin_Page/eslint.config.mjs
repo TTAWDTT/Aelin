@@ -1,6 +1,7 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import { fixupConfigRules, fixupPluginRules } from "@eslint/compat";
 import react from "eslint-plugin-react";
+import nextPlugin from "@next/eslint-plugin-next";
 import unusedImports from "eslint-plugin-unused-imports";
 import _import from "eslint-plugin-import";
 import typescriptEslint from "@typescript-eslint/eslint-plugin";
@@ -57,6 +58,7 @@ export default defineConfig([globalIgnores([
         "@typescript-eslint": typescriptEslint,
         "jsx-a11y": fixupPluginRules(jsxA11Y),
         prettier: fixupPluginRules(prettier),
+        "@next/next": nextPlugin,
     },
 
     languageOptions: {
@@ -85,6 +87,8 @@ export default defineConfig([globalIgnores([
     files: ["**/*.ts", "**/*.tsx"],
 
     rules: {
+        ...nextPlugin.configs.recommended.rules,
+        ...nextPlugin.configs["core-web-vitals"].rules,
         "no-console": "warn",
         "react/prop-types": "off",
         "react/jsx-uses-react": "off",

@@ -2,7 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 
 import matter from "gray-matter";
+import { imageSize } from "image-size";
+import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
+
+export type DocHeading = {
+  id: string;
+  level: number;
+  text: string;
+};
 
 export type DocRecord = {
   relPath: string;
@@ -11,6 +19,14 @@ export type DocRecord = {
   description: string;
   date: string;
   contentHtml: string;
+  headings: DocHeading[];
+};
+
+export type DocSearchEntry = {
+  relPath: string;
+  slug: string[];
+  title: string;
+  description: string;
 };
 
 export type DocTreeNode =
@@ -29,7 +45,7 @@ export type DocTreeNode =
       title: string;
     };
 
-type RawDocRecord = Omit<DocRecord, "contentHtml"> & {
+type RawDocRecord = Omit<DocRecord, "contentHtml" | "headings"> & {
   content: string;
 };
 
@@ -37,6 +53,7 @@ type DocsSnapshot = {
   docs: DocRecord[];
   slugs: string[][];
   tree: DocTreeNode[];
+  searchEntries: DocSearchEntry[];
 };
 
 type DocsVersion = {
@@ -44,12 +61,28 @@ type DocsVersion = {
   maxMtimeMs: number;
 };
 
+type DocsSnapshotMeta = {
+  createdAt: string;
+  schemaVersion: number;
+  version: DocsVersion;
+};
+
+type PersistedDocsSnapshot = DocsSnapshot & {
+  __meta?: DocsSnapshotMeta;
+};
+
 const DOC_EXTENSIONS = new Set([".md", ".mdx"]);
+const SNAPSHOT_SCHEMA_VERSION = 2;
 const FOUNDATION_ROOT = path.resolve(
   process.cwd(),
   "content",
   "docs",
   "aelin-docs-foundation",
+);
+const SNAPSHOT_PATH = path.resolve(
+  process.cwd(),
+  ".generated",
+  "docs-snapshot.json",
 );
 
 let cachedSnapshot: DocsSnapshot | null = null;
@@ -61,6 +94,15 @@ function toPosixPath(filePath: string): string {
 
 function stripDocExtension(filePath: string): string {
   return filePath.replace(/\.(md|mdx)$/i, "");
+}
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[`~!@#$%^&*()+={}[\]|\\:;"'<>,.?/]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
 }
 
 function getTitleFromContent(content: string): string {
@@ -142,30 +184,28 @@ function resolveDocsRelativePath(
   rawPath: string,
 ): string | null {
   const normalizedInput = rawPath.replace(/\\/g, "/");
-  const currentDir = currentDocPath.split("/").slice(0, -1).join("/");
-  const candidate = normalizedInput.startsWith("/")
-    ? normalizedInput.slice(1)
-    : `${currentDir}/${normalizedInput}`;
-  const normalized = candidate
-    .split("/")
-    .filter((segment) => segment !== ".")
-    .reduce<string[]>((parts, segment) => {
-      if (!segment) return parts;
-      if (segment === "..") {
-        parts.pop();
-      } else {
-        parts.push(segment);
+  const currentDir = currentDocPath.split("/").slice(0, -1);
+  const parts = normalizedInput.startsWith("/")
+    ? normalizedInput.slice(1).split("/")
+    : [...currentDir, ...normalizedInput.split("/")];
+
+  const safeParts: string[] = [];
+
+  for (const segment of parts) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (!safeParts.length) {
+        return null;
       }
-
-      return parts;
-    }, [])
-    .join("/");
-
-  if (!normalized || normalized.startsWith("../")) {
-    return null;
+      safeParts.pop();
+      continue;
+    }
+    safeParts.push(segment);
   }
 
-  return normalized;
+  if (!safeParts.length) return null;
+
+  return safeParts.join("/");
 }
 
 function resolveMarkdownHref(
@@ -173,25 +213,16 @@ function resolveMarkdownHref(
   currentDocPath: string,
   docPathSet: Set<string>,
 ): string {
-  if (!href) {
-    return href;
-  }
-
-  if (/^(https?:|mailto:|tel:|#|data:|\/\/)/i.test(href)) {
-    return href;
-  }
+  if (!href) return href;
+  if (/^(https?:|mailto:|tel:|#|data:|\/\/)/i.test(href)) return href;
 
   const { pathname, suffix } = splitPathAndSuffix(href);
 
-  if (!pathname) {
-    return href;
-  }
+  if (!pathname) return href;
 
   const resolvedPath = resolveDocsRelativePath(currentDocPath, pathname);
 
-  if (!resolvedPath) {
-    return href;
-  }
+  if (!resolvedPath) return href;
 
   const extension = [".md", ".mdx"].find((ext) =>
     resolvedPath.toLowerCase().endsWith(ext),
@@ -215,22 +246,29 @@ function resolveMarkdownHref(
 }
 
 function resolveImageSrc(src: string, currentDocPath: string): string {
-  if (!src) {
-    return src;
-  }
-
-  if (/^(https?:|data:|\/\/)/i.test(src)) {
-    return src;
-  }
+  if (!src) return src;
+  if (/^(https?:|data:|\/\/)/i.test(src)) return src;
 
   const { pathname, suffix } = splitPathAndSuffix(src);
   const resolvedPath = resolveDocsRelativePath(currentDocPath, pathname);
 
-  if (!resolvedPath) {
-    return src;
-  }
+  if (!resolvedPath) return src;
 
   return `/api/docs-asset/${encodePath(resolvedPath)}${suffix}`;
+}
+
+function resolveImageAbsolutePath(
+  src: string,
+  currentDocPath: string,
+): string | null {
+  if (!src || /^(https?:|data:|\/\/)/i.test(src)) return null;
+
+  const { pathname } = splitPathAndSuffix(src);
+  const resolvedPath = resolveDocsRelativePath(currentDocPath, pathname);
+
+  if (!resolvedPath) return null;
+
+  return path.resolve(FOUNDATION_ROOT, resolvedPath);
 }
 
 function escapeHtmlAttribute(value: string): string {
@@ -241,7 +279,7 @@ function escapeHtmlAttribute(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function preprocessObsidianImages(markdown: string): string {
+function preprocessObsidianMarkdown(markdown: string): string {
   return markdown.replace(
     /!\[\[([^\]\|]+?)(?:\|([^\]]+))?\]\]/g,
     (_match, rawTarget: string, rawAlt?: string) => {
@@ -261,8 +299,25 @@ function renderMarkdownToHtml(
   markdown: string,
   currentDocPath: string,
   docPathSet: Set<string>,
-): string {
+): { html: string; headings: DocHeading[] } {
+  const normalizedMarkdown = preprocessObsidianMarkdown(markdown);
   const renderer = new marked.Renderer();
+  const headingCounts = new Map<string, number>();
+  const headings: DocHeading[] = [];
+
+  renderer.heading = ({ text, depth }) => {
+    const base = slugify(text) || "section";
+    const count = headingCounts.get(base) ?? 0;
+
+    headingCounts.set(base, count + 1);
+    const id = count ? `${base}-${count}` : base;
+
+    if (depth >= 2 && depth <= 3) {
+      headings.push({ id, level: depth, text });
+    }
+
+    return `<h${depth} id="${escapeHtmlAttribute(id)}">${text}</h${depth}>`;
+  };
 
   renderer.link = ({ href = "", title = null, tokens }) => {
     const resolvedHref = resolveMarkdownHref(href, currentDocPath, docPathSet);
@@ -282,26 +337,53 @@ function renderMarkdownToHtml(
 
   renderer.image = ({ href = "", text = "", title = null }) => {
     const src = resolveImageSrc(href, currentDocPath);
+    const absolutePath = resolveImageAbsolutePath(href, currentDocPath);
+
+    let widthAttr = "";
+    let heightAttr = "";
+
+    if (absolutePath && fs.existsSync(absolutePath)) {
+      try {
+        const dim = imageSize(new Uint8Array(fs.readFileSync(absolutePath)));
+
+        if (dim.width && dim.height) {
+          widthAttr = `width="${dim.width}"`;
+          heightAttr = `height="${dim.height}"`;
+        }
+      } catch {
+        // ignore image size errors
+      }
+    }
+
     const attrs = [
       `src="${escapeHtmlAttribute(src)}"`,
       `alt="${escapeHtmlAttribute(text)}"`,
+      widthAttr,
+      heightAttr,
       `loading="lazy"`,
-      `decoding="async"`,
-      `fetchpriority="low"`,
       title ? `title="${escapeHtmlAttribute(title)}"` : "",
     ]
       .filter(Boolean)
       .join(" ");
 
-    return `<img ${attrs} />`;
+    return `<img class="docs-image" ${attrs} />`;
   };
 
-  return marked.parse(preprocessObsidianImages(markdown), {
+  const rawHtml = marked.parse(normalizedMarkdown, {
     async: false,
     breaks: false,
     gfm: true,
     renderer,
   }) as string;
+
+  const sanitized = DOMPurify.sanitize(rawHtml, {
+    USE_PROFILES: { html: true },
+  });
+
+  return {
+    html: sanitized,
+    headings,
+  };
 }
 
 function readDocsRecursively(rootDir: string, currentDir = ""): RawDocRecord[] {
@@ -321,9 +403,7 @@ function readDocsRecursively(rootDir: string, currentDir = ""): RawDocRecord[] {
 
     const extension = path.extname(entry.name).toLowerCase();
 
-    if (!DOC_EXTENSIONS.has(extension)) {
-      continue;
-    }
+    if (!DOC_EXTENSIONS.has(extension)) continue;
 
     const absoluteFilePath = path.join(rootDir, nextRelativePath);
     const source = fs.readFileSync(absoluteFilePath, "utf8");
@@ -341,14 +421,7 @@ function readDocsRecursively(rootDir: string, currentDir = ""): RawDocRecord[] {
     const relPath = nextRelativePath;
     const slug = stripDocExtension(relPath).split("/");
 
-    docs.push({
-      relPath,
-      slug,
-      title,
-      description,
-      date,
-      content,
-    });
+    docs.push({ relPath, slug, title, description, date, content });
   }
 
   return docs;
@@ -372,6 +445,43 @@ function sortTree(nodes: DocTreeNode[]): DocTreeNode[] {
   return nodes;
 }
 
+function createSnapshot(): DocsSnapshot {
+  if (!fs.existsSync(FOUNDATION_ROOT)) {
+    return { docs: [], slugs: [], tree: [], searchEntries: [] };
+  }
+
+  const rawDocs = readDocsRecursively(FOUNDATION_ROOT).sort((a, b) =>
+    a.relPath.localeCompare(b.relPath, "zh-CN"),
+  );
+  const docPathSet = new Set(rawDocs.map((doc) => doc.relPath));
+
+  const docs: DocRecord[] = rawDocs.map((doc) => {
+    const rendered = renderMarkdownToHtml(doc.content, doc.relPath, docPathSet);
+
+    return {
+      relPath: doc.relPath,
+      slug: doc.slug,
+      title: doc.title,
+      description: doc.description,
+      date: doc.date,
+      contentHtml: rendered.html,
+      headings: rendered.headings,
+    };
+  });
+
+  return {
+    docs,
+    slugs: docs.map((doc) => doc.slug),
+    tree: buildDocsTree(docs),
+    searchEntries: docs.map((doc) => ({
+      relPath: doc.relPath,
+      slug: doc.slug,
+      title: doc.title,
+      description: doc.description,
+    })),
+  };
+}
+
 function computeDocsVersion(rootDir: string, currentDir = ""): DocsVersion {
   const absoluteDir = path.join(rootDir, currentDir);
   const entries = fs.readdirSync(absoluteDir, { withFileTypes: true });
@@ -382,15 +492,10 @@ function computeDocsVersion(rootDir: string, currentDir = ""): DocsVersion {
     const nextRelativePath = path.join(currentDir, entry.name);
 
     if (entry.isDirectory()) {
-      const childVersion = computeDocsVersion(rootDir, nextRelativePath);
-      fileCount += childVersion.fileCount;
-      maxMtimeMs = Math.max(maxMtimeMs, childVersion.maxMtimeMs);
-      continue;
-    }
+      const child = computeDocsVersion(rootDir, nextRelativePath);
 
-    const extension = path.extname(entry.name).toLowerCase();
-
-    if (!DOC_EXTENSIONS.has(extension)) {
+      fileCount += child.fileCount;
+      maxMtimeMs = Math.max(maxMtimeMs, child.maxMtimeMs);
       continue;
     }
 
@@ -413,70 +518,116 @@ function isSameDocsVersion(left: DocsVersion, right: DocsVersion): boolean {
   );
 }
 
-function createSnapshot(): DocsSnapshot {
-  if (!fs.existsSync(FOUNDATION_ROOT)) {
-    return {
-      docs: [],
-      slugs: [],
-      tree: [],
-    };
-  }
+function getPersistedSnapshotMeta(snapshot: PersistedDocsSnapshot): {
+  schemaVersion: number;
+  version: DocsVersion;
+} | null {
+  const meta = snapshot.__meta;
 
-  const rawDocs = readDocsRecursively(FOUNDATION_ROOT).sort((a, b) =>
-    a.relPath.localeCompare(b.relPath, "zh-CN"),
-  );
-  const docPathSet = new Set(rawDocs.map((doc) => doc.relPath));
-  const docs: DocRecord[] = rawDocs.map((doc) => ({
-    relPath: doc.relPath,
-    slug: doc.slug,
-    title: doc.title,
-    description: doc.description,
-    date: doc.date,
-    contentHtml: renderMarkdownToHtml(doc.content, doc.relPath, docPathSet),
-  }));
+  if (!meta) return null;
+  if (meta.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) return null;
+  if (!meta.version) return null;
+
+  const { fileCount, maxMtimeMs } = meta.version;
+
+  if (!Number.isFinite(fileCount) || !Number.isFinite(maxMtimeMs)) return null;
 
   return {
-    docs,
-    slugs: docs.map((doc) => doc.slug),
-    tree: buildDocsTree(docs),
+    schemaVersion: meta.schemaVersion,
+    version: meta.version,
   };
+}
+
+function getValidatedSnapshotFromDisk(
+  expectedVersion: DocsVersion,
+): DocsSnapshot | null {
+  if (!fs.existsSync(SNAPSHOT_PATH)) return null;
+
+  try {
+    const raw = fs.readFileSync(SNAPSHOT_PATH, "utf8");
+    const parsed = JSON.parse(raw) as PersistedDocsSnapshot;
+    const meta = getPersistedSnapshotMeta(parsed);
+
+    if (!meta || !isSameDocsVersion(meta.version, expectedVersion)) {
+      return null;
+    }
+
+    if (!Array.isArray(parsed.docs) || !Array.isArray(parsed.tree)) {
+      return null;
+    }
+
+    return {
+      docs: parsed.docs,
+      slugs: Array.isArray(parsed.slugs) ? parsed.slugs : [],
+      tree: parsed.tree,
+      searchEntries: Array.isArray(parsed.searchEntries)
+        ? parsed.searchEntries
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSnapshotToDisk(
+  snapshot: DocsSnapshot,
+  version: DocsVersion,
+): void {
+  try {
+    const dir = path.dirname(SNAPSHOT_PATH);
+    const payload: PersistedDocsSnapshot = {
+      ...snapshot,
+      __meta: {
+        createdAt: new Date().toISOString(),
+        schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+        version,
+      },
+    };
+
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SNAPSHOT_PATH, JSON.stringify(payload), "utf8");
+  } catch {
+    // ignore snapshot write errors in runtime
+  }
 }
 
 function getSnapshot(): DocsSnapshot {
   if (!fs.existsSync(FOUNDATION_ROOT)) {
-    cachedSnapshot = {
-      docs: [],
-      slugs: [],
-      tree: [],
-    };
-    cachedVersion = {
-      fileCount: 0,
-      maxMtimeMs: 0,
-    };
+    cachedSnapshot = { docs: [], slugs: [], tree: [], searchEntries: [] };
+    cachedVersion = { fileCount: 0, maxMtimeMs: 0 };
 
     return cachedSnapshot;
   }
 
-  if (process.env.NODE_ENV === "production") {
-    if (!cachedSnapshot) {
-      cachedSnapshot = createSnapshot();
+  if (process.env.NODE_ENV !== "production") {
+    const currentVersion = computeDocsVersion(FOUNDATION_ROOT);
+
+    if (
+      cachedSnapshot &&
+      cachedVersion &&
+      isSameDocsVersion(cachedVersion, currentVersion)
+    ) {
+      return cachedSnapshot;
     }
 
+    cachedSnapshot = createSnapshot();
+    cachedVersion = currentVersion;
+
     return cachedSnapshot;
   }
 
-  const currentVersion = computeDocsVersion(FOUNDATION_ROOT);
+  if (!cachedSnapshot) {
+    const currentVersion = computeDocsVersion(FOUNDATION_ROOT);
+    const diskSnapshot = getValidatedSnapshotFromDisk(currentVersion);
 
-  if (
-    cachedSnapshot &&
-    cachedVersion &&
-    isSameDocsVersion(cachedVersion, currentVersion)
-  ) {
-    return cachedSnapshot;
+    cachedSnapshot = diskSnapshot;
+    cachedVersion = currentVersion;
+
+    if (!cachedSnapshot) {
+      cachedSnapshot = createSnapshot();
+      writeSnapshotToDisk(cachedSnapshot, currentVersion);
+    }
   }
-
-  cachedSnapshot = createSnapshot();
-  cachedVersion = currentVersion;
 
   return cachedSnapshot;
 }
@@ -497,13 +648,15 @@ export function getDocsTree(): DocTreeNode[] {
   return getSnapshot().tree;
 }
 
+export function getDocsSearchEntries(): DocSearchEntry[] {
+  return getSnapshot().searchEntries;
+}
+
 export function findDocBySlug(
   docs: DocRecord[],
   slug?: string[],
 ): DocRecord | null {
-  if (!docs.length) {
-    return null;
-  }
+  if (!docs.length) return null;
 
   if (slug?.length) {
     const key = slug.join("/");
