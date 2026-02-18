@@ -1,4 +1,4 @@
-import type { GetStaticProps } from "next";
+import type { GetServerSideProps } from "next";
 
 import { Code } from "@heroui/code";
 import { Snippet } from "@heroui/snippet";
@@ -150,7 +150,9 @@ export default function AboutPage({ aboutPage }: AboutPageProps) {
   );
 }
 
-export const getStaticProps: GetStaticProps<AboutPageProps> = async () => {
+export const getServerSideProps: GetServerSideProps<
+  AboutPageProps
+> = async () => {
   return {
     props: {
       aboutPage: getAboutPageData(),

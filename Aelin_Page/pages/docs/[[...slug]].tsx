@@ -1,4 +1,4 @@
-import type { GetStaticPaths, GetStaticProps } from "next";
+import type { GetServerSideProps } from "next";
 
 import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
@@ -32,7 +32,6 @@ import DefaultLayout from "@/layouts/default";
 import {
   findDocBySlug,
   getAllDocs,
-  getAllDocSlugs,
   getDocsSearchEntries,
   getDocsTree,
   type DocHeading,
@@ -812,19 +811,7 @@ export default function DocsPage({
   );
 }
 
-export const getStaticPaths: GetStaticPaths = async () => {
-  const slugs = getAllDocSlugs();
-  const paths = [{ params: { slug: [] as string[] } }].concat(
-    slugs.map((slug) => ({ params: { slug } })),
-  );
-
-  return {
-    paths,
-    fallback: false,
-  };
-};
-
-export const getStaticProps: GetStaticProps<DocsPageProps> = async ({
+export const getServerSideProps: GetServerSideProps<DocsPageProps> = async ({
   params,
 }) => {
   const docs = getAllDocs();
