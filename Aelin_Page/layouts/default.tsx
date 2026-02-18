@@ -1,4 +1,5 @@
 import { Link } from "@heroui/link";
+import { useRouter } from "next/router";
 
 import { Head } from "./head";
 
@@ -10,10 +11,13 @@ export default function DefaultLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+  const showSakura = !router.pathname.startsWith("/docs");
+
   return (
     <div className="app-shell relative flex h-screen flex-col">
       <Head />
-      <SakuraOverlay />
+      {showSakura ? <SakuraOverlay /> : null}
       <Navbar />
       <main className="container mx-auto max-w-7xl flex-grow px-6 pt-14">
         {children}

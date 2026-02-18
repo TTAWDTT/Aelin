@@ -54,6 +54,23 @@ function pickPetalCount(viewportWidth: number, isDocsPage: boolean): number {
   return 48;
 }
 
+function applyDeviceTier(baseCount: number): number {
+  if (typeof navigator === "undefined") return baseCount;
+
+  const conn = (
+    navigator as Navigator & {
+      connection?: { saveData?: boolean };
+    }
+  ).connection;
+  const saveData = !!conn?.saveData;
+  const cpu = navigator.hardwareConcurrency || 4;
+
+  if (saveData || cpu <= 4) return Math.max(8, Math.floor(baseCount * 0.5));
+  if (cpu <= 8) return Math.max(10, Math.floor(baseCount * 0.75));
+
+  return baseCount;
+}
+
 export function SakuraOverlay() {
   const router = useRouter();
   const isDocsPage = router.pathname.startsWith("/docs");
@@ -64,8 +81,11 @@ export function SakuraOverlay() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const updateCount = () =>
-      setPetalCount(pickPetalCount(window.innerWidth, isDocsPage));
+    const updateCount = () => {
+      const base = pickPetalCount(window.innerWidth, isDocsPage);
+
+      setPetalCount(applyDeviceTier(base));
+    };
 
     updateCount();
     window.addEventListener("resize", updateCount);

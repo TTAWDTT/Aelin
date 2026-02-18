@@ -25,13 +25,11 @@
 
 .route-page-shell {
   position: relative;
-  will-change: opacity, transform, filter;
+  will-change: opacity;
 }
 
 .route-page-shell[data-route-state="leaving"] {
   opacity: 0.72;
-  transform: translateY(4px) scale(0.996);
-  filter: saturate(0.93);
 }
 
 .route-page-shell[data-route-state="entering"] {
@@ -562,8 +560,8 @@
 }
 
 .theme-switch-glyph-dark {
-  color: rgb(250 250 250);
-  filter: drop-shadow(0 0 8px rgb(255 255 255 / 0.25));
+  color: rgb(250 204 21);
+  filter: drop-shadow(0 0 9px rgb(245 158 11 / 0.48));
 }
 
 @keyframes sakura-fall {
@@ -597,14 +595,10 @@
 @keyframes route-page-enter {
   from {
     opacity: 0.76;
-    transform: translateY(9px) scale(0.997);
-    filter: blur(1px) saturate(0.92);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0) saturate(1);
   }
 }
 
