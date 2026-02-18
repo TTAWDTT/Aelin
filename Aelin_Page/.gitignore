@@ -38,6 +38,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# obsidian
+.obsidian/
+**/.obsidian/
+
 pnpm-lock.yaml
 yarn.lock
 package-lock.json
