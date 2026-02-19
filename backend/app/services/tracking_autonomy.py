@@ -344,13 +344,25 @@ class TrackingAutonomyService:
                 return {"ok": False, "message": "target not found"}
             if target.status == "deleted" or target.deleted_at is not None:
                 return {"ok": False, "message": "target deleted"}
-            target.next_run_at = _utcnow()
-            db.add(target)
+            if target.status != "active":
+                return {"ok": False, "message": f"target status is {target.status}"}
+
+            stats = self._run_target_ids(db, [int(target_id)])
             db.commit()
+
+            fetched_count = int(stats.get("fetched_count", 0))
+            snapshots_created = int(stats.get("snapshots_created", 0))
+            changes_created = int(stats.get("changes_created", 0))
+            if snapshots_created == 0 and fetched_count == 0:
+                message = "run completed: source_no_result (no snapshots/changes yet)"
+            else:
+                message = f"run completed: fetched={fetched_count}, snapshots={snapshots_created}, changes={changes_created}"
+            return {"ok": True, "message": message}
+        except Exception as exc:
+            db.rollback()
+            return {"ok": False, "message": f"run failed: {str(exc)[:220]}"}
         finally:
             db.close()
-        self._dispatch_due_once(force_target_id=target_id)
-        return {"ok": True, "message": "run completed"}
 
     def build_notification_items(self, db: Session, *, user_id: int, limit: int = 20) -> tuple[list[dict[str, Any]], list[int]]:
         q = (
@@ -500,9 +512,10 @@ class TrackingAutonomyService:
         elif level == "critical":
             need = 4
         return rank.get(sev, 1) >= need
-    def _run_target_ids(self, db: Session, target_ids: list[int]) -> None:
+    def _run_target_ids(self, db: Session, target_ids: list[int]) -> dict[str, int]:
+        stats = {"targets": 0, "fetched_count": 0, "snapshots_created": 0, "changes_created": 0, "errors": 0}
         if not target_ids:
-            return
+            return stats
         targets = list(
             db.scalars(
                 select(TrackingTarget)
@@ -511,8 +524,9 @@ class TrackingAutonomyService:
             )
         )
         if not targets:
-            return
+            return stats
 
+        stats["targets"] = len(targets)
         primary = targets[0]
         now = _utcnow()
         try:
@@ -521,9 +535,12 @@ class TrackingAutonomyService:
             err = str(exc or "fetch failed")[:500]
             for target in targets:
                 self._apply_fetch_error(db, target, err, now=now)
-            return
+                stats["errors"] += 1
+            return stats
 
         payload_hash = hashlib.sha256(_safe_json_dumps(normalized_payload).encode("utf-8")).hexdigest()
+        fetched_count = len((normalized_payload.get("items") or [])) if isinstance(normalized_payload, dict) else 0
+        stats["fetched_count"] = max(0, int(fetched_count))
         for target in targets:
             target.last_run_at = now
             target.last_checked_at = now
@@ -548,7 +565,7 @@ class TrackingAutonomyService:
 
             if prev_hash == payload_hash and prev_snapshot is not None:
                 if prev_error_count > 0:
-                    self._create_change(
+                    recovered = self._create_change(
                         db,
                         target=target,
                         from_snapshot=prev_snapshot,
@@ -560,6 +577,8 @@ class TrackingAutonomyService:
                         fingerprint="recovered",
                         now=now,
                     )
+                    if recovered is not None:
+                        stats["changes_created"] += 1
                 db.add(target)
                 continue
 
@@ -573,11 +592,12 @@ class TrackingAutonomyService:
                 normalized_payload_json=normalized_json,
                 content_hash=payload_hash,
                 fetched_at=now,
-                fetch_status="ok",
-                fetch_error=None,
+                fetch_status="ok" if fetched_count > 0 else "partial",
+                fetch_error=None if fetched_count > 0 else "source_no_result",
             )
             db.add(snapshot)
             db.flush()
+            stats["snapshots_created"] += 1
 
             prev_normalized = _json_loads_dict(prev_snapshot.normalized_payload_json) if prev_snapshot else {}
             changes = self._diff_changes(prev_payload=prev_normalized, next_payload=normalized_payload)
@@ -590,7 +610,7 @@ class TrackingAutonomyService:
                     "fingerprint": "baseline",
                 }]
             for item in changes:
-                self._create_change(
+                created = self._create_change(
                     db,
                     target=target,
                     from_snapshot=prev_snapshot,
@@ -602,9 +622,13 @@ class TrackingAutonomyService:
                     fingerprint=str(item.get("fingerprint") or "generic"),
                     now=now,
                 )
+                if created is not None:
+                    stats["changes_created"] += 1
             if changes:
                 target.last_change_at = now
             db.add(target)
+
+        return stats
 
     def _apply_fetch_error(self, db: Session, target: TrackingTarget, error: str, *, now: datetime) -> None:
         prev_status = target.status
