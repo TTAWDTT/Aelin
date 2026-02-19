@@ -291,6 +291,8 @@ export type AelinTrackConfirmResponse = {
   status: string;
   message: string;
   provider?: string | null;
+  target_id?: number | null;
+  next_run_at?: string | null;
   actions: AelinAction[];
   generated_at: string;
 };
@@ -298,10 +300,26 @@ export type AelinTrackConfirmResponse = {
 export type AelinTrackingItem = {
   note_id?: number | null;
   message_id?: number | null;
+  target_id?: number | null;
   target: string;
   source: string;
   query: string;
+  workspace?: string;
+  track_type?: string;
+  description?: string;
+  tags?: string[];
   status: string;
+  interval_seconds?: number;
+  notify_level?: string;
+  unread_changes?: number;
+  error_count?: number;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_checked_at?: string | null;
+  last_change_at?: string | null;
+  mute_until?: string | null;
+  is_temporary?: boolean;
+  expires_at?: string | null;
   updated_at: string;
   status_updated_at?: string | null;
 };
@@ -309,6 +327,58 @@ export type AelinTrackingItem = {
 export type AelinTrackingListResponse = {
   total: number;
   items: AelinTrackingItem[];
+  generated_at: string;
+};
+
+export type AelinTrackingTargetUpdateRequest = {
+  status?: "active" | "paused" | "error" | "deleted";
+  interval_seconds?: number;
+  notify_level?: "all" | "important" | "critical";
+  mute_until?: string | null;
+  description?: string;
+  tags?: string[];
+};
+
+export type AelinTrackingRunResponse = {
+  ok: boolean;
+  message: string;
+  generated_at: string;
+};
+
+export type AelinTrackingChangeItem = {
+  id: number;
+  target_id: number;
+  change_type: string;
+  severity: string;
+  title: string;
+  summary: string;
+  diff_json: Record<string, unknown>;
+  dedupe_key: string;
+  notified: boolean;
+  acked: boolean;
+  created_at: string;
+};
+
+export type AelinTrackingChangeListResponse = {
+  total: number;
+  items: AelinTrackingChangeItem[];
+  generated_at: string;
+};
+
+export type AelinTrackingSnapshotItem = {
+  id: number;
+  target_id: number;
+  version_no: number;
+  content_hash: string;
+  fetch_status: string;
+  fetch_error: string;
+  fetched_at: string;
+  normalized_payload_json: Record<string, unknown>;
+};
+
+export type AelinTrackingSnapshotListResponse = {
+  total: number;
+  items: AelinTrackingSnapshotItem[];
   generated_at: string;
 };
 
@@ -958,6 +1028,14 @@ export async function aelinConfirmTrack(payload: {
   target: string;
   source?: string;
   query?: string;
+  workspace?: string;
+  description?: string;
+  tags?: string[];
+  track_type?: "term" | "url";
+  interval_seconds?: number;
+  notify_level?: "all" | "important" | "critical";
+  is_temporary?: boolean;
+  temporary_days?: number;
 }): Promise<AelinTrackConfirmResponse> {
   return await fetchJson<AelinTrackConfirmResponse>("/api/v1/aelin/track/confirm", {
     method: "POST",
@@ -966,13 +1044,89 @@ export async function aelinConfirmTrack(payload: {
       target: payload.target,
       source: payload.source || "auto",
       query: payload.query || "",
+      workspace: payload.workspace || "default",
+      description: payload.description || "",
+      tags: (payload.tags || []).filter((tag) => String(tag || "").trim()).slice(0, 20),
+      track_type: payload.track_type,
+      interval_seconds: payload.interval_seconds,
+      notify_level: payload.notify_level || "all",
+      is_temporary: Boolean(payload.is_temporary),
+      temporary_days: payload.temporary_days,
     }),
   });
 }
 
-export async function getAelinTracking(limit = 80): Promise<AelinTrackingListResponse> {
+export async function getAelinTracking(
+  limitOrOptions:
+    | number
+    | {
+        limit?: number;
+        workspace?: string;
+        status?: string;
+      } = 80
+): Promise<AelinTrackingListResponse> {
+  const opts =
+    typeof limitOrOptions === "number"
+      ? { limit: limitOrOptions }
+      : (limitOrOptions || {});
+  const safeLimit = Number.isFinite(opts.limit || 0)
+    ? Math.max(1, Math.min(300, Math.floor(Number(opts.limit || 80))))
+    : 80;
+  const qs = new URLSearchParams();
+  qs.set("limit", String(safeLimit));
+  if (String(opts.workspace || "").trim()) qs.set("workspace", String(opts.workspace).trim());
+  if (String(opts.status || "").trim()) qs.set("status", String(opts.status).trim());
+  return await fetchJson<AelinTrackingListResponse>(`/api/v1/aelin/tracking?${qs.toString()}`);
+}
+
+export async function updateAelinTrackingTarget(
+  targetId: number,
+  payload: AelinTrackingTargetUpdateRequest
+): Promise<AelinTrackingItem> {
+  return await fetchJson<AelinTrackingItem>(`/api/v1/aelin/tracking/targets/${targetId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function runAelinTrackingTarget(targetId: number): Promise<AelinTrackingRunResponse> {
+  return await fetchJson<AelinTrackingRunResponse>(`/api/v1/aelin/tracking/targets/${targetId}/run`, {
+    method: "POST",
+  });
+}
+
+export async function listAelinTrackingChanges(
+  targetId: number,
+  options?: { limit?: number; severity?: string; change_type?: string; acked?: boolean }
+): Promise<AelinTrackingChangeListResponse> {
+  const qs = new URLSearchParams();
+  const safeLimit = Number.isFinite(options?.limit || 0)
+    ? Math.max(1, Math.min(300, Math.floor(Number(options?.limit || 80))))
+    : 80;
+  qs.set("limit", String(safeLimit));
+  if (String(options?.severity || "").trim()) qs.set("severity", String(options?.severity || "").trim());
+  if (String(options?.change_type || "").trim()) qs.set("change_type", String(options?.change_type || "").trim());
+  if (typeof options?.acked === "boolean") qs.set("acked", options.acked ? "true" : "false");
+  return await fetchJson<AelinTrackingChangeListResponse>(
+    `/api/v1/aelin/tracking/targets/${targetId}/changes?${qs.toString()}`
+  );
+}
+
+export async function ackAelinTrackingChange(changeId: number): Promise<AelinTrackingRunResponse> {
+  return await fetchJson<AelinTrackingRunResponse>(`/api/v1/aelin/tracking/changes/${changeId}/ack`, {
+    method: "POST",
+  });
+}
+
+export async function listAelinTrackingSnapshots(
+  targetId: number,
+  limit = 80
+): Promise<AelinTrackingSnapshotListResponse> {
   const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(300, Math.floor(limit))) : 80;
-  return await fetchJson<AelinTrackingListResponse>(`/api/v1/aelin/tracking?limit=${safeLimit}`);
+  return await fetchJson<AelinTrackingSnapshotListResponse>(
+    `/api/v1/aelin/tracking/targets/${targetId}/snapshots?limit=${safeLimit}`
+  );
 }
 
 export async function getAelinNotifications(limit = 24): Promise<AelinNotificationResponse> {

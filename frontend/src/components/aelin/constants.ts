@@ -119,6 +119,9 @@ export const TRACKING_STATUS_META: Record<
   { label: string; color: "success" | "info" | "warning" | "error" | "default" }
 > = {
   active: { label: "进行中", color: "success" },
+  paused: { label: "已暂停", color: "warning" },
+  error: { label: "异常", color: "error" },
+  deleted: { label: "已删除", color: "default" },
   created: { label: "已创建", color: "info" },
   seeded: { label: "已预热", color: "info" },
   sync_started: { label: "同步中", color: "success" },
