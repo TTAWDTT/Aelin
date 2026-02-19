@@ -4995,284 +4995,6 @@ def list_aelin_notifications(
         generated_at=datetime.now(timezone.utc),
     )
 
-    # Legacy implementation kept below temporarily for reference.
-    tool_trace: list[AelinToolStep] = []
-
-    def add_trace(stage: str, *, status: str = "completed", detail: str = "", count: int = 0) -> None:
-        tool_trace.append(AelinToolStep(stage=stage, status=status, detail=detail[:240], count=max(0, int(count or 0))))
-
-    service, provider = _resolve_llm_service(db, current_user)
-    llm_generation_failed = False
-
-    base_bundle = _build_context_bundle(
-        db,
-        current_user.id,
-        workspace=payload.workspace,
-        query="",
-    )
-    memory_summary = str(base_bundle["summary"] or "")
-    brief_summary = base_bundle["daily_brief"].summary if base_bundle.get("daily_brief") else ""
-    todo_titles = [item.title for item in base_bundle["todos"]]
-    images = _normalize_images(payload.images)
-    history_turns = _normalize_history(payload.history)
-
-    tool_plan = _plan_tool_usage(
-        query=payload.query,
-        service=service,
-        provider=provider,
-        memory_summary=memory_summary,
-    )
-    need_local_search = bool(tool_plan.get("need_local_search"))
-    need_web_search = bool(tool_plan.get("need_web_search"))
-    planning_reason = str(tool_plan.get("reason") or "planner:none")
-    web_queries = _normalize_web_queries(payload.query, tool_plan.get("web_queries"))
-    track_suggestion = tool_plan.get("track_suggestion")
-    add_trace(
-        "planner",
-        status="completed",
-        detail=f"{planning_reason}; local={'on' if need_local_search else 'off'}; web={'on' if need_web_search else 'off'}",
-    )
-
-    active_bundle = base_bundle
-    local_citations: list[AelinCitation] = []
-    if need_local_search:
-        active_bundle = _build_context_bundle(
-            db,
-            current_user.id,
-            workspace=payload.workspace,
-            query=payload.query,
-        )
-        local_citations = _to_citations(active_bundle["focus_items_raw"], payload.max_citations)
-        local_citations = _hydrate_citation_avatars(db, current_user.id, local_citations)
-        add_trace("local_search", status="completed", detail="retrieved local memory signals", count=len(local_citations))
-    else:
-        add_trace("local_search", status="skipped", detail="planner disabled local search")
-
-    web_citations: list[AelinCitation] = []
-    web_evidence_lines: list[str] = []
-    web_results_for_answer: list[WebSearchResult] = []
-    if need_web_search and web_queries:
-        for q in web_queries[:3]:
-            rows = _web_search.search_and_fetch(q, max_results=5, fetch_top_k=3)
-            if not rows:
-                continue
-            web_results_for_answer.extend(rows[:5])
-            web_citations.extend(_persist_web_search_results(db, current_user.id, query=q, results=rows))
-            for item in rows[:5]:
-                host = _domain_from_url(item.url)
-                snippet = ((getattr(item, "fetched_excerpt", "") or "").strip() or (item.snippet or "").strip())
-                evidence = f"- [Web] {item.title} ({host})"
-                if snippet:
-                    evidence += f" | {snippet}"
-                web_evidence_lines.append(evidence)
-        add_trace("web_search", status="completed", detail="; ".join(web_queries[:3]), count=len(web_citations))
-    elif need_web_search:
-        add_trace("web_search", status="failed", detail="planner enabled but no query/result")
-    else:
-        add_trace("web_search", status="skipped", detail="planner disabled web search")
-
-    citations = sorted(
-        [*local_citations, *web_citations],
-        key=lambda x: float(x.score or 0.0),
-        reverse=True,
-    )[: max(1, min(20, payload.max_citations))]
-
-    pin_lines = [
-        f"{item.display_name}（score {item.score:.1f}，未读 {item.unread_count}）"
-        for item in active_bundle["pin_recommendations"][:4]
-    ]
-    memory_prompt = _memory.build_system_memory_prompt(
-        db,
-        current_user.id,
-        query=payload.query if need_local_search else "",
-    )
-
-    if provider == "rule_based":
-        add_trace("generation", status="completed", detail="rule_based response path")
-        if local_citations:
-            answer = _rule_based_answer(
-                payload.query,
-                memory_summary,
-                citations,
-                brief_summary=brief_summary,
-                todo_titles=todo_titles,
-                image_count=len(images),
-            )
-        elif web_evidence_lines:
-            answer = _compose_web_first_answer(payload.query, web_results_for_answer)
-        else:
-            answer = _rule_based_chat_answer(
-                payload.query,
-                memory_summary=memory_summary,
-                brief_summary=brief_summary,
-            )
-    elif not service.is_configured():
-        add_trace("generation", status="failed", detail="llm client not configured")
-        answer = (
-            "当前无法初始化 LLM 客户端，Aelin 已停止静默降级。"
-            "\n\n请检查设置中的 Provider / Base URL / API Key 是否正确，然后重试。"
-            "\n\n提示：Base URL 应填写 API 根地址，而不是完整的 /chat/completions 路径。"
-        )
-    else:
-        evidence_block = "\n".join(
-            f"- [{it.source_label}] {it.title} ({it.sender}, {it.received_at})"
-            for it in citations[:8]
-        ) if citations else ""
-        prompt = (
-            "You are Aelin, a signal-native chat agent.\n"
-            "Answer in Simplified Chinese.\n"
-            "Default to normal conversational interaction.\n"
-            "You must answer the user's question directly first.\n"
-            "Do not ask users to manually search websites when web evidence is already provided.\n"
-            "Only cite synced evidence when retrieval is actually provided.\n"
-            "You MUST answer the user's actual question directly first.\n"
-            "Tracking/subscription suggestions are optional and must be placed after the direct answer.\n"
-            "If evidence is insufficient, say uncertainty explicitly and avoid fabricating details.\n"
-            "Keep answer concise, practical, and natural.\n"
-            "You may use 0-2 natural emoji in the answer body when it helps tone.\n"
-            "Use daily brief and pending todos only when they help this specific user question.\n"
-            "Aelin has 11 expressions. Choose one according to semantics below:\n"
-            + _expression_mapping_prompt()
-            + "\n"
-            "You MUST append exactly one tag at the very end: [expression:exp-XX].\n"
-            "Optional emoji control tag is allowed only before the final expression tag: [emoji:🙂].\n"
-            "Do not output any other expression format.\n"
-        )
-        retrieval_note = f"规划结果：{planning_reason}。"
-        retrieval_note += f" local_search={'on' if need_local_search else 'off'}; web_search={'on' if need_web_search else 'off'}。"
-        user_msg = (
-            f"用户问题：{payload.query.strip()}\n\n"
-            f"工具规划：{retrieval_note}\n\n"
-            + (
-                "最近对话（供连续上下文参考）：\n"
-                + "\n".join(
-                    f"- {'用户' if turn['role'] == 'user' else 'Aelin'}: {turn['content'][:220]}"
-                    for turn in history_turns[-6:]
-                )
-                + "\n\n"
-                if history_turns
-                else ""
-            )
-            + f"长期记忆摘要：{memory_summary or '暂无'}\n\n"
-            + f"今日简报：{brief_summary or '暂无'}\n\n"
-            + f"待跟进事项：{'; '.join(todo_titles[:5]) if todo_titles else '暂无'}\n\n"
-            + f"置顶建议：{'; '.join(pin_lines) if pin_lines else '暂无'}\n\n"
-            + (
-                "用户上传图片：\n"
-                + "\n".join(f"- {img['name'] or 'image'}" for img in images)
-                + "\n\n"
-                if images
-                else ""
-            )
-            + (f"本地可用证据：\n{evidence_block}\n\n" if evidence_block else "")
-            + (f"联网搜索结果：\n{chr(10).join(web_evidence_lines[:8])}\n" if web_evidence_lines else "")
-        )
-        llm_messages = [{"role": "system", "content": prompt}]
-        if memory_prompt:
-            llm_messages.append({"role": "system", "content": memory_prompt})
-        if history_turns:
-            llm_messages.extend(history_turns[-10:])
-        if images:
-            user_content: list[dict[str, Any]] = [{"type": "text", "text": user_msg}]
-            for img in images:
-                user_content.append({"type": "image_url", "image_url": {"url": img["data_url"]}})
-            llm_messages.append({"role": "user", "content": user_content})
-        else:
-            llm_messages.append({"role": "user", "content": user_msg})
-        llm_error: str | None = None
-        try:
-            raw = service._chat(
-                messages=llm_messages,
-                max_tokens=520,
-                stream=False,
-            )
-            answer = str(raw).strip() if raw else ""
-            add_trace("generation", status="completed", detail="llm generation succeeded")
-        except Exception as e:
-            llm_error = str(e)
-            answer = ""
-            llm_generation_failed = True
-            add_trace("generation", status="failed", detail=f"llm error: {llm_error[:180]}")
-            if images:
-                # Some providers/models are text-only; retry once without image payload.
-                fallback_messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
-                if memory_prompt:
-                    fallback_messages.append({"role": "system", "content": memory_prompt})
-                fallback_messages.append({"role": "user", "content": user_msg})
-                try:
-                    raw = service._chat(
-                        messages=fallback_messages,
-                        max_tokens=520,
-                        stream=False,
-                    )
-                    maybe = str(raw).strip() if raw else ""
-                    if maybe:
-                        answer = (
-                            "当前模型可能不支持图片输入，我已先基于文本上下文回答。\n\n"
-                            + maybe
-                        )
-                        add_trace("generation", status="completed", detail="fallback text-only generation succeeded")
-                except Exception as e2:
-                    llm_error = llm_error or str(e2)
-                    answer = ""
-        if not answer:
-            if citations:
-                answer = _rule_based_answer(
-                    payload.query,
-                    memory_summary,
-                    citations,
-                    brief_summary=brief_summary,
-                    todo_titles=todo_titles,
-                    image_count=len(images),
-                )
-            else:
-                answer = (
-                    "我刚才调用外部模型失败了，先给你一个保底回复。"
-                    + (f"\n\n错误：{llm_error}" if llm_error else "")
-                    + "\n\n你可以先在设置页测试 Provider 连通性，然后我再继续正常对话。"
-                    + "\n\n"
-                    + _rule_based_chat_answer(
-                        payload.query,
-                        memory_summary=memory_summary,
-                        brief_summary=brief_summary,
-                    )
-                )
-        if answer and web_results_for_answer and _looks_like_link_dump_answer(answer):
-            answer = _compose_web_first_answer(payload.query, web_results_for_answer)
-
-    answer, tagged_expression = _extract_expression_tag(answer)
-    answer, tagged_emoji = _extract_emoji_tag(answer)
-    expression = tagged_expression or _pick_expression(payload.query, answer, generation_failed=llm_generation_failed)
-    answer = _apply_answer_emoji(answer, expression, explicit_emoji=tagged_emoji)
-
-    if payload.use_memory and answer:
-        _memory.update_after_turn(
-            db,
-            current_user.id,
-            [{"role": "user", "content": payload.query}],
-            answer,
-        )
-        db.commit()
-    elif need_web_search and web_queries:
-        # Persist fetched web records even if this round does not update chat memory.
-        db.commit()
-
-    return AelinChatResponse(
-        answer=answer,
-        expression=expression,
-        citations=citations,
-        actions=_build_actions(
-            payload.query,
-            citations,
-            has_todos=bool(todo_titles),
-            track_suggestion=track_suggestion if isinstance(track_suggestion, dict) else None,
-        ),
-        tool_trace=tool_trace[:8],
-        memory_summary=memory_summary,
-        generated_at=datetime.now(timezone.utc),
-    )
-
-
 @router.post("/chat/stream")
 def aelin_chat_stream(
     payload: AelinChatRequest,
@@ -5465,55 +5187,6 @@ def _ensure_tracking_account(
     except Exception:
         db.rollback()
         return None
-
-
-def _persist_tracking_event(
-    db: Session,
-    *,
-    user_id: int,
-    target: str,
-    source: str,
-    query: str,
-    status: str,
-) -> int | None:
-    contact = crud.upsert_contact(db, user_id=user_id, handle="aelin:tracking", display_name="Aelin Tracking")
-    now = datetime.now(timezone.utc)
-    seed = f"{target}|{query}|{status}|{now.strftime('%Y%m%d%H%M%S')}"
-    external_id = f"aelin-track:{source}:{hashlib.sha1(seed.encode('utf-8')).hexdigest()}"
-    body = (
-        f"跟踪目标: {target}\n"
-        f"来源: {source}\n"
-        f"状态: {status}\n"
-        f"触发问题: {query or '未提供'}\n"
-        f"时间: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}"
-    )
-    msg = crud.create_message(
-        db,
-        user_id=user_id,
-        contact_id=contact.id,
-        source="aelin",
-        external_id=external_id,
-        sender="Aelin",
-        subject=f"跟踪任务：{target[:80]}",
-        body=body,
-        received_at=now,
-        summary=f"{source} / {status}",
-    )
-    if msg is not None and getattr(msg, "id", None) is None:
-        db.flush()
-    if msg is None:
-        msg = db.scalar(
-            select(Message).where(
-                Message.user_id == user_id,
-                Message.source == "aelin",
-                Message.external_id == external_id,
-            )
-        )
-    if msg is None:
-        return None
-    crud.touch_contact_last_message(db, contact=contact, received_at=now)
-    db.flush()
-    return int(msg.id)
 
 
 def _extract_tracking_field(text: str, label: str) -> str:
@@ -5784,6 +5457,55 @@ def _target_to_tracking_item(row: TrackingTarget, *, unread_changes: int) -> Ael
 
 
 
+def _append_tracking_contact_event(
+    db: Session,
+    *,
+    user_id: int,
+    target: str,
+    source: str,
+    query: str,
+    status: str,
+) -> int | None:
+    contact = crud.upsert_contact(db, user_id=user_id, handle="aelin:tracking", display_name="Aelin Tracking")
+    now = datetime.now(timezone.utc)
+    seed = f"{target}|{query}|{status}|{now.strftime('%Y%m%d%H%M%S')}"
+    external_id = f"aelin-track:{source}:{hashlib.sha1(seed.encode('utf-8')).hexdigest()}"
+    body = (
+        f"跟踪目标: {target}\n"
+        f"来源: {source}\n"
+        f"状态: {status}\n"
+        f"触发问题: {query or '未提供'}\n"
+        f"时间: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    )
+    msg = crud.create_message(
+        db,
+        user_id=user_id,
+        contact_id=contact.id,
+        source="aelin",
+        external_id=external_id,
+        sender="Aelin",
+        subject=f"跟踪任务：{target[:80]}",
+        body=body,
+        received_at=now,
+        summary=f"{source} / {status}",
+    )
+    if msg is not None and getattr(msg, "id", None) is None:
+        db.flush()
+    if msg is None:
+        msg = db.scalar(
+            select(Message).where(
+                Message.user_id == user_id,
+                Message.source == "aelin",
+                Message.external_id == external_id,
+            )
+        )
+    if msg is None:
+        return None
+    crud.touch_contact_last_message(db, contact=contact, received_at=now)
+    db.flush()
+    return int(msg.id)
+
+
 def _matching_accounts_for_tracking(accounts: list[Any], source: str) -> list[Any]:
     if source == "email":
         email_providers = {"imap", "gmail", "outlook", "forward"}
@@ -5836,6 +5558,18 @@ def confirm_track_subscription(
     )
     try:
         _memory.add_note(db, current_user.id, note_content, kind="tracking", source=f"track:{source}")
+    except Exception:
+        pass
+
+    try:
+        _append_tracking_contact_event(
+            db,
+            user_id=current_user.id,
+            target=target,
+            source=source,
+            query=query,
+            status=("active" if config_ready else "needs_config"),
+        )
     except Exception:
         pass
 
