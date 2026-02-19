@@ -334,12 +334,22 @@ class AelinTrackConfirmRequest(BaseModel):
     target: str = Field(min_length=1, max_length=240)
     source: str = Field(default="auto", min_length=1, max_length=32)
     query: str = Field(default="", max_length=500)
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    description: str = Field(default="", max_length=1200)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    track_type: Optional[str] = Field(default=None, max_length=16)
+    interval_seconds: Optional[int] = Field(default=None, ge=30, le=86400)
+    notify_level: str = Field(default="all", min_length=1, max_length=16)
+    is_temporary: bool = False
+    temporary_days: int = Field(default=7, ge=1, le=30)
 
 
 class AelinTrackConfirmResponse(BaseModel):
     status: str
     message: str
     provider: Optional[str] = None
+    target_id: Optional[int] = None
+    next_run_at: Optional[str] = None
     actions: list[AelinAction] = Field(default_factory=list)
     generated_at: datetime
 
@@ -347,10 +357,26 @@ class AelinTrackConfirmResponse(BaseModel):
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None
+    target_id: Optional[int] = None
     target: str
     source: str
     query: str = ""
+    workspace: str = "default"
+    track_type: str = "term"
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
     status: str = "active"
+    interval_seconds: int = 120
+    notify_level: str = "all"
+    unread_changes: int = 0
+    error_count: int = 0
+    next_run_at: Optional[str] = None
+    last_run_at: Optional[str] = None
+    last_checked_at: Optional[str] = None
+    last_change_at: Optional[str] = None
+    mute_until: Optional[str] = None
+    is_temporary: bool = False
+    expires_at: Optional[str] = None
     updated_at: str
     status_updated_at: Optional[str] = None
 
@@ -358,6 +384,58 @@ class AelinTrackingItem(BaseModel):
 class AelinTrackingListResponse(BaseModel):
     total: int
     items: list[AelinTrackingItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinTrackingTargetUpdateRequest(BaseModel):
+    status: Optional[str] = Field(default=None, max_length=16)
+    interval_seconds: Optional[int] = Field(default=None, ge=30, le=86400)
+    notify_level: Optional[str] = Field(default=None, max_length=16)
+    mute_until: Optional[str] = None
+    description: Optional[str] = Field(default=None, max_length=1200)
+    tags: Optional[list[str]] = Field(default=None, max_length=20)
+
+
+class AelinTrackingRunResponse(BaseModel):
+    ok: bool
+    message: str
+    generated_at: datetime
+
+
+class AelinTrackingChangeItem(BaseModel):
+    id: int
+    target_id: int
+    change_type: str
+    severity: str
+    title: str
+    summary: str = ""
+    diff_json: dict[str, Any] = Field(default_factory=dict)
+    dedupe_key: str = ""
+    notified: bool = False
+    acked: bool = False
+    created_at: str = ""
+
+
+class AelinTrackingChangeListResponse(BaseModel):
+    total: int
+    items: list[AelinTrackingChangeItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinTrackingSnapshotItem(BaseModel):
+    id: int
+    target_id: int
+    version_no: int
+    content_hash: str = ""
+    fetch_status: str = "ok"
+    fetch_error: str = ""
+    fetched_at: str = ""
+    normalized_payload_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class AelinTrackingSnapshotListResponse(BaseModel):
+    total: int
+    items: list[AelinTrackingSnapshotItem] = Field(default_factory=list)
     generated_at: datetime
 
 
@@ -604,3 +682,4 @@ class SyncJobStatusResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+

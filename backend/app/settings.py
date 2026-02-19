@@ -46,9 +46,27 @@ class Settings(BaseSettings):
     crawler_rsshub_parallelism: int = 12
     crawler_playwright_poll_seconds: int = 10
 
+    # Autonomous tracking scheduler.
+    tracking_scheduler_enabled: bool = True
+    tracking_scheduler_tick_seconds: float = 1.0
+    tracking_scheduler_batch_size: int = 80
+    tracking_global_max_workers: int = 16
+    tracking_source_max_workers: int = 4
+    tracking_min_interval_seconds: int = 30
+    tracking_default_term_interval_seconds: int = 120
+    tracking_default_url_interval_seconds: int = 180
+    tracking_max_backoff_seconds: int = 60 * 60 * 6
+    tracking_request_timeout_seconds: float = 15.0
+    tracking_target_timeout_seconds: float = 70.0
+    tracking_error_threshold: int = 10
+    tracking_dedupe_window_hours: int = 24
+    tracking_quiet_start_hour: int = 23
+    tracking_quiet_end_hour: int = 8
+
     # Optional Fernet key used to encrypt stored secrets (OAuth tokens, IMAP passwords).
     # Generate one via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str | None = None
 
 
 settings = Settings()
+

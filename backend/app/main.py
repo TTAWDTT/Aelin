@@ -13,6 +13,7 @@ from app.db import get_engine
 from app.models import Base
 from app.routers import accounts, agent, aelin, auth, contacts, inbound, messages
 from app.settings import settings
+from app.services.tracking_autonomy import tracking_autonomy_service
 
 _log = logging.getLogger(__name__)
 
@@ -40,7 +41,11 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     # Lightweight column migration for SQLite (add columns that don't exist yet)
     _add_missing_columns(engine)
-    yield
+    tracking_autonomy_service.start()
+    try:
+        yield
+    finally:
+        tracking_autonomy_service.stop()
 
 
 def create_app() -> FastAPI:
@@ -83,3 +88,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+

@@ -28,7 +28,7 @@ from app.connectors.douyin import _extract_sec_uid as extract_douyin_uid
 from app.connectors.xiaohongshu import _extract_user_id as extract_xhs_uid
 from app.connectors.weibo import _extract_uid as extract_weibo_uid
 from app.db import get_session
-from app.models import AgentMemoryNote, Contact, Message, User
+from app.models import AgentMemoryNote, Contact, Message, TrackingChange, TrackingSnapshot, TrackingTarget, User
 from app.routers.auth import get_current_user
 from app.schemas import (
     AelinAction,
@@ -58,6 +58,12 @@ from app.schemas import (
     AelinTrackConfirmRequest,
     AelinTrackConfirmResponse,
     AelinToolStep,
+    AelinTrackingChangeItem,
+    AelinTrackingChangeListResponse,
+    AelinTrackingRunResponse,
+    AelinTrackingSnapshotItem,
+    AelinTrackingSnapshotListResponse,
+    AelinTrackingTargetUpdateRequest,
     AelinTodoItem,
     AgentConfigOut,
     AgentFocusItemOut,
@@ -69,6 +75,7 @@ from app.services.llm import LLMService
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
 from app.services.web_search import WebSearchResult, WebSearchService
+from app.services.tracking_autonomy import tracking_autonomy_service
 
 try:
     import psutil  # type: ignore
@@ -80,6 +87,7 @@ router = APIRouter(prefix="/aelin", tags=["aelin"])
 _memory = AgentMemoryService()
 _summarizer = RuleBasedSummarizer()
 _web_search = WebSearchService()
+_tracking = tracking_autonomy_service
 
 _TRACKABLE_SOURCES = {
     "auto",
@@ -4962,10 +4970,28 @@ def list_aelin_notifications(
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    items = [AelinNotificationItem(**item) for item in _memory.build_notifications(db, current_user.id, limit=limit)]
+    memory_items = [AelinNotificationItem(**item) for item in _memory.build_notifications(db, current_user.id, limit=limit)]
+    tracking_rows, to_mark = _tracking.build_notification_items(db, user_id=current_user.id, limit=limit)
+    tracking_items = [AelinNotificationItem(**item) for item in tracking_rows]
+
+    merged: list[AelinNotificationItem] = []
+    seen_ids: set[str] = set()
+    for row in [*tracking_items, *memory_items]:
+        key = str(row.id or "").strip()
+        if not key or key in seen_ids:
+            continue
+        seen_ids.add(key)
+        merged.append(row)
+        if len(merged) >= limit:
+            break
+
+    if to_mark:
+        _tracking.mark_notified(db, change_ids=to_mark)
+        db.commit()
+
     return AelinNotificationResponse(
-        total=len(items),
-        items=items,
+        total=len(merged),
+        items=merged,
         generated_at=datetime.now(timezone.utc),
     )
 
@@ -5555,75 +5581,207 @@ def _load_tracking_events(db: Session, *, user_id: int, limit: int) -> dict[str,
 @router.get("/tracking", response_model=AelinTrackingListResponse)
 def list_trackings(
     limit: int = Query(default=80, ge=1, le=300),
+    workspace: str = Query(default="", max_length=64),
+    status: str = Query(default="", max_length=16),
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    notes = db.scalars(
-        select(AgentMemoryNote)
-        .where(
-            AgentMemoryNote.user_id == current_user.id,
-            AgentMemoryNote.kind == "tracking",
-        )
-        .order_by(AgentMemoryNote.updated_at.desc(), AgentMemoryNote.id.desc())
-        .limit(limit)
-    ).all()
-
-    events_by_key = _load_tracking_events(db, user_id=current_user.id, limit=limit)
-    seen_keys: set[str] = set()
-    items: list[AelinTrackingItem] = []
-
-    for note in notes:
-        parsed = _parse_tracking_payload(note.content or "")
-        note_source = ""
-        if (note.source or "").startswith("track:"):
-            note_source = (note.source or "").split(":", 1)[1].strip()
-        source = _normalize_track_source(parsed.get("source") or note_source or "auto")
-        target = (parsed.get("target") or "").strip()
-        if not target:
-            continue
-        key = _tracking_key(source, target)
-        seen_keys.add(key)
-        event = events_by_key.get(key)
-        note_updated = note.updated_at.isoformat() if note.updated_at else ""
-        items.append(
-            AelinTrackingItem(
-                note_id=int(note.id),
-                message_id=int(event["message_id"]) if event and event.get("message_id") else None,
-                target=target,
-                source=source,
-                query=(parsed.get("query") or "").strip(),
-                status=(event.get("status") if event else "") or "active",
-                updated_at=note_updated,
-                status_updated_at=(event.get("updated_at") if event else "") or None,
-            )
-        )
-
-    for key, event in events_by_key.items():
-        if key in seen_keys:
-            continue
-        items.append(
-            AelinTrackingItem(
-                note_id=None,
-                message_id=int(event["message_id"]) if event.get("message_id") else None,
-                target=str(event.get("target") or "").strip(),
-                source=_normalize_track_source(str(event.get("source") or "auto")),
-                query=str(event.get("query") or "").strip(),
-                status=str(event.get("status") or "").strip() or "active",
-                updated_at=str(event.get("updated_at") or ""),
-                status_updated_at=str(event.get("updated_at") or "") or None,
-            )
-        )
-
-    items.sort(
-        key=lambda row: (row.status_updated_at or row.updated_at or ""),
-        reverse=True,
+    workspace_norm = _normalize_workspace(workspace) if (workspace or "").strip() else None
+    _tracking.ensure_legacy_migration(db, user_id=current_user.id, workspace=workspace_norm or "default")
+    rows = _tracking.list_targets(
+        db,
+        user_id=current_user.id,
+        workspace=workspace_norm,
+        status=(status or "").strip().lower() or None,
+        limit=limit,
     )
-    trimmed = items[:limit]
+    target_ids = [int(row.id) for row in rows if getattr(row, "id", None)]
+    unread_counts: dict[int, int] = {}
+    if target_ids:
+        q = (
+            select(TrackingChange.target_id, func.count(TrackingChange.id))
+            .where(TrackingChange.target_id.in_(target_ids), TrackingChange.acked.is_(False))
+            .group_by(TrackingChange.target_id)
+        )
+        unread_counts = {int(tid): int(cnt or 0) for tid, cnt in db.execute(q).all()}
+
+    items = [_target_to_tracking_item(row, unread_changes=unread_counts.get(int(row.id), 0)) for row in rows]
     return AelinTrackingListResponse(
-        total=len(trimmed),
-        items=trimmed,
+        total=len(items),
+        items=items,
         generated_at=datetime.now(timezone.utc),
     )
+
+
+@router.get("/tracking/targets", response_model=AelinTrackingListResponse)
+def list_tracking_targets(
+    limit: int = Query(default=80, ge=1, le=300),
+    workspace: str = Query(default="", max_length=64),
+    status: str = Query(default="", max_length=16),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    return list_trackings(limit=limit, workspace=workspace, status=status, db=db, current_user=current_user)
+
+
+@router.patch("/tracking/targets/{target_id}", response_model=AelinTrackingItem)
+def update_tracking_target(
+    target_id: int,
+    payload: AelinTrackingTargetUpdateRequest,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    row = _tracking.update_target(
+        db,
+        user_id=current_user.id,
+        target_id=target_id,
+        status=(payload.status or "").strip().lower() or None,
+        interval_seconds=payload.interval_seconds,
+        notify_level=payload.notify_level,
+        mute_until=_parse_iso_datetime(payload.mute_until),
+        description=payload.description,
+        tags=payload.tags,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="tracking target not found")
+    db.commit()
+    unread = int(
+        db.scalar(
+            select(func.count(TrackingChange.id)).where(
+                TrackingChange.target_id == int(row.id),
+                TrackingChange.acked.is_(False),
+            )
+        )
+        or 0
+    )
+    return _target_to_tracking_item(row, unread_changes=unread)
+
+
+@router.post("/tracking/targets/{target_id}/run", response_model=AelinTrackingRunResponse)
+def run_tracking_target(
+    target_id: int,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    result = _tracking.run_target_now(user_id=current_user.id, target_id=target_id)
+    return AelinTrackingRunResponse(
+        ok=bool(result.get("ok")),
+        message=str(result.get("message") or "run completed"),
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/tracking/targets/{target_id}/changes", response_model=AelinTrackingChangeListResponse)
+def list_tracking_changes(
+    target_id: int,
+    limit: int = Query(default=80, ge=1, le=300),
+    severity: str = Query(default="", max_length=16),
+    change_type: str = Query(default="", max_length=32),
+    acked: bool | None = Query(default=None),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    rows = _tracking.list_changes(
+        db,
+        user_id=current_user.id,
+        target_id=target_id,
+        limit=limit,
+        severity=(severity or "").strip().lower() or None,
+        change_type=(change_type or "").strip().lower() or None,
+        acked=acked,
+    )
+    items = [
+        AelinTrackingChangeItem(
+            id=int(row.id),
+            target_id=int(row.target_id),
+            change_type=row.change_type,
+            severity=row.severity,
+            title=row.title,
+            summary=row.summary or "",
+            diff_json=_json_from_text(row.diff_json or "{}"),
+            dedupe_key=row.dedupe_key or "",
+            notified=bool(row.notified),
+            acked=bool(row.acked),
+            created_at=row.created_at.isoformat() if row.created_at else "",
+        )
+        for row in rows
+    ]
+    return AelinTrackingChangeListResponse(total=len(items), items=items, generated_at=datetime.now(timezone.utc))
+
+
+@router.post("/tracking/changes/{change_id}/ack", response_model=AelinTrackingRunResponse)
+def ack_tracking_change(
+    change_id: int,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    row = _tracking.ack_change(db, user_id=current_user.id, change_id=change_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="tracking change not found")
+    db.commit()
+    return AelinTrackingRunResponse(ok=True, message="acked", generated_at=datetime.now(timezone.utc))
+
+
+@router.get("/tracking/targets/{target_id}/snapshots", response_model=AelinTrackingSnapshotListResponse)
+def list_tracking_snapshots(
+    target_id: int,
+    limit: int = Query(default=80, ge=1, le=300),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    rows = _tracking.list_snapshots(db, user_id=current_user.id, target_id=target_id, limit=limit)
+    items = [
+        AelinTrackingSnapshotItem(
+            id=int(row.id),
+            target_id=int(row.target_id),
+            version_no=int(row.version_no),
+            content_hash=row.content_hash or "",
+            fetch_status=row.fetch_status or "ok",
+            fetch_error=row.fetch_error or "",
+            fetched_at=row.fetched_at.isoformat() if row.fetched_at else "",
+            normalized_payload_json=_json_from_text(row.normalized_payload_json or "{}"),
+        )
+        for row in rows
+    ]
+    return AelinTrackingSnapshotListResponse(total=len(items), items=items, generated_at=datetime.now(timezone.utc))
+
+
+def _target_to_tracking_item(row: TrackingTarget, *, unread_changes: int) -> AelinTrackingItem:
+    cfg = _json_from_text(row.config_json or "{}")
+    tags_raw = []
+    try:
+        parsed = json.loads(row.tags_json or "[]")
+        if isinstance(parsed, list):
+            tags_raw = [str(item).strip()[:32] for item in parsed if str(item).strip()]
+    except Exception:
+        tags_raw = []
+    return AelinTrackingItem(
+        note_id=None,
+        message_id=None,
+        target_id=int(row.id),
+        target=(row.display_name or row.source_key or "").strip(),
+        source=(row.source_type or "web").strip().lower() or "web",
+        query=str(cfg.get("query") or "").strip(),
+        workspace=row.workspace or "default",
+        track_type=row.track_type or "term",
+        description=(row.description or "").strip(),
+        tags=tags_raw,
+        status=row.status or "active",
+        interval_seconds=max(30, int(row.interval_seconds or 120)),
+        notify_level=row.notify_level or "all",
+        unread_changes=max(0, int(unread_changes or 0)),
+        error_count=max(0, int(row.error_count or 0)),
+        next_run_at=row.next_run_at.isoformat() if row.next_run_at else None,
+        last_run_at=row.last_run_at.isoformat() if row.last_run_at else None,
+        last_checked_at=row.last_checked_at.isoformat() if row.last_checked_at else None,
+        last_change_at=row.last_change_at.isoformat() if row.last_change_at else None,
+        mute_until=row.mute_until.isoformat() if row.mute_until else None,
+        is_temporary=bool(row.is_temporary),
+        expires_at=row.expires_at.isoformat() if row.expires_at else None,
+        updated_at=row.updated_at.isoformat() if row.updated_at else "",
+        status_updated_at=(row.last_change_at.isoformat() if row.last_change_at else (row.updated_at.isoformat() if row.updated_at else None)),
+    )
+
 
 
 def _matching_accounts_for_tracking(accounts: list[Any], source: str) -> list[Any]:
@@ -5631,7 +5789,6 @@ def _matching_accounts_for_tracking(accounts: list[Any], source: str) -> list[An
         email_providers = {"imap", "gmail", "outlook", "forward"}
         return [a for a in accounts if str(getattr(a, "provider", "")).lower() in email_providers]
     return [a for a in accounts if str(getattr(a, "provider", "")).lower() == source]
-
 
 @router.post("/track/confirm", response_model=AelinTrackConfirmResponse)
 def confirm_track_subscription(
@@ -5645,92 +5802,56 @@ def confirm_track_subscription(
     if source == "auto":
         source = _infer_tracking_source(target)
 
+    config_ready = True
+    if source not in {"web", "rss", "auto"}:
+        matched = _matching_accounts_for_tracking(crud.list_accounts(db, user_id=current_user.id), source)
+        if not matched:
+            config_ready = False
+
+    _tracking.ensure_legacy_migration(db, user_id=current_user.id, workspace=payload.workspace)
+    row = _tracking.upsert_target(
+        db,
+        user_id=current_user.id,
+        workspace=payload.workspace,
+        target=target,
+        source_type=(source or "web"),
+        query=query,
+        description=payload.description,
+        tags=payload.tags,
+        track_type=payload.track_type,
+        interval_seconds=payload.interval_seconds,
+        notify_level=payload.notify_level,
+        is_temporary=bool(payload.is_temporary),
+        temporary_days=payload.temporary_days,
+        config_ready=config_ready,
+        merge_existing=True,
+    )
+
     note_content = (
         f"跟踪目标: {target}\n"
         f"来源: {source}\n"
-        f"触发问题: {query or '未提供'}"
+        f"状态: {'active' if config_ready else 'needs_config'}\n"
+        f"触发问题: {query or '未提供'}\n"
+        f"时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
     )
     try:
         _memory.add_note(db, current_user.id, note_content, kind="tracking", source=f"track:{source}")
     except Exception:
         pass
 
-    tracking_message_id = _persist_tracking_event(
-        db,
-        user_id=current_user.id,
-        target=target,
-        source=source,
-        query=query,
-        status="created",
-    )
+    db.commit()
 
-    if source == "web":
-        search_query = query or target
-        rows = _web_search.search_and_fetch(search_query, max_results=7, fetch_top_k=4)
-        citations = _persist_web_search_results(db, current_user.id, query=search_query, results=rows)
-        tracking_message_id = _persist_tracking_event(
-            db,
-            user_id=current_user.id,
-            target=target,
-            source=source,
-            query=query,
-            status="seeded",
-        ) or tracking_message_id
-        db.commit()
-        action_payload: dict[str, str] = {"path": "/desk"}
-        if tracking_message_id:
-            action_payload["message_id"] = str(tracking_message_id)
-        if target:
-            action_payload["query"] = target[:120]
-        return AelinTrackConfirmResponse(
-            status="tracking_enabled",
-            message=(
-                f"已开启“{target}”的长期跟踪。"
-                + ("我已先抓取一批公开信息并持久化到本地。" if citations else "我会在后续对话中继续补充数据。")
-            ),
-            provider="web",
-            actions=[
-                AelinAction(
-                    kind="open_desk",
-                    title="查看已保存数据",
-                    detail="打开 Desk 查看刚保存的跟踪结果",
-                    payload=action_payload,
-                )
-            ],
-            generated_at=datetime.now(timezone.utc),
-        )
-
-    all_accounts = crud.list_accounts(db, user_id=current_user.id)
-    matched = _matching_accounts_for_tracking(all_accounts, source)
-    if not matched and source in {"x", "douyin", "xiaohongshu", "weibo", "bilibili"}:
-        created = _ensure_tracking_account(
-            db,
-            user_id=current_user.id,
-            source=source,
-            target=target,
-            query=query,
-        )
-        if created is not None:
-            all_accounts = crud.list_accounts(db, user_id=current_user.id)
-            matched = _matching_accounts_for_tracking(all_accounts, source)
-
-    if not matched:
-        tracking_message_id = _persist_tracking_event(
-            db,
-            user_id=current_user.id,
-            target=target,
-            source=source,
-            query=query,
-            status="needs_config",
-        ) or tracking_message_id
-        db.commit()
-        payload_settings = {"path": "/settings", "provider": source}
+    next_run = row.next_run_at.isoformat() if row.next_run_at else None
+    if not config_ready:
+        payload_settings = {"path": "/settings", "provider": source, "target_id": str(row.id)}
         if target:
             payload_settings["target"] = target[:120]
         return AelinTrackConfirmResponse(
             status="needs_config",
-            message=f"要跟踪“{target}”，你需要先配置 {source} 数据源。",
+            message=f"已创建追踪目标“{target}”，但当前缺少 {source} 配置。",
             provider=source,
+            target_id=int(row.id),
+            next_run_at=next_run,
             actions=[
                 AelinAction(
                     kind="open_settings",
@@ -5742,36 +5863,22 @@ def confirm_track_subscription(
             generated_at=datetime.now(timezone.utc),
         )
 
-    for account in matched[:4]:
-        try:
-            enqueue_sync_job(user_id=current_user.id, account_id=int(account.id), force_full=False)
-        except Exception:
-            continue
-    tracking_message_id = _persist_tracking_event(
-        db,
-        user_id=current_user.id,
-        target=target,
-        source=source,
-        query=query,
-        status="sync_started",
-    ) or tracking_message_id
-    db.commit()
-    action_payload = {"path": "/desk"}
-    if tracking_message_id:
-        action_payload["message_id"] = str(tracking_message_id)
-    if target:
-        action_payload["query"] = target[:120]
+    _tracking.wake_up()
+    run_result = _tracking.run_target_now(user_id=current_user.id, target_id=int(row.id))
     return AelinTrackConfirmResponse(
-        status="sync_started",
-        message=f"已为“{target}”启动 {len(matched[:4])} 个同步任务，后续会持续更新并写入本地。",
-        provider=source,
+        status="tracking_enabled",
+        message=f"已开启“{target}”的持续跟踪。{str(run_result.get('message') or '')}",
+        provider=(source or "web"),
+        target_id=int(row.id),
+        next_run_at=next_run,
         actions=[
             AelinAction(
-                kind="open_desk",
-                title="查看同步进度",
-                detail="打开 Desk 观察新数据写入",
-                payload=action_payload,
+                kind="open_tracking",
+                title="查看追踪详情",
+                detail="打开追踪悬浮窗查看变化流与快照",
+                payload={"target_id": str(row.id), "workspace": row.workspace},
             )
         ],
         generated_at=datetime.now(timezone.utc),
     )
+
