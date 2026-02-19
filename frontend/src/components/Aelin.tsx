@@ -4092,7 +4092,9 @@ export default function Aelin({
                                 </Stack>
                               ) : (
                                 <Typography variant="caption" color="text.secondary" sx={{ mt: 0.6, display: "block" }}>
-                                  暂无变化记录。
+                                  {trackingSnapshots.length === 0
+                                    ? "已执行但暂未命中数据源（source_no_result），可稍后重试或更换追踪关键词。"
+                                    : "暂无变化记录。"}
                                 </Typography>
                               )}
                             </Paper>
@@ -4134,7 +4136,7 @@ export default function Aelin({
                                 </Stack>
                               ) : (
                                 <Typography variant="caption" color="text.secondary" sx={{ mt: 0.6, display: "block" }}>
-                                  暂无快照记录。
+                                  暂无快照记录（已执行但本轮未命中可用结果）。
                                 </Typography>
                               )}
                             </Paper>
