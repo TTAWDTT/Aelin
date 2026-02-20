@@ -4,7 +4,7 @@ const { createProxyMiddleware } = require("http-proxy-middleware");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { StringDecoder } = require("string_decoder");
 
 const isDev = process.env.MERCURYDESK_DESKTOP_DEV === "1" || !app.isPackaged;
@@ -94,6 +94,66 @@ function spawnViaCmd(commandLine, options) {
   return spawn(comspec, ["/d", "/s", "/c", normalized], options);
 }
 
+function sanitizePythonPath(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  const match = trimmed.match(/^"(.*)"$/);
+  return match ? match[1] : trimmed;
+}
+
+function buildPythonCandidates(requestedPython) {
+  const items = [];
+  const seen = new Set();
+  function pushCandidate(command, args = []) {
+    const key = `${String(command || "").toLowerCase()}|${args.join(" ")}`;
+    if (!command || seen.has(key)) return;
+    seen.add(key);
+    items.push({ command, args, label: [command, ...args].join(" ") });
+  }
+
+  const requested = sanitizePythonPath(requestedPython);
+  if (requested) pushCandidate(requested, []);
+
+  // Prefer plain `python` to avoid broken `py -3` mappings on Windows.
+  pushCandidate("python", []);
+
+  if (process.platform === "win32") {
+    pushCandidate("py", ["-3.12"]);
+    pushCandidate("py", ["-3.11"]);
+    pushCandidate("py", ["-3.10"]);
+    pushCandidate("py", ["-3"]);
+  }
+
+  return items;
+}
+
+function probePythonRunner(candidate, cwd, env) {
+  try {
+    const probe = spawnSync(
+      candidate.command,
+      [...candidate.args, "-c", "import sys,uvicorn;print(sys.executable)"],
+      {
+        cwd,
+        env,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8",
+      }
+    );
+
+    if (probe.error) {
+      return { ok: false, reason: probe.error.message || String(probe.error) };
+    }
+    if (probe.status !== 0) {
+      const reason = String(probe.stderr || probe.stdout || "").trim();
+      return { ok: false, reason: reason || `exit code ${probe.status}` };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function stripAnsiCodes(text) {
   return String(text || "").replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
@@ -169,30 +229,33 @@ function startBackend() {
     throw new Error(`backend 目录不存在: ${root}`);
   }
 
-  const requestedPython = String(process.env.MERCURYDESK_PYTHON || "").trim();
-  const pythonCandidates = [];
-  if (requestedPython) pythonCandidates.push(`"${requestedPython}"`);
-  pythonCandidates.push("py -3", "python");
+  const requestedPython = String(process.env.MERCURYDESK_PYTHON || "");
+  const pythonCandidates = buildPythonCandidates(requestedPython);
+  const failed = [];
 
-  let started = false;
-  let lastError = "";
-  for (const runner of pythonCandidates) {
-    try {
-      const cmd = `${runner} -m uvicorn app.main:app --host 127.0.0.1 --port ${backendPort}`;
-      backendProc = spawnViaCmd(cmd, {
+  for (const candidate of pythonCandidates) {
+    const probe = probePythonRunner(candidate, root, env);
+    if (!probe.ok) {
+      failed.push(`${candidate.label}: ${probe.reason}`);
+      continue;
+    }
+    console.log(`[backend] Python runner selected: ${candidate.label}`);
+    backendProc = spawn(
+      candidate.command,
+      [...candidate.args, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(backendPort)],
+      {
         cwd: root,
         env,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
-      });
-      started = true;
-      break;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
+      }
+    );
+    break;
   }
-  if (!started || !backendProc) {
-    throw new Error(`无法启动后端 Python 进程。${lastError ? `最后错误: ${lastError}` : ""}`);
+
+  if (!backendProc) {
+    const details = failed.length ? `\n候选失败:\n- ${failed.join("\n- ")}` : "";
+    throw new Error(`无法启动后端 Python 进程。${details}`);
   }
 
   pipeTaggedLog(backendProc, "backend");
