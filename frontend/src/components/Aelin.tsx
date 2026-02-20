@@ -137,10 +137,6 @@ import {
   upsertTraceStep,
   useGroupedMessages,
 } from "./aelin/chatState";
-import {
-  TRACKING_CHANGE_TYPE_LABEL,
-  TRACKING_SEVERITY_META,
-} from "./aelin/trackingMeta";
 import type {
   AelinDeskBridgePayload,
   AelinProps,
@@ -154,6 +150,11 @@ import type {
 import { MessageRow } from "./aelin/conversation/MessageRow";
 import { AelinCitationDrawers, type CitationDrawerState, type CitationPreviewState } from "./aelin/panels/CitationDrawers";
 import { AelinTrackingChoiceSheet } from "./aelin/panels/TrackingChoiceSheet";
+import { AelinMemoryDialog } from "./aelin/panels/MemoryDialog";
+import { AelinNotificationDialog } from "./aelin/panels/NotificationDialog";
+import { AelinLlmSettingsDialog } from "./aelin/panels/LlmSettingsDialog";
+import { AelinTrackingCenterDialog } from "./aelin/panels/TrackingCenterDialog";
+import { AelinDeviceCenterDialog } from "./aelin/panels/DeviceCenterDialog";
 
 export type { AelinDeskBridgePayload } from "./aelin/types";
 
@@ -2251,1147 +2252,140 @@ export default function Aelin({
           </Paper>
         </Container>
       </Box>
-
-      <Dialog
+      <AelinLlmSettingsDialog
         open={llmDialogOpen}
+        loading={llmLoading}
+        refreshing={llmRefreshing}
+        saving={llmSaving}
+        testing={llmTesting}
+        catalog={llmCatalog}
+        provider={llmProvider}
+        providerSelectValue={llmProviderSelectValue}
+        customProviderId={llmCustomProviderId}
+        baseUrl={llmBaseUrl}
+        model={llmModel}
+        temperature={llmTemperature}
+        apiKey={llmApiKey}
+        hasApiKey={llmHasApiKey}
+        isCustomProvider={llmIsCustomProvider}
+        selectedProvider={llmSelectedProvider}
+        customProviderOption={CUSTOM_PROVIDER_OPTION}
+        providerDisplay={normalizeProviderId(llmProvider) || "rule_based"}
         onClose={() => setLlmDialogOpen(false)}
-        fullWidth
-        maxWidth="sm"
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-            overflow: "hidden",
-            bgcolor: alpha(theme.palette.background.paper, 0.98),
-            backdropFilter: "blur(10px)",
-          },
+        onRefreshCatalog={() => {
+          void handleLlmCatalogRefresh();
         }}
-      >
-        <Box sx={{ px: 1.2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-              Aelin 模型设置
-            </Typography>
-            <Stack direction="row" spacing={0.4}>
-              <Tooltip title="刷新模型目录">
-                <span>
-                  <IconButton size="small" onClick={() => void handleLlmCatalogRefresh()} disabled={llmRefreshing || llmLoading}>
-                    {llmRefreshing ? <CircularProgress size={14} /> : <RefreshIcon fontSize="small" />}
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <IconButton size="small" onClick={() => setLlmDialogOpen(false)}>
-                <CloseIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-          </Stack>
-        </Box>
-
-        <Box sx={{ px: 1.2, py: 1.1 }}>
-          {llmLoading ? (
-            <Stack direction="row" spacing={0.8} alignItems="center" sx={{ py: 2.6 }}>
-              <CircularProgress size={18} />
-              <Typography variant="body2" color="text.secondary">
-                正在加载模型配置...
-              </Typography>
-            </Stack>
-          ) : (
-            <Stack spacing={1.1}>
-              <TextField
-                select
-                fullWidth
-                size="small"
-                label="服务商"
-                value={llmProviderSelectValue}
-                onChange={(event) => {
-                  const value = String(event.target.value || "");
-                  if (value === CUSTOM_PROVIDER_OPTION) {
-                    setLlmProviderSelectValue(CUSTOM_PROVIDER_OPTION);
-                    setLlmProvider(normalizeProviderId(llmCustomProviderId));
-                    if (!llmBaseUrl.trim()) {
-                      setLlmBaseUrl("https://api.openai.com/v1");
-                    }
-                    return;
-                  }
-                  const normalized = normalizeProviderId(value) || "rule_based";
-                  setLlmProviderSelectValue(normalized);
-                  setLlmProvider(normalized);
-                  if (normalized === "rule_based") {
-                    setLlmCustomProviderId("");
-                  }
-                  setLlmBaseUrl(getDefaultLlmBaseUrl(normalized));
-                }}
-                SelectProps={{ native: true }}
-              >
-                <option value="rule_based">内置规则（免费）</option>
-                {(llmCatalog?.providers ?? []).map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.name} ({provider.id})
-                  </option>
-                ))}
-                <option value={CUSTOM_PROVIDER_OPTION}>自定义提供商（手动填写）</option>
-              </TextField>
-
-              {llmIsCustomProvider ? (
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="自定义 Provider ID"
-                  value={llmCustomProviderId}
-                  onChange={(event) => {
-                    const value = String(event.target.value || "");
-                    setLlmCustomProviderId(value);
-                    setLlmProvider(normalizeProviderId(value));
-                  }}
-                  placeholder="例如：deepseek / groq / my-private-llm"
-                />
-              ) : null}
-
-              {llmProvider !== "rule_based" ? (
-                <>
-                  {llmSelectedProvider?.models?.length && !llmIsCustomProvider ? (
-                    <TextField
-                      select
-                      fullWidth
-                      size="small"
-                      label="模型"
-                      value={llmModel}
-                      onChange={(event) => setLlmModel(String(event.target.value || ""))}
-                      SelectProps={{ native: true }}
-                    >
-                      {llmSelectedProvider.models.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.name} ({model.id})
-                        </option>
-                      ))}
-                    </TextField>
-                  ) : (
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="模型"
-                      value={llmModel}
-                      onChange={(event) => setLlmModel(String(event.target.value || ""))}
-                      placeholder="输入模型 ID"
-                    />
-                  )}
-
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="接口地址（Base URL）"
-                    value={llmBaseUrl}
-                    onChange={(event) => setLlmBaseUrl(String(event.target.value || ""))}
-                    placeholder={llmSelectedProvider?.api || "https://api.openai.com/v1"}
-                  />
-                  <TextField
-                    fullWidth
-                    size="small"
-                    type="number"
-                    label="随机度（Temperature）"
-                    value={llmTemperature}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      setLlmTemperature(Number.isFinite(value) ? value : 0.2);
-                    }}
-                    inputProps={{ min: 0, max: 2, step: 0.1 }}
-                  />
-                  <TextField
-                    fullWidth
-                    size="small"
-                    type="password"
-                    label="API Key（留空则沿用已保存 Key）"
-                    value={llmApiKey}
-                    onChange={(event) => setLlmApiKey(String(event.target.value || ""))}
-                    placeholder={llmHasApiKey ? "已保存（不显示）" : "sk-..."}
-                  />
-                  <Alert severity="info" sx={{ borderRadius: 1.2, py: 0.35 }}>
-                    当前使用 OpenAI-Compatible 接口。请确保 Base URL 与模型 ID 对应同一服务商。
-                  </Alert>
-                </>
-              ) : (
-                <Alert severity="info" sx={{ borderRadius: 1.2, py: 0.35 }}>
-                  已使用内置规则模式，可直接聊天；若需高质量模型回答，请切换到任意 API 提供商。
-                </Alert>
-              )}
-
-              <Typography variant="caption" color="text.secondary">
-                当前：{normalizeProviderId(llmProvider) || "rule_based"} · Key：{llmHasApiKey ? "已配置" : "未配置"}
-              </Typography>
-            </Stack>
-          )}
-        </Box>
-
-        <Box sx={{ px: 1.2, pb: 1.1, pt: 0.2, display: "flex", gap: 0.8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <Button size="small" variant="text" onClick={() => navigate("/settings")}>
-            完整设置
-          </Button>
-          <Button size="small" variant="outlined" onClick={() => void handleLlmTest()} disabled={llmLoading || llmSaving || llmTesting}>
-            {llmTesting ? "测试中..." : "测试连接"}
-          </Button>
-          <Button size="small" variant="contained" onClick={() => void handleLlmSave()} disabled={llmLoading || llmSaving}>
-            {llmSaving ? "保存中..." : "保存配置"}
-          </Button>
-        </Box>
-      </Dialog>
-
-      <Dialog
-        open={trackingDialogOpen}
-        onClose={() => setTrackingDialogOpen(false)}
-        fullWidth
-        maxWidth="lg"
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-            overflow: "hidden",
-            bgcolor: alpha(theme.palette.background.paper, 0.98),
-            backdropFilter: "blur(10px)",
-          },
+        onProviderSelect={(value) => {
+          if (value === CUSTOM_PROVIDER_OPTION) {
+            setLlmProviderSelectValue(CUSTOM_PROVIDER_OPTION);
+            setLlmProvider(normalizeProviderId(llmCustomProviderId));
+            if (!llmBaseUrl.trim()) {
+              setLlmBaseUrl("https://api.openai.com/v1");
+            }
+            return;
+          }
+          const normalized = normalizeProviderId(value) || "rule_based";
+          setLlmProviderSelectValue(normalized);
+          setLlmProvider(normalized);
+          if (normalized === "rule_based") {
+            setLlmCustomProviderId("");
+          }
+          setLlmBaseUrl(getDefaultLlmBaseUrl(normalized));
         }}
-      >
-        <Box sx={{ px: 1.2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Stack direction="row" spacing={0.8} alignItems="center">
-              <TrackChangesIcon sx={{ fontSize: 18, color: "primary.main" }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                跟踪中心
-              </Typography>
-            </Stack>
-            <Stack direction="row" spacing={0.4}>
-              <Tooltip title="刷新">
-                <span>
-                  <IconButton
-                    size="small"
-                    onClick={() => {
-                      void refreshTracking();
-                      if (activeTrackingItem?.target_id) {
-                        void refreshTrackingDetail(Number(activeTrackingItem.target_id));
-                      }
-                    }}
-                    disabled={trackingBusy}
-                  >
-                    <RefreshIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <IconButton size="small" onClick={() => setTrackingDialogOpen(false)}>
-                <CloseIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-          </Stack>
-
-          <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap sx={{ mt: 0.8 }}>
-            <Chip size="small" label={`目标 ${trackingItems.length}`} />
-            <Chip
-              size="small"
-              color="success"
-              label={`进行中 ${trackingItems.filter((it) => it.status === "sync_started" || it.status === "active").length}`}
-            />
-            <Chip
-              size="small"
-              color="warning"
-              label={`已暂停 ${trackingItems.filter((it) => it.status === "paused").length}`}
-            />
-            <Chip size="small" color="error" label={`异常 ${trackingItems.filter((it) => it.status === "error" || it.status === "failed").length}`} />
-            <Chip size="small" color="info" label={`未读变化 ${trackingUnreadCount}`} />
-          </Stack>
-        </Box>
-
-        <Box sx={{ px: 1.2, py: 1.1, maxHeight: "76vh", overflow: "hidden", display: "flex", flexDirection: "column", gap: 0.9 }}>
-          <Paper variant="outlined" sx={{ p: 0.8, borderRadius: 1.4 }}>
-            <Stack spacing={0.65}>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={0.65}>
-                <TextField
-                  size="small"
-                  placeholder="筛选目标/问题"
-                  value={trackingKeyword}
-                  onChange={(event) => setTrackingKeyword(event.target.value)}
-                  fullWidth
-                />
-                <TextField
-                  select
-                  size="small"
-                  label="状态"
-                  value={trackingStatusFilter}
-                  onChange={(event) => setTrackingStatusFilter(String(event.target.value || "all"))}
-                  sx={{ minWidth: 120 }}
-                  SelectProps={{ native: true }}
-                >
-                  <option value="all">全部</option>
-                  <option value="active">进行中</option>
-                  <option value="sync_started">同步中</option>
-                  <option value="paused">已暂停</option>
-                  <option value="needs_config">待配置</option>
-                  <option value="error">异常</option>
-                  <option value="failed">失败</option>
-                </TextField>
-                <TextField
-                  select
-                  size="small"
-                  label="来源"
-                  value={trackingSourceFilter}
-                  onChange={(event) => setTrackingSourceFilter(String(event.target.value || "all"))}
-                  sx={{ minWidth: 120 }}
-                  SelectProps={{ native: true }}
-                >
-                  <option value="all">全部</option>
-                  {Object.entries(TRACKING_SOURCE_LABEL).map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  ))}
-                </TextField>
-              </Stack>
-              <Typography variant="caption" color="text.secondary">
-                当前匹配 {filteredTrackingItems.length} 条。选择左侧目标可查看变化流与快照。
-              </Typography>
-            </Stack>
-          </Paper>
-
-          {trackingBusy ? (
-            <Stack direction="row" spacing={0.8} alignItems="center" sx={{ py: 2.6 }}>
-              <CircularProgress size={18} />
-              <Typography variant="body2" color="text.secondary">
-                正在加载跟踪列表...
-              </Typography>
-            </Stack>
-          ) : trackingError ? (
-            <Paper variant="outlined" sx={{ p: 1, borderRadius: 1.4 }}>
-              <Typography variant="body2" color="error.main">
-                {trackingError}
-              </Typography>
-              <Button size="small" sx={{ mt: 0.6 }} onClick={() => void refreshTracking()}>
-                重试
-              </Button>
-            </Paper>
-          ) : filteredTrackingItems.length ? (
-            <Box
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", md: "minmax(260px,0.95fr) minmax(340px,1.25fr)" },
-                gap: 0.9,
-              }}
-            >
-              <Stack spacing={0.75} sx={{ minHeight: 0, overflowY: "auto", pr: { md: 0.25 } }}>
-                {filteredTrackingItems.map((item) => {
-                  const status = formatTrackingStatus(item.status);
-                  const sourceLabel = TRACKING_SOURCE_LABEL[item.source] || item.source || "未知";
-                  const itemTargetId = Number(item.target_id || 0);
-                  const selected = itemTargetId > 0 && itemTargetId === trackingActiveTargetId;
-                  const unread = Math.max(0, Number(item.unread_changes || 0));
-                  const statusTs = item.status_updated_at || item.updated_at;
-                  const nextProbe = item.next_run_at || "";
-                  return (
-                    <Paper
-                      key={`tracking-item-${item.target_id || item.target}-${item.source}`}
-                      variant="outlined"
-                      onClick={() => {
-                        if (itemTargetId > 0) {
-                          setTrackingActiveTargetId(itemTargetId);
-                          void refreshTrackingDetail(itemTargetId);
-                        }
-                      }}
-                      sx={{
-                        p: 0.85,
-                        borderRadius: 1.5,
-                        borderColor: selected ? alpha(theme.palette.primary.main, 0.52) : alpha(theme.palette.divider, 0.85),
-                        boxShadow: selected ? `0 0 0 1px ${alpha(theme.palette.primary.main, 0.14)}` : "none",
-                        cursor: itemTargetId > 0 ? "pointer" : "default",
-                      }}
-                    >
-                      <Stack spacing={0.45}>
-                        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={0.8}>
-                          <Box sx={{ minWidth: 0 }}>
-                            <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-                              {item.target}
-                            </Typography>
-                            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.45 }}>
-                              <Chip size="small" label={sourceLabel} variant="outlined" />
-                              <Chip size="small" label={status.label} color={status.color} />
-                              {item.track_type ? <Chip size="small" variant="outlined" label={item.track_type === "url" ? "URL" : "词条"} /> : null}
-                              {unread > 0 ? <Chip size="small" color="info" label={`未读 ${unread}`} /> : null}
-                            </Stack>
-                          </Box>
-                        </Stack>
-                        {item.query ? (
-                          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
-                            触发问题：{item.query}
-                          </Typography>
-                        ) : null}
-                        <Typography variant="caption" color="text.secondary">
-                          最近更新：{formatIsoTime(statusTs)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          下次执行：{nextProbe ? formatIsoTime(nextProbe) : "待调度"}
-                        </Typography>
-                      </Stack>
-                    </Paper>
-                  );
-                })}
-              </Stack>
-
-              <Paper
-                variant="outlined"
-                sx={{
-                  p: 0.95,
-                  borderRadius: 1.5,
-                  minHeight: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                }}
-              >
-                {activeTrackingItem ? (
-                  (() => {
-                    const targetId = Number(activeTrackingItem.target_id || 0);
-                    const sourceLabel = TRACKING_SOURCE_LABEL[activeTrackingItem.source] || activeTrackingItem.source || "未知";
-                    const status = formatTrackingStatus(activeTrackingItem.status || "active");
-                    const statusValue = String(activeTrackingItem.status || "").toLowerCase();
-                    const mutationBusy = trackingMutationBusy === targetId;
-                    const mutedUntil = String(activeTrackingItem.mute_until || "").trim();
-                    const muted = !!mutedUntil && Date.parse(mutedUntil) > Date.now();
-                    return (
-                      <>
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={0.7} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
-                          <Box sx={{ minWidth: 0 }}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 800, lineHeight: 1.25 }}>
-                              {activeTrackingItem.target}
-                            </Typography>
-                            <Stack direction="row" spacing={0.55} flexWrap="wrap" useFlexGap sx={{ mt: 0.45 }}>
-                              <Chip size="small" variant="outlined" label={sourceLabel} />
-                              <Chip size="small" color={status.color} label={status.label} />
-                              <Chip size="small" variant="outlined" label={`${Math.max(30, Number(activeTrackingItem.interval_seconds || 120))}s`} />
-                              {Math.max(0, Number(activeTrackingItem.error_count || 0)) > 0 ? (
-                                <Chip size="small" color="error" label={`错误 ${Math.max(0, Number(activeTrackingItem.error_count || 0))}`} />
-                              ) : null}
-                            </Stack>
-                          </Box>
-                          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              disabled={!targetId || mutationBusy}
-                              onClick={() =>
-                                void patchTrackingTarget(
-                                  targetId,
-                                  { status: statusValue === "active" || statusValue === "sync_started" ? "paused" : "active" },
-                                  statusValue === "active" || statusValue === "sync_started" ? "已暂停该追踪" : "已恢复该追踪"
-                                )
-                              }
-                            >
-                              {mutationBusy ? "处理中..." : statusValue === "active" || statusValue === "sync_started" ? "暂停" : "恢复"}
-                            </Button>
-                            <Button size="small" variant="outlined" disabled={!targetId || mutationBusy} onClick={() => void runTrackingTargetNow(targetId)}>
-                              立即执行
-                            </Button>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              disabled={!targetId || mutationBusy}
-                              onClick={() =>
-                                void patchTrackingTarget(
-                                  targetId,
-                                  { mute_until: muted ? null : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() },
-                                  muted ? "已取消静音" : "已静音 24 小时"
-                                )
-                              }
-                            >
-                              {muted ? "取消静音" : "静音24h"}
-                            </Button>
-                          </Stack>
-                        </Stack>
-
-                        <Stack direction="row" spacing={1.2} flexWrap="wrap" useFlexGap sx={{ mt: 0.75 }}>
-                          <Typography variant="caption" color="text.secondary">
-                            工作区：{activeTrackingItem.workspace || workspaceScope}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            下次执行：{activeTrackingItem.next_run_at ? formatIsoTime(activeTrackingItem.next_run_at) : "待调度"}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            最近执行：{activeTrackingItem.last_run_at ? formatIsoTime(activeTrackingItem.last_run_at) : "暂无"}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            静音至：{mutedUntil ? formatIsoTime(mutedUntil) : "未静音"}
-                          </Typography>
-                        </Stack>
-
-                        <Divider sx={{ my: 0.9 }} />
-
-                        <Stack spacing={0.65} sx={{ mb: 0.8 }}>
-                          <Stack direction={{ xs: "column", sm: "row" }} spacing={0.65}>
-                            <TextField
-                              select
-                              size="small"
-                              label="级别"
-                              value={trackingChangeSeverityFilter}
-                              onChange={(event) => setTrackingChangeSeverityFilter(String(event.target.value || "all"))}
-                              sx={{ minWidth: 120 }}
-                              SelectProps={{ native: true }}
-                            >
-                              <option value="all">全部级别</option>
-                              <option value="low">低</option>
-                              <option value="medium">中</option>
-                              <option value="high">高</option>
-                              <option value="critical">严重</option>
-                            </TextField>
-                            <TextField
-                              select
-                              size="small"
-                              label="类型"
-                              value={trackingChangeTypeFilter}
-                              onChange={(event) => setTrackingChangeTypeFilter(String(event.target.value || "all"))}
-                              sx={{ minWidth: 132 }}
-                              SelectProps={{ native: true }}
-                            >
-                              <option value="all">全部类型</option>
-                              {Object.entries(TRACKING_CHANGE_TYPE_LABEL).map(([key, label]) => (
-                                <option key={key} value={key}>
-                                  {label}
-                                </option>
-                              ))}
-                            </TextField>
-                            <TextField
-                              select
-                              size="small"
-                              label="已读"
-                              value={trackingAckFilter}
-                              onChange={(event) => setTrackingAckFilter(String(event.target.value || "unacked") as TrackingAckFilter)}
-                              sx={{ minWidth: 120 }}
-                              SelectProps={{ native: true }}
-                            >
-                              <option value="unacked">仅未读</option>
-                              <option value="all">全部</option>
-                              <option value="acked">仅已读</option>
-                            </TextField>
-                          </Stack>
-                        </Stack>
-
-                        {trackingDetailBusy ? (
-                          <Stack direction="row" spacing={0.8} alignItems="center" sx={{ py: 1.8 }}>
-                            <CircularProgress size={16} />
-                            <Typography variant="body2" color="text.secondary">
-                              正在加载追踪详情...
-                            </Typography>
-                          </Stack>
-                        ) : trackingDetailError ? (
-                          <Paper variant="outlined" sx={{ p: 0.9, borderRadius: 1.25 }}>
-                            <Typography variant="body2" color="error.main">
-                              {trackingDetailError}
-                            </Typography>
-                            <Button size="small" sx={{ mt: 0.5 }} onClick={() => void refreshTrackingDetail(targetId)}>
-                              重试
-                            </Button>
-                          </Paper>
-                        ) : (
-                          <Stack spacing={0.75} sx={{ minHeight: 0, overflowY: "auto", pr: { md: 0.25 } }}>
-                            <Paper variant="outlined" sx={{ p: 0.75, borderRadius: 1.3 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                                变化流（{trackingChanges.length}）
-                              </Typography>
-                              {trackingChanges.length ? (
-                                <Stack spacing={0.6} sx={{ mt: 0.55 }}>
-                                  {trackingChanges.slice(0, 16).map((change) => {
-                                    const severityMeta = TRACKING_SEVERITY_META[change.severity] || {
-                                      label: change.severity || "未知",
-                                      color: "default" as const,
-                                    };
-                                    const changeLabel = TRACKING_CHANGE_TYPE_LABEL[change.change_type] || change.change_type || "变化";
-                                    const summary = String(change.summary || "").trim() || String(change.title || "").trim();
-                                    return (
-                                      <Paper key={`tracking-change-${change.id}`} variant="outlined" sx={{ p: 0.65, borderRadius: 1.2 }}>
-                                        <Stack spacing={0.45}>
-                                          <Stack direction="row" alignItems="center" spacing={0.45} flexWrap="wrap" useFlexGap>
-                                            <Chip size="small" label={changeLabel} variant="outlined" />
-                                            <Chip size="small" color={severityMeta.color} label={severityMeta.label} />
-                                            <Typography variant="caption" color="text.secondary">
-                                              {formatIsoTime(change.created_at)}
-                                            </Typography>
-                                          </Stack>
-                                          <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-                                            {change.title || changeLabel}
-                                          </Typography>
-                                          {summary ? (
-                                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-                                              {summary}
-                                            </Typography>
-                                          ) : null}
-                                          {!change.acked ? (
-                                            <Stack direction="row" justifyContent="flex-end">
-                                              <Button
-                                                size="small"
-                                                variant="text"
-                                                disabled={trackingAckBusy === change.id}
-                                                onClick={() => void ackTrackingChange(change.id)}
-                                              >
-                                                {trackingAckBusy === change.id ? "处理中..." : "标记已读"}
-                                              </Button>
-                                            </Stack>
-                                          ) : null}
-                                        </Stack>
-                                      </Paper>
-                                    );
-                                  })}
-                                </Stack>
-                              ) : (
-                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.6, display: "block" }}>
-                                  {trackingSnapshots.length === 0
-                                    ? "已执行但暂未命中数据源（source_no_result），可稍后重试或更换追踪关键词。"
-                                    : "暂无变化记录。"}
-                                </Typography>
-                              )}
-                            </Paper>
-
-                            <Paper variant="outlined" sx={{ p: 0.75, borderRadius: 1.3 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                                最近快照（{trackingSnapshots.length}）
-                              </Typography>
-                              {trackingSnapshots.length ? (
-                                <Stack spacing={0.6} sx={{ mt: 0.55 }}>
-                                  {trackingSnapshots.slice(0, 10).map((snapshot) => {
-                                    const payloadText = JSON.stringify(snapshot.normalized_payload_json || {});
-                                    return (
-                                      <Paper key={`tracking-snapshot-${snapshot.id}`} variant="outlined" sx={{ p: 0.6, borderRadius: 1.15 }}>
-                                        <Stack spacing={0.35}>
-                                          <Stack direction="row" spacing={0.45} alignItems="center" flexWrap="wrap" useFlexGap>
-                                            <Chip size="small" variant="outlined" label={`v${snapshot.version_no}`} />
-                                            <Chip
-                                              size="small"
-                                              color={snapshot.fetch_status === "ok" ? "success" : snapshot.fetch_status === "failed" ? "error" : "warning"}
-                                              label={snapshot.fetch_status || "ok"}
-                                            />
-                                            <Typography variant="caption" color="text.secondary">
-                                              {formatIsoTime(snapshot.fetched_at)}
-                                            </Typography>
-                                          </Stack>
-                                          {snapshot.fetch_error ? (
-                                            <Typography variant="caption" color="error.main" sx={{ lineHeight: 1.4 }}>
-                                              {snapshot.fetch_error}
-                                            </Typography>
-                                          ) : null}
-                                          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.35 }}>
-                                            {payloadText.length > 180 ? `${payloadText.slice(0, 180)}...` : payloadText}
-                                          </Typography>
-                                        </Stack>
-                                      </Paper>
-                                    );
-                                  })}
-                                </Stack>
-                              ) : (
-                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.6, display: "block" }}>
-                                  暂无快照记录（已执行但本轮未命中可用结果）。
-                                </Typography>
-                              )}
-                            </Paper>
-                            <Paper variant="outlined" sx={{ p: 0.75, borderRadius: 1.3 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                                文件记忆命中（{trackingFileMemory.length}）
-                              </Typography>
-                              {trackingFileMemory.length ? (
-                                <Stack spacing={0.55} sx={{ mt: 0.55 }}>
-                                  {trackingFileMemory.slice(0, 10).map((item, idx) => (
-                                    <Paper key={`tracking-file-memory-${item.canonical_id || item.path || idx}`} variant="outlined" sx={{ p: 0.55, borderRadius: 1.1 }}>
-                                      <Stack spacing={0.35}>
-                                        <Stack direction="row" spacing={0.45} alignItems="center" flexWrap="wrap" useFlexGap>
-                                          <Chip size="small" variant="outlined" label={item.kind || "memory"} />
-                                          {item.source ? <Chip size="small" variant="outlined" label={item.source} /> : null}
-                                          <Typography variant="caption" color="text.secondary">
-                                            score {Number(item.score || 0).toFixed(2)}
-                                          </Typography>
-                                        </Stack>
-                                        <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-                                          {item.title || item.target || "memory item"}
-                                        </Typography>
-                                        {item.preview ? (
-                                          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-                                            {item.preview}
-                                          </Typography>
-                                        ) : null}
-                                        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={0.6}>
-                                          <Typography
-                                            variant="caption"
-                                            color="text.secondary"
-                                            sx={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
-                                          >
-                                            {item.path}
-                                          </Typography>
-                                          <Button size="small" variant="text" onClick={() => void copyText(item.path)}>
-                                            复制路径
-                                          </Button>
-                                        </Stack>
-                                      </Stack>
-                                    </Paper>
-                                  ))}
-                                </Stack>
-                              ) : (
-                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.6, display: "block" }}>
-                                  当前未命中文件化追踪记忆，可在抓取后再查看。
-                                </Typography>
-                              )}
-                            </Paper>
-                          </Stack>
-                        )}
-                      </>
-                    );
-                  })()
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    请选择一个追踪目标查看详情。
-                  </Typography>
-                )}
-              </Paper>
-            </Box>
-          ) : (
-            <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 1.4 }}>
-              <Typography variant="body2" color="text.secondary">
-                {trackingItems.length ? "当前筛选条件下没有匹配项，请调整筛选。" : "暂无跟踪项。你在对话里同意“开启跟踪”后，这里会自动出现。"}
-              </Typography>
-            </Paper>
-          )}
-        </Box>
-      </Dialog>
-
-      <Dialog
-        open={deviceDialogOpen}
-        onClose={() => setDeviceDialogOpen(false)}
-        fullWidth
-        maxWidth="md"
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-            overflow: "hidden",
-            bgcolor: alpha(theme.palette.background.paper, 0.98),
-            backdropFilter: "blur(10px)",
-          },
+        onCustomProviderIdChange={(value) => {
+          setLlmCustomProviderId(value);
+          setLlmProvider(normalizeProviderId(value));
         }}
-      >
-        <Box sx={{ px: 1.2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Stack direction="row" spacing={0.7} alignItems="center">
-              <ComputerIcon sx={{ fontSize: 18, color: "primary.main" }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                设备中心
-              </Typography>
-            </Stack>
-            <Stack direction="row" spacing={0.4}>
-              <Tooltip title="刷新进程">
-                <span>
-                  <IconButton size="small" onClick={() => void refreshDeviceProcesses()} disabled={deviceBusy}>
-                    <RefreshIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <IconButton size="small" onClick={() => setDeviceDialogOpen(false)}>
-                <CloseIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-          </Stack>
-        </Box>
+        onModelChange={setLlmModel}
+        onBaseUrlChange={setLlmBaseUrl}
+        onTemperatureChange={setLlmTemperature}
+        onApiKeyChange={setLlmApiKey}
+        onOpenSettings={() => navigate("/settings")}
+        onTest={() => {
+          void handleLlmTest();
+        }}
+        onSave={() => {
+          void handleLlmSave();
+        }}
+      />
 
-        <Box sx={{ px: 1.2, py: 1.05, maxHeight: "72vh", overflowY: "auto" }}>
-          <Typography variant="caption" color="text.secondary">
-            模式控制会尽力应用到系统；如果权限或设备不支持，会给出明确提示。          </Typography>
+            <AelinTrackingCenterDialog
+        trackingDialogOpen={trackingDialogOpen}
+        setTrackingDialogOpen={setTrackingDialogOpen}
+        refreshTracking={refreshTracking}
+        activeTrackingItem={activeTrackingItem}
+        refreshTrackingDetail={refreshTrackingDetail}
+        trackingBusy={trackingBusy}
+        trackingItems={trackingItems}
+        trackingUnreadCount={trackingUnreadCount}
+        trackingKeyword={trackingKeyword}
+        setTrackingKeyword={setTrackingKeyword}
+        trackingStatusFilter={trackingStatusFilter}
+        setTrackingStatusFilter={setTrackingStatusFilter}
+        trackingSourceFilter={trackingSourceFilter}
+        setTrackingSourceFilter={setTrackingSourceFilter}
+        filteredTrackingItems={filteredTrackingItems}
+        trackingError={trackingError}
+        trackingActiveTargetId={trackingActiveTargetId}
+        setTrackingActiveTargetId={setTrackingActiveTargetId}
+        patchTrackingTarget={patchTrackingTarget}
+        trackingMutationBusy={trackingMutationBusy}
+        runTrackingTargetNow={runTrackingTargetNow}
+        workspaceScope={workspaceScope}
+        trackingChangeSeverityFilter={trackingChangeSeverityFilter}
+        setTrackingChangeSeverityFilter={setTrackingChangeSeverityFilter}
+        trackingChangeTypeFilter={trackingChangeTypeFilter}
+        setTrackingChangeTypeFilter={setTrackingChangeTypeFilter}
+        trackingAckFilter={trackingAckFilter}
+        setTrackingAckFilter={setTrackingAckFilter}
+        trackingDetailBusy={trackingDetailBusy}
+        trackingDetailError={trackingDetailError}
+        trackingChanges={trackingChanges}
+        trackingAckBusy={trackingAckBusy}
+        ackTrackingChange={ackTrackingChange}
+        trackingSnapshots={trackingSnapshots}
+        trackingFileMemory={trackingFileMemory}
+        copyText={copyText}
+      />
 
-          {deviceCapabilities ? (
-            <Paper variant="outlined" sx={{ mt: 0.8, p: 0.85, borderRadius: 1.4 }}>
-              <Stack spacing={0.45}>
-                <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                  平台能力
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  平台：{deviceCapabilities.platform}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-                  {Object.entries(deviceCapabilities.capabilities || {})
-                    .map(([k, v]) => `${k}:${v ? "✅" : "❌"}`)
-                    .join(" · ")}
-                </Typography>
-                {(deviceCapabilities.notes || []).length ? (
-                  <Alert severity="info" sx={{ borderRadius: 1.1 }}>
-                    {(deviceCapabilities.notes || []).slice(0, 2).join("；")}
-                  </Alert>
-                ) : null}
-              </Stack>
-            </Paper>
-          ) : null}
-
-          <Stack direction={{ xs: "column", md: "row" }} spacing={0.8} sx={{ mt: 0.8 }}>
-            {(Object.keys(DEVICE_MODE_META) as DeviceMode[]).map((mode) => {
-              const meta = DEVICE_MODE_META[mode];
-              const active = (deviceModeState?.mode || "normal") === mode;
-              return (
-                <Paper
-                  key={mode}
-                  variant="outlined"
-                  sx={{
-                    flex: 1,
-                    p: 0.8,
-                    borderRadius: 1.45,
-                    borderColor: active ? alpha(theme.palette.primary.main, 0.55) : alpha(theme.palette.divider, 0.9),
-                    bgcolor: active ? alpha(theme.palette.primary.main, 0.08) : alpha(theme.palette.background.default, 0.45),
-                  }}
-                >
-                  <Stack spacing={0.45}>
-                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                      {meta.label}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-                      {meta.detail}
-                    </Typography>
-                    <Button
-                      size="small"
-                      variant={active ? "contained" : "outlined"}
-                      startIcon={<PowerSettingsNewIcon sx={{ fontSize: 14 }} />}
-                      disabled={deviceModeApplying !== null}
-                      onClick={() => void applyDeviceModeAction(mode)}
-                    >
-                      {deviceModeApplying === mode ? "应用中..." : active ? "已启用" : "启用"}
-                    </Button>
-                  </Stack>
-                </Paper>
-              );
-            })}
-          </Stack>
-
-          <Paper variant="outlined" sx={{ mt: 0.9, p: 0.9, borderRadius: 1.45 }}>
-            <Stack spacing={0.5}>
-              <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                当前设备模式
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-                {deviceModeState?.summary || "尚未读取模式状态"}
-              </Typography>
-              {(deviceModeState?.steps || []).length ? (
-                <Stack spacing={0.35}>
-                  {(deviceModeState?.steps || []).slice(0, 4).map((step, idx) => (
-                    <Typography key={`mode-step-${idx}`} variant="caption" color="text.secondary">
-                      - {step}
-                    </Typography>
-                  ))}
-                </Stack>
-              ) : null}
-              {(deviceModeState?.warnings || []).length ? (
-                <Alert severity="warning" sx={{ borderRadius: 1.2 }}>
-                  {(deviceModeState?.warnings || []).slice(0, 2).join("；")}
-                </Alert>
-              ) : null}
-            </Stack>
-          </Paper>
-
-          <Stack direction="row" spacing={0.7} alignItems="center" sx={{ mt: 1 }}>
-            <FormControl size="small" sx={{ minWidth: 160 }}>
-              <Select
-                value={deviceSortBy}
-                onChange={(event) => setDeviceSortBy(String(event.target.value || "cpu") as DeviceSortBy)}
-              >
-                <MenuItem value="cpu">按 CPU 排序</MenuItem>
-                <MenuItem value="memory">按内存排序</MenuItem>
-              </Select>
-            </FormControl>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<SpeedIcon sx={{ fontSize: 14 }} />}
-              onClick={() => void runDeviceOptimize()}
-              disabled={deviceOptimizeBusy}
-            >
-              {deviceOptimizeBusy ? "优化中..." : "一键降载"}
-            </Button>
-            <Typography variant="caption" color="text.secondary">
-              异常分越高越需要处理            </Typography>
-          </Stack>
-
-          {deviceOptimizeResult ? (
-            <Paper variant="outlined" sx={{ mt: 0.85, p: 0.75, borderRadius: 1.35 }}>
-              <Typography variant="caption" color="text.secondary">
-                最近优化：{deviceOptimizeResult.optimized_count} 个进程              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
-                {(deviceOptimizeResult.steps || []).slice(0, 2).join("；")}
-              </Typography>
-            </Paper>
-          ) : null}
-
-          <Stack spacing={0.7} sx={{ mt: 0.9 }}>
-            {deviceBusy ? (
-              <>
-                <Skeleton variant="rounded" height={72} />
-                <Skeleton variant="rounded" height={72} />
-                <Skeleton variant="rounded" height={72} />
-              </>
-            ) : deviceProcesses.length ? (
-              deviceProcesses.slice(0, 18).map((proc) => {
-                const isAnomaly = proc.anomaly_score >= 1.6;
-                return (
-                  <Paper
-                    key={`proc-${proc.pid}`}
-                    variant="outlined"
-                    sx={{
-                      p: 0.82,
-                      borderRadius: 1.4,
-                      borderColor: isAnomaly ? alpha(theme.palette.warning.main, 0.52) : alpha(theme.palette.divider, 0.88),
-                      bgcolor: isAnomaly ? alpha(theme.palette.warning.main, 0.07) : alpha(theme.palette.background.default, 0.5),
-                    }}
-                  >
-                    <Stack spacing={0.5}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={0.8}>
-                        <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-                            {proc.name}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            PID {proc.pid} 路 {proc.username || "unknown"} 路 {proc.status || "running"}
-                          </Typography>
-                        </Box>
-                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                          <Chip
-                            size="small"
-                            icon={<SpeedIcon sx={{ fontSize: 12 }} />}
-                            color={proc.cpu_percent >= 60 ? "warning" : "default"}
-                            label={`${proc.cpu_percent.toFixed(1)}% CPU`}
-                          />
-                          <Chip
-                            size="small"
-                            icon={<MemoryIcon sx={{ fontSize: 12 }} />}
-                            color={proc.memory_mb >= 800 ? "warning" : "default"}
-                            label={`${proc.memory_mb.toFixed(0)}MB`}
-                          />
-                          <Chip size="small" variant="outlined" label={`异常分 ${proc.anomaly_score.toFixed(1)}`} />
-                        </Stack>
-                      </Stack>
-                      {proc.anomaly_reasons.length ? (
-                        <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-                          {proc.anomaly_reasons.join("；")}
-                        </Typography>
-                      ) : null}
-                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          disabled={deviceActionBusyPid === proc.pid}
-                          onClick={() => void handleDeviceProcessAction(proc.pid, "set_low_priority")}
-                        >
-                          降优先级
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          disabled={deviceActionBusyPid === proc.pid}
-                          onClick={() => void handleDeviceProcessAction(proc.pid, "set_high_priority")}
-                        >
-                          提升优先级
-                        </Button>
-                        {proc.safe_to_terminate ? (
-                          <Button
-                            size="small"
-                            color="error"
-                            variant="outlined"
-                            disabled={deviceActionBusyPid === proc.pid}
-                            onClick={() => void handleDeviceProcessAction(proc.pid, "terminate")}
-                          >
-                            结束进程
-                          </Button>
-                        ) : null}
-                      </Stack>
-                    </Stack>
-                  </Paper>
-                );
-              })
-            ) : (
-              <Paper variant="outlined" sx={{ p: 1.05, borderRadius: 1.4 }}>
-                <Typography variant="body2" color="text.secondary">
-                  当前未读取到进程数据。可能是系统权限限制或运行环境不支持。
-                </Typography>
-              </Paper>
-            )}
-          </Stack>
-        </Box>
-      </Dialog>
-
-      <Dialog
+            <AelinDeviceCenterDialog
+        deviceDialogOpen={deviceDialogOpen}
+        setDeviceDialogOpen={setDeviceDialogOpen}
+        refreshDeviceProcesses={refreshDeviceProcesses}
+        deviceBusy={deviceBusy}
+        deviceCapabilities={deviceCapabilities}
+        deviceModeState={deviceModeState}
+        deviceModeApplying={deviceModeApplying}
+        applyDeviceModeAction={applyDeviceModeAction}
+        deviceSortBy={deviceSortBy}
+        setDeviceSortBy={setDeviceSortBy}
+        runDeviceOptimize={runDeviceOptimize}
+        deviceOptimizeBusy={deviceOptimizeBusy}
+        deviceOptimizeResult={deviceOptimizeResult}
+        deviceProcesses={deviceProcesses}
+        deviceActionBusyPid={deviceActionBusyPid}
+        handleDeviceProcessAction={handleDeviceProcessAction}
+      />
+      <AelinMemoryDialog
         open={memoryDialogOpen}
         onClose={() => setMemoryDialogOpen(false)}
-        fullWidth
-        maxWidth="md"
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-            overflow: "hidden",
-            bgcolor: alpha(theme.palette.background.paper, 0.98),
-            backdropFilter: "blur(10px)",
-          },
-        }}
-      >
-        <Box sx={{ px: 1.2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Stack direction="row" spacing={0.7} alignItems="center">
-              <LayersIcon sx={{ fontSize: 18, color: "primary.main" }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                分层记忆视图
-              </Typography>
-            </Stack>
-            <IconButton size="small" onClick={() => setMemoryDialogOpen(false)}>
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          </Stack>
-          <Tabs
-            value={memoryLayerTab}
-            onChange={(_event, value) => setMemoryLayerTab(value)}
-            variant="fullWidth"
-            sx={{ mt: 0.8, minHeight: 34, "& .MuiTab-root": { minHeight: 34, fontSize: "0.82rem", fontWeight: 700 } }}
-          >
-            <Tab icon={<FactCheckIcon sx={{ fontSize: 15 }} />} iconPosition="start" label={`事实层 ${memoryLayers.facts.length}`} value="facts" />
-            <Tab icon={<TuneIcon sx={{ fontSize: 15 }} />} iconPosition="start" label={`偏好层 ${memoryLayers.preferences.length}`} value="preferences" />
-            <Tab icon={<PendingActionsIcon sx={{ fontSize: 15 }} />} iconPosition="start" label={`进行中 ${memoryLayers.in_progress.length}`} value="in_progress" />
-          </Tabs>
-        </Box>
-
-        <Box sx={{ px: 1.2, py: 1.1, maxHeight: "68vh", overflowY: "auto" }}>
-          <Typography variant="caption" color="text.secondary">
-            生成时间：{formatIsoTime(memoryLayers.generated_at)}
-          </Typography>
-          <Stack spacing={0.8} sx={{ mt: 0.8 }}>
-            {memoryLayerItems.length ? (
-              memoryLayerItems.map((item) => (
-                <Paper key={item.id} variant="outlined" sx={{ p: 0.85, borderRadius: 1.4 }}>
-                  <Stack spacing={0.45}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={0.8}>
-                      <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-                        {item.title}
-                      </Typography>
-                      <Chip
-                        size="small"
-                        variant="outlined"
-                        label={`${Math.round((item.confidence || 0) * 100)}%`}
-                        sx={{ "& .MuiChip-label": { px: 0.7, fontSize: "0.68rem", fontWeight: 700 } }}
-                      />
-                    </Stack>
-                    {item.detail ? (
-                      <Box
-                        sx={{
-                          "& p": { m: 0, mb: 0.5, lineHeight: 1.55, fontSize: "0.82rem" },
-                          "& p:last-of-type": { mb: 0 },
-                          "& a": { color: "primary.main", textDecoration: "underline" },
-                          "& ul, & ol": { mt: 0.25, mb: 0.5, pl: 2.2 },
-                        }}
-                      >
-                        <ReactMarkdown>{item.detail}</ReactMarkdown>
-                      </Box>
-                    ) : null}
-                    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                      <Chip size="small" label={item.source || item.layer} />
-                      <Chip size="small" variant="outlined" label={formatIsoTime(item.updated_at)} />
-                    </Stack>
-                  </Stack>
-                </Paper>
-              ))
-            ) : (
-              <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 1.4 }}>
-                <Typography variant="body2" color="text.secondary">
-                  当前层暂无可展示记忆。
-                </Typography>
-              </Paper>
-            )}
-          </Stack>
-        </Box>
-      </Dialog>
-
-      <Dialog
+        layerTab={memoryLayerTab}
+        onLayerTabChange={setMemoryLayerTab}
+        memoryLayers={memoryLayers}
+        layerItems={memoryLayerItems}
+      />
+      <AelinNotificationDialog
         open={notificationDialogOpen}
+        busy={notificationBusy}
+        items={allNotifications}
         onClose={() => setNotificationDialogOpen(false)}
-        fullWidth
-        maxWidth="sm"
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-            overflow: "hidden",
-            bgcolor: alpha(theme.palette.background.paper, 0.98),
-            backdropFilter: "blur(10px)",
-          },
+        onRefresh={() => {
+          void refreshNotifications();
         }}
-      >
-        <Box sx={{ px: 1.2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
-            <Stack direction="row" spacing={0.7} alignItems="center">
-              <NotificationsNoneIcon sx={{ fontSize: 18, color: "primary.main" }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                通知中心
-              </Typography>
-            </Stack>
-            <Stack direction="row" spacing={0.4}>
-              <Tooltip title="刷新">
-                <span>
-                  <IconButton size="small" onClick={() => void refreshNotifications()} disabled={notificationBusy}>
-                    <RefreshIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <IconButton size="small" onClick={() => setNotificationDialogOpen(false)}>
-                <CloseIcon fontSize="small" />
-              </IconButton>
-            </Stack>
-          </Stack>
-        </Box>
-
-        <Box sx={{ px: 1.2, py: 1.1, maxHeight: "68vh", overflowY: "auto" }}>
-          {notificationBusy ? (
-            <Stack spacing={0.7}>
-              <Skeleton variant="rounded" height={64} />
-              <Skeleton variant="rounded" height={64} />
-              <Skeleton variant="rounded" height={64} />
-            </Stack>
-          ) : allNotifications.length ? (
-            <Stack spacing={0.72}>
-              {allNotifications.map((item) => (
-                <Paper key={item.id} variant="outlined" sx={{ p: 0.85, borderRadius: 1.4 }}>
-                  <Stack spacing={0.45}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={0.7}>
-                      <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-                        {item.title}
-                      </Typography>
-                      <Chip
-                        size="small"
-                        color={
-                          item.level === "warning"
-                            ? "warning"
-                            : item.level === "success"
-                              ? "success"
-                              : item.level === "error"
-                                ? "error"
-                                : "info"
-                        }
-                        label={item.level || "info"}
-                        sx={{ "& .MuiChip-label": { px: 0.72, fontSize: "0.68rem", fontWeight: 700 } }}
-                      />
-                    </Stack>
-                    {item.detail ? (
-                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.5 }}>
-                        {item.detail}
-                      </Typography>
-                    ) : null}
-                    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={0.7}>
-                      <Typography variant="caption" color="text.secondary">
-                        {item.source || "system"} 路 {formatIsoTime(item.ts)}
-                      </Typography>
-                      {item.action_kind ? (
-                        <Button size="small" variant="outlined" onClick={() => handleNotificationAction(item)}>
-                          查看
-                        </Button>
-                      ) : null}
-                    </Stack>
-                  </Stack>
-                </Paper>
-              ))}
-            </Stack>
-          ) : (
-            <Paper variant="outlined" sx={{ p: 1.1, borderRadius: 1.4 }}>
-              <Typography variant="body2" color="text.secondary">
-                暂无通知。新的简报、待办和跟踪进展会显示在这里。
-              </Typography>
-            </Paper>
-          )}
-        </Box>
-      </Dialog>
+        onAction={(item) => {
+          handleNotificationAction(item);
+        }}
+      />
 
       <Drawer
         anchor="right"
@@ -3443,6 +2437,17 @@ export default function Aelin({
     </Box>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 
