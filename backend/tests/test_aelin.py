@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.routers.aelin as aelin_router
+import app.services.device_center as device_center
 from app.db import init_engine
 from app.main import create_app
 from app.models import Base
@@ -1112,11 +1113,11 @@ def test_device_processes_windows_fallback_without_psutil(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    monkeypatch.setattr(aelin_router, "psutil", None)
-    monkeypatch.setattr(aelin_router, "_device_is_windows", lambda: True)
+    monkeypatch.setattr(device_center, "psutil", None)
+    monkeypatch.setattr(device_center, "device_is_windows", lambda: True)
     monkeypatch.setattr(
-        aelin_router,
-        "_run_powershell",
+        device_center,
+        "run_powershell",
         lambda script, timeout_s=8: (
             True,
             json.dumps(
@@ -1148,3 +1149,4 @@ def test_device_processes_windows_fallback_without_psutil(monkeypatch):
     first = (data.get("items") or [])[0]
     assert str(first.get("name") or "").lower().startswith("code")
     assert float(first.get("memory_mb") or 0.0) > 0
+

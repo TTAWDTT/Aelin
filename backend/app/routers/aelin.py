@@ -79,7 +79,15 @@ from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
 from app.services.web_search import WebSearchResult, WebSearchService
 from app.services.tracking_autonomy import tracking_autonomy_service
-
+from app.services.device_center import (
+    apply_device_mode as device_apply_mode,
+    collect_device_process_items as device_collect_process_items,
+    device_capabilities as device_capabilities_info,
+    device_is_windows as is_windows_runtime,
+    get_process_name_by_pid_windows as device_process_name_by_pid,
+    normalize_device_mode as normalize_mode_value,
+    set_process_priority as device_set_process_priority,
+)
 try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional runtime dependency
@@ -313,6 +321,43 @@ def _save_proactive_state(
     return row
 
 
+
+def _load_device_mode_state(db: Session, *, user_id: int) -> tuple[AgentMemoryNote | None, dict[str, Any]]:
+    row = db.scalar(
+        select(AgentMemoryNote)
+        .where(AgentMemoryNote.user_id == user_id, AgentMemoryNote.source == _DEVICE_MODE_SOURCE)
+        .order_by(AgentMemoryNote.updated_at.desc(), AgentMemoryNote.id.desc())
+        .limit(1)
+    )
+    if row is None:
+        return None, {}
+    return row, _json_from_text(row.content or "{}")
+
+
+def _save_device_mode_state(
+    db: Session,
+    *,
+    user_id: int,
+    existing: AgentMemoryNote | None,
+    payload: dict[str, Any],
+) -> AgentMemoryNote:
+    content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    row = existing
+    if row is None:
+        row = AgentMemoryNote(
+            user_id=user_id,
+            kind="system",
+            source=_DEVICE_MODE_SOURCE,
+            content=content,
+        )
+        db.add(row)
+        return row
+    row.kind = "system"
+    row.source = _DEVICE_MODE_SOURCE
+    row.content = content
+    db.add(row)
+    return row
+
 def _parse_iso_datetime(raw: str | None) -> datetime | None:
     if not raw:
         return None
@@ -326,419 +371,6 @@ def _parse_iso_datetime(raw: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
-
-
-def _device_is_windows() -> bool:
-    return platform.system().strip().lower().startswith("win")
-
-
-def _device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
-    platform_name = platform.system().strip().lower() or "unknown"
-    is_windows = _device_is_windows()
-    has_psutil = psutil is not None
-    has_windows_fallback = bool(is_windows)
-    process_list_supported = bool(has_psutil or has_windows_fallback)
-    capabilities = {
-        "process_list": process_list_supported,
-        "process_terminate": bool(has_psutil or has_windows_fallback),
-        "process_priority": bool(has_psutil or has_windows_fallback),
-        "mode_focus": bool(is_windows),
-        "mode_silent": bool(is_windows),
-        "mode_normal": True,
-        "optimize_processes": process_list_supported,
-    }
-    notes: list[str] = []
-    if not has_psutil:
-        if is_windows:
-            notes.append("psutil unavailable; using Windows fallback process probe (cpu may be approximate)")
-        else:
-            notes.append("psutil unavailable; process controls disabled")
-    if not is_windows:
-        notes.append("non-windows runtime: mode actions may degrade to state-only updates")
-    return platform_name, capabilities, notes
-
-def _normalize_device_mode(raw: str) -> str:
-    mode = str(raw or "").strip().lower()
-    alias = {
-        "meeting": "meeting",
-        "focus": "focus",
-        "sleep": "sleep",
-        "normal": "normal",
-        "default": "normal",
-        "开会": "meeting",
-        "专注": "focus",
-        "睡眠": "sleep",
-        "恢复": "normal",
-    }
-    return alias.get(mode, "normal")
-
-
-def _run_powershell(script: str, *, timeout_s: int = 8) -> tuple[bool, str]:
-    try:
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-            capture_output=True,
-            text=True,
-            timeout=max(1, int(timeout_s)),
-            encoding="utf-8",
-            errors="ignore",
-        )
-    except Exception as exc:
-        return False, str(exc)
-    output = (proc.stdout or proc.stderr or "").strip()
-    return proc.returncode == 0, output
-
-
-def _set_windows_toast_enabled(enabled: bool) -> tuple[bool, str]:
-    value = "1" if enabled else "0"
-    script = (
-        "New-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications' "
-        "-Force | Out-Null; "
-        f"Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications' "
-        f"-Name ToastEnabled -Type DWord -Value {value}; "
-        "Write-Output 'ok'"
-    )
-    ok, detail = _run_powershell(script)
-    return ok, detail or ("ok" if ok else "failed")
-
-
-def _set_windows_brightness(percent: int) -> tuple[bool, str]:
-    safe = max(10, min(100, int(percent or 35)))
-    script = (
-        "$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction SilentlyContinue; "
-        f"if ($m) {{ $null = $m.WmiSetBrightness(1,{safe}); Write-Output 'ok'; }} "
-        "else { Write-Output 'unsupported'; exit 1; }"
-    )
-    ok, detail = _run_powershell(script)
-    return ok, detail or ("ok" if ok else "brightness unsupported")
-
-
-def _get_process_name_by_pid_windows(pid: int) -> str:
-    safe_pid = max(1, int(pid or 0))
-    script = (
-        "$ErrorActionPreference='SilentlyContinue'; "
-        f"$p = Get-Process -Id {safe_pid}; "
-        "if ($null -eq $p) { Write-Output ''; exit 1; } "
-        "Write-Output $p.ProcessName"
-    )
-    ok, detail = _run_powershell(script, timeout_s=4)
-    if not ok:
-        return ""
-    return str(detail or "").strip().lower()
-
-
-def _collect_device_process_items_windows_fallback(*, sort_by: str, limit: int) -> list[AelinDeviceProcessItem]:
-    max_items = max(1, min(200, int(limit or 40)))
-    sort_key = "memory" if str(sort_by or "").strip().lower() == "memory" else "cpu"
-    script = (
-        "$ErrorActionPreference='SilentlyContinue'; "
-        "Get-Process | Select-Object Name,Id,WorkingSet64,CPU,StartTime,PriorityClass,ProcessName "
-        "| ConvertTo-Json -Compress"
-    )
-    ok, detail = _run_powershell(script, timeout_s=12)
-    if not ok or not detail:
-        return []
-
-    try:
-        parsed = json.loads(detail)
-    except Exception:
-        return []
-
-    rows_data: list[dict[str, Any]]
-    if isinstance(parsed, list):
-        rows_data = [x for x in parsed if isinstance(x, dict)]
-    elif isinstance(parsed, dict):
-        rows_data = [parsed]
-    else:
-        return []
-
-    critical_names = {
-        "system",
-        "idle",
-        "registry",
-        "csrss",
-        "wininit",
-        "services",
-        "lsass",
-        "svchost",
-        "explorer",
-    }
-
-    rows: list[AelinDeviceProcessItem] = []
-    for item in rows_data:
-        try:
-            pid = int(item.get("Id") or 0)
-        except Exception:
-            continue
-        if pid <= 0:
-            continue
-        name_raw = str(item.get("Name") or item.get("ProcessName") or f"pid-{pid}").strip()
-        name = f"{name_raw}.exe" if name_raw and "." not in name_raw else name_raw
-        ws = float(item.get("WorkingSet64") or 0)
-        memory_mb = max(0.0, ws / (1024 * 1024))
-        cpu_seconds = 0.0
-        try:
-            cpu_seconds = float(item.get("CPU") or 0.0)
-        except Exception:
-            cpu_seconds = 0.0
-        status = "running"
-        created_iso: str | None = None
-        start_raw = item.get("StartTime")
-        if isinstance(start_raw, str) and start_raw.strip():
-            created_iso = start_raw.strip()
-
-        reasons: list[str] = []
-        score = 0.0
-        if memory_mb >= 1400:
-            reasons.append("内存占用过高")
-            score += 2.5
-        elif memory_mb >= 800:
-            reasons.append("内存占用偏高")
-            score += 1.2
-        if cpu_seconds >= 1200:
-            reasons.append("CPU累计时间较高")
-            score += 0.8
-
-        lower = name.lower().replace(".exe", "")
-        safe_to_terminate = (lower not in critical_names) and (pid > 120)
-        rows.append(
-            AelinDeviceProcessItem(
-                pid=pid,
-                name=name,
-                cpu_percent=0.0,
-                memory_mb=round(memory_mb, 1),
-                status=status,
-                username="",
-                create_time=created_iso,
-                anomaly_score=round(score, 2),
-                anomaly_reasons=reasons[:3],
-                safe_to_terminate=safe_to_terminate,
-            )
-        )
-
-    if sort_key == "memory":
-        rows.sort(key=lambda x: (x.anomaly_score, x.memory_mb, x.pid), reverse=True)
-    else:
-        rows.sort(key=lambda x: (x.anomaly_score, x.memory_mb, x.pid), reverse=True)
-    return rows[:max_items]
-
-def _set_process_priority(pid: int, level: str) -> tuple[bool, str]:
-    target = str(level or "").strip().lower()
-
-    if psutil is not None:
-        try:
-            proc = psutil.Process(int(pid))
-            if _device_is_windows():
-                if target == "high":
-                    proc.nice(psutil.HIGH_PRIORITY_CLASS)
-                else:
-                    proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-            else:
-                proc.nice(-5 if target == "high" else 10)
-            return True, f"priority set to {target or 'low'}"
-        except Exception:
-            # fallback to powershell below on Windows
-            pass
-
-    if _device_is_windows():
-        ps_level = "High" if target == "high" else "BelowNormal"
-        script = (
-            "$ErrorActionPreference='Stop'; "
-            f"$p = Get-Process -Id {int(pid)}; "
-            "if ($null -eq $p) { throw 'process not found'; } "
-            f"$p.PriorityClass = '{ps_level}'; "
-            "Write-Output 'ok'"
-        )
-        ok, detail = _run_powershell(script, timeout_s=6)
-        if ok:
-            return True, f"priority set to {target or 'low'}"
-        return False, detail or "failed to set process priority"
-
-    return False, "process priority control unavailable"
-
-def _collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDeviceProcessItem]:
-    if psutil is None:
-        if _device_is_windows():
-            return _collect_device_process_items_windows_fallback(sort_by=sort_by, limit=limit)
-        return []
-
-    max_items = max(1, min(200, int(limit or 40)))
-    sort_key = "memory" if str(sort_by or "").strip().lower() == "memory" else "cpu"
-    current_user = str(os.environ.get("USERNAME") or os.environ.get("USER") or "").strip().lower()
-    critical_names = {
-        "system",
-        "idle",
-        "registry",
-        "csrss.exe",
-        "wininit.exe",
-        "services.exe",
-        "lsass.exe",
-        "svchost.exe",
-        "explorer.exe",
-    }
-
-    procs: list[Any] = []
-    for proc in psutil.process_iter(attrs=["pid", "name", "username", "status", "memory_info", "create_time"]):
-        try:
-            proc.cpu_percent(None)
-            procs.append(proc)
-        except Exception:
-            continue
-    time.sleep(0.12)
-
-    rows: list[AelinDeviceProcessItem] = []
-    for proc in procs:
-        try:
-            with proc.oneshot():
-                pid = int(proc.pid)
-                name = str(proc.info.get("name") or proc.name() or f"pid-{pid}").strip()
-                username = str(proc.info.get("username") or "").strip()
-                status = str(proc.info.get("status") or proc.status() or "").strip().lower()
-                cpu = float(proc.cpu_percent(None) or 0.0)
-                mem = proc.info.get("memory_info") or proc.memory_info()
-                memory_mb = float(getattr(mem, "rss", 0) / (1024 * 1024))
-                created = proc.info.get("create_time") or proc.create_time()
-                created_iso = datetime.fromtimestamp(float(created), tz=timezone.utc).isoformat() if created else None
-        except Exception:
-            continue
-        reasons: list[str] = []
-        score = 0.0
-        if cpu >= 80:
-            reasons.append("CPU 持续高占用")
-            score += 2.8
-        elif cpu >= 55:
-            reasons.append("CPU 偏高")
-            score += 1.5
-        if memory_mb >= 1400:
-            reasons.append("内存占用过高")
-            score += 2.5
-        elif memory_mb >= 800:
-            reasons.append("内存占用偏高")
-            score += 1.2
-        if status in {"zombie", "stopped"}:
-            reasons.append(f"进程状态异常: {status}")
-            score += 1.8
-
-        name_lower = name.lower()
-        user_match = bool(current_user and current_user in username.lower())
-        safe_to_terminate = (name_lower not in critical_names) and ((user_match and pid > 120) or (pid > 5000))
-        rows.append(
-            AelinDeviceProcessItem(
-                pid=pid,
-                name=name,
-                cpu_percent=round(cpu, 2),
-                memory_mb=round(memory_mb, 1),
-                status=status,
-                username=username,
-                create_time=created_iso,
-                anomaly_score=round(score, 2),
-                anomaly_reasons=reasons[:3],
-                safe_to_terminate=safe_to_terminate,
-            )
-        )
-
-    if sort_key == "memory":
-        rows.sort(key=lambda x: (x.anomaly_score, x.memory_mb, x.cpu_percent), reverse=True)
-    else:
-        rows.sort(key=lambda x: (x.anomaly_score, x.cpu_percent, x.memory_mb), reverse=True)
-    return rows[:max_items]
-
-def _load_device_mode_state(db: Session, *, user_id: int) -> tuple[AgentMemoryNote | None, dict[str, Any]]:
-    row = db.scalar(
-        select(AgentMemoryNote)
-        .where(AgentMemoryNote.user_id == user_id, AgentMemoryNote.source == _DEVICE_MODE_SOURCE)
-        .order_by(AgentMemoryNote.updated_at.desc(), AgentMemoryNote.id.desc())
-        .limit(1)
-    )
-    if row is None:
-        return None, {}
-    parsed = _json_from_text(row.content or "{}")
-    return row, parsed
-
-
-def _save_device_mode_state(
-    db: Session,
-    *,
-    user_id: int,
-    existing: AgentMemoryNote | None,
-    payload: dict[str, Any],
-) -> None:
-    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    row = existing
-    if row is None:
-        row = AgentMemoryNote(
-            user_id=user_id,
-            kind="system",
-            source=_DEVICE_MODE_SOURCE,
-            content=text,
-        )
-        db.add(row)
-        return
-    row.kind = "system"
-    row.source = _DEVICE_MODE_SOURCE
-    row.content = text
-    db.add(row)
-
-
-def _apply_device_mode(mode: str) -> tuple[str, str, str, list[str], list[str]]:
-    mode_norm = _normalize_device_mode(mode)
-    steps: list[str] = []
-    warnings: list[str] = []
-
-    if not _device_is_windows():
-        warnings.append("当前仅在 Windows 提供系统级模式控制，其它系统将只记录模式状态。")
-        return mode_norm, "partial", f"模式已切换为 {mode_norm}（系统控制受限）", steps, warnings
-
-    if mode_norm in {"meeting", "focus", "sleep"}:
-        ok_toast, detail_toast = _set_windows_toast_enabled(False)
-        if ok_toast:
-            steps.append("已限制系统通知横幅（Toast）。")
-        else:
-            warnings.append(f"限制系统通知失败: {detail_toast}")
-    else:
-        ok_toast, detail_toast = _set_windows_toast_enabled(True)
-        if ok_toast:
-            steps.append("已恢复系统通知横幅。")
-        else:
-            warnings.append(f"恢复系统通知失败: {detail_toast}")
-
-    if mode_norm == "focus":
-        wechat_hits = 0
-        if psutil is not None:
-            for proc in psutil.process_iter(attrs=["pid", "name"]):
-                try:
-                    name = str(proc.info.get("name") or "").lower()
-                    if "wechat" not in name:
-                        continue
-                    ok, detail = _set_process_priority(int(proc.pid), "low")
-                    if ok:
-                        wechat_hits += 1
-                    else:
-                        warnings.append(f"WeChat 优先级调整失败: {detail}")
-                except Exception:
-                    continue
-        if wechat_hits > 0:
-            steps.append(f"已降低 {wechat_hits} 个 WeChat 进程优先级（减少打扰）。")
-        else:
-            warnings.append("未检测到 WeChat 进程，微信提示音需手动在系统混音器中关闭。")
-
-    if mode_norm == "sleep":
-        ok_brightness, detail_brightness = _set_windows_brightness(35)
-        if ok_brightness:
-            steps.append("已尝试降低屏幕亮度至 35%。")
-        else:
-            warnings.append(f"亮度调整失败或设备不支持: {detail_brightness}")
-
-    if mode_norm == "meeting":
-        warnings.append("系统静音开关在部分设备上需手动确认（已保留开会模式状态）。")
-
-    status = "applied" if not warnings else "partial"
-    summary = (
-        f"{mode_norm} 模式已应用。"
-        if status == "applied"
-        else f"{mode_norm} 模式已部分应用，请查看警告项。"
-    )
-    return mode_norm, status, summary, steps, warnings
 
 
 def _to_layout_cards(raw_cards: list[dict]) -> list[AelinLayoutCard]:
@@ -5245,7 +4877,7 @@ def poll_aelin_proactive_events(
     process_alert_at = _parse_iso_datetime(str(state.get("last_process_alert_at") or ""))
     process_alert_due = process_alert_at is None or (now - process_alert_at) >= timedelta(minutes=40)
     process_alert_pid = int(state.get("last_process_alert_pid") or 0)
-    process_rows = _collect_device_process_items(sort_by="cpu", limit=6)
+    process_rows = device_collect_process_items(sort_by="cpu", limit=6)
     top_process = process_rows[0] if process_rows else None
     if (
         top_process
@@ -5331,8 +4963,8 @@ def list_device_processes(
 ):
     _ = current_user  # Auth guard for local device APIs.
     sort_key = "memory" if str(sort_by or "").strip().lower() == "memory" else "cpu"
-    items = _collect_device_process_items(sort_by=sort_key, limit=limit)
-    platform_name, _, notes = _device_capabilities()
+    items = device_collect_process_items(sort_by=sort_key, limit=limit)
+    platform_name, _, notes = device_capabilities_info()
     filter_context = {
         "sort_by": sort_key,
         "requested_limit": str(int(limit or 40)),
@@ -5385,8 +5017,8 @@ def run_device_process_action(
             proc_name = str(proc.name() or "").strip().lower()
         except Exception:
             proc = None
-    if not proc_name and _device_is_windows():
-        proc_name = _get_process_name_by_pid_windows(int(pid))
+    if not proc_name and is_windows_runtime():
+        proc_name = device_process_name_by_pid(int(pid))
 
     critical_names = {
         "system", "idle", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "svchost.exe",
@@ -5425,7 +5057,7 @@ def run_device_process_action(
                     generated_at=datetime.now(timezone.utc),
                 )
 
-        if _device_is_windows():
+        if is_windows_runtime():
             try:
                 tk = subprocess.run(
                     ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
@@ -5461,7 +5093,7 @@ def run_device_process_action(
         )
 
     target = "high" if action == "set_high_priority" else "low"
-    ok, detail = _set_process_priority(int(pid), target)
+    ok, detail = device_set_process_priority(int(pid), target)
     return AelinDeviceProcessActionResponse(
         pid=int(pid),
         action=action,
@@ -5475,7 +5107,7 @@ def optimize_device_processes(
     current_user: User = Depends(get_current_user),
 ):
     _ = current_user  # Auth guard for local device APIs.
-    candidates = _collect_device_process_items(sort_by="cpu", limit=40)
+    candidates = device_collect_process_items(sort_by="cpu", limit=40)
     steps: list[str] = []
     warnings: list[str] = []
     affected: list[int] = []
@@ -5484,7 +5116,7 @@ def optimize_device_processes(
             continue
         if not row.safe_to_terminate:
             continue
-        ok, detail = _set_process_priority(int(row.pid), "low")
+        ok, detail = device_set_process_priority(int(row.pid), "low")
         if ok:
             affected.append(int(row.pid))
             steps.append(f"{row.name} (PID {row.pid}) -> low priority")
@@ -5508,7 +5140,7 @@ def get_device_capabilities(
     current_user: User = Depends(get_current_user),
 ):
     _ = current_user  # Auth guard for local device APIs.
-    platform_name, capabilities, notes = _device_capabilities()
+    platform_name, capabilities, notes = device_capabilities_info()
     return AelinDeviceCapabilitiesResponse(
         platform=platform_name,
         capabilities=capabilities,
@@ -5523,7 +5155,7 @@ def get_device_mode_state(
     current_user: User = Depends(get_current_user),
 ):
     _, state = _load_device_mode_state(db, user_id=current_user.id)
-    mode = _normalize_device_mode(str(state.get("mode") or "normal"))
+    mode = normalize_mode_value(str(state.get("mode") or "normal"))
     status = str(state.get("status") or "applied").strip().lower() or "applied"
     summary = str(state.get("summary") or f"当前模式: {mode}").strip()
     steps = state.get("steps") if isinstance(state.get("steps"), list) else []
@@ -5545,7 +5177,7 @@ def apply_device_mode(
     current_user: User = Depends(get_current_user),
 ):
     requested_mode = str(payload.mode or "").strip().lower()
-    mode, status, summary, steps, warnings = _apply_device_mode(payload.mode)
+    mode, status, summary, steps, warnings = device_apply_mode(payload.mode)
     allowed_requested_modes = {"meeting", "focus", "sleep", "normal", "default"}
     if requested_mode and requested_mode not in allowed_requested_modes:
         status = "degraded"
@@ -6270,12 +5902,4 @@ def confirm_track_subscription(
         ],
         generated_at=datetime.now(timezone.utc),
     )
-
-
-
-
-
-
-
-
 
