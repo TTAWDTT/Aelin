@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.db import create_session
 from app.models import AgentMemoryNote, TrackingChange, TrackingSnapshot, TrackingTarget
 from app.services.encryption import encrypt_optional
+from app.services.openviking_bridge import tracking_file_memory_bridge
 from app.services.web_search import WebSearchService
 from app.settings import settings
 
@@ -120,6 +121,7 @@ class TrackingAutonomyService:
         self._running_group_keys: set[str] = set()
         self._running_source_counts: dict[str, int] = defaultdict(int)
         self._migrated_users: set[int] = set()
+        self._file_memory = tracking_file_memory_bridge
 
     def start(self) -> None:
         if not bool(getattr(settings, "tracking_scheduler_enabled", True)):
@@ -238,6 +240,7 @@ class TrackingAutonomyService:
             )
             db.add(row)
             db.flush()
+            self._file_memory.sync_target_profile(row)
             return row
 
         row.source_type = (source_type or row.source_type or "web").strip().lower() or "web"
@@ -259,6 +262,7 @@ class TrackingAutonomyService:
         row.config_json = _safe_json_dumps(cfg)
         db.add(row)
         db.flush()
+        self._file_memory.sync_target_profile(row)
         return row
 
     def list_targets(self, db: Session, *, user_id: int, workspace: str | None, limit: int, status: str | None = None, include_deleted: bool = False) -> list[TrackingTarget]:
@@ -296,6 +300,7 @@ class TrackingAutonomyService:
             row.next_run_at = _utcnow() + timedelta(seconds=random.randint(1, 4))
         db.add(row)
         db.flush()
+        self._file_memory.sync_target_profile(row)
         self.wake_up()
         return row
 
@@ -542,6 +547,7 @@ class TrackingAutonomyService:
         fetched_count = len((normalized_payload.get("items") or [])) if isinstance(normalized_payload, dict) else 0
         stats["fetched_count"] = max(0, int(fetched_count))
         for target in targets:
+            self._file_memory.sync_target_profile(target)
             target.last_run_at = now
             target.last_checked_at = now
             target.next_run_at = self._next_run_time(interval_seconds=target.interval_seconds, error_count=0)
@@ -597,6 +603,7 @@ class TrackingAutonomyService:
             )
             db.add(snapshot)
             db.flush()
+            self._file_memory.append_snapshot(target=target, snapshot=snapshot, normalized_payload=normalized_payload)
             stats["snapshots_created"] += 1
 
             prev_normalized = _json_loads_dict(prev_snapshot.normalized_payload_json) if prev_snapshot else {}
@@ -652,6 +659,8 @@ class TrackingAutonomyService:
         )
         db.add(snapshot)
         db.flush()
+        self._file_memory.append_snapshot(target=target, snapshot=snapshot, normalized_payload={})
+        self._file_memory.sync_target_profile(target)
 
         self._create_change(
             db,
@@ -805,6 +814,7 @@ class TrackingAutonomyService:
         )
         db.add(row)
         db.flush()
+        self._file_memory.append_change(target=target, change=row, diff_payload=diff_payload if isinstance(diff_payload, dict) else {})
         return row
 
     def _next_run_time(self, *, interval_seconds: int, error_count: int) -> datetime:
@@ -833,3 +843,9 @@ class TrackingAutonomyService:
 
 
 tracking_autonomy_service = TrackingAutonomyService()
+
+
+
+
+
+

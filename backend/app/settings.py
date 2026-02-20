@@ -63,10 +63,14 @@ class Settings(BaseSettings):
     tracking_quiet_start_hour: int = 23
     tracking_quiet_end_hour: int = 8
 
+    # File memory bridge (OpenViking-compatible projection + retrieval fallback).
+    openviking_enabled: bool = True
+    openviking_data_dir: str = "../data/aelin_memory"
+    openviking_query_limit: int = 8
+
     # Optional Fernet key used to encrypt stored secrets (OAuth tokens, IMAP passwords).
     # Generate one via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str | None = None
 
 
 settings = Settings()
-
