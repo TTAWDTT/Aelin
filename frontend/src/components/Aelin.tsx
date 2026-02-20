@@ -17,8 +17,6 @@ import {
   aelinChat,
   aelinChatStream,
   aelinConfirmTrack,
-  getAelinNotifications,
-  getAelinProactivePoll,
   getAelinContext,
   getMessage,
 } from "../api";
@@ -30,12 +28,10 @@ import {
   AELIN_CHAT_STORAGE_KEY,
   AELIN_LAST_DESK_BRIDGE_KEY,
   AELIN_LAST_SESSION_KEY,
-  AELIN_LOGO_SRC,
   AELIN_SESSIONS_STORAGE_KEY,
   CUSTOM_PROVIDER_OPTION,
   DEVICE_MODE_META,
   MAX_PERSISTED_SESSIONS,
-  PROACTIVE_POLL_MS,
 } from "./aelin/constants";
 import {
   extractFirstUrl,
@@ -71,6 +67,7 @@ import { AelinHandoffBanner } from "./aelin/layout/AelinHandoffBanner";
 import { useAelinLlmConfig } from "./aelin/hooks/useAelinLlmConfig";
 import { useAelinDeviceCenter } from "./aelin/hooks/useAelinDeviceCenter";
 import { useAelinTrackingCenter } from "./aelin/hooks/useAelinTrackingCenter";
+import { useAelinNotifications } from "./aelin/hooks/useAelinNotifications";
 import {
   AelinCitationDrawers,
   type CitationDrawerState,
@@ -163,12 +160,6 @@ export default function Aelin({
   const [memoryLayerTab, setMemoryLayerTab] = React.useState<
     "facts" | "preferences" | "in_progress"
   >("facts");
-  const [notificationDialogOpen, setNotificationDialogOpen] =
-    React.useState(false);
-  const [notificationBusy, setNotificationBusy] = React.useState(false);
-  const [notificationItems, setNotificationItems] = React.useState<
-    AelinNotificationItem[]
-  >([]);
   const {
     deviceDialogOpen,
     setDeviceDialogOpen,
@@ -224,7 +215,6 @@ export default function Aelin({
   const [latestSparkMessageId, setLatestSparkMessageId] =
     React.useState<string>("");
   const dismissedTrackTargetsRef = React.useRef<Record<string, true>>({});
-  const proactiveSeenRef = React.useRef<Record<string, true>>({});
   const [citationDrawer, setCitationDrawer] =
     React.useState<CitationDrawerState>({
       open: false,
@@ -298,29 +288,18 @@ export default function Aelin({
     () => contextSnapshot?.notifications || [],
     [contextSnapshot?.notifications],
   );
-  const allNotifications = React.useMemo(() => {
-    const merged = [...notificationItems, ...contextNotifications];
-    const seen = new Set<string>();
-    const out: AelinNotificationItem[] = [];
-    for (const item of merged) {
-      const key = String(item.id || "");
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(item);
-      if (out.length >= 60) break;
-    }
-    out.sort((a, b) => Date.parse(b.ts || "") - Date.parse(a.ts || ""));
-    return out;
-  }, [contextNotifications, notificationItems]);
-  const unreadNotificationCount = React.useMemo(
-    () =>
-      Math.min(
-        99,
-        allNotifications.filter((it) => (it.level || "info") !== "default")
-          .length,
-      ),
-    [allNotifications],
-  );
+  const {
+    notificationDialogOpen,
+    setNotificationDialogOpen,
+    notificationBusy,
+    allNotifications,
+    unreadNotificationCount,
+    refreshNotifications,
+  } = useAelinNotifications({
+    workspaceScope,
+    contextNotifications,
+    showToast,
+  });
   const playHandoffFX = React.useCallback(
     (title: string, detail: string, holdMs = 900) => {
       setHandoffFX({ title, detail });
@@ -430,129 +409,9 @@ export default function Aelin({
     }
   }, [workspaceScope]);
 
-  const refreshNotifications = React.useCallback(async () => {
-    setNotificationBusy(true);
-    try {
-      const ret = await getAelinNotifications(30);
-      setNotificationItems(ret.items || []);
-    } catch {
-      // ignore transient failures
-    } finally {
-      setNotificationBusy(false);
-    }
-  }, []);
-
-  const pushSystemNotification = React.useCallback(
-    (item: AelinNotificationItem) => {
-      if (typeof window === "undefined") return;
-      if (!("Notification" in window)) return;
-      if (Notification.permission !== "granted") return;
-      try {
-        const title = (item.title || "Aelin 提醒").trim() || "Aelin 提醒";
-        const detail = (item.detail || "").trim();
-        const note = new Notification(title, {
-          body: detail ? detail.slice(0, 180) : "你有新的动态值得查看",
-          icon: AELIN_LOGO_SRC,
-          tag: String(item.id || ""),
-        });
-        window.setTimeout(() => note.close(), 5600);
-      } catch {
-        // ignore notification errors
-      }
-    },
-    [],
-  );
-
-  const pollProactive = React.useCallback(async () => {
-    try {
-      const ret = await getAelinProactivePoll(workspaceScope, 8);
-      const incoming = Array.isArray(ret.items)
-        ? ret.items.filter(Boolean)
-        : [];
-      if (!incoming.length) return;
-      setNotificationItems((prev) => {
-        const seen = new Set<string>();
-        const merged: AelinNotificationItem[] = [];
-        for (const row of [...incoming, ...prev]) {
-          const key = String(row.id || "");
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          merged.push(row);
-          if (merged.length >= 80) break;
-        }
-        return merged;
-      });
-
-      const justIn: AelinNotificationItem[] = [];
-      for (const item of incoming) {
-        const key = String(item.id || "");
-        if (!key || proactiveSeenRef.current[key]) continue;
-        proactiveSeenRef.current[key] = true;
-        justIn.push(item);
-      }
-      if (!justIn.length) return;
-
-      for (const item of justIn) {
-        const detail = (item.detail || "").trim();
-        const toastText = detail ? `${item.title} 路 ${detail}` : item.title;
-        const level = String(item.level || "info").toLowerCase();
-        showToast(
-          toastText.slice(0, 220),
-          level === "error"
-            ? "error"
-            : level === "warning"
-              ? "warning"
-              : level === "success"
-                ? "success"
-                : "info",
-        );
-        if (document.hidden) {
-          pushSystemNotification(item);
-        }
-      }
-    } catch {
-      // ignore transient proactive polling failures
-    }
-  }, [pushSystemNotification, showToast, workspaceScope]);
-
   React.useEffect(() => {
     void refreshContext();
   }, [refreshContext]);
-
-  React.useEffect(() => {
-    if (!notificationDialogOpen) return;
-    void refreshNotifications();
-  }, [notificationDialogOpen, refreshNotifications]);
-
-  React.useEffect(() => {
-    void refreshNotifications();
-  }, [refreshNotifications]);
-
-  React.useEffect(() => {
-    for (const item of notificationItems) {
-      const key = String(item.id || "");
-      if (!key) continue;
-      proactiveSeenRef.current[key] = true;
-    }
-  }, [notificationItems]);
-
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== "default") return;
-    const timer = window.setTimeout(() => {
-      void Notification.requestPermission().catch(() => "default");
-    }, 1800);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  React.useEffect(() => {
-    void pollProactive();
-    const timer = window.setInterval(() => {
-      void pollProactive();
-    }, PROACTIVE_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [pollProactive]);
 
   React.useEffect(() => {
     if (embedded) return;
