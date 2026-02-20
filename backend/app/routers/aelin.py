@@ -336,22 +336,26 @@ def _device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
     platform_name = platform.system().strip().lower() or "unknown"
     is_windows = _device_is_windows()
     has_psutil = psutil is not None
+    has_windows_fallback = bool(is_windows)
+    process_list_supported = bool(has_psutil or has_windows_fallback)
     capabilities = {
-        "process_list": bool(has_psutil),
-        "process_terminate": bool(has_psutil),
-        "process_priority": bool(has_psutil),
+        "process_list": process_list_supported,
+        "process_terminate": bool(has_psutil or has_windows_fallback),
+        "process_priority": bool(has_psutil or has_windows_fallback),
         "mode_focus": bool(is_windows),
         "mode_silent": bool(is_windows),
         "mode_normal": True,
-        "optimize_processes": bool(has_psutil),
+        "optimize_processes": process_list_supported,
     }
     notes: list[str] = []
     if not has_psutil:
-        notes.append("psutil unavailable; process controls disabled")
+        if is_windows:
+            notes.append("psutil unavailable; using Windows fallback process probe (cpu may be approximate)")
+        else:
+            notes.append("psutil unavailable; process controls disabled")
     if not is_windows:
         notes.append("non-windows runtime: mode actions may degrade to state-only updates")
     return platform_name, capabilities, notes
-
 
 def _normalize_device_mode(raw: str) -> str:
     mode = str(raw or "").strip().lower()
@@ -409,33 +413,157 @@ def _set_windows_brightness(percent: int) -> tuple[bool, str]:
     return ok, detail or ("ok" if ok else "brightness unsupported")
 
 
-def _set_process_priority(pid: int, level: str) -> tuple[bool, str]:
-    if psutil is None:
-        return False, "psutil unavailable"
-    try:
-        proc = psutil.Process(int(pid))
-    except Exception as exc:
-        return False, str(exc)
-    target = str(level or "").strip().lower()
-    try:
-        if _device_is_windows():
-            if target == "high":
-                proc.nice(psutil.HIGH_PRIORITY_CLASS)
-            else:
-                proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-        else:
-            proc.nice(-5 if target == "high" else 10)
-        return True, f"priority set to {target or 'low'}"
-    except Exception as exc:
-        return False, str(exc)
+def _get_process_name_by_pid_windows(pid: int) -> str:
+    safe_pid = max(1, int(pid or 0))
+    script = (
+        "$ErrorActionPreference='SilentlyContinue'; "
+        f"$p = Get-Process -Id {safe_pid}; "
+        "if ($null -eq $p) { Write-Output ''; exit 1; } "
+        "Write-Output $p.ProcessName"
+    )
+    ok, detail = _run_powershell(script, timeout_s=4)
+    if not ok:
+        return ""
+    return str(detail or "").strip().lower()
 
+
+def _collect_device_process_items_windows_fallback(*, sort_by: str, limit: int) -> list[AelinDeviceProcessItem]:
+    max_items = max(1, min(200, int(limit or 40)))
+    sort_key = "memory" if str(sort_by or "").strip().lower() == "memory" else "cpu"
+    script = (
+        "$ErrorActionPreference='SilentlyContinue'; "
+        "Get-Process | Select-Object Name,Id,WorkingSet64,CPU,StartTime,PriorityClass,ProcessName "
+        "| ConvertTo-Json -Compress"
+    )
+    ok, detail = _run_powershell(script, timeout_s=12)
+    if not ok or not detail:
+        return []
+
+    try:
+        parsed = json.loads(detail)
+    except Exception:
+        return []
+
+    rows_data: list[dict[str, Any]]
+    if isinstance(parsed, list):
+        rows_data = [x for x in parsed if isinstance(x, dict)]
+    elif isinstance(parsed, dict):
+        rows_data = [parsed]
+    else:
+        return []
+
+    critical_names = {
+        "system",
+        "idle",
+        "registry",
+        "csrss",
+        "wininit",
+        "services",
+        "lsass",
+        "svchost",
+        "explorer",
+    }
+
+    rows: list[AelinDeviceProcessItem] = []
+    for item in rows_data:
+        try:
+            pid = int(item.get("Id") or 0)
+        except Exception:
+            continue
+        if pid <= 0:
+            continue
+        name_raw = str(item.get("Name") or item.get("ProcessName") or f"pid-{pid}").strip()
+        name = f"{name_raw}.exe" if name_raw and "." not in name_raw else name_raw
+        ws = float(item.get("WorkingSet64") or 0)
+        memory_mb = max(0.0, ws / (1024 * 1024))
+        cpu_seconds = 0.0
+        try:
+            cpu_seconds = float(item.get("CPU") or 0.0)
+        except Exception:
+            cpu_seconds = 0.0
+        status = "running"
+        created_iso: str | None = None
+        start_raw = item.get("StartTime")
+        if isinstance(start_raw, str) and start_raw.strip():
+            created_iso = start_raw.strip()
+
+        reasons: list[str] = []
+        score = 0.0
+        if memory_mb >= 1400:
+            reasons.append("内存占用过高")
+            score += 2.5
+        elif memory_mb >= 800:
+            reasons.append("内存占用偏高")
+            score += 1.2
+        if cpu_seconds >= 1200:
+            reasons.append("CPU累计时间较高")
+            score += 0.8
+
+        lower = name.lower().replace(".exe", "")
+        safe_to_terminate = (lower not in critical_names) and (pid > 120)
+        rows.append(
+            AelinDeviceProcessItem(
+                pid=pid,
+                name=name,
+                cpu_percent=0.0,
+                memory_mb=round(memory_mb, 1),
+                status=status,
+                username="",
+                create_time=created_iso,
+                anomaly_score=round(score, 2),
+                anomaly_reasons=reasons[:3],
+                safe_to_terminate=safe_to_terminate,
+            )
+        )
+
+    if sort_key == "memory":
+        rows.sort(key=lambda x: (x.anomaly_score, x.memory_mb, x.pid), reverse=True)
+    else:
+        rows.sort(key=lambda x: (x.anomaly_score, x.memory_mb, x.pid), reverse=True)
+    return rows[:max_items]
+
+def _set_process_priority(pid: int, level: str) -> tuple[bool, str]:
+    target = str(level or "").strip().lower()
+
+    if psutil is not None:
+        try:
+            proc = psutil.Process(int(pid))
+            if _device_is_windows():
+                if target == "high":
+                    proc.nice(psutil.HIGH_PRIORITY_CLASS)
+                else:
+                    proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+            else:
+                proc.nice(-5 if target == "high" else 10)
+            return True, f"priority set to {target or 'low'}"
+        except Exception:
+            # fallback to powershell below on Windows
+            pass
+
+    if _device_is_windows():
+        ps_level = "High" if target == "high" else "BelowNormal"
+        script = (
+            "$ErrorActionPreference='Stop'; "
+            f"$p = Get-Process -Id {int(pid)}; "
+            "if ($null -eq $p) { throw 'process not found'; } "
+            f"$p.PriorityClass = '{ps_level}'; "
+            "Write-Output 'ok'"
+        )
+        ok, detail = _run_powershell(script, timeout_s=6)
+        if ok:
+            return True, f"priority set to {target or 'low'}"
+        return False, detail or "failed to set process priority"
+
+    return False, "process priority control unavailable"
 
 def _collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDeviceProcessItem]:
     if psutil is None:
+        if _device_is_windows():
+            return _collect_device_process_items_windows_fallback(sort_by=sort_by, limit=limit)
         return []
+
     max_items = max(1, min(200, int(limit or 40)))
     sort_key = "memory" if str(sort_by or "").strip().lower() == "memory" else "cpu"
-    now = datetime.now(timezone.utc)
     current_user = str(os.environ.get("USERNAME") or os.environ.get("USER") or "").strip().lower()
     critical_names = {
         "system",
@@ -493,7 +621,7 @@ def _collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDevi
 
         name_lower = name.lower()
         user_match = bool(current_user and current_user in username.lower())
-        safe_to_terminate = (name_lower not in critical_names) and user_match and (pid > 120)
+        safe_to_terminate = (name_lower not in critical_names) and ((user_match and pid > 120) or (pid > 5000))
         rows.append(
             AelinDeviceProcessItem(
                 pid=pid,
@@ -514,7 +642,6 @@ def _collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDevi
     else:
         rows.sort(key=lambda x: (x.anomaly_score, x.cpu_percent, x.memory_mb), reverse=True)
     return rows[:max_items]
-
 
 def _load_device_mode_state(db: Session, *, user_id: int) -> tuple[AgentMemoryNote | None, dict[str, Any]]:
     row = db.scalar(
@@ -5217,7 +5344,7 @@ def list_device_processes(
         empty_reason = (
             "no-process-data: psutil unavailable"
             if psutil is None
-            else "no-process-data: no matching user/anomaly processes found"
+            else "no-process-data: process probe returned no rows"
         )
         if notes:
             filter_context["notes"] = "; ".join(notes[:2])
@@ -5249,28 +5376,22 @@ def run_device_process_action(
                 "allowed_actions": sorted(_DEVICE_ALLOWED_PROCESS_ACTIONS),
             },
         )
-    if psutil is None:
-        return AelinDeviceProcessActionResponse(
-            pid=int(pid),
-            action=action,
-            ok=False,
-            detail="psutil unavailable",
-            generated_at=datetime.now(timezone.utc),
-        )
 
-    try:
-        proc = psutil.Process(int(pid))
-        proc_name = str(proc.name() or "").strip().lower()
-    except Exception as exc:
-        return AelinDeviceProcessActionResponse(
-            pid=int(pid),
-            action=action,
-            ok=False,
-            detail=str(exc),
-            generated_at=datetime.now(timezone.utc),
-        )
+    proc_name = ""
+    proc = None
+    if psutil is not None:
+        try:
+            proc = psutil.Process(int(pid))
+            proc_name = str(proc.name() or "").strip().lower()
+        except Exception:
+            proc = None
+    if not proc_name and _device_is_windows():
+        proc_name = _get_process_name_by_pid_windows(int(pid))
 
-    critical_names = {"system", "idle", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "svchost.exe"}
+    critical_names = {
+        "system", "idle", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "svchost.exe",
+        "csrss", "wininit", "services", "lsass", "svchost",
+    }
     if action == "terminate" and proc_name in critical_names:
         return AelinDeviceProcessActionResponse(
             pid=int(pid),
@@ -5281,27 +5402,63 @@ def run_device_process_action(
         )
 
     if action == "terminate":
-        try:
-            proc.terminate()
+        if proc is not None:
             try:
-                proc.wait(timeout=2.5)
-            except Exception:
-                proc.kill()
-            return AelinDeviceProcessActionResponse(
-                pid=int(pid),
-                action=action,
-                ok=True,
-                detail="process terminated",
-                generated_at=datetime.now(timezone.utc),
-            )
-        except Exception as exc:
-            return AelinDeviceProcessActionResponse(
-                pid=int(pid),
-                action=action,
-                ok=False,
-                detail=str(exc),
-                generated_at=datetime.now(timezone.utc),
-            )
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2.5)
+                except Exception:
+                    proc.kill()
+                return AelinDeviceProcessActionResponse(
+                    pid=int(pid),
+                    action=action,
+                    ok=True,
+                    detail="process terminated",
+                    generated_at=datetime.now(timezone.utc),
+                )
+            except Exception as exc:
+                return AelinDeviceProcessActionResponse(
+                    pid=int(pid),
+                    action=action,
+                    ok=False,
+                    detail=str(exc),
+                    generated_at=datetime.now(timezone.utc),
+                )
+
+        if _device_is_windows():
+            try:
+                tk = subprocess.run(
+                    ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                    encoding="utf-8",
+                    errors="ignore",
+                )
+                detail = (tk.stdout or tk.stderr or "").strip()
+                return AelinDeviceProcessActionResponse(
+                    pid=int(pid),
+                    action=action,
+                    ok=bool(tk.returncode == 0),
+                    detail=detail or ("process terminated" if tk.returncode == 0 else "taskkill failed"),
+                    generated_at=datetime.now(timezone.utc),
+                )
+            except Exception as exc:
+                return AelinDeviceProcessActionResponse(
+                    pid=int(pid),
+                    action=action,
+                    ok=False,
+                    detail=str(exc),
+                    generated_at=datetime.now(timezone.utc),
+                )
+
+        return AelinDeviceProcessActionResponse(
+            pid=int(pid),
+            action=action,
+            ok=False,
+            detail="process terminate unavailable on this runtime",
+            generated_at=datetime.now(timezone.utc),
+        )
 
     target = "high" if action == "set_high_priority" else "low"
     ok, detail = _set_process_priority(int(pid), target)
@@ -5312,7 +5469,6 @@ def run_device_process_action(
         detail=detail,
         generated_at=datetime.now(timezone.utc),
     )
-
 
 @router.post("/device/processes/optimize", response_model=AelinDeviceOptimizeResponse)
 def optimize_device_processes(
@@ -6114,6 +6270,7 @@ def confirm_track_subscription(
         ],
         generated_at=datetime.now(timezone.utc),
     )
+
 
 
 
