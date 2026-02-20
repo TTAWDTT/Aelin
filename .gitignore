@@ -24,6 +24,10 @@ desktop/release-dist*/
 desktop/build-dist-*.log
 desktop/build-dist-*.meta
 
+# Local runtime data / generated memory store
+/data/
+/*.db
+
 .DS_Store
 Thumbs.db
 tmpclaude-*-cwd
