@@ -278,6 +278,58 @@ class TrackingFileMemoryBridge:
         except Exception as exc:
             _LOG.warning("file-memory change append failed: %s", exc)
 
+    def append_insight(
+        self,
+        *,
+        target: Any,
+        title: str,
+        markdown: str,
+        reason: str = "",
+        confidence: float | None = None,
+        source_query: str = "",
+    ) -> Path | None:
+        if not self.enabled:
+            return None
+        safe_markdown = str(markdown or "").strip()
+        if not safe_markdown:
+            return None
+        try:
+            meta = self._target_meta(target)
+            now = _utcnow()
+            ts = _iso(now) or _iso(_utcnow())
+            ts_id = _slug(ts.replace(":", "").replace("+00:00", "Z"), fallback="t", max_len=48)
+            title_text = str(title or "追踪洞察").strip()[:180] or "追踪洞察"
+            score_text = ""
+            if confidence is not None:
+                try:
+                    score = max(0.0, min(1.0, float(confidence)))
+                    score_text = f"{score:.2f}"
+                except Exception:
+                    score_text = ""
+            body = [
+                "# Tracking Insight",
+                "",
+                f"- canonical_id: `{meta['canonical_id']}`",
+                f"- target: {meta['display_name']}",
+                f"- source: {meta['source_type']}",
+                "- kind: insight",
+                f"- created_at: {ts}",
+            ]
+            if score_text:
+                body.append(f"- confidence: {score_text}")
+            if source_query.strip():
+                body.append(f"- query: {source_query.strip()[:320]}")
+            if reason.strip():
+                body.append(f"- reason: {reason.strip()[:500]}")
+            body.extend(["", "## Title", "", title_text, "", "## Insight", "", safe_markdown, ""] )
+            out_path = self._target_dir(target) / "insights" / f"{ts_id}_{_slug(title_text, fallback='insight', max_len=42)}.md"
+            self._write_markdown(out_path, "\n".join(body))
+            return out_path
+        except Exception as exc:
+            _LOG.warning("file-memory insight append failed: %s", exc)
+            return None
+
+
     def search(
         self,
         *,

@@ -1996,39 +1996,105 @@ def _normalize_match_text(text: str) -> str:
 
 
 def _build_planner_tracking_snapshot(db: Session, *, user_id: int, workspace: str, query: str) -> dict[str, Any]:
+    workspace_norm = _normalize_workspace(workspace)
+    active_items: list[dict[str, Any]] = []
+
+    try:
+        rows = _tracking.list_targets(
+            db,
+            user_id=user_id,
+            workspace=workspace_norm,
+            limit=120,
+            include_deleted=False,
+        )
+    except Exception:
+        rows = []
+
+    for row in rows:
+        if row is None:
+            continue
+        if str(getattr(row, "status", "") or "").strip().lower() == "deleted":
+            continue
+        if getattr(row, "deleted_at", None) is not None:
+            continue
+        cfg = _json_from_text(getattr(row, "config_json", "") or "{}")
+        target_text = (str(getattr(row, "display_name", "") or "") or str(getattr(row, "source_key", "") or "")).strip()
+        if not target_text:
+            continue
+        active_items.append(
+            {
+                "target_id": int(getattr(row, "id", 0) or 0),
+                "target": target_text[:255],
+                "source": (str(getattr(row, "source_type", "web") or "web").strip().lower() or "web")[:32],
+                "query": str(cfg.get("query") or "").strip()[:500],
+                "status": str(getattr(row, "status", "active") or "active").strip().lower() or "active",
+                "workspace": workspace_norm,
+                "track_type": str(getattr(row, "track_type", "term") or "term").strip().lower() or "term",
+                "updated_at": (
+                    getattr(row, "updated_at", None).isoformat()
+                    if getattr(row, "updated_at", None) is not None
+                    else ""
+                ),
+            }
+        )
+
+    # Keep legacy tracking contact events as supplemental context when available.
     try:
         events = _load_tracking_events(db, user_id=user_id, limit=80)
     except Exception:
         events = {}
+    if events:
+        seen = {
+            _tracking_key(str(it.get("source") or ""), str(it.get("target") or ""))
+            for it in active_items
+            if str(it.get("target") or "").strip()
+        }
+        for it in sorted(
+            [x for x in (events or {}).values() if str(x.get("target") or "").strip()],
+            key=lambda row: str(row.get("updated_at") or ""),
+            reverse=True,
+        ):
+            key = _tracking_key(str(it.get("source") or ""), str(it.get("target") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            active_items.append(
+                {
+                    "target_id": 0,
+                    "target": str(it.get("target") or "").strip()[:255],
+                    "source": _normalize_track_source(str(it.get("source") or "auto")),
+                    "query": str(it.get("query") or "").strip()[:500],
+                    "status": str(it.get("status") or "active").strip().lower() or "active",
+                    "workspace": workspace_norm,
+                    "track_type": "term",
+                    "updated_at": str(it.get("updated_at") or ""),
+                }
+            )
+            if len(active_items) >= 160:
+                break
 
-    active_items = sorted(
-        [it for it in (events or {}).values() if str(it.get("target") or "").strip()],
-        key=lambda it: str(it.get("updated_at") or ""),
-        reverse=True,
-    )
+    active_items.sort(key=lambda it: str(it.get("updated_at") or ""), reverse=True)
+
     q_norm = _normalize_match_text(query)
     matched_items: list[dict[str, Any]] = []
     if q_norm:
         for it in active_items:
             target_norm = _normalize_match_text(str(it.get("target") or ""))
-            if not target_norm:
-                continue
-            if target_norm in q_norm or q_norm in target_norm:
-                matched_items.append(it)
-                if len(matched_items) >= 5:
-                    break
-                continue
             query_norm = _normalize_match_text(str(it.get("query") or ""))
-            if query_norm and (query_norm in q_norm or q_norm in query_norm):
+            if not target_norm and not query_norm:
+                continue
+            if target_norm and (target_norm in q_norm or q_norm in target_norm):
                 matched_items.append(it)
-            if len(matched_items) >= 5:
+            elif query_norm and (query_norm in q_norm or q_norm in query_norm):
+                matched_items.append(it)
+            if len(matched_items) >= 8:
                 break
 
     memory_hits = _tracking_file_memory.search(
         user_id=user_id,
-        workspace=workspace,
+        workspace=workspace_norm,
         query=query,
-        limit=8,
+        limit=12,
     )
     file_items = [
         {
@@ -2042,14 +2108,14 @@ def _build_planner_tracking_snapshot(db: Session, *, user_id: int, workspace: st
             "source": item.source,
             "kind": item.kind,
         }
-        for item in memory_hits[:8]
+        for item in memory_hits[:12]
     ]
     return {
-        "active_items": active_items[:8],
-        "matched_items": matched_items[:5],
+        "active_items": active_items[:12],
+        "matched_items": matched_items[:8],
         "active_count": len(active_items),
         "matched_count": len(matched_items) + len(file_items),
-        "matched_file_items": file_items[:5],
+        "matched_file_items": file_items[:8],
         "matched_file_count": len(file_items),
     }
 
@@ -3512,6 +3578,248 @@ def _dedupe_citations(rows: list[AelinCitation], *, limit: int) -> list[AelinCit
     return out
 
 
+
+def _extract_first_json_object(raw: str) -> dict[str, Any]:
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    direct = _json_from_text(text)
+    if direct:
+        return direct
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        return {}
+    return _json_from_text(match.group(0))
+
+
+def _pick_tracking_target_for_insight(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: str,
+    query: str,
+    tracking_snapshot: dict[str, Any] | None,
+) -> TrackingTarget | None:
+    workspace_norm = _normalize_workspace(workspace)
+    try:
+        rows = _tracking.list_targets(
+            db,
+            user_id=user_id,
+            workspace=workspace_norm,
+            limit=180,
+            include_deleted=False,
+        )
+    except Exception:
+        rows = []
+    if not rows:
+        return None
+
+    candidates: list[tuple[str, str, str]] = []
+    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
+    for key in ("matched_items", "active_items"):
+        items = tracking.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items[:16]:
+            if not isinstance(item, dict):
+                continue
+            target = str(item.get("target") or "").strip()
+            if not target:
+                continue
+            source = _normalize_track_source(str(item.get("source") or "auto"))
+            candidate_query = str(item.get("query") or "").strip()
+            candidates.append((source, target, candidate_query))
+
+    q_norm = _normalize_match_text(query)
+    best: TrackingTarget | None = None
+    best_score = -1.0
+    for row in rows:
+        if row is None:
+            continue
+        if str(getattr(row, "status", "") or "").strip().lower() == "deleted":
+            continue
+        if getattr(row, "deleted_at", None) is not None:
+            continue
+        row_source = str(getattr(row, "source_type", "web") or "web").strip().lower() or "web"
+        row_target = (str(getattr(row, "display_name", "") or "") or str(getattr(row, "source_key", "") or "")).strip()
+        row_cfg = _json_from_text(getattr(row, "config_json", "") or "{}")
+        row_query = str(row_cfg.get("query") or "").strip()
+        row_target_norm = _normalize_match_text(row_target)
+        row_query_norm = _normalize_match_text(row_query)
+
+        score = 0.0
+        if str(getattr(row, "status", "") or "").strip().lower() == "active":
+            score += 1.2
+
+        for source, target, cand_query in candidates:
+            target_norm = _normalize_match_text(target)
+            cand_query_norm = _normalize_match_text(cand_query)
+            if source and source == row_source:
+                score += 0.7
+            if target_norm and row_target_norm and (target_norm in row_target_norm or row_target_norm in target_norm):
+                score += 3.2
+            if cand_query_norm and row_query_norm and (cand_query_norm in row_query_norm or row_query_norm in cand_query_norm):
+                score += 1.8
+
+        if q_norm:
+            if row_target_norm and (q_norm in row_target_norm or row_target_norm in q_norm):
+                score += 2.0
+            if row_query_norm and (q_norm in row_query_norm or row_query_norm in q_norm):
+                score += 1.4
+
+        if score > best_score:
+            best_score = score
+            best = row
+
+    if best is not None and best_score > 0:
+        return best
+    return rows[0] if rows else None
+
+
+def _decide_tracking_insight_write(
+    *,
+    service: LLMService,
+    provider: str,
+    query: str,
+    answer: str,
+    tracking_snapshot: dict[str, Any] | None,
+    file_memory_lines: list[str],
+) -> dict[str, Any]:
+    if provider == "rule_based" or not service.is_configured():
+        return {"should_write": False, "reason": "llm_not_configured", "confidence": 0.0}
+    question = (query or "").strip()
+    reply = (answer or "").strip()
+    if not question or not reply:
+        return {"should_write": False, "reason": "empty_turn", "confidence": 0.0}
+
+    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
+    active_items = tracking.get("active_items") if isinstance(tracking.get("active_items"), list) else []
+    matched_items = tracking.get("matched_items") if isinstance(tracking.get("matched_items"), list) else []
+    active_hint = "; ".join(str(it.get("target") or "").strip() for it in active_items[:8] if isinstance(it, dict) and str(it.get("target") or "").strip())
+    matched_hint = "; ".join(str(it.get("target") or "").strip() for it in matched_items[:6] if isinstance(it, dict) and str(it.get("target") or "").strip())
+    file_hint = "\n".join(file_memory_lines[:6]) if file_memory_lines else ""
+
+    system_prompt = (
+        "You are Aelin planner for long-term tracking memory write.\\n"
+        "Decide autonomously whether this finished answer should be persisted as a tracking insight.\\n"
+        "Return strict JSON only with keys: should_write, confidence, title, markdown, reason.\\n"
+        "Rules: should_write=true only when output adds stable insight helpful for future discussion; markdown should be concise, structured, and factual.\\n"
+        "confidence in [0,1]."
+    )
+    user_prompt = (
+        f"question: {question[:500]}\\n\\n"
+        + f"answer: {reply[:1800]}\\n\\n"
+        + f"matched_tracking: {matched_hint or 'none'}\\n"
+        + f"active_tracking: {active_hint or 'none'}\\n"
+        + (f"file_memory_hits:\\n{file_hint}\\n" if file_hint else "")
+    )
+    try:
+        raw = service._chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=320,
+            stream=False,
+        )
+    except Exception as exc:
+        return {"should_write": False, "reason": f"planner_error:{str(exc)[:80]}", "confidence": 0.0}
+
+    parsed = _extract_first_json_object(str(raw or ""))
+    should_write = bool(parsed.get("should_write"))
+    title = str(parsed.get("title") or "").strip()[:120]
+    markdown = str(parsed.get("markdown") or "").strip()[:3200]
+    reason = str(parsed.get("reason") or "").strip()[:200]
+    try:
+        confidence = max(0.0, min(1.0, float(parsed.get("confidence") or 0.0)))
+    except Exception:
+        confidence = 0.0
+
+    if should_write and not markdown:
+        base_title = title or "追踪洞察"
+        markdown = f"### {base_title}\\n\\n{reply[:1200]}"
+
+    if should_write and not title:
+        title = "追踪洞察"
+
+    if (not should_write) and confidence >= 0.85 and markdown:
+        # High-confidence insights are kept even if model forgot the boolean flag.
+        should_write = True
+
+    return {
+        "should_write": should_write,
+        "confidence": confidence,
+        "title": title,
+        "markdown": markdown,
+        "reason": reason or ("planner_declined" if not should_write else ""),
+    }
+
+
+def _maybe_write_tracking_insight(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: str,
+    query: str,
+    answer: str,
+    service: LLMService,
+    provider: str,
+    tracking_snapshot: dict[str, Any] | None,
+    file_memory_lines: list[str],
+) -> dict[str, Any]:
+    decision = _decide_tracking_insight_write(
+        service=service,
+        provider=provider,
+        query=query,
+        answer=answer,
+        tracking_snapshot=tracking_snapshot,
+        file_memory_lines=file_memory_lines,
+    )
+    if not bool(decision.get("should_write")):
+        return {"written": False, "reason": str(decision.get("reason") or "planner_skip")}
+
+    target = _pick_tracking_target_for_insight(
+        db,
+        user_id=user_id,
+        workspace=workspace,
+        query=query,
+        tracking_snapshot=tracking_snapshot,
+    )
+    if target is None:
+        return {"written": False, "reason": "no_tracking_target"}
+
+    out_path = _tracking_file_memory.append_insight(
+        target=target,
+        title=str(decision.get("title") or "追踪洞察"),
+        markdown=str(decision.get("markdown") or "").strip(),
+        reason=str(decision.get("reason") or ""),
+        confidence=float(decision.get("confidence") or 0.0),
+        source_query=query,
+    )
+    if out_path is None:
+        return {"written": False, "reason": "file_write_failed"}
+
+    try:
+        _memory.add_note(
+            db,
+            user_id,
+            f"[tracking-insight] {str(decision.get('title') or '追踪洞察')}\\npath: {str(out_path)}",
+            kind="tracking_insight",
+            source=f"tracking:insight:{int(getattr(target, 'id', 0) or 0)}",
+        )
+    except Exception:
+        pass
+
+    return {
+        "written": True,
+        "target_id": int(getattr(target, "id", 0) or 0),
+        "target": str(getattr(target, "display_name", "") or ""),
+        "path": str(out_path),
+        "confidence": float(decision.get("confidence") or 0.0),
+        "reason": str(decision.get("reason") or ""),
+    }
+
+
 def _aelin_chat_impl(
     payload: AelinChatRequest,
     db: Session,
@@ -3944,11 +4252,78 @@ def _aelin_chat_impl(
 
     max_citations = max(1, min(20, int(payload.max_citations or 6)))
     citations = _dedupe_citations([*local_citations, *web_citations], limit=max_citations)
+
+    file_memory_items_raw = (
+        tracking_snapshot.get("matched_file_items")
+        if isinstance(tracking_snapshot, dict) and isinstance(tracking_snapshot.get("matched_file_items"), list)
+        else []
+    )
+    file_memory_items: list[dict[str, Any]] = []
+    for row in file_memory_items_raw[:12]:
+        if not isinstance(row, dict):
+            continue
+        file_memory_items.append(
+            {
+                "path": str(row.get("path") or "").strip()[:400],
+                "title": str(row.get("title") or "").strip()[:220],
+                "preview": str(row.get("preview") or "").strip()[:520],
+                "score": float(row.get("score") or 0.0),
+                "updated_at": str(row.get("updated_at") or "").strip()[:80],
+                "source": str(row.get("source") or "").strip()[:32],
+                "kind": str(row.get("kind") or "").strip()[:24],
+                "target": str(row.get("target") or "").strip()[:255],
+            }
+        )
+
+    if (not file_memory_items) and need_local_search and payload.query.strip():
+        try:
+            fallback_hits = _tracking_file_memory.search(
+                user_id=current_user.id,
+                workspace=payload.workspace,
+                query=payload.query,
+                limit=8,
+            )
+            file_memory_items = [
+                {
+                    "path": str(item.path),
+                    "title": str(item.title),
+                    "preview": str(item.preview),
+                    "score": float(item.score),
+                    "updated_at": str(item.updated_at),
+                    "source": str(item.source),
+                    "kind": str(item.kind),
+                    "target": str(item.target),
+                }
+                for item in fallback_hits[:8]
+            ]
+        except Exception:
+            file_memory_items = []
+
+    file_memory_lines: list[str] = []
+    for item in file_memory_items[:6]:
+        title = str(item.get("title") or item.get("target") or "memory").strip()
+        preview = re.sub(r"\s+", " ", str(item.get("preview") or "")).strip()[:160]
+        source = str(item.get("source") or "tracking").strip() or "tracking"
+        kind = str(item.get("kind") or "memory").strip() or "memory"
+        path = str(item.get("path") or "").strip()[:220]
+        line = f"- [{source}/{kind}] {title}"
+        if preview:
+            line += f" | {preview}"
+        if path:
+            line += f" | path={path}"
+        file_memory_lines.append(line)
+
     add_trace(
         "message_hub",
         status="completed",
-        detail=f"merged local={len(local_citations)} web={len(web_citations)}",
+        detail=f"merged local={len(local_citations)} web={len(web_citations)} file={len(file_memory_items)}",
         count=len(citations),
+    )
+    add_trace(
+        "file_memory_search",
+        status="completed" if file_memory_items else "skipped",
+        detail="file memory hits merged" if file_memory_items else "no file memory hits",
+        count=len(file_memory_items),
     )
 
     pin_lines = [
@@ -3975,6 +4350,13 @@ def _aelin_chat_impl(
                 image_count=len(images),
             )
             generation_detail = "rule_based with local evidence"
+        elif file_memory_lines:
+            answer = (
+                f"我先从你的长期追踪记忆里查到了与“{payload.query.strip()}”相关的线索：\n"
+                + "\n".join(file_memory_lines[:4])
+                + "\n\n如果你需要，我可以继续结合联网结果补全并持续跟踪。"
+            )
+            generation_detail = "rule_based with file memory"
         elif web_evidence_lines:
             answer = _compose_web_first_answer(payload.query, web_results_for_answer)
             generation_detail = "rule_based with web evidence"
@@ -4013,7 +4395,8 @@ def _aelin_chat_impl(
         retrieval_note = (
             f"planner={planning_reason}; "
             f"local={'on' if need_local_search else 'off'}; "
-            f"web={'on' if need_web_search else 'off'}"
+            f"web={'on' if need_web_search else 'off'}; "
+            f"file_mem={len(file_memory_items)}"
         )
         user_msg = (
             f"用户问题: {payload.query.strip()}\n\n"
@@ -4038,6 +4421,7 @@ def _aelin_chat_impl(
                 if images else ""
             )
             + (f"本地证据:\n{evidence_block}\n\n" if evidence_block else "")
+            + (f"文件记忆命中:\n{chr(10).join(file_memory_lines[:6])}\n\n" if file_memory_lines else "")
             + (f"联网证据:\n{chr(10).join(web_evidence_lines[:8])}\n" if web_evidence_lines else "")
         )
         llm_messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
@@ -4511,25 +4895,76 @@ def _aelin_chat_impl(
             )
         except Exception:
             pass
+
+    insight_write_result: dict[str, Any] = {"written": False, "reason": "not_evaluated"}
     try:
+        insight_write_result = _maybe_write_tracking_insight(
+            db,
+            user_id=current_user.id,
+            workspace=payload.workspace,
+            query=payload.query,
+            answer=answer,
+            service=service,
+            provider=provider,
+            tracking_snapshot=tracking_snapshot,
+            file_memory_lines=file_memory_lines,
+        )
+        if bool(insight_write_result.get("written")):
+            detail = (
+                f"target={str(insight_write_result.get('target') or '')[:80]}; "
+                f"conf={float(insight_write_result.get('confidence') or 0.0):.2f}"
+            )
+            add_trace("insight_write", status="completed", detail=detail, count=1)
+        else:
+            add_trace(
+                "insight_write",
+                status="skipped",
+                detail=str(insight_write_result.get("reason") or "planner_skip")[:160],
+                count=0,
+            )
+    except Exception as exc:
+        add_trace("insight_write", status="failed", detail=f"{str(exc)[:160]}", count=0)
+
+    try:
+        should_commit = False
         if payload.use_memory and answer:
-            db.commit()
+            should_commit = True
         elif web_citations or trace_web_citations:
+            should_commit = True
+        elif bool(insight_write_result.get("written")):
+            should_commit = True
+        if should_commit:
             db.commit()
     except Exception:
         db.rollback()
 
     final_memory_summary = str(active_bundle.get("summary") or memory_summary or "")
+    actions = _build_actions(
+        payload.query,
+        citations,
+        has_todos=bool(todo_titles),
+        track_suggestion=track_suggestion if isinstance(track_suggestion, dict) else None,
+    )
+    if bool(insight_write_result.get("written")):
+        target_id = int(insight_write_result.get("target_id") or 0)
+        actions.insert(
+            0,
+            AelinAction(
+                kind="open_tracking",
+                title="已沉淀长期洞察",
+                detail=str(insight_write_result.get("path") or "").strip()[:220],
+                payload={
+                    "target_id": str(target_id) if target_id > 0 else "",
+                    "workspace": payload.workspace,
+                },
+            ),
+        )
+
     response = AelinChatResponse(
         answer=answer,
         expression=expression,
         citations=citations,
-        actions=_build_actions(
-            payload.query,
-            citations,
-            has_todos=bool(todo_titles),
-            track_suggestion=track_suggestion if isinstance(track_suggestion, dict) else None,
-        ),
+        actions=actions,
         tool_trace=tool_trace[:64],
         memory_summary=final_memory_summary,
         generated_at=datetime.now(timezone.utc),
@@ -5679,6 +6114,10 @@ def confirm_track_subscription(
         ],
         generated_at=datetime.now(timezone.utc),
     )
+
+
+
+
 
 
 
