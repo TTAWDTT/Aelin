@@ -382,6 +382,25 @@ export type AelinTrackingSnapshotListResponse = {
   generated_at: string;
 };
 
+export type AelinTrackingFileMemoryItem = {
+  path: string;
+  title: string;
+  preview: string;
+  score: number;
+  updated_at: string;
+  canonical_id: string;
+  target: string;
+  source: string;
+  kind: string;
+};
+
+export type AelinTrackingFileMemorySearchResponse = {
+  workspace: string;
+  total: number;
+  items: AelinTrackingFileMemoryItem[];
+  generated_at: string;
+};
+
 export type AgentCardLayoutItem = {
   contact_id: number;
   display_name: string;
@@ -1129,6 +1148,27 @@ export async function listAelinTrackingSnapshots(
   );
 }
 
+export async function listAelinTrackingFileMemory(options?: {
+  workspace?: string;
+  query?: string;
+  limit?: number;
+  source?: string;
+}): Promise<AelinTrackingFileMemorySearchResponse> {
+  const qs = new URLSearchParams();
+  const workspace = String(options?.workspace || "default").trim() || "default";
+  const query = String(options?.query || "").trim();
+  const source = String(options?.source || "").trim();
+  const safeLimit = Number.isFinite(options?.limit || 0)
+    ? Math.max(1, Math.min(40, Math.floor(Number(options?.limit || 12))))
+    : 12;
+  qs.set("workspace", workspace);
+  qs.set("limit", String(safeLimit));
+  if (query) qs.set("query", query);
+  if (source) qs.set("source", source);
+  return await fetchJson<AelinTrackingFileMemorySearchResponse>(`/api/v1/aelin/tracking/file-memory/search?${qs.toString()}`);
+}
+
+
 export async function getAelinNotifications(limit = 24): Promise<AelinNotificationResponse> {
   const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(100, Math.floor(limit))) : 24;
   return await fetchJson<AelinNotificationResponse>(`/api/v1/aelin/notifications?limit=${safeLimit}`);
@@ -1310,3 +1350,5 @@ export async function deleteXAuthCookies(): Promise<{ cookies_configured: boolea
     method: "DELETE",
   });
 }
+
+

@@ -66,6 +66,7 @@ import {
   AelinTrackingChangeItem,
   AelinTrackingItem,
   AelinTrackingSnapshotItem,
+  AelinTrackingFileMemoryItem,
   AelinToolStep,
   MessageDetail,
   ackAelinTrackingChange,
@@ -85,6 +86,7 @@ import {
   getMessage,
   listAelinTrackingChanges,
   listAelinTrackingSnapshots,
+  listAelinTrackingFileMemory,
   optimizeAelinDeviceProcesses,
   runAelinDeviceProcessAction,
   runAelinTrackingTarget,
@@ -1466,6 +1468,7 @@ export default function Aelin({
   const [trackingActiveTargetId, setTrackingActiveTargetId] = React.useState<number | null>(null);
   const [trackingChanges, setTrackingChanges] = React.useState<AelinTrackingChangeItem[]>([]);
   const [trackingSnapshots, setTrackingSnapshots] = React.useState<AelinTrackingSnapshotItem[]>([]);
+  const [trackingFileMemory, setTrackingFileMemory] = React.useState<AelinTrackingFileMemoryItem[]>([]);
   const [trackingDetailBusy, setTrackingDetailBusy] = React.useState(false);
   const [trackingDetailError, setTrackingDetailError] = React.useState("");
   const [trackingMutationBusy, setTrackingMutationBusy] = React.useState<number | null>(null);
@@ -1728,14 +1731,19 @@ export default function Aelin({
   const refreshTrackingDetail = React.useCallback(
     async (targetId: number, options?: { silent?: boolean }) => {
       const safeTargetId = Number(targetId || 0);
-      if (!safeTargetId) return;
+      if (!safeTargetId) {
+        setTrackingFileMemory([]);
+        return;
+      }
       if (!options?.silent) {
         setTrackingDetailBusy(true);
       }
       setTrackingDetailError("");
       try {
         const acked = trackingAckFilter === "all" ? undefined : trackingAckFilter === "acked";
-        const [changesRet, snapshotsRet] = await Promise.all([
+        const targetMeta = trackingItems.find((item) => Number(item.target_id || 0) === safeTargetId) || null;
+        const memoryQuery = String(targetMeta?.query || targetMeta?.target || "").trim();
+        const [changesRet, snapshotsRet, fileMemoryRet] = await Promise.all([
           listAelinTrackingChanges(safeTargetId, {
             limit: 120,
             severity: trackingChangeSeverityFilter !== "all" ? trackingChangeSeverityFilter : undefined,
@@ -1743,18 +1751,26 @@ export default function Aelin({
             acked,
           }),
           listAelinTrackingSnapshots(safeTargetId, 40),
+          listAelinTrackingFileMemory({
+            workspace: workspaceScope,
+            query: memoryQuery,
+            source: String(targetMeta?.source || "").trim() || undefined,
+            limit: 12,
+          }),
         ]);
         setTrackingChanges(changesRet.items || []);
         setTrackingSnapshots(snapshotsRet.items || []);
+        setTrackingFileMemory(fileMemoryRet.items || []);
       } catch (error) {
         setTrackingDetailError(error instanceof Error ? error.message : "追踪详情加载失败");
+        setTrackingFileMemory([]);
       } finally {
         if (!options?.silent) {
           setTrackingDetailBusy(false);
         }
       }
     },
-    [trackingAckFilter, trackingChangeSeverityFilter, trackingChangeTypeFilter]
+    [trackingAckFilter, trackingChangeSeverityFilter, trackingChangeTypeFilter, trackingItems, workspaceScope]
   );
 
   const patchTrackingTarget = React.useCallback(
@@ -4140,6 +4156,52 @@ export default function Aelin({
                                 </Typography>
                               )}
                             </Paper>
+                            <Paper variant="outlined" sx={{ p: 0.75, borderRadius: 1.3 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                                文件记忆命中（{trackingFileMemory.length}）
+                              </Typography>
+                              {trackingFileMemory.length ? (
+                                <Stack spacing={0.55} sx={{ mt: 0.55 }}>
+                                  {trackingFileMemory.slice(0, 10).map((item, idx) => (
+                                    <Paper key={`tracking-file-memory-${item.canonical_id || item.path || idx}`} variant="outlined" sx={{ p: 0.55, borderRadius: 1.1 }}>
+                                      <Stack spacing={0.35}>
+                                        <Stack direction="row" spacing={0.45} alignItems="center" flexWrap="wrap" useFlexGap>
+                                          <Chip size="small" variant="outlined" label={item.kind || "memory"} />
+                                          {item.source ? <Chip size="small" variant="outlined" label={item.source} /> : null}
+                                          <Typography variant="caption" color="text.secondary">
+                                            score {Number(item.score || 0).toFixed(2)}
+                                          </Typography>
+                                        </Stack>
+                                        <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
+                                          {item.title || item.target || "memory item"}
+                                        </Typography>
+                                        {item.preview ? (
+                                          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.45 }}>
+                                            {item.preview}
+                                          </Typography>
+                                        ) : null}
+                                        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={0.6}>
+                                          <Typography
+                                            variant="caption"
+                                            color="text.secondary"
+                                            sx={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
+                                          >
+                                            {item.path}
+                                          </Typography>
+                                          <Button size="small" variant="text" onClick={() => void copyText(item.path)}>
+                                            复制路径
+                                          </Button>
+                                        </Stack>
+                                      </Stack>
+                                    </Paper>
+                                  ))}
+                                </Stack>
+                              ) : (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.6, display: "block" }}>
+                                  当前未命中文件化追踪记忆，可在抓取后再查看。
+                                </Typography>
+                              )}
+                            </Paper>
                           </Stack>
                         )}
                       </>
@@ -4840,6 +4902,10 @@ export default function Aelin({
     </Box>
   );
 }
+
+
+
+
 
 
 
