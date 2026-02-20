@@ -439,6 +439,25 @@ class AelinTrackingSnapshotListResponse(BaseModel):
     generated_at: datetime
 
 
+
+class AelinTrackingFileMemoryItem(BaseModel):
+    path: str
+    title: str = ""
+    preview: str = ""
+    score: float = 0.0
+    updated_at: str = ""
+    canonical_id: str = ""
+    target: str = ""
+    source: str = ""
+    kind: str = ""
+
+
+class AelinTrackingFileMemorySearchResponse(BaseModel):
+    workspace: str = "default"
+    total: int = 0
+    items: list[AelinTrackingFileMemoryItem] = Field(default_factory=list)
+    generated_at: datetime
+
 class AelinDeviceProcessItem(BaseModel):
     pid: int
     name: str
@@ -682,4 +701,5 @@ class SyncJobStatusResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+
 

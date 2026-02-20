@@ -63,6 +63,8 @@ from app.schemas import (
     AelinTrackingRunResponse,
     AelinTrackingSnapshotItem,
     AelinTrackingSnapshotListResponse,
+    AelinTrackingFileMemoryItem,
+    AelinTrackingFileMemorySearchResponse,
     AelinTrackingTargetUpdateRequest,
     AelinTodoItem,
     AgentConfigOut,
@@ -72,6 +74,7 @@ from app.schemas import (
 from app.services.agent_memory import AgentMemoryService
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
+from app.services.openviking_bridge import tracking_file_memory_bridge
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
 from app.services.web_search import WebSearchResult, WebSearchService
@@ -88,6 +91,7 @@ _memory = AgentMemoryService()
 _summarizer = RuleBasedSummarizer()
 _web_search = WebSearchService()
 _tracking = tracking_autonomy_service
+_tracking_file_memory = tracking_file_memory_bridge
 
 _TRACKABLE_SOURCES = {
     "auto",
@@ -1991,11 +1995,11 @@ def _normalize_match_text(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").strip().lower())
 
 
-def _build_planner_tracking_snapshot(db: Session, *, user_id: int, query: str) -> dict[str, Any]:
+def _build_planner_tracking_snapshot(db: Session, *, user_id: int, workspace: str, query: str) -> dict[str, Any]:
     try:
         events = _load_tracking_events(db, user_id=user_id, limit=80)
     except Exception:
-        return {"active_items": [], "matched_items": [], "active_count": 0, "matched_count": 0}
+        events = {}
 
     active_items = sorted(
         [it for it in (events or {}).values() if str(it.get("target") or "").strip()],
@@ -2019,11 +2023,34 @@ def _build_planner_tracking_snapshot(db: Session, *, user_id: int, query: str) -
                 matched_items.append(it)
             if len(matched_items) >= 5:
                 break
+
+    memory_hits = _tracking_file_memory.search(
+        user_id=user_id,
+        workspace=workspace,
+        query=query,
+        limit=8,
+    )
+    file_items = [
+        {
+            "path": item.path,
+            "title": item.title,
+            "preview": item.preview,
+            "score": float(item.score),
+            "updated_at": item.updated_at,
+            "canonical_id": item.canonical_id,
+            "target": item.target,
+            "source": item.source,
+            "kind": item.kind,
+        }
+        for item in memory_hits[:8]
+    ]
     return {
         "active_items": active_items[:8],
         "matched_items": matched_items[:5],
         "active_count": len(active_items),
-        "matched_count": len(matched_items),
+        "matched_count": len(matched_items) + len(file_items),
+        "matched_file_items": file_items[:5],
+        "matched_file_count": len(file_items),
     }
 
 
@@ -3543,7 +3570,7 @@ def _aelin_chat_impl(
     images = _normalize_images(payload.images)
     history_turns = _normalize_history(payload.history)
 
-    tracking_snapshot = _build_planner_tracking_snapshot(db, user_id=current_user.id, query=payload.query)
+    tracking_snapshot = _build_planner_tracking_snapshot(db, user_id=current_user.id, workspace=payload.workspace, query=payload.query)
     intent_contract = _build_intent_contract(
         query=payload.query,
         service=service,
@@ -5417,6 +5444,43 @@ def list_tracking_snapshots(
         for row in rows
     ]
     return AelinTrackingSnapshotListResponse(total=len(items), items=items, generated_at=datetime.now(timezone.utc))
+@router.get("/tracking/file-memory/search", response_model=AelinTrackingFileMemorySearchResponse)
+def search_tracking_file_memory(
+    workspace: str = Query(default="default", min_length=1, max_length=64),
+    query: str = Query(default="", max_length=500),
+    limit: int = Query(default=12, ge=1, le=40),
+    source: str = Query(default="", max_length=32),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    _tracking.ensure_legacy_migration(db, user_id=current_user.id, workspace=workspace)
+    items_raw = _tracking_file_memory.search(
+        user_id=current_user.id,
+        workspace=workspace,
+        query=query,
+        limit=limit,
+        source=(source or "").strip().lower() or None,
+    )
+    items = [
+        AelinTrackingFileMemoryItem(
+            path=item.path,
+            title=item.title,
+            preview=item.preview,
+            score=float(item.score),
+            updated_at=item.updated_at,
+            canonical_id=item.canonical_id,
+            target=item.target,
+            source=item.source,
+            kind=item.kind,
+        )
+        for item in items_raw
+    ]
+    return AelinTrackingFileMemorySearchResponse(
+        workspace=_normalize_workspace(workspace),
+        total=len(items),
+        items=items,
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 def _target_to_tracking_item(row: TrackingTarget, *, unread_changes: int) -> AelinTrackingItem:
@@ -5615,4 +5679,7 @@ def confirm_track_subscription(
         ],
         generated_at=datetime.now(timezone.utc),
     )
+
+
+
 
