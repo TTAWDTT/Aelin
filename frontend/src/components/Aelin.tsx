@@ -12,26 +12,15 @@ import {
   AelinMemoryLayerItem,
   AelinNotificationItem,
   AelinImageInput,
-  AelinTrackingChangeItem,
-  AelinTrackingItem,
-  AelinTrackingSnapshotItem,
-  AelinTrackingFileMemoryItem,
   AelinToolStep,
   MessageDetail,
-  ackAelinTrackingChange,
   aelinChat,
   aelinChatStream,
   aelinConfirmTrack,
-  getAelinTracking,
   getAelinNotifications,
   getAelinProactivePoll,
   getAelinContext,
   getMessage,
-  listAelinTrackingChanges,
-  listAelinTrackingSnapshots,
-  listAelinTrackingFileMemory,
-  runAelinTrackingTarget,
-  updateAelinTrackingTarget,
 } from "../api";
 import { useConfirmDialog } from "../hooks/useConfirmDialog";
 import { useToast } from "../contexts/ToastContext";
@@ -73,7 +62,6 @@ import type {
   ChatSession,
   HandoffFXState,
   PendingImage,
-  TrackingAckFilter,
   TrackingSheetState,
 } from "./aelin/types";
 import { MessageRow } from "./aelin/conversation/MessageRow";
@@ -82,6 +70,7 @@ import { AelinHeader } from "./aelin/layout/AelinHeader";
 import { AelinHandoffBanner } from "./aelin/layout/AelinHandoffBanner";
 import { useAelinLlmConfig } from "./aelin/hooks/useAelinLlmConfig";
 import { useAelinDeviceCenter } from "./aelin/hooks/useAelinDeviceCenter";
+import { useAelinTrackingCenter } from "./aelin/hooks/useAelinTrackingCenter";
 import {
   AelinCitationDrawers,
   type CitationDrawerState,
@@ -118,6 +107,10 @@ export default function Aelin({
   const { showToast } = useToast();
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const boot = React.useMemo(() => loadPersistedSessions(), []);
+  const workspaceScope = React.useMemo(
+    () => (workspace || "default").trim() || "default",
+    [workspace],
+  );
   const [input, setInput] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [storyBusy, setStoryBusy] = React.useState(false);
@@ -130,41 +123,42 @@ export default function Aelin({
     React.useState<AelinContextResponse | null>(null);
   const [trackingSheet, setTrackingSheet] =
     React.useState<TrackingSheetState | null>(null);
-  const [trackingDialogOpen, setTrackingDialogOpen] = React.useState(false);
-  const [trackingItems, setTrackingItems] = React.useState<AelinTrackingItem[]>(
-    [],
-  );
-  const [trackingBusy, setTrackingBusy] = React.useState(false);
-  const [trackingError, setTrackingError] = React.useState("");
-  const [trackingStatusFilter, setTrackingStatusFilter] = React.useState("all");
-  const [trackingSourceFilter, setTrackingSourceFilter] = React.useState("all");
-  const [trackingKeyword, setTrackingKeyword] = React.useState("");
-  const [trackingActiveTargetId, setTrackingActiveTargetId] = React.useState<
-    number | null
-  >(null);
-  const [trackingChanges, setTrackingChanges] = React.useState<
-    AelinTrackingChangeItem[]
-  >([]);
-  const [trackingSnapshots, setTrackingSnapshots] = React.useState<
-    AelinTrackingSnapshotItem[]
-  >([]);
-  const [trackingFileMemory, setTrackingFileMemory] = React.useState<
-    AelinTrackingFileMemoryItem[]
-  >([]);
-  const [trackingDetailBusy, setTrackingDetailBusy] = React.useState(false);
-  const [trackingDetailError, setTrackingDetailError] = React.useState("");
-  const [trackingMutationBusy, setTrackingMutationBusy] = React.useState<
-    number | null
-  >(null);
-  const [trackingAckBusy, setTrackingAckBusy] = React.useState<number | null>(
-    null,
-  );
-  const [trackingChangeSeverityFilter, setTrackingChangeSeverityFilter] =
-    React.useState("all");
-  const [trackingChangeTypeFilter, setTrackingChangeTypeFilter] =
-    React.useState("all");
-  const [trackingAckFilter, setTrackingAckFilter] =
-    React.useState<TrackingAckFilter>("unacked");
+  const {
+    trackingDialogOpen,
+    setTrackingDialogOpen,
+    trackingItems,
+    trackingBusy,
+    trackingError,
+    trackingStatusFilter,
+    setTrackingStatusFilter,
+    trackingSourceFilter,
+    setTrackingSourceFilter,
+    trackingKeyword,
+    setTrackingKeyword,
+    trackingActiveTargetId,
+    setTrackingActiveTargetId,
+    trackingChanges,
+    trackingSnapshots,
+    trackingFileMemory,
+    trackingDetailBusy,
+    trackingDetailError,
+    trackingMutationBusy,
+    trackingAckBusy,
+    trackingChangeSeverityFilter,
+    setTrackingChangeSeverityFilter,
+    trackingChangeTypeFilter,
+    setTrackingChangeTypeFilter,
+    trackingAckFilter,
+    setTrackingAckFilter,
+    filteredTrackingItems,
+    trackingUnreadCount,
+    activeTrackingItem,
+    refreshTracking,
+    refreshTrackingDetail,
+    patchTrackingTarget,
+    runTrackingTargetNow,
+    ackTrackingChange,
+  } = useAelinTrackingCenter({ workspaceScope, showToast });
   const [memoryDialogOpen, setMemoryDialogOpen] = React.useState(false);
   const [memoryLayerTab, setMemoryLayerTab] = React.useState<
     "facts" | "preferences" | "in_progress"
@@ -262,10 +256,6 @@ export default function Aelin({
     [sessions],
   );
   const groupedMessages = useGroupedMessages(messages);
-  const workspaceScope = React.useMemo(
-    () => (workspace || "default").trim() || "default",
-    [workspace],
-  );
   const nativeMobileShell = React.useMemo(() => isNativeMobileShell(), []);
   const compactMode = React.useMemo(() => {
     if (embedded) return false;
@@ -331,49 +321,6 @@ export default function Aelin({
       ),
     [allNotifications],
   );
-  const filteredTrackingItems = React.useMemo(() => {
-    const kw = trackingKeyword.trim().toLowerCase();
-    return trackingItems.filter((item) => {
-      if (
-        trackingStatusFilter !== "all" &&
-        String(item.status || "").toLowerCase() !== trackingStatusFilter
-      )
-        return false;
-      if (
-        trackingSourceFilter !== "all" &&
-        String(item.source || "").toLowerCase() !== trackingSourceFilter
-      )
-        return false;
-      if (!kw) return true;
-      const blob =
-        `${item.target} ${item.query} ${item.source} ${item.status}`.toLowerCase();
-      return blob.includes(kw);
-    });
-  }, [
-    trackingItems,
-    trackingStatusFilter,
-    trackingSourceFilter,
-    trackingKeyword,
-  ]);
-  const trackingUnreadCount = React.useMemo(
-    () =>
-      trackingItems.reduce(
-        (sum, item) => sum + Math.max(0, Number(item.unread_changes || 0)),
-        0,
-      ),
-    [trackingItems],
-  );
-  const activeTrackingItem = React.useMemo(() => {
-    if (!trackingItems.length) return null;
-    if (trackingActiveTargetId !== null) {
-      const matched = trackingItems.find(
-        (item) => Number(item.target_id || 0) === trackingActiveTargetId,
-      );
-      if (matched) return matched;
-    }
-    return trackingItems[0] || null;
-  }, [trackingActiveTargetId, trackingItems]);
-
   const playHandoffFX = React.useCallback(
     (title: string, detail: string, holdMs = 900) => {
       setHandoffFX({ title, detail });
@@ -483,190 +430,6 @@ export default function Aelin({
     }
   }, [workspaceScope]);
 
-  const refreshTracking = React.useCallback(async () => {
-    setTrackingBusy(true);
-    setTrackingError("");
-    try {
-      const ret = await getAelinTracking({
-        limit: 120,
-        workspace: workspaceScope,
-        status:
-          trackingStatusFilter !== "all" ? trackingStatusFilter : undefined,
-      });
-      const items = ret.items || [];
-      setTrackingItems(items);
-      setTrackingActiveTargetId((prev) => {
-        if (
-          prev !== null &&
-          items.some((item) => Number(item.target_id || 0) === prev)
-        )
-          return prev;
-        const first = items.find((item) => Number(item.target_id || 0) > 0);
-        return first ? Number(first.target_id || 0) : null;
-      });
-    } catch (error) {
-      setTrackingError(
-        error instanceof Error ? error.message : "跟踪列表加载失败",
-      );
-    } finally {
-      setTrackingBusy(false);
-    }
-  }, [trackingStatusFilter, workspaceScope]);
-
-  const refreshTrackingDetail = React.useCallback(
-    async (targetId: number, options?: { silent?: boolean }) => {
-      const safeTargetId = Number(targetId || 0);
-      if (!safeTargetId) {
-        setTrackingFileMemory([]);
-        return;
-      }
-      if (!options?.silent) {
-        setTrackingDetailBusy(true);
-      }
-      setTrackingDetailError("");
-      try {
-        const acked =
-          trackingAckFilter === "all"
-            ? undefined
-            : trackingAckFilter === "acked";
-        const targetMeta =
-          trackingItems.find(
-            (item) => Number(item.target_id || 0) === safeTargetId,
-          ) || null;
-        const memoryQuery = String(
-          targetMeta?.query || targetMeta?.target || "",
-        ).trim();
-        const [changesRet, snapshotsRet, fileMemoryRet] = await Promise.all([
-          listAelinTrackingChanges(safeTargetId, {
-            limit: 120,
-            severity:
-              trackingChangeSeverityFilter !== "all"
-                ? trackingChangeSeverityFilter
-                : undefined,
-            change_type:
-              trackingChangeTypeFilter !== "all"
-                ? trackingChangeTypeFilter
-                : undefined,
-            acked,
-          }),
-          listAelinTrackingSnapshots(safeTargetId, 40),
-          listAelinTrackingFileMemory({
-            workspace: workspaceScope,
-            query: memoryQuery,
-            source: String(targetMeta?.source || "").trim() || undefined,
-            limit: 12,
-          }),
-        ]);
-        setTrackingChanges(changesRet.items || []);
-        setTrackingSnapshots(snapshotsRet.items || []);
-        setTrackingFileMemory(fileMemoryRet.items || []);
-      } catch (error) {
-        setTrackingDetailError(
-          error instanceof Error ? error.message : "追踪详情加载失败",
-        );
-        setTrackingFileMemory([]);
-      } finally {
-        if (!options?.silent) {
-          setTrackingDetailBusy(false);
-        }
-      }
-    },
-    [
-      trackingAckFilter,
-      trackingChangeSeverityFilter,
-      trackingChangeTypeFilter,
-      trackingItems,
-      workspaceScope,
-    ],
-  );
-
-  const patchTrackingTarget = React.useCallback(
-    async (
-      targetId: number,
-      payload: {
-        status?: "active" | "paused" | "error" | "deleted";
-        interval_seconds?: number;
-        notify_level?: "all" | "important" | "critical";
-        mute_until?: string | null;
-        description?: string;
-        tags?: string[];
-      },
-      successMessage: string,
-    ) => {
-      const safeTargetId = Number(targetId || 0);
-      if (!safeTargetId) return;
-      setTrackingMutationBusy(safeTargetId);
-      try {
-        await updateAelinTrackingTarget(safeTargetId, payload);
-        showToast(successMessage, "success");
-        await refreshTracking();
-        await refreshTrackingDetail(safeTargetId, { silent: true });
-      } catch (error) {
-        showToast(
-          error instanceof Error ? error.message : "追踪项更新失败",
-          "error",
-        );
-      } finally {
-        setTrackingMutationBusy(null);
-      }
-    },
-    [refreshTracking, refreshTrackingDetail, showToast],
-  );
-
-  const runTrackingTargetNow = React.useCallback(
-    async (targetId: number) => {
-      const safeTargetId = Number(targetId || 0);
-      if (!safeTargetId) return;
-      setTrackingMutationBusy(safeTargetId);
-      try {
-        const ret = await runAelinTrackingTarget(safeTargetId);
-        showToast(
-          ret.message || "已触发立即执行",
-          ret.ok ? "success" : "warning",
-        );
-        await refreshTracking();
-        await refreshTrackingDetail(safeTargetId, { silent: true });
-      } catch (error) {
-        showToast(
-          error instanceof Error ? error.message : "手动执行失败",
-          "error",
-        );
-      } finally {
-        setTrackingMutationBusy(null);
-      }
-    },
-    [refreshTracking, refreshTrackingDetail, showToast],
-  );
-
-  const ackTrackingChange = React.useCallback(
-    async (changeId: number) => {
-      const safeChangeId = Number(changeId || 0);
-      const targetId = Number(activeTrackingItem?.target_id || 0);
-      if (!safeChangeId || !targetId) return;
-      setTrackingAckBusy(safeChangeId);
-      try {
-        await ackAelinTrackingChange(safeChangeId);
-        await Promise.all([
-          refreshTracking(),
-          refreshTrackingDetail(targetId, { silent: true }),
-        ]);
-      } catch (error) {
-        showToast(
-          error instanceof Error ? error.message : "标记已读失败",
-          "error",
-        );
-      } finally {
-        setTrackingAckBusy(null);
-      }
-    },
-    [
-      activeTrackingItem?.target_id,
-      refreshTracking,
-      refreshTrackingDetail,
-      showToast,
-    ],
-  );
-
   const refreshNotifications = React.useCallback(async () => {
     setNotificationBusy(true);
     try {
@@ -755,50 +518,6 @@ export default function Aelin({
   React.useEffect(() => {
     void refreshContext();
   }, [refreshContext]);
-
-  React.useEffect(() => {
-    if (!trackingDialogOpen) return;
-    void refreshTracking();
-  }, [refreshTracking, trackingDialogOpen]);
-
-  React.useEffect(() => {
-    void refreshTracking();
-  }, [refreshTracking]);
-
-  React.useEffect(() => {
-    if (!trackingItems.length) {
-      setTrackingActiveTargetId(null);
-      setTrackingChanges([]);
-      setTrackingSnapshots([]);
-      return;
-    }
-    if (
-      trackingActiveTargetId === null ||
-      !trackingItems.some(
-        (item) => Number(item.target_id || 0) === trackingActiveTargetId,
-      )
-    ) {
-      const first = trackingItems.find(
-        (item) => Number(item.target_id || 0) > 0,
-      );
-      setTrackingActiveTargetId(first ? Number(first.target_id || 0) : null);
-    }
-  }, [trackingActiveTargetId, trackingItems]);
-
-  React.useEffect(() => {
-    if (!trackingDialogOpen) return;
-    const targetId = Number(activeTrackingItem?.target_id || 0);
-    if (!targetId) {
-      setTrackingChanges([]);
-      setTrackingSnapshots([]);
-      return;
-    }
-    void refreshTrackingDetail(targetId);
-  }, [
-    activeTrackingItem?.target_id,
-    refreshTrackingDetail,
-    trackingDialogOpen,
-  ]);
 
   React.useEffect(() => {
     if (!notificationDialogOpen) return;
