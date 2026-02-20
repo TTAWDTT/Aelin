@@ -1,53 +1,9 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { useLocation, useNavigate } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
 import Container from "@mui/material/Container";
-import IconButton from "@mui/material/IconButton";
-import Paper from "@mui/material/Paper";
-import Stack from "@mui/material/Stack";
-import Badge from "@mui/material/Badge";
-import FormControl from "@mui/material/FormControl";
-import Select from "@mui/material/Select";
-import MenuItem from "@mui/material/MenuItem";
-import InputBase from "@mui/material/InputBase";
-import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
-import Dialog from "@mui/material/Dialog";
-import CircularProgress from "@mui/material/CircularProgress";
-import Tooltip from "@mui/material/Tooltip";
-import Alert from "@mui/material/Alert";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
-import Skeleton from "@mui/material/Skeleton";
-import Tabs from "@mui/material/Tabs";
-import Tab from "@mui/material/Tab";
-import AddIcon from "@mui/icons-material/Add";
-import SendIcon from "@mui/icons-material/Send";
-import SettingsIcon from "@mui/icons-material/Settings";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import ImageIcon from "@mui/icons-material/Image";
-import CloseIcon from "@mui/icons-material/Close";
-import TimelineIcon from "@mui/icons-material/Timeline";
-import AutoStoriesIcon from "@mui/icons-material/AutoStories";
-import BoltIcon from "@mui/icons-material/Bolt";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import TravelExploreIcon from "@mui/icons-material/TravelExplore";
-import InsightsIcon from "@mui/icons-material/Insights";
-import TrackChangesIcon from "@mui/icons-material/TrackChanges";
-import NotificationsNoneIcon from "@mui/icons-material/NotificationsNone";
-import LayersIcon from "@mui/icons-material/Layers";
-import FactCheckIcon from "@mui/icons-material/FactCheck";
-import TuneIcon from "@mui/icons-material/Tune";
-import PendingActionsIcon from "@mui/icons-material/PendingActions";
-import ComputerIcon from "@mui/icons-material/Computer";
-import MemoryIcon from "@mui/icons-material/Memory";
-import SpeedIcon from "@mui/icons-material/Speed";
-import PowerSettingsNewIcon from "@mui/icons-material/PowerSettingsNew";
 import { alpha, useTheme } from "@mui/material/styles";
 import {
   AelinAction,
@@ -100,7 +56,6 @@ import { isNativeMobileShell } from "../mobile/runtime";
 import Dashboard from "./Dashboard";
 import {
   AELIN_CHAT_STORAGE_KEY,
-  type AelinExpressionId,
   AELIN_LAST_DESK_BRIDGE_KEY,
   AELIN_LAST_SESSION_KEY,
   AELIN_LOGO_SRC,
@@ -109,18 +64,11 @@ import {
   DEVICE_MODE_META,
   type DeviceMode,
   type DeviceSortBy,
-  MAX_PERSISTED_IMAGE_DATA_URL,
-  MAX_PERSISTED_MESSAGES,
   MAX_PERSISTED_SESSIONS,
   PROACTIVE_POLL_MS,
-  QUICK_PROMPTS,
-  TRACKING_SOURCE_LABEL,
 } from "./aelin/constants";
 import {
   extractFirstUrl,
-  formatIsoTime,
-  formatTime,
-  formatTrackingStatus,
   nextMessageId,
   normalizeExpressionId,
   normalizeProviderId,
@@ -148,13 +96,21 @@ import type {
   TrackingSheetState,
 } from "./aelin/types";
 import { MessageRow } from "./aelin/conversation/MessageRow";
-import { AelinCitationDrawers, type CitationDrawerState, type CitationPreviewState } from "./aelin/panels/CitationDrawers";
+import { AelinComposer } from "./aelin/composer/AelinComposer";
+import { AelinHeader } from "./aelin/layout/AelinHeader";
+import { AelinHandoffBanner } from "./aelin/layout/AelinHandoffBanner";
+import {
+  AelinCitationDrawers,
+  type CitationDrawerState,
+  type CitationPreviewState,
+} from "./aelin/panels/CitationDrawers";
 import { AelinTrackingChoiceSheet } from "./aelin/panels/TrackingChoiceSheet";
 import { AelinMemoryDialog } from "./aelin/panels/MemoryDialog";
 import { AelinNotificationDialog } from "./aelin/panels/NotificationDialog";
 import { AelinLlmSettingsDialog } from "./aelin/panels/LlmSettingsDialog";
 import { AelinTrackingCenterDialog } from "./aelin/panels/TrackingCenterDialog";
 import { AelinDeviceCenterDialog } from "./aelin/panels/DeviceCenterDialog";
+import { AelinTodayFocusCard } from "./aelin/sections/AelinTodayFocusCard";
 
 export type { AelinDeskBridgePayload } from "./aelin/types";
 
@@ -183,59 +139,101 @@ export default function Aelin({
   const [busy, setBusy] = React.useState(false);
   const [storyBusy, setStoryBusy] = React.useState(false);
   const [sessions, setSessions] = React.useState<ChatSession[]>(boot.sessions);
-  const [activeSessionId, setActiveSessionId] = React.useState<string>(boot.activeId);
+  const [activeSessionId, setActiveSessionId] = React.useState<string>(
+    boot.activeId,
+  );
   const [pendingImages, setPendingImages] = React.useState<PendingImage[]>([]);
-  const [contextSnapshot, setContextSnapshot] = React.useState<AelinContextResponse | null>(null);
-  const [trackingSheet, setTrackingSheet] = React.useState<TrackingSheetState | null>(null);
+  const [contextSnapshot, setContextSnapshot] =
+    React.useState<AelinContextResponse | null>(null);
+  const [trackingSheet, setTrackingSheet] =
+    React.useState<TrackingSheetState | null>(null);
   const [trackingDialogOpen, setTrackingDialogOpen] = React.useState(false);
-  const [trackingItems, setTrackingItems] = React.useState<AelinTrackingItem[]>([]);
+  const [trackingItems, setTrackingItems] = React.useState<AelinTrackingItem[]>(
+    [],
+  );
   const [trackingBusy, setTrackingBusy] = React.useState(false);
   const [trackingError, setTrackingError] = React.useState("");
   const [trackingStatusFilter, setTrackingStatusFilter] = React.useState("all");
   const [trackingSourceFilter, setTrackingSourceFilter] = React.useState("all");
   const [trackingKeyword, setTrackingKeyword] = React.useState("");
-  const [trackingActiveTargetId, setTrackingActiveTargetId] = React.useState<number | null>(null);
-  const [trackingChanges, setTrackingChanges] = React.useState<AelinTrackingChangeItem[]>([]);
-  const [trackingSnapshots, setTrackingSnapshots] = React.useState<AelinTrackingSnapshotItem[]>([]);
-  const [trackingFileMemory, setTrackingFileMemory] = React.useState<AelinTrackingFileMemoryItem[]>([]);
+  const [trackingActiveTargetId, setTrackingActiveTargetId] = React.useState<
+    number | null
+  >(null);
+  const [trackingChanges, setTrackingChanges] = React.useState<
+    AelinTrackingChangeItem[]
+  >([]);
+  const [trackingSnapshots, setTrackingSnapshots] = React.useState<
+    AelinTrackingSnapshotItem[]
+  >([]);
+  const [trackingFileMemory, setTrackingFileMemory] = React.useState<
+    AelinTrackingFileMemoryItem[]
+  >([]);
   const [trackingDetailBusy, setTrackingDetailBusy] = React.useState(false);
   const [trackingDetailError, setTrackingDetailError] = React.useState("");
-  const [trackingMutationBusy, setTrackingMutationBusy] = React.useState<number | null>(null);
-  const [trackingAckBusy, setTrackingAckBusy] = React.useState<number | null>(null);
-  const [trackingChangeSeverityFilter, setTrackingChangeSeverityFilter] = React.useState("all");
-  const [trackingChangeTypeFilter, setTrackingChangeTypeFilter] = React.useState("all");
-  const [trackingAckFilter, setTrackingAckFilter] = React.useState<TrackingAckFilter>("unacked");
+  const [trackingMutationBusy, setTrackingMutationBusy] = React.useState<
+    number | null
+  >(null);
+  const [trackingAckBusy, setTrackingAckBusy] = React.useState<number | null>(
+    null,
+  );
+  const [trackingChangeSeverityFilter, setTrackingChangeSeverityFilter] =
+    React.useState("all");
+  const [trackingChangeTypeFilter, setTrackingChangeTypeFilter] =
+    React.useState("all");
+  const [trackingAckFilter, setTrackingAckFilter] =
+    React.useState<TrackingAckFilter>("unacked");
   const [memoryDialogOpen, setMemoryDialogOpen] = React.useState(false);
-  const [memoryLayerTab, setMemoryLayerTab] = React.useState<"facts" | "preferences" | "in_progress">("facts");
-  const [notificationDialogOpen, setNotificationDialogOpen] = React.useState(false);
+  const [memoryLayerTab, setMemoryLayerTab] = React.useState<
+    "facts" | "preferences" | "in_progress"
+  >("facts");
+  const [notificationDialogOpen, setNotificationDialogOpen] =
+    React.useState(false);
   const [notificationBusy, setNotificationBusy] = React.useState(false);
-  const [notificationItems, setNotificationItems] = React.useState<AelinNotificationItem[]>([]);
+  const [notificationItems, setNotificationItems] = React.useState<
+    AelinNotificationItem[]
+  >([]);
   const [deviceDialogOpen, setDeviceDialogOpen] = React.useState(false);
   const [deviceBusy, setDeviceBusy] = React.useState(false);
   const [deviceSortBy, setDeviceSortBy] = React.useState<DeviceSortBy>("cpu");
-  const [deviceProcesses, setDeviceProcesses] = React.useState<AelinDeviceProcessItem[]>([]);
-  const [deviceProcessMeta, setDeviceProcessMeta] = React.useState<{ emptyReason: string; platform: string; filterContext: Record<string, string> }>({
+  const [deviceProcesses, setDeviceProcesses] = React.useState<
+    AelinDeviceProcessItem[]
+  >([]);
+  const [deviceProcessMeta, setDeviceProcessMeta] = React.useState<{
+    emptyReason: string;
+    platform: string;
+    filterContext: Record<string, string>;
+  }>({
     emptyReason: "",
     platform: "unknown",
     filterContext: {},
   });
-  const [deviceCapabilities, setDeviceCapabilities] = React.useState<AelinDeviceCapabilitiesResponse | null>(null);
-  const [deviceModeState, setDeviceModeState] = React.useState<AelinDeviceModeApplyResponse | null>(null);
-  const [deviceActionBusyPid, setDeviceActionBusyPid] = React.useState<number | null>(null);
-  const [deviceModeApplying, setDeviceModeApplying] = React.useState<DeviceMode | null>(null);
+  const [deviceCapabilities, setDeviceCapabilities] =
+    React.useState<AelinDeviceCapabilitiesResponse | null>(null);
+  const [deviceModeState, setDeviceModeState] =
+    React.useState<AelinDeviceModeApplyResponse | null>(null);
+  const [deviceActionBusyPid, setDeviceActionBusyPid] = React.useState<
+    number | null
+  >(null);
+  const [deviceModeApplying, setDeviceModeApplying] =
+    React.useState<DeviceMode | null>(null);
   const [deviceOptimizeBusy, setDeviceOptimizeBusy] = React.useState(false);
-  const [deviceOptimizeResult, setDeviceOptimizeResult] = React.useState<AelinDeviceOptimizeResponse | null>(null);
+  const [deviceOptimizeResult, setDeviceOptimizeResult] =
+    React.useState<AelinDeviceOptimizeResponse | null>(null);
   const [isProgressPending, startProgressTransition] = React.useTransition();
   const [llmDialogOpen, setLlmDialogOpen] = React.useState(false);
   const [llmLoading, setLlmLoading] = React.useState(false);
   const [llmRefreshing, setLlmRefreshing] = React.useState(false);
   const [llmSaving, setLlmSaving] = React.useState(false);
   const [llmTesting, setLlmTesting] = React.useState(false);
-  const [llmCatalog, setLlmCatalog] = React.useState<ModelCatalogResponse | null>(null);
+  const [llmCatalog, setLlmCatalog] =
+    React.useState<ModelCatalogResponse | null>(null);
   const [llmProvider, setLlmProvider] = React.useState("rule_based");
-  const [llmProviderSelectValue, setLlmProviderSelectValue] = React.useState<string>("rule_based");
+  const [llmProviderSelectValue, setLlmProviderSelectValue] =
+    React.useState<string>("rule_based");
   const [llmCustomProviderId, setLlmCustomProviderId] = React.useState("");
-  const [llmBaseUrl, setLlmBaseUrl] = React.useState("https://api.openai.com/v1");
+  const [llmBaseUrl, setLlmBaseUrl] = React.useState(
+    "https://api.openai.com/v1",
+  );
   const [llmModel, setLlmModel] = React.useState("gpt-4o-mini");
   const [llmTemperature, setLlmTemperature] = React.useState(0.2);
   const [llmApiKey, setLlmApiKey] = React.useState("");
@@ -243,40 +241,45 @@ export default function Aelin({
   const [deskOpen, setDeskOpen] = React.useState(false);
   const [deskPanelKey, setDeskPanelKey] = React.useState(0);
   const [handoffFX, setHandoffFX] = React.useState<HandoffFXState | null>(null);
-  const [latestSparkMessageId, setLatestSparkMessageId] = React.useState<string>("");
+  const [latestSparkMessageId, setLatestSparkMessageId] =
+    React.useState<string>("");
   const dismissedTrackTargetsRef = React.useRef<Record<string, true>>({});
   const proactiveSeenRef = React.useRef<Record<string, true>>({});
-  const [citationDrawer, setCitationDrawer] = React.useState<CitationDrawerState>({
-    open: false,
-    citation: null,
-    detail: null,
-    loading: false,
-    error: "",
-  });
-  const [citationPreview, setCitationPreview] = React.useState<CitationPreviewState>({
-    open: false,
-    citation: null,
-    url: "",
-    loading: false,
-    error: "",
-  });
+  const [citationDrawer, setCitationDrawer] =
+    React.useState<CitationDrawerState>({
+      open: false,
+      citation: null,
+      detail: null,
+      loading: false,
+      error: "",
+    });
+  const [citationPreview, setCitationPreview] =
+    React.useState<CitationPreviewState>({
+      open: false,
+      citation: null,
+      url: "",
+      loading: false,
+      error: "",
+    });
   const timelineRef = React.useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = React.useRef(true);
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const citationUrlCacheRef = React.useRef<Record<number, string>>({});
   const handledDeskReturnRef = React.useRef<string>("");
   const handoffFXTimerRef = React.useRef<number | null>(null);
   const activeSession = React.useMemo(
     () => sessions.find((item) => item.id === activeSessionId) || sessions[0],
-    [activeSessionId, sessions]
+    [activeSessionId, sessions],
   );
   const messages = activeSession?.messages || [];
   const sortedSessions = React.useMemo(
     () => sessions.slice().sort((a, b) => b.updated_at - a.updated_at),
-    [sessions]
+    [sessions],
   );
   const groupedMessages = useGroupedMessages(messages);
-  const workspaceScope = React.useMemo(() => (workspace || "default").trim() || "default", [workspace]);
+  const workspaceScope = React.useMemo(
+    () => (workspace || "default").trim() || "default",
+    [workspace],
+  );
   const nativeMobileShell = React.useMemo(() => isNativeMobileShell(), []);
   const compactMode = React.useMemo(() => {
     if (embedded) return false;
@@ -288,7 +291,10 @@ export default function Aelin({
   const llmIsCustomProvider = llmProviderSelectValue === CUSTOM_PROVIDER_OPTION;
   const llmSelectedProvider = React.useMemo<ModelProviderInfo | null>(() => {
     const providerId = normalizeProviderId(llmProvider);
-    return llmCatalog?.providers.find((provider) => provider.id === providerId) ?? null;
+    return (
+      llmCatalog?.providers.find((provider) => provider.id === providerId) ??
+      null
+    );
   }, [llmCatalog, llmProvider]);
   const lastAssistantCitation = React.useMemo(() => {
     const reversed = [...messages].reverse();
@@ -300,15 +306,29 @@ export default function Aelin({
     return null;
   }, [messages]);
   const memoryLayers = React.useMemo(
-    () => contextSnapshot?.memory_layers || { facts: [], preferences: [], in_progress: [], generated_at: "" },
-    [contextSnapshot?.memory_layers]
+    () =>
+      contextSnapshot?.memory_layers || {
+        facts: [],
+        preferences: [],
+        in_progress: [],
+        generated_at: "",
+      },
+    [contextSnapshot?.memory_layers],
   );
   const memoryLayerItems = React.useMemo<AelinMemoryLayerItem[]>(() => {
     if (memoryLayerTab === "facts") return memoryLayers.facts || [];
     if (memoryLayerTab === "preferences") return memoryLayers.preferences || [];
     return memoryLayers.in_progress || [];
-  }, [memoryLayerTab, memoryLayers.facts, memoryLayers.in_progress, memoryLayers.preferences]);
-  const contextNotifications = React.useMemo(() => contextSnapshot?.notifications || [], [contextSnapshot?.notifications]);
+  }, [
+    memoryLayerTab,
+    memoryLayers.facts,
+    memoryLayers.in_progress,
+    memoryLayers.preferences,
+  ]);
+  const contextNotifications = React.useMemo(
+    () => contextSnapshot?.notifications || [],
+    [contextSnapshot?.notifications],
+  );
   const allNotifications = React.useMemo(() => {
     const merged = [...notificationItems, ...contextNotifications];
     const seen = new Set<string>();
@@ -324,42 +344,70 @@ export default function Aelin({
     return out;
   }, [contextNotifications, notificationItems]);
   const unreadNotificationCount = React.useMemo(
-    () => Math.min(99, allNotifications.filter((it) => (it.level || "info") !== "default").length),
-    [allNotifications]
+    () =>
+      Math.min(
+        99,
+        allNotifications.filter((it) => (it.level || "info") !== "default")
+          .length,
+      ),
+    [allNotifications],
   );
   const filteredTrackingItems = React.useMemo(() => {
     const kw = trackingKeyword.trim().toLowerCase();
     return trackingItems.filter((item) => {
-      if (trackingStatusFilter !== "all" && String(item.status || "").toLowerCase() !== trackingStatusFilter) return false;
-      if (trackingSourceFilter !== "all" && String(item.source || "").toLowerCase() !== trackingSourceFilter) return false;
+      if (
+        trackingStatusFilter !== "all" &&
+        String(item.status || "").toLowerCase() !== trackingStatusFilter
+      )
+        return false;
+      if (
+        trackingSourceFilter !== "all" &&
+        String(item.source || "").toLowerCase() !== trackingSourceFilter
+      )
+        return false;
       if (!kw) return true;
-      const blob = `${item.target} ${item.query} ${item.source} ${item.status}`.toLowerCase();
+      const blob =
+        `${item.target} ${item.query} ${item.source} ${item.status}`.toLowerCase();
       return blob.includes(kw);
     });
-  }, [trackingItems, trackingStatusFilter, trackingSourceFilter, trackingKeyword]);
+  }, [
+    trackingItems,
+    trackingStatusFilter,
+    trackingSourceFilter,
+    trackingKeyword,
+  ]);
   const trackingUnreadCount = React.useMemo(
-    () => trackingItems.reduce((sum, item) => sum + Math.max(0, Number(item.unread_changes || 0)), 0),
-    [trackingItems]
+    () =>
+      trackingItems.reduce(
+        (sum, item) => sum + Math.max(0, Number(item.unread_changes || 0)),
+        0,
+      ),
+    [trackingItems],
   );
   const activeTrackingItem = React.useMemo(() => {
     if (!trackingItems.length) return null;
     if (trackingActiveTargetId !== null) {
-      const matched = trackingItems.find((item) => Number(item.target_id || 0) === trackingActiveTargetId);
+      const matched = trackingItems.find(
+        (item) => Number(item.target_id || 0) === trackingActiveTargetId,
+      );
       if (matched) return matched;
     }
     return trackingItems[0] || null;
   }, [trackingActiveTargetId, trackingItems]);
 
-  const playHandoffFX = React.useCallback((title: string, detail: string, holdMs = 900) => {
-    setHandoffFX({ title, detail });
-    if (handoffFXTimerRef.current !== null) {
-      window.clearTimeout(handoffFXTimerRef.current);
-    }
-    handoffFXTimerRef.current = window.setTimeout(() => {
-      setHandoffFX(null);
-      handoffFXTimerRef.current = null;
-    }, holdMs);
-  }, []);
+  const playHandoffFX = React.useCallback(
+    (title: string, detail: string, holdMs = 900) => {
+      setHandoffFX({ title, detail });
+      if (handoffFXTimerRef.current !== null) {
+        window.clearTimeout(handoffFXTimerRef.current);
+      }
+      handoffFXTimerRef.current = window.setTimeout(() => {
+        setHandoffFX(null);
+        handoffFXTimerRef.current = null;
+      }, holdMs);
+    },
+    [],
+  );
 
   const openDeskWithContext = React.useCallback(
     (args?: {
@@ -384,15 +432,21 @@ export default function Aelin({
             JSON.stringify({
               from: "aelin",
               session_id: sid,
-                focus_message_id: Number.isFinite(messageNum) && messageNum > 0 ? Math.floor(messageNum) : undefined,
-                focus_contact_id: Number.isFinite(contactNum) && contactNum > 0 ? Math.floor(contactNum) : undefined,
-                focus_query: focusQuery || undefined,
-                workspace: workspaceScope,
-                highlight_source: source || undefined,
-                resume_prompt: resumePrompt || undefined,
-                ts: Date.now(),
-              })
-            );
+              focus_message_id:
+                Number.isFinite(messageNum) && messageNum > 0
+                  ? Math.floor(messageNum)
+                  : undefined,
+              focus_contact_id:
+                Number.isFinite(contactNum) && contactNum > 0
+                  ? Math.floor(contactNum)
+                  : undefined,
+              focus_query: focusQuery || undefined,
+              workspace: workspaceScope,
+              highlight_source: source || undefined,
+              resume_prompt: resumePrompt || undefined,
+              ts: Date.now(),
+            }),
+          );
         } catch {
           // ignore storage failures
         }
@@ -400,13 +454,21 @@ export default function Aelin({
       if (onOpenDesk) {
         playHandoffFX(
           "Aelin -> Desk",
-          focusQuery ? `正在定位主题“${focusQuery.slice(0, 36)}”` : "正在打开观察视图"
+          focusQuery
+            ? `正在定位主题“${focusQuery.slice(0, 36)}”`
+            : "正在打开观察视图",
         );
         onOpenDesk({
           sessionId: sid,
           workspace: workspaceScope,
-          messageId: Number.isFinite(messageNum) && messageNum > 0 ? Math.floor(messageNum) : undefined,
-          contactId: Number.isFinite(contactNum) && contactNum > 0 ? Math.floor(contactNum) : undefined,
+          messageId:
+            Number.isFinite(messageNum) && messageNum > 0
+              ? Math.floor(messageNum)
+              : undefined,
+          contactId:
+            Number.isFinite(contactNum) && contactNum > 0
+              ? Math.floor(contactNum)
+              : undefined,
           focusQuery: focusQuery || undefined,
           highlightSource: source || undefined,
           resumePrompt: resumePrompt || undefined,
@@ -415,14 +477,22 @@ export default function Aelin({
       }
       playHandoffFX(
         "Aelin -> Desk",
-        focusQuery ? `正在定位主题“${focusQuery.slice(0, 36)}”` : "正在打开观察视图"
+        focusQuery
+          ? `正在定位主题“${focusQuery.slice(0, 36)}”`
+          : "正在打开观察视图",
       );
       window.setTimeout(() => {
         setDeskPanelKey((prev) => prev + 1);
         setDeskOpen(true);
       }, 140);
     },
-    [activeSession?.id, activeSessionId, onOpenDesk, playHandoffFX, workspaceScope]
+    [
+      activeSession?.id,
+      activeSessionId,
+      onOpenDesk,
+      playHandoffFX,
+      workspaceScope,
+    ],
   );
 
   const refreshContext = React.useCallback(async () => {
@@ -441,17 +511,24 @@ export default function Aelin({
       const ret = await getAelinTracking({
         limit: 120,
         workspace: workspaceScope,
-        status: trackingStatusFilter !== "all" ? trackingStatusFilter : undefined,
+        status:
+          trackingStatusFilter !== "all" ? trackingStatusFilter : undefined,
       });
       const items = ret.items || [];
       setTrackingItems(items);
       setTrackingActiveTargetId((prev) => {
-        if (prev !== null && items.some((item) => Number(item.target_id || 0) === prev)) return prev;
+        if (
+          prev !== null &&
+          items.some((item) => Number(item.target_id || 0) === prev)
+        )
+          return prev;
         const first = items.find((item) => Number(item.target_id || 0) > 0);
         return first ? Number(first.target_id || 0) : null;
       });
     } catch (error) {
-      setTrackingError(error instanceof Error ? error.message : "跟踪列表加载失败");
+      setTrackingError(
+        error instanceof Error ? error.message : "跟踪列表加载失败",
+      );
     } finally {
       setTrackingBusy(false);
     }
@@ -469,14 +546,28 @@ export default function Aelin({
       }
       setTrackingDetailError("");
       try {
-        const acked = trackingAckFilter === "all" ? undefined : trackingAckFilter === "acked";
-        const targetMeta = trackingItems.find((item) => Number(item.target_id || 0) === safeTargetId) || null;
-        const memoryQuery = String(targetMeta?.query || targetMeta?.target || "").trim();
+        const acked =
+          trackingAckFilter === "all"
+            ? undefined
+            : trackingAckFilter === "acked";
+        const targetMeta =
+          trackingItems.find(
+            (item) => Number(item.target_id || 0) === safeTargetId,
+          ) || null;
+        const memoryQuery = String(
+          targetMeta?.query || targetMeta?.target || "",
+        ).trim();
         const [changesRet, snapshotsRet, fileMemoryRet] = await Promise.all([
           listAelinTrackingChanges(safeTargetId, {
             limit: 120,
-            severity: trackingChangeSeverityFilter !== "all" ? trackingChangeSeverityFilter : undefined,
-            change_type: trackingChangeTypeFilter !== "all" ? trackingChangeTypeFilter : undefined,
+            severity:
+              trackingChangeSeverityFilter !== "all"
+                ? trackingChangeSeverityFilter
+                : undefined,
+            change_type:
+              trackingChangeTypeFilter !== "all"
+                ? trackingChangeTypeFilter
+                : undefined,
             acked,
           }),
           listAelinTrackingSnapshots(safeTargetId, 40),
@@ -491,7 +582,9 @@ export default function Aelin({
         setTrackingSnapshots(snapshotsRet.items || []);
         setTrackingFileMemory(fileMemoryRet.items || []);
       } catch (error) {
-        setTrackingDetailError(error instanceof Error ? error.message : "追踪详情加载失败");
+        setTrackingDetailError(
+          error instanceof Error ? error.message : "追踪详情加载失败",
+        );
         setTrackingFileMemory([]);
       } finally {
         if (!options?.silent) {
@@ -499,7 +592,13 @@ export default function Aelin({
         }
       }
     },
-    [trackingAckFilter, trackingChangeSeverityFilter, trackingChangeTypeFilter, trackingItems, workspaceScope]
+    [
+      trackingAckFilter,
+      trackingChangeSeverityFilter,
+      trackingChangeTypeFilter,
+      trackingItems,
+      workspaceScope,
+    ],
   );
 
   const patchTrackingTarget = React.useCallback(
@@ -513,7 +612,7 @@ export default function Aelin({
         description?: string;
         tags?: string[];
       },
-      successMessage: string
+      successMessage: string,
     ) => {
       const safeTargetId = Number(targetId || 0);
       if (!safeTargetId) return;
@@ -524,12 +623,15 @@ export default function Aelin({
         await refreshTracking();
         await refreshTrackingDetail(safeTargetId, { silent: true });
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "追踪项更新失败", "error");
+        showToast(
+          error instanceof Error ? error.message : "追踪项更新失败",
+          "error",
+        );
       } finally {
         setTrackingMutationBusy(null);
       }
     },
-    [refreshTracking, refreshTrackingDetail, showToast]
+    [refreshTracking, refreshTrackingDetail, showToast],
   );
 
   const runTrackingTargetNow = React.useCallback(
@@ -539,16 +641,22 @@ export default function Aelin({
       setTrackingMutationBusy(safeTargetId);
       try {
         const ret = await runAelinTrackingTarget(safeTargetId);
-        showToast(ret.message || "已触发立即执行", ret.ok ? "success" : "warning");
+        showToast(
+          ret.message || "已触发立即执行",
+          ret.ok ? "success" : "warning",
+        );
         await refreshTracking();
         await refreshTrackingDetail(safeTargetId, { silent: true });
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "手动执行失败", "error");
+        showToast(
+          error instanceof Error ? error.message : "手动执行失败",
+          "error",
+        );
       } finally {
         setTrackingMutationBusy(null);
       }
     },
-    [refreshTracking, refreshTrackingDetail, showToast]
+    [refreshTracking, refreshTrackingDetail, showToast],
   );
 
   const ackTrackingChange = React.useCallback(
@@ -559,14 +667,25 @@ export default function Aelin({
       setTrackingAckBusy(safeChangeId);
       try {
         await ackAelinTrackingChange(safeChangeId);
-        await Promise.all([refreshTracking(), refreshTrackingDetail(targetId, { silent: true })]);
+        await Promise.all([
+          refreshTracking(),
+          refreshTrackingDetail(targetId, { silent: true }),
+        ]);
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "标记已读失败", "error");
+        showToast(
+          error instanceof Error ? error.message : "标记已读失败",
+          "error",
+        );
       } finally {
         setTrackingAckBusy(null);
       }
     },
-    [activeTrackingItem?.target_id, refreshTracking, refreshTrackingDetail, showToast]
+    [
+      activeTrackingItem?.target_id,
+      refreshTracking,
+      refreshTrackingDetail,
+      showToast,
+    ],
   );
 
   const refreshNotifications = React.useCallback(async () => {
@@ -581,28 +700,33 @@ export default function Aelin({
     }
   }, []);
 
-  const pushSystemNotification = React.useCallback((item: AelinNotificationItem) => {
-    if (typeof window === "undefined") return;
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== "granted") return;
-    try {
-      const title = (item.title || "Aelin 提醒").trim() || "Aelin 提醒";
-      const detail = (item.detail || "").trim();
-      const note = new Notification(title, {
-        body: detail ? detail.slice(0, 180) : "你有新的动态值得查看",
-        icon: AELIN_LOGO_SRC,
-        tag: String(item.id || ""),
-      });
-      window.setTimeout(() => note.close(), 5600);
-    } catch {
-      // ignore notification errors
-    }
-  }, []);
+  const pushSystemNotification = React.useCallback(
+    (item: AelinNotificationItem) => {
+      if (typeof window === "undefined") return;
+      if (!("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+      try {
+        const title = (item.title || "Aelin 提醒").trim() || "Aelin 提醒";
+        const detail = (item.detail || "").trim();
+        const note = new Notification(title, {
+          body: detail ? detail.slice(0, 180) : "你有新的动态值得查看",
+          icon: AELIN_LOGO_SRC,
+          tag: String(item.id || ""),
+        });
+        window.setTimeout(() => note.close(), 5600);
+      } catch {
+        // ignore notification errors
+      }
+    },
+    [],
+  );
 
   const pollProactive = React.useCallback(async () => {
     try {
       const ret = await getAelinProactivePoll(workspaceScope, 8);
-      const incoming = Array.isArray(ret.items) ? ret.items.filter(Boolean) : [];
+      const incoming = Array.isArray(ret.items)
+        ? ret.items.filter(Boolean)
+        : [];
       if (!incoming.length) return;
       setNotificationItems((prev) => {
         const seen = new Set<string>();
@@ -630,10 +754,16 @@ export default function Aelin({
         const detail = (item.detail || "").trim();
         const toastText = detail ? `${item.title} 路 ${detail}` : item.title;
         const level = String(item.level || "info").toLowerCase();
-          showToast(
-            toastText.slice(0, 220),
-            level === "error" ? "error" : level === "warning" ? "warning" : level === "success" ? "success" : "info"
-          );
+        showToast(
+          toastText.slice(0, 220),
+          level === "error"
+            ? "error"
+            : level === "warning"
+              ? "warning"
+              : level === "success"
+                ? "success"
+                : "info",
+        );
         if (document.hidden) {
           pushSystemNotification(item);
         }
@@ -672,7 +802,10 @@ export default function Aelin({
         filterContext: ret.filter_context || {},
       });
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "读取进程失败", "error");
+      showToast(
+        error instanceof Error ? error.message : "读取进程失败",
+        "error",
+      );
     } finally {
       setDeviceBusy(false);
     }
@@ -699,35 +832,48 @@ export default function Aelin({
               : "info";
         const warningText = (ret.warnings || []).slice(0, 1).join(";");
         showToast(
-          warningText ? `${ret.summary || `模式已切换 ${mode}`} · ${warningText}` : ret.summary || `模式已切换 ${mode}`,
-          severity
+          warningText
+            ? `${ret.summary || `模式已切换 ${mode}`} · ${warningText}`
+            : ret.summary || `模式已切换 ${mode}`,
+          severity,
         );
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "模式切换失败", "error");
+        showToast(
+          error instanceof Error ? error.message : "模式切换失败",
+          "error",
+        );
       } finally {
         setDeviceModeApplying(null);
       }
     },
-    [showToast]
+    [showToast],
   );
 
   const handleDeviceProcessAction = React.useCallback(
-    async (pid: number, action: "terminate" | "set_low_priority" | "set_high_priority") => {
+    async (
+      pid: number,
+      action: "terminate" | "set_low_priority" | "set_high_priority",
+    ) => {
       setDeviceActionBusyPid(pid);
       try {
         const ret = await runAelinDeviceProcessAction(pid, action);
         showToast(
-          ret.ok ? `已执行：${ret.detail || action}` : `执行失败：${ret.detail || action}`,
-          ret.ok ? "success" : "error"
+          ret.ok
+            ? `已执行：${ret.detail || action}`
+            : `执行失败：${ret.detail || action}`,
+          ret.ok ? "success" : "error",
         );
         await refreshDeviceProcesses();
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "进程操作失败", "error");
+        showToast(
+          error instanceof Error ? error.message : "进程操作失败",
+          "error",
+        );
       } finally {
         setDeviceActionBusyPid(null);
       }
     },
-    [refreshDeviceProcesses, showToast]
+    [refreshDeviceProcesses, showToast],
   );
 
   const runDeviceOptimize = React.useCallback(async () => {
@@ -739,7 +885,7 @@ export default function Aelin({
         ret.optimized_count > 0
           ? `已优化 ${ret.optimized_count} 个高占用进程`
           : "没有可优化的高占用进程",
-        ret.optimized_count > 0 ? "success" : "info"
+        ret.optimized_count > 0 ? "success" : "info",
       );
       await refreshDeviceProcesses();
     } catch (error) {
@@ -751,18 +897,25 @@ export default function Aelin({
 
   const getDefaultLlmBaseUrl = React.useCallback(
     (providerId: string, catalog: ModelCatalogResponse | null = llmCatalog) => {
-      const normalizedProviderId = normalizeProviderId(providerId) || "rule_based";
-      if (normalizedProviderId === "rule_based") return "https://api.openai.com/v1";
-      const matched = (catalog?.providers ?? []).find((provider) => provider.id === normalizedProviderId);
+      const normalizedProviderId =
+        normalizeProviderId(providerId) || "rule_based";
+      if (normalizedProviderId === "rule_based")
+        return "https://api.openai.com/v1";
+      const matched = (catalog?.providers ?? []).find(
+        (provider) => provider.id === normalizedProviderId,
+      );
       return (matched?.api || "").trim() || "https://api.openai.com/v1";
     },
-    [llmCatalog]
+    [llmCatalog],
   );
 
   const hydrateLlmDialogState = React.useCallback(
     (config: AgentConfig, catalog: ModelCatalogResponse | null) => {
-      const provider = normalizeProviderId(config.provider || "rule_based") || "rule_based";
-      const catalogIds = new Set((catalog?.providers ?? []).map((item) => item.id));
+      const provider =
+        normalizeProviderId(config.provider || "rule_based") || "rule_based";
+      const catalogIds = new Set(
+        (catalog?.providers ?? []).map((item) => item.id),
+      );
       setLlmProvider(provider);
       if (provider === "rule_based") {
         setLlmProviderSelectValue("rule_based");
@@ -775,21 +928,29 @@ export default function Aelin({
       }
       setLlmBaseUrl(config.base_url || getDefaultLlmBaseUrl(provider, catalog));
       setLlmModel(config.model || "gpt-4o-mini");
-      setLlmTemperature(Number.isFinite(config.temperature) ? config.temperature : 0.2);
+      setLlmTemperature(
+        Number.isFinite(config.temperature) ? config.temperature : 0.2,
+      );
       setLlmHasApiKey(Boolean(config.has_api_key));
       setLlmApiKey("");
     },
-    [getDefaultLlmBaseUrl]
+    [getDefaultLlmBaseUrl],
   );
 
   const loadLlmDialogData = React.useCallback(async () => {
     setLlmLoading(true);
     try {
-      const [config, catalog] = await Promise.all([getAgentConfig(), getAgentCatalog(false)]);
+      const [config, catalog] = await Promise.all([
+        getAgentConfig(),
+        getAgentCatalog(false),
+      ]);
       setLlmCatalog(catalog);
       hydrateLlmDialogState(config, catalog);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "加载模型配置失败", "error");
+      showToast(
+        error instanceof Error ? error.message : "加载模型配置失败",
+        "error",
+      );
     } finally {
       setLlmLoading(false);
     }
@@ -805,9 +966,15 @@ export default function Aelin({
     try {
       const fresh = await getAgentCatalog(true);
       setLlmCatalog(fresh);
-      showToast(`模型目录已刷新（${fresh.providers.length} 个服务商）`, "success");
+      showToast(
+        `模型目录已刷新（${fresh.providers.length} 个服务商）`,
+        "success",
+      );
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "刷新模型目录失败", "error");
+      showToast(
+        error instanceof Error ? error.message : "刷新模型目录失败",
+        "error",
+      );
     } finally {
       setLlmRefreshing(false);
     }
@@ -821,18 +988,24 @@ export default function Aelin({
     }
     if (provider !== "rule_based") {
       if (!llmBaseUrl.trim()) {
-          showToast("请填写 Base URL", "error");
+        showToast("请填写 Base URL", "error");
         return;
       }
       if (!llmModel.trim()) {
-          showToast("请填写模型 ID", "error");
+        showToast("请填写模型 ID", "error");
         return;
       }
     }
 
     setLlmSaving(true);
     try {
-      const payload: { provider: string; base_url?: string; model?: string; temperature: number; api_key?: string } = {
+      const payload: {
+        provider: string;
+        base_url?: string;
+        model?: string;
+        temperature: number;
+        api_key?: string;
+      } = {
         provider,
         temperature: Number.isFinite(llmTemperature) ? llmTemperature : 0.2,
       };
@@ -847,11 +1020,23 @@ export default function Aelin({
       hydrateLlmDialogState(updated, llmCatalog);
       showToast("Aelin 模型配置已保存", "success");
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "保存模型配置失败", "error");
+      showToast(
+        error instanceof Error ? error.message : "保存模型配置失败",
+        "error",
+      );
     } finally {
       setLlmSaving(false);
     }
-  }, [hydrateLlmDialogState, llmApiKey, llmBaseUrl, llmCatalog, llmModel, llmProvider, llmTemperature, showToast]);
+  }, [
+    hydrateLlmDialogState,
+    llmApiKey,
+    llmBaseUrl,
+    llmCatalog,
+    llmModel,
+    llmProvider,
+    llmTemperature,
+    showToast,
+  ]);
 
   const handleLlmTest = React.useCallback(async () => {
     setLlmTesting(true);
@@ -885,8 +1070,15 @@ export default function Aelin({
       setTrackingSnapshots([]);
       return;
     }
-    if (trackingActiveTargetId === null || !trackingItems.some((item) => Number(item.target_id || 0) === trackingActiveTargetId)) {
-      const first = trackingItems.find((item) => Number(item.target_id || 0) > 0);
+    if (
+      trackingActiveTargetId === null ||
+      !trackingItems.some(
+        (item) => Number(item.target_id || 0) === trackingActiveTargetId,
+      )
+    ) {
+      const first = trackingItems.find(
+        (item) => Number(item.target_id || 0) > 0,
+      );
       setTrackingActiveTargetId(first ? Number(first.target_id || 0) : null);
     }
   }, [trackingActiveTargetId, trackingItems]);
@@ -900,7 +1092,11 @@ export default function Aelin({
       return;
     }
     void refreshTrackingDetail(targetId);
-  }, [activeTrackingItem?.target_id, refreshTrackingDetail, trackingDialogOpen]);
+  }, [
+    activeTrackingItem?.target_id,
+    refreshTrackingDetail,
+    trackingDialogOpen,
+  ]);
 
   React.useEffect(() => {
     if (!notificationDialogOpen) return;
@@ -948,7 +1144,12 @@ export default function Aelin({
   }, [deviceDialogOpen, refreshDeviceMode]);
 
   React.useEffect(() => {
-    if (llmProvider === "rule_based" || llmIsCustomProvider || !llmSelectedProvider) return;
+    if (
+      llmProvider === "rule_based" ||
+      llmIsCustomProvider ||
+      !llmSelectedProvider
+    )
+      return;
     if (
       llmSelectedProvider.models.length > 0 &&
       !llmSelectedProvider.models.some((model) => model.id === llmModel)
@@ -1001,10 +1202,10 @@ export default function Aelin({
             title: deriveSessionTitle(nextMessages),
             updated_at: Date.now(),
           };
-        })
+        }),
       );
     },
-    [activeSessionId]
+    [activeSessionId],
   );
 
   React.useEffect(() => {
@@ -1047,8 +1248,16 @@ export default function Aelin({
           updated_at: session.updated_at,
           messages: toPersistedMessages(session.messages || []),
         }));
-      const payload = { version: 1, sessions: compact, active_id: activeSessionId, saved_at: Date.now() };
-      window.localStorage.setItem(AELIN_SESSIONS_STORAGE_KEY, JSON.stringify(payload));
+      const payload = {
+        version: 1,
+        sessions: compact,
+        active_id: activeSessionId,
+        saved_at: Date.now(),
+      };
+      window.localStorage.setItem(
+        AELIN_SESSIONS_STORAGE_KEY,
+        JSON.stringify(payload),
+      );
       window.localStorage.removeItem(AELIN_CHAT_STORAGE_KEY);
     } catch {
       // Ignore storage failures (e.g., quota exceeded/private mode restrictions).
@@ -1085,18 +1294,22 @@ export default function Aelin({
     if (resumePrompt) {
       setInput((prev) => (prev.trim() ? prev : resumePrompt));
     } else if (focusQuery) {
-      setInput((prev) => (prev.trim() ? prev : `继续围绕这个主题：${focusQuery}`));
+      setInput((prev) =>
+        prev.trim() ? prev : `继续围绕这个主题：${focusQuery}`,
+      );
     }
     if (Number.isFinite(focusMessageId) && focusMessageId > 0) {
       playHandoffFX(
         "Desk -> Aelin",
         source
           ? `已带回 ${source} 的观察结果（消息 #${focusMessageId}）`
-          : `已带回焦点消息 #${focusMessageId}`
+          : `已带回焦点消息 #${focusMessageId}`,
       );
       showToast(
-        source ? `已从 Desk 返回，继续围绕 ${source}（消息 #${focusMessageId}）` : `已从 Desk 返回，焦点消息 #${focusMessageId}`,
-        "info"
+        source
+          ? `已从 Desk 返回，继续围绕 ${source}（消息 #${focusMessageId}）`
+          : `已从 Desk 返回，焦点消息 #${focusMessageId}`,
+        "info",
       );
     } else {
       playHandoffFX("Desk -> Aelin", "已返回聊天，可继续追问。");
@@ -1129,7 +1342,7 @@ export default function Aelin({
         showToast("复制失败", "error");
       }
     },
-    [showToast]
+    [showToast],
   );
 
   const appendFiles = React.useCallback(
@@ -1139,7 +1352,9 @@ export default function Aelin({
         showToast("最多上传 4 张图片", "info");
         return;
       }
-      const candidates = files.filter((file) => file.type.startsWith("image/")).slice(0, 4 - existing);
+      const candidates = files
+        .filter((file) => file.type.startsWith("image/"))
+        .slice(0, 4 - existing);
       if (!candidates.length) {
         showToast("请选择图片文件", "info");
         return;
@@ -1150,7 +1365,9 @@ export default function Aelin({
         return;
       }
       try {
-        const urls = await Promise.all(candidates.map((file) => fileToDataUrl(file)));
+        const urls = await Promise.all(
+          candidates.map((file) => fileToDataUrl(file)),
+        );
         setPendingImages((prev) => [
           ...prev,
           ...urls.map((dataUrl, idx) => ({
@@ -1160,10 +1377,13 @@ export default function Aelin({
           })),
         ]);
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "图片读取失败", "error");
+        showToast(
+          error instanceof Error ? error.message : "图片读取失败",
+          "error",
+        );
       }
     },
-    [pendingImages.length, showToast]
+    [pendingImages.length, showToast],
   );
 
   const send = React.useCallback(
@@ -1178,13 +1398,19 @@ export default function Aelin({
       const nowTs = Date.now();
       const sessionIdAtSend = activeSessionId;
       const historyForSend = (activeSession?.messages || [])
-        .filter((item) => !item.pending && (item.role === "user" || item.role === "assistant"))
+        .filter(
+          (item) =>
+            !item.pending &&
+            (item.role === "user" || item.role === "assistant"),
+        )
         .slice(-10)
         .map((item) => ({ role: item.role, content: item.content }));
-      const imagesForSend: AelinImageInput[] = pendingImages.slice(0, 4).map((img) => ({
-        data_url: img.dataUrl,
-        name: img.name,
-      }));
+      const imagesForSend: AelinImageInput[] = pendingImages
+        .slice(0, 4)
+        .map((img) => ({
+          data_url: img.dataUrl,
+          name: img.name,
+        }));
       setPendingImages([]);
 
       setSessions((prev) =>
@@ -1194,24 +1420,44 @@ export default function Aelin({
                 ...session,
                 messages: [
                   ...session.messages,
-                  { id: nextMessageId(), role: "user", content: query || "（图片）", ts: nowTs, images: imagesForSend },
+                  {
+                    id: nextMessageId(),
+                    role: "user",
+                    content: query || "（图片）",
+                    ts: nowTs,
+                    images: imagesForSend,
+                  },
                   {
                     id: assistantId,
                     role: "assistant",
                     content: "",
                     ts: nowTs + 1,
                     pending: true,
-                    tool_trace: [{ stage: "main_agent", status: "running", detail: "主控已接收请求", count: 0, ts: nowTs + 1 }],
+                    tool_trace: [
+                      {
+                        stage: "main_agent",
+                        status: "running",
+                        detail: "主控已接收请求",
+                        count: 0,
+                        ts: nowTs + 1,
+                      },
+                    ],
                   },
                 ],
                 title: deriveSessionTitle([
                   ...session.messages,
-                  { id: "tmp", role: "user", content: query || "（图片）", ts: nowTs, images: imagesForSend },
+                  {
+                    id: "tmp",
+                    role: "user",
+                    content: query || "（图片）",
+                    ts: nowTs,
+                    images: imagesForSend,
+                  },
                 ]),
                 updated_at: Date.now(),
               }
-            : session
-        )
+            : session,
+        ),
       );
 
       let finalResult: {
@@ -1244,18 +1490,21 @@ export default function Aelin({
                           item.id === assistantId && item.pending
                             ? {
                                 ...item,
-                                tool_trace: upsertTraceStep(item.tool_trace || [], {
-                                  stage: "main_agent",
-                                  status: "running",
-                                  detail: "主控开始编排子任务",
-                                  count: 1,
-                                }),
+                                tool_trace: upsertTraceStep(
+                                  item.tool_trace || [],
+                                  {
+                                    stage: "main_agent",
+                                    status: "running",
+                                    detail: "主控开始编排子任务",
+                                    count: 1,
+                                  },
+                                ),
                               }
-                            : item
+                            : item,
                         ),
                       }
-                    : session
-                )
+                    : session,
+                ),
               );
             });
             continue;
@@ -1272,13 +1521,16 @@ export default function Aelin({
                           item.id === assistantId && item.pending
                             ? {
                                 ...item,
-                                tool_trace: upsertTraceStep(item.tool_trace || [], evt.step),
+                                tool_trace: upsertTraceStep(
+                                  item.tool_trace || [],
+                                  evt.step,
+                                ),
                               }
-                            : item
+                            : item,
                         ),
                       }
-                    : session
-                )
+                    : session,
+                ),
               );
             });
             continue;
@@ -1290,7 +1542,9 @@ export default function Aelin({
             const queryIndex = Number(evt.progress?.query_index || 0);
             const queryTotal = Number(evt.progress?.query_total || 0);
             const evidenceCount = Number(evt.progress?.evidence_count || 0);
-            const sourceBits = [evt.provider || "", evt.fetch_mode || ""].filter((x) => !!x.trim()).join("/");
+            const sourceBits = [evt.provider || "", evt.fetch_mode || ""]
+              .filter((x) => !!x.trim())
+              .join("/");
             const progressText =
               queryTotal > 0
                 ? ` (${Math.min(Math.max(queryIndex, 1), queryTotal)}/${queryTotal})`
@@ -1307,10 +1561,15 @@ export default function Aelin({
                           item.id === assistantId && item.pending
                             ? {
                                 ...item,
-                                citations: mergeCitations(item.citations || [], [citation], 12),
-                                citation_snippets: mergeCitationSnippets(item.citation_snippets, [
-                                  { citation, snippet: evt.snippet || "" },
-                                ]),
+                                citations: mergeCitations(
+                                  item.citations || [],
+                                  [citation],
+                                  12,
+                                ),
+                                citation_snippets: mergeCitationSnippets(
+                                  item.citation_snippets,
+                                  [{ citation, snippet: evt.snippet || "" }],
+                                ),
                                 tool_trace: upsertTraceStep(
                                   upsertTraceStep(item.tool_trace || [], {
                                     stage: "web_search",
@@ -1323,14 +1582,14 @@ export default function Aelin({
                                     status: "running",
                                     detail: "证据汇聚中",
                                     count: evidenceCount,
-                                  }
+                                  },
                                 ),
                               }
-                            : item
+                            : item,
                         ),
                       }
-                    : session
-                )
+                    : session,
+                ),
               );
             });
             continue;
@@ -1352,18 +1611,23 @@ export default function Aelin({
                           item.id === assistantId && item.pending
                             ? {
                                 ...item,
-                                tool_trace: upsertTraceStep(item.tool_trace || [], {
-                                  stage: "trace_agent",
-                                  status: "completed",
-                                  detail,
-                                  count: Number((evt.items || []).length || 0),
-                                }),
+                                tool_trace: upsertTraceStep(
+                                  item.tool_trace || [],
+                                  {
+                                    stage: "trace_agent",
+                                    status: "completed",
+                                    detail,
+                                    count: Number(
+                                      (evt.items || []).length || 0,
+                                    ),
+                                  },
+                                ),
                               }
-                            : item
+                            : item,
                         ),
                       }
-                    : session
-                )
+                    : session,
+                ),
               );
             });
             continue;
@@ -1381,19 +1645,28 @@ export default function Aelin({
                           ? {
                               ...item,
                               pending: false,
-                              content: evt.result.answer || "当前未生成文本回答。",
-                              expression: normalizeExpressionId(evt.result.expression),
-                              citations: mergeCitations(item.citations || [], evt.result.citations || [], 12),
+                              content:
+                                evt.result.answer || "当前未生成文本回答。",
+                              expression: normalizeExpressionId(
+                                evt.result.expression,
+                              ),
+                              citations: mergeCitations(
+                                item.citations || [],
+                                evt.result.citations || [],
+                                12,
+                              ),
                               citation_snippets: item.citation_snippets,
                               actions: evt.result.actions || [],
-                              tool_trace: (evt.result.tool_trace || []).map(normalizeTraceStep),
+                              tool_trace: (evt.result.tool_trace || []).map(
+                                normalizeTraceStep,
+                              ),
                             }
-                          : item
+                          : item,
                       ),
                       updated_at: Date.now(),
                     }
-                  : session
-              )
+                  : session,
+              ),
             );
             continue;
           }
@@ -1428,26 +1701,38 @@ export default function Aelin({
                             ...item,
                             pending: false,
                             content: result.answer || "当前未生成文本回答。",
-                            expression: normalizeExpressionId(result.expression),
-                            citations: mergeCitations(item.citations || [], result.citations || [], 12),
+                            expression: normalizeExpressionId(
+                              result.expression,
+                            ),
+                            citations: mergeCitations(
+                              item.citations || [],
+                              result.citations || [],
+                              12,
+                            ),
                             citation_snippets: item.citation_snippets,
                             actions: result.actions || [],
-                            tool_trace: (result.tool_trace || []).map(normalizeTraceStep),
+                            tool_trace: (result.tool_trace || []).map(
+                              normalizeTraceStep,
+                            ),
                           }
-                        : item
+                        : item,
                     ),
                     updated_at: Date.now(),
                   }
-                : session
-            )
+                : session,
+            ),
           );
         }
 
         if (finalResult) {
           setLatestSparkMessageId(assistantId);
-          const trackAction = (finalResult.actions || []).find((it) => it.kind === "confirm_track");
+          const trackAction = (finalResult.actions || []).find(
+            (it) => it.kind === "confirm_track",
+          );
           if (trackAction) {
-            const target = (trackAction.payload.target || "").trim().toLowerCase();
+            const target = (trackAction.payload.target || "")
+              .trim()
+              .toLowerCase();
             if (!dismissedTrackTargetsRef.current[target]) {
               setTrackingSheet({ action: trackAction, messageId: assistantId });
             }
@@ -1483,23 +1768,34 @@ export default function Aelin({
                             {
                               stage: "generation",
                               status: "failed",
-                              detail: error instanceof Error ? error.message : "request failed",
+                              detail:
+                                error instanceof Error
+                                  ? error.message
+                                  : "request failed",
                               count: 0,
-                            }
+                            },
                           ),
                         }
-                      : item
+                      : item,
                   ),
                   updated_at: Date.now(),
                 }
-              : session
-          )
+              : session,
+          ),
         );
       } finally {
         setBusy(false);
       }
     },
-    [activeSession?.messages, activeSessionId, busy, pendingImages, refreshContext, startProgressTransition, workspaceScope]
+    [
+      activeSession?.messages,
+      activeSessionId,
+      busy,
+      pendingImages,
+      refreshContext,
+      startProgressTransition,
+      workspaceScope,
+    ],
   );
 
   const onActionClick = React.useCallback(
@@ -1511,7 +1807,10 @@ export default function Aelin({
             messageId: action.payload.message_id,
             contactId: action.payload.contact_id,
             focusQuery: action.payload.query || "",
-            highlightSource: action.payload.source || lastAssistantCitation?.source_label || "",
+            highlightSource:
+              action.payload.source ||
+              lastAssistantCitation?.source_label ||
+              "",
             resumePrompt: action.payload.query || "",
           });
         } else {
@@ -1520,7 +1819,8 @@ export default function Aelin({
         return;
       }
       if (action.kind === "open_settings") {
-        const targetPath = (action.payload.path || "/settings").trim() || "/settings";
+        const targetPath =
+          (action.payload.path || "/settings").trim() || "/settings";
         if (targetPath === "/settings") {
           openLlmDialog();
         } else {
@@ -1534,7 +1834,8 @@ export default function Aelin({
           messageId,
           contactId: action.payload.contact_id,
           focusQuery: action.payload.query || "",
-          highlightSource: action.payload.source || lastAssistantCitation?.source_label || "",
+          highlightSource:
+            action.payload.source || lastAssistantCitation?.source_label || "",
           resumePrompt: action.payload.query || "",
         });
         return;
@@ -1557,35 +1858,64 @@ export default function Aelin({
         setTrackingSheet({ action, messageId: nextMessageId() });
       }
     },
-    [lastAssistantCitation?.source_label, navigate, openDeskWithContext, openLlmDialog, refreshTrackingDetail, showToast]
+    [
+      lastAssistantCitation?.source_label,
+      navigate,
+      openDeskWithContext,
+      openLlmDialog,
+      refreshTrackingDetail,
+      showToast,
+    ],
   );
 
   const resolveCitationUrl = React.useCallback(
-    async (item: AelinCitation): Promise<{ url: string; detail: MessageDetail | null }> => {
+    async (
+      item: AelinCitation,
+    ): Promise<{ url: string; detail: MessageDetail | null }> => {
       const id = Number(item.message_id || 0);
       if (id > 0 && citationUrlCacheRef.current[id]) {
         return { url: citationUrlCacheRef.current[id], detail: null };
       }
       const detail = await getMessage(item.message_id);
-      const url = extractFirstUrl(detail.body || "") || extractFirstUrl(detail.subject || "");
+      const url =
+        extractFirstUrl(detail.body || "") ||
+        extractFirstUrl(detail.subject || "");
       if (id > 0 && url) {
         citationUrlCacheRef.current[id] = url;
       }
       return { url, detail };
     },
-    []
+    [],
   );
 
   const handleCitationOpen = React.useCallback(
     async (item: AelinCitation) => {
-      setCitationPreview({ open: true, citation: item, url: "", loading: true, error: "" });
+      setCitationPreview({
+        open: true,
+        citation: item,
+        url: "",
+        loading: true,
+        error: "",
+      });
       try {
         const { url, detail } = await resolveCitationUrl(item);
         if (url) {
-          setCitationPreview({ open: true, citation: item, url, loading: false, error: "" });
+          setCitationPreview({
+            open: true,
+            citation: item,
+            url,
+            loading: false,
+            error: "",
+          });
           return;
         }
-        setCitationPreview({ open: false, citation: null, url: "", loading: false, error: "" });
+        setCitationPreview({
+          open: false,
+          citation: null,
+          url: "",
+          loading: false,
+          error: "",
+        });
         setCitationDrawer({
           open: true,
           citation: item,
@@ -1594,7 +1924,13 @@ export default function Aelin({
           error: "该证据暂无可跳转网页链接，已切换到详情视图。",
         });
       } catch (error) {
-        setCitationPreview({ open: false, citation: null, url: "", loading: false, error: "" });
+        setCitationPreview({
+          open: false,
+          citation: null,
+          url: "",
+          loading: false,
+          error: "",
+        });
         setCitationDrawer({
           open: true,
           citation: item,
@@ -1604,7 +1940,7 @@ export default function Aelin({
         });
       }
     },
-    [resolveCitationUrl]
+    [resolveCitationUrl],
   );
 
   const handleTrackingChoice = React.useCallback(
@@ -1632,7 +1968,8 @@ export default function Aelin({
           source: trackingSheet.action.payload.source || "auto",
           query: trackingSheet.action.payload.query || "",
           workspace: workspaceScope,
-          track_type: trackingSheet.action.payload.track_type === "url" ? "url" : "term",
+          track_type:
+            trackingSheet.action.payload.track_type === "url" ? "url" : "term",
           notify_level: "all",
         });
         updateActiveMessages((prev) => [
@@ -1666,16 +2003,30 @@ export default function Aelin({
           showToast("已开启持续跟踪", "success");
         }
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "跟踪开启失败", "error");
+        showToast(
+          error instanceof Error ? error.message : "跟踪开启失败",
+          "error",
+        );
       }
     },
-    [confirm, openLlmDialog, refreshContext, refreshTracking, refreshTrackingDetail, showToast, trackingSheet, updateActiveMessages, workspaceScope]
+    [
+      confirm,
+      openLlmDialog,
+      refreshContext,
+      refreshTracking,
+      refreshTrackingDetail,
+      showToast,
+      trackingSheet,
+      updateActiveMessages,
+      workspaceScope,
+    ],
   );
 
   const runStoryMode = React.useCallback(async () => {
     setStoryBusy(true);
     try {
-      const ctx = contextSnapshot || (await getAelinContext(workspaceScope, ""));
+      const ctx =
+        contextSnapshot || (await getAelinContext(workspaceScope, ""));
       if (!contextSnapshot) setContextSnapshot(ctx);
       const story = buildStoryFromContext(ctx);
       updateActiveMessages((prev) => [
@@ -1687,13 +2038,26 @@ export default function Aelin({
           expression: "exp-03",
           ts: Date.now(),
           tool_trace: [
-            { stage: "planner", status: "completed", detail: "story mode enabled", count: 1 },
-            { stage: "local_search", status: "completed", detail: "used 24h local context", count: (ctx.focus_items || []).length },
+            {
+              stage: "planner",
+              status: "completed",
+              detail: "story mode enabled",
+              count: 1,
+            },
+            {
+              stage: "local_search",
+              status: "completed",
+              detail: "used 24h local context",
+              count: (ctx.focus_items || []).length,
+            },
           ],
         },
       ]);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : "故事模式生成失败", "error");
+      showToast(
+        error instanceof Error ? error.message : "故事模式生成失败",
+        "error",
+      );
     } finally {
       setStoryBusy(false);
     }
@@ -1742,7 +2106,12 @@ export default function Aelin({
         setNotificationDialogOpen(false);
       }
     },
-    [openDeskWithContext, openDeviceDialog, refreshTrackingDetail, runStoryMode]
+    [
+      openDeskWithContext,
+      openDeviceDialog,
+      refreshTrackingDetail,
+      runStoryMode,
+    ],
   );
 
   return (
@@ -1761,203 +2130,38 @@ export default function Aelin({
         overflow: "hidden",
         fontSize: compactMode ? "0.94rem" : "1rem",
         mx: embedded ? 0 : compactFramed ? "auto" : 0,
-        borderLeft: compactFramed ? `1px solid ${alpha(theme.palette.divider, 0.8)}` : "none",
-        borderRight: compactFramed ? `1px solid ${alpha(theme.palette.divider, 0.8)}` : "none",
+        borderLeft: compactFramed
+          ? `1px solid ${alpha(theme.palette.divider, 0.8)}`
+          : "none",
+        borderRight: compactFramed
+          ? `1px solid ${alpha(theme.palette.divider, 0.8)}`
+          : "none",
       }}
     >
-      <Box
-        sx={{
-          height: compactMode ? "auto" : 64,
-          minHeight: compactMode ? 74 : 64,
-          py: compactMode ? 0.75 : 0,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          display: "flex",
-          alignItems: "center",
-          flexShrink: 0,
-          position: "relative",
-          zIndex: 2,
-          bgcolor: alpha(theme.palette.background.default, 0.82),
-          backdropFilter: "blur(8px)",
+      <AelinHeader
+        compactMode={compactMode}
+        embedded={embedded}
+        mainContainerMaxWidth={mainContainerMaxWidth}
+        activeSessionId={activeSession?.id || ""}
+        sortedSessions={sortedSessions}
+        storyBusy={storyBusy}
+        trackingUnreadCount={trackingUnreadCount}
+        trackingItemsCount={trackingItems.length}
+        unreadNotificationCount={unreadNotificationCount}
+        onSessionChange={setActiveSessionId}
+        onNewConversation={resetConversation}
+        onRunStoryMode={() => {
+          void runStoryMode();
         }}
-      >
-        <Container
-          maxWidth={mainContainerMaxWidth}
-          sx={{
-            display: "flex",
-            flexDirection: compactMode ? "column" : "row",
-            alignItems: compactMode ? "stretch" : "center",
-            justifyContent: "space-between",
-            rowGap: compactMode ? 0.65 : 0,
-            px: { xs: 0.9, sm: compactMode ? 1.3 : 2.2 },
-          }}
-        >
-          <Stack direction="row" spacing={1.1} alignItems="center" sx={{ width: compactMode ? "100%" : "auto" }}>
-            <Avatar
-              src={AELIN_LOGO_SRC}
-              sx={{ width: 34, height: 34, borderRadius: 1.2, bgcolor: "transparent", border: "none", boxShadow: "none" }}
-              imgProps={{ style: { objectFit: "cover", objectPosition: "center 24%" } }}
-            />
-            <Box>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.06, fontSize: "1.03rem" }}>
-                Aelin
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.8rem" }}>
-                Chat
-              </Typography>
-            </Box>
-          </Stack>
-
-          <Stack
-            direction="row"
-            spacing={0.55}
-            alignItems="center"
-            flexWrap={compactMode ? "wrap" : "nowrap"}
-            useFlexGap
-            sx={{
-              width: compactMode ? "100%" : "auto",
-              justifyContent: compactMode ? "flex-start" : "flex-end",
-              rowGap: compactMode ? 0.5 : 0,
-            }}
-          >
-            <FormControl
-              size="small"
-              sx={{
-                minWidth: compactMode ? 150 : 170,
-                width: compactMode ? "100%" : "auto",
-                flex: compactMode ? "1 1 210px" : "0 0 auto",
-              }}
-            >
-              <Select
-                value={activeSession?.id || ""}
-                onChange={(event) => setActiveSessionId(String(event.target.value || ""))}
-                displayEmpty
-                sx={{
-                  borderRadius: 1.4,
-                  fontSize: "0.85rem",
-                  "& .MuiSelect-select": { py: compactMode ? 0.58 : 0.6, pr: 2.2 },
-                }}
-              >
-                {sortedSessions.map((session) => (
-                  <MenuItem key={session.id} value={session.id}>
-                    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 1 }}>
-                      <Typography variant="body2" sx={{ maxWidth: 132, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {session.title || "新对话"}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {formatTime(session.updated_at)}
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Tooltip title="新对话">
-              <IconButton onClick={resetConversation}>
-                <AddIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="故事模式">
-              <span>
-                <IconButton onClick={runStoryMode} disabled={storyBusy}>
-                  <TimelineIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-            <Tooltip title="跟踪列表">
-              <IconButton onClick={() => setTrackingDialogOpen(true)}>
-                <Badge
-                  color="primary"
-                  badgeContent={Math.min(99, trackingUnreadCount || trackingItems.length)}
-                  invisible={!trackingUnreadCount && !trackingItems.length}
-                  overlap="circular"
-                >
-                  <TrackChangesIcon fontSize="small" />
-                </Badge>
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="通知中心">
-              <IconButton onClick={() => setNotificationDialogOpen(true)}>
-                <Badge
-                  color="error"
-                  badgeContent={unreadNotificationCount}
-                  invisible={!unreadNotificationCount}
-                  overlap="circular"
-                >
-                  <NotificationsNoneIcon fontSize="small" />
-                </Badge>
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="设备中心">
-              <IconButton onClick={openDeviceDialog}>
-                <ComputerIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="分层记忆">
-              <IconButton onClick={() => setMemoryDialogOpen(true)}>
-                <LayersIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="打开观察台">
-              <IconButton onClick={() => setDeskOpen(true)}>
-                <TravelExploreIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="设置">
-              <IconButton onClick={openLlmDialog}>
-                <SettingsIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            {embedded && onRequestClose ? (
-              <Tooltip title="收起 Aelin">
-                <IconButton onClick={onRequestClose}>
-                  <CloseIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            ) : null}
-          </Stack>
-        </Container>
-      </Box>
-
-      {handoffFX ? (
-        <Box
-          component={motion.div}
-          initial={{ opacity: 0, y: -8, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -6, scale: 0.99 }}
-          transition={{ duration: 0.2 }}
-          sx={{
-            position: "fixed",
-            top: { xs: 72, md: 80 },
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 1500,
-            pointerEvents: "none",
-            width: "min(620px, calc(100vw - 28px))",
-          }}
-        >
-          <Paper
-            variant="outlined"
-            sx={{
-              px: 1.1,
-              py: 0.85,
-              borderRadius: 1.8,
-              borderColor: alpha(theme.palette.primary.main, 0.34),
-              bgcolor: alpha(theme.palette.background.paper, 0.95),
-              backdropFilter: "blur(10px)",
-              boxShadow: `0 12px 24px ${alpha(theme.palette.common.black, 0.14)}`,
-            }}
-          >
-            <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.2 }}>
-              {handoffFX.title}
-            </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3 }}>
-              {handoffFX.detail}
-            </Typography>
-          </Paper>
-        </Box>
-      ) : null}
-
+        onOpenTracking={() => setTrackingDialogOpen(true)}
+        onOpenNotification={() => setNotificationDialogOpen(true)}
+        onOpenDevice={openDeviceDialog}
+        onOpenMemory={() => setMemoryDialogOpen(true)}
+        onOpenDesk={() => setDeskOpen(true)}
+        onOpenSettings={openLlmDialog}
+        onRequestClose={onRequestClose}
+      />{" "}
+      <AelinHandoffBanner handoffFX={handoffFX} />{" "}
       <Box
         ref={timelineRef}
         sx={{
@@ -1969,81 +2173,25 @@ export default function Aelin({
           overscrollBehaviorY: "contain",
         }}
       >
-        <Container maxWidth={mainContainerMaxWidth} sx={{ px: { xs: 0.5, sm: compactMode ? 1.0 : 0.4 }, py: compactMode ? 1.0 : 1.35 }}>
+        <Container
+          maxWidth={mainContainerMaxWidth}
+          sx={{
+            px: { xs: 0.5, sm: compactMode ? 1.0 : 0.4 },
+            py: compactMode ? 1.0 : 1.35,
+          }}
+        >
           {messages.length <= 1 ? (
-            <Paper
-              variant="outlined"
-              sx={{
-                px: 1.2,
-                py: 1.1,
-                borderRadius: 2.2,
-                borderColor: alpha(theme.palette.primary.main, 0.28),
-                background:
-                  theme.palette.mode === "light"
-                    ? "linear-gradient(135deg, rgba(255,255,255,0.96), rgba(245,249,255,0.86))"
-                    : "linear-gradient(135deg, rgba(34,34,34,0.96), rgba(22,28,36,0.86))",
-                mb: 1.1,
+            <AelinTodayFocusCard
+              contextSnapshot={contextSnapshot}
+              storyBusy={storyBusy}
+              onRunStoryMode={() => {
+                void runStoryMode();
               }}
-            >
-              <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.8 }}>
-                <Stack direction="row" spacing={0.8} alignItems="center">
-                  <BoltIcon sx={{ fontSize: 18, color: "primary.main" }} />
-                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-                    Today Focus
-                  </Typography>
-                </Stack>
-                <Button
-                  size="small"
-                  startIcon={<AutoStoriesIcon sx={{ fontSize: 16 }} />}
-                  onClick={runStoryMode}
-                  disabled={storyBusy}
-                >
-                  {storyBusy ? "生成中..." : "故事模式"}
-                </Button>
-              </Stack>
-              <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.55 }}>
-                {contextSnapshot?.daily_brief?.summary || "正在读取你的每日简报与高价值信号..."}
-              </Typography>
-
-              <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(3, 1fr)" }, gap: 0.7, mt: 0.95 }}>
-                {(contextSnapshot?.daily_brief?.top_updates || []).slice(0, 3).map((item, idx) => (
-                  <Paper
-                    key={`${item.message_id}-${idx}`}
-                    variant="outlined"
-                    onClick={() => send(`请详细解释这个更新并告诉我为什么重要：${item.title}`)}
-                    sx={{
-                      px: 0.85,
-                      py: 0.72,
-                      borderRadius: 1.5,
-                      borderColor: alpha(theme.palette.primary.main, 0.24),
-                      bgcolor: alpha(theme.palette.primary.main, 0.06),
-                      cursor: "pointer",
-                      transition: "transform 160ms ease, box-shadow 200ms ease",
-                      "&:hover": { transform: "translateY(-1px)", boxShadow: "0 10px 20px rgba(0,0,0,0.08)" },
-                    }}
-                  >
-                    <Typography variant="caption" sx={{ fontWeight: 700, color: "primary.main" }}>
-                      {item.source_label}
-                    </Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 700, mt: 0.2, lineHeight: 1.35 }}>
-                      {item.title}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {item.sender} 路 {item.received_at}
-                    </Typography>
-                  </Paper>
-                ))}
-              </Box>
-
-              <Divider sx={{ my: 0.95 }} />
-              <Stack direction="row" spacing={0.7} flexWrap="wrap" useFlexGap sx={{ py: 0.2 }}>
-                {QUICK_PROMPTS.map((prompt) => (
-                  <Chip key={prompt} size="small" variant="outlined" clickable onClick={() => send(prompt)} label={prompt} />
-                ))}
-              </Stack>
-            </Paper>
-          ) : null}
-
+              onSendPrompt={(prompt) => {
+                void send(prompt);
+              }}
+            />
+          ) : null}{" "}
           {groupedMessages.map(({ message, isGroupStart }) => (
             <MessageRow
               key={message.id}
@@ -2058,200 +2206,39 @@ export default function Aelin({
           ))}
         </Container>
       </Box>
-
-      <Box
-        sx={{
-          flexShrink: 0,
-          pt: compactMode ? 0.7 : 1.1,
-          pb: compactMode ? 1.0 : 1.35,
-          px: 1.1,
-          borderTop: "1px solid",
-          borderColor: alpha(theme.palette.divider, 0.9),
-          backdropFilter: "blur(8px)",
-          background:
-            theme.palette.mode === "light"
-              ? "linear-gradient(to top, rgba(250,249,245,1), rgba(250,249,245,0.96), rgba(250,249,245,0.56), rgba(250,249,245,0))"
-              : "linear-gradient(to top, rgba(20,20,19,1), rgba(20,20,19,0.96), rgba(20,20,19,0.52), rgba(20,20,19,0))",
+      <AelinComposer
+        compactMode={compactMode}
+        mainContainerMaxWidth={mainContainerMaxWidth}
+        input={input}
+        busy={busy}
+        pendingImages={pendingImages}
+        lastAssistantCitation={lastAssistantCitation}
+        onInputChange={setInput}
+        onSend={(value) => {
+          void send(value);
         }}
-      >
-        <Container maxWidth={mainContainerMaxWidth} sx={{ px: { xs: 0.5, sm: compactMode ? 1.0 : 0.4 } }}>
-          <Paper
-            variant="outlined"
-            sx={{
-              p: compactMode ? 0.72 : 0.9,
-              borderRadius: 2.4,
-              borderColor: alpha(theme.palette.divider, 0.95),
-            }}
-          >
-            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.65, px: 0.1 }}>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                观察联动
-              </Typography>
-              <Button
-                size="small"
-                variant="text"
-                startIcon={<TravelExploreIcon sx={{ fontSize: 15 }} />}
-                onClick={() =>
-                  openDeskWithContext({
-                    messageId: lastAssistantCitation?.message_id,
-                    focusQuery: (input || "").trim() || lastAssistantCitation?.title || "",
-                    highlightSource: lastAssistantCitation?.source_label || lastAssistantCitation?.source || "",
-                    resumePrompt:
-                      ((input || "").trim() && `继续围绕这个问题讨论：${input.trim()}`) ||
-                      (lastAssistantCitation?.title && `继续分析这条线索：${lastAssistantCitation.title}`) ||
-                      "继续从观察视图里分析我的重点信息。",
-                  })
-                }
-              >
-                在 Desk 观察
-              </Button>
-            </Stack>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{ display: "none" }}
-              onChange={async (event) => {
-                const files = Array.from(event.target.files || []);
-                if (!files.length) return;
-                await appendFiles(files);
-                event.target.value = "";
-              }}
-            />
-
-            {pendingImages.length ? (
-              <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))", gap: 0.7, mb: 0.8 }}>
-                {pendingImages.map((img) => (
-                  <Box key={img.id} sx={{ position: "relative" }}>
-                    <Box
-                      component="img"
-                      src={img.dataUrl}
-                      alt={img.name}
-                      sx={{
-                        width: "100%",
-                        height: 88,
-                        objectFit: "cover",
-                        borderRadius: 1.1,
-                        border: "1px solid",
-                        borderColor: "divider",
-                      }}
-                    />
-                    <IconButton
-                      size="small"
-                      onClick={() => setPendingImages((prev) => prev.filter((item) => item.id !== img.id))}
-                      sx={{
-                        position: "absolute",
-                        right: 4,
-                        top: 4,
-                        bgcolor: alpha(theme.palette.background.paper, 0.88),
-                        "&:hover": { bgcolor: alpha(theme.palette.background.paper, 1) },
-                      }}
-                    >
-                      <CloseIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  </Box>
-                ))}
-              </Box>
-            ) : null}
-
-            <Box sx={{ display: "flex", alignItems: "flex-end", gap: 0.8 }}>
-              <Tooltip title="上传图片">
-                <span>
-                  <IconButton
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={busy || pendingImages.length >= 4}
-                    sx={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 1.1,
-                      border: "1px solid",
-                      borderColor: "divider",
-                      alignSelf: "flex-end",
-                      mb: 0.2,
-                    }}
-                  >
-                    <ImageIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <InputBase
-                fullWidth
-                multiline
-                minRows={1}
-                maxRows={8}
-                placeholder="发送消息..."
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onPaste={async (event) => {
-                  const items = Array.from(event.clipboardData?.items || []);
-                  const imageFiles: File[] = [];
-                  for (const item of items) {
-                    if (item.type.startsWith("image/")) {
-                      const file = item.getAsFile();
-                      if (file) imageFiles.push(file);
-                    }
-                  }
-                  if (!imageFiles.length) return;
-                  event.preventDefault();
-                  await appendFiles(imageFiles);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    send(input);
-                  }
-                }}
-                sx={{
-                  flex: 1,
-                  px: 1,
-                  py: 0.75,
-                  fontSize: "1rem",
-                  lineHeight: 1.6,
-                  borderRadius: 1.6,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: "background.paper",
-                  "& textarea": {
-                    resize: "none",
-                    p: 0,
-                  },
-                  "&.Mui-focused": {
-                    borderColor: "primary.main",
-                  },
-                }}
-              />
-              <Button
-                variant="contained"
-                onClick={() => send(input)}
-                disabled={busy || (!input.trim() && pendingImages.length === 0)}
-                sx={{
-                  minWidth: 36,
-                  width: 36,
-                  height: 36,
-                  borderRadius: "50%",
-                  p: 0,
-                  alignSelf: "flex-end",
-                  mb: 0.2,
-                  transition: "transform 180ms ease, box-shadow 200ms ease",
-                  boxShadow: `0 6px 14px ${alpha(theme.palette.primary.main, 0.24)}`,
-                  "&:hover": {
-                    transform: "translateY(-1px) scale(1.03)",
-                    boxShadow: `0 10px 20px ${alpha(theme.palette.primary.main, 0.32)}`,
-                  },
-                }}
-              >
-                <SendIcon sx={{ fontSize: 18 }} />
-              </Button>
-            </Box>
-
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.55, px: 0.6 }}>
-              Enter 发送，Shift+Enter 换行
-            </Typography>
-          </Paper>
-        </Container>
-      </Box>
+        onAppendFiles={appendFiles}
+        onRemovePendingImage={(id) =>
+          setPendingImages((prev) => prev.filter((item) => item.id !== id))
+        }
+        onOpenDeskObserve={() =>
+          openDeskWithContext({
+            messageId: lastAssistantCitation?.message_id,
+            focusQuery:
+              (input || "").trim() || lastAssistantCitation?.title || "",
+            highlightSource:
+              lastAssistantCitation?.source_label ||
+              lastAssistantCitation?.source ||
+              "",
+            resumePrompt:
+              ((input || "").trim() &&
+                `继续围绕这个问题讨论：${input.trim()}`) ||
+              (lastAssistantCitation?.title &&
+                `继续分析这条线索：${lastAssistantCitation.title}`) ||
+              "继续从观察视图里分析我的重点信息。",
+          })
+        }
+      />{" "}
       <AelinLlmSettingsDialog
         open={llmDialogOpen}
         loading={llmLoading}
@@ -2308,8 +2295,7 @@ export default function Aelin({
           void handleLlmSave();
         }}
       />
-
-            <AelinTrackingCenterDialog
+      <AelinTrackingCenterDialog
         trackingDialogOpen={trackingDialogOpen}
         setTrackingDialogOpen={setTrackingDialogOpen}
         refreshTracking={refreshTracking}
@@ -2347,8 +2333,7 @@ export default function Aelin({
         trackingFileMemory={trackingFileMemory}
         copyText={copyText}
       />
-
-            <AelinDeviceCenterDialog
+      <AelinDeviceCenterDialog
         deviceDialogOpen={deviceDialogOpen}
         setDeviceDialogOpen={setDeviceDialogOpen}
         refreshDeviceProcesses={refreshDeviceProcesses}
@@ -2386,14 +2371,16 @@ export default function Aelin({
           handleNotificationAction(item);
         }}
       />
-
       <Drawer
         anchor="right"
         open={deskOpen}
         onClose={() => setDeskOpen(false)}
         PaperProps={{
           sx: {
-            width: { xs: "100%", sm: compactFramed ? "min(100vw, 430px)" : "min(100vw, 1320px)" },
+            width: {
+              xs: "100%",
+              sm: compactFramed ? "min(100vw, 430px)" : "min(100vw, 1320px)",
+            },
             maxWidth: "100vw",
             borderLeft: "1px solid",
             borderColor: "divider",
@@ -2402,22 +2389,28 @@ export default function Aelin({
         }}
       >
         <Box sx={{ height: "100dvh", overflow: "auto" }}>
-          <Dashboard key={`embedded-desk-${deskPanelKey}`} embedded onRequestClose={() => setDeskOpen(false)} />
+          <Dashboard
+            key={`embedded-desk-${deskPanelKey}`}
+            embedded
+            onRequestClose={() => setDeskOpen(false)}
+          />
         </Box>
       </Drawer>
-
-            <AelinTrackingChoiceSheet
+      <AelinTrackingChoiceSheet
         trackingSheet={trackingSheet}
         onChoice={(choice) => {
           void handleTrackingChoice(choice);
         }}
       />
-
       <AelinCitationDrawers
         citationPreview={citationPreview}
         citationDrawer={citationDrawer}
-        onClosePreview={() => setCitationPreview((prev) => ({ ...prev, open: false }))}
-        onCloseDrawer={() => setCitationDrawer((prev) => ({ ...prev, open: false }))}
+        onClosePreview={() =>
+          setCitationPreview((prev) => ({ ...prev, open: false }))
+        }
+        onCloseDrawer={() =>
+          setCitationDrawer((prev) => ({ ...prev, open: false }))
+        }
         onOpenCitationWeb={(citation) => {
           void handleCitationOpen(citation);
         }}
@@ -2437,30 +2430,3 @@ export default function Aelin({
     </Box>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
