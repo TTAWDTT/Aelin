@@ -1,223 +1,229 @@
-import React, { useEffect, useState } from 'react';
-import Alert from '@mui/material/Alert';
-import Avatar from '@mui/material/Avatar';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import CircularProgress from '@mui/material/CircularProgress';
-import Collapse from '@mui/material/Collapse';
-import Divider from '@mui/material/Divider';
-import Grid from '@mui/material/Grid';
-import IconButton from '@mui/material/IconButton';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemAvatar from '@mui/material/ListItemAvatar';
-import ListItemText from '@mui/material/ListItemText';
-import Paper from '@mui/material/Paper';
-import Switch from '@mui/material/Switch';
-import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
-import Typography from '@mui/material/Typography';
-import DeleteIcon from '@mui/icons-material/DeleteOutline';
-import GitHubIcon from '@mui/icons-material/GitHub';
-import EmailIcon from '@mui/icons-material/Email';
-import SyncIcon from '@mui/icons-material/Sync';
-import RssFeedIcon from '@mui/icons-material/RssFeed';
-import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
-import PersonIcon from '@mui/icons-material/Person';
-import useSWR from 'swr';
+import React, { useEffect, useState } from "react";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Grid from "@mui/material/Grid";
+import Paper from "@mui/material/Paper";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
+import GitHubIcon from "@mui/icons-material/GitHub";
+import EmailIcon from "@mui/icons-material/Email";
+import SyncIcon from "@mui/icons-material/Sync";
+import RssFeedIcon from "@mui/icons-material/RssFeed";
+import AlternateEmailIcon from "@mui/icons-material/AlternateEmail";
+import PersonIcon from "@mui/icons-material/Person";
+import useSWR from "swr";
 
 import {
-    ConnectedAccount,
-    ForwardAccountInfo,
-    OAuthProvider,
-    OAuthProviderConfig,
-    XApiConfig,
-    createAccount,
-    deleteAccount,
-    deleteXAuthCookies,
-    getForwardAccountInfo,
-    getOAuthProviderConfig,
-    getXApiConfig,
-    listAccounts,
-    startAccountOAuth,
-    syncAccount,
-    updateOAuthProviderConfig,
-    updateXApiConfig,
-    updateXAuthCookies,
-} from '../../../api';
-import { useToast } from '../../../contexts/ToastContext';
-import { useConfirmDialog } from '../../../hooks/useConfirmDialog';
-import { extractRedirectOriginFromAuthUrl, openOAuthPopup, waitForOAuthPopupMessage } from '../../../utils/oauthPopup';
-
-type SourceProvider = 'mock' | 'github' | 'gmail' | 'outlook' | 'forward' | 'imap' | 'rss' | 'bilibili' | 'x' | 'douyin' | 'xiaohongshu' | 'weibo';
-type OAuthSourceProvider = OAuthProvider;
-type GithubConnectMode = 'oauth' | 'token';
-const GMAIL_OAUTH_CONSOLE_URL = 'https://console.cloud.google.com/apis/credentials';
-const GMAIL_API_ENABLE_URL = 'https://console.cloud.google.com/apis/library/gmail.googleapis.com';
-const GITHUB_OAUTH_APPS_URL = 'https://github.com/settings/developers';
-const GITHUB_OAUTH_DOCS_URL = 'https://docs.github.com/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app';
-const GITHUB_PAT_URL = 'https://github.com/settings/tokens';
-const GITHUB_PAT_DOCS_URL = 'https://docs.github.com/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens';
-const OUTLOOK_OAUTH_PORTAL_URL = 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade';
+  ConnectedAccount,
+  ForwardAccountInfo,
+  OAuthProviderConfig,
+  XApiConfig,
+  createAccount,
+  deleteAccount,
+  deleteXAuthCookies,
+  getForwardAccountInfo,
+  getOAuthProviderConfig,
+  getXApiConfig,
+  listAccounts,
+  startAccountOAuth,
+  syncAccount,
+  updateOAuthProviderConfig,
+  updateXApiConfig,
+  updateXAuthCookies,
+} from "../../../api";
+import { useToast } from "../../../contexts/ToastContext";
+import { useConfirmDialog } from "../../../hooks/useConfirmDialog";
+import {
+  extractRedirectOriginFromAuthUrl,
+  openOAuthPopup,
+  waitForOAuthPopupMessage,
+} from "../../../utils/oauthPopup";
+import { ConnectedAccountsList } from "./accounts/ConnectedAccountsList";
+import { AccountProviderFields } from "./accounts/AccountProviderFields";
+import type {
+  GithubConnectMode,
+  OAuthSourceProvider,
+  SourceProvider,
+} from "./accounts/types";
 
 const OAUTH_PROVIDER_LABEL: Record<OAuthSourceProvider, string> = {
-    gmail: 'Gmail',
-    outlook: 'Outlook',
-    github: 'GitHub',
+  gmail: "Gmail",
+  outlook: "Outlook",
+  github: "GitHub",
 };
 
 function accountIcon(provider: string) {
-    const normalized = provider.toLowerCase();
-    if (normalized === 'github') return <GitHubIcon />;
-    if (normalized === 'rss') return <RssFeedIcon />;
-    if (normalized === 'bilibili') return <PersonIcon />;
-    if (normalized === 'x') return <AlternateEmailIcon />;
-    if (normalized === 'douyin') return <PersonIcon />;
-    if (normalized === 'xiaohongshu') return <PersonIcon />;
-    if (normalized === 'weibo') return <PersonIcon />;
-    if (normalized === 'forward') return <SyncIcon />;
-    return <EmailIcon />;
+  const normalized = provider.toLowerCase();
+  if (normalized === "github") return <GitHubIcon />;
+  if (normalized === "rss") return <RssFeedIcon />;
+  if (normalized === "bilibili") return <PersonIcon />;
+  if (normalized === "x") return <AlternateEmailIcon />;
+  if (normalized === "douyin") return <PersonIcon />;
+  if (normalized === "xiaohongshu") return <PersonIcon />;
+  if (normalized === "weibo") return <PersonIcon />;
+  if (normalized === "forward") return <SyncIcon />;
+  return <EmailIcon />;
 }
 
 export function AccountsSection() {
-    const { showToast } = useToast();
-    const { confirm, ConfirmDialog } = useConfirmDialog();
-    const { data: accounts, mutate: mutateAccounts } = useSWR<ConnectedAccount[]>('/api/v1/accounts');
+  const { showToast } = useToast();
+  const { confirm, ConfirmDialog } = useConfirmDialog();
+  const { data: accounts, mutate: mutateAccounts } =
+    useSWR<ConnectedAccount[]>("/api/v1/accounts");
 
-    const [syncing, setSyncing] = useState<number | null>(null);
-    // Account State
-    const [newProvider, setNewProvider] = useState<SourceProvider>('gmail');
-    const [imapPreset, setImapPreset] = useState<'gmail' | 'outlook' | 'icloud' | 'qq' | '163' | 'custom'>('gmail');
-    const [showImapAdvanced, setShowImapAdvanced] = useState(false);
-    const [imapHost, setImapHost] = useState('');
-    const [imapPort, setImapPort] = useState('993');
-    const [imapUseSsl, setImapUseSsl] = useState(true);
-    const [imapUsername, setImapUsername] = useState('');
-    const [imapPassword, setImapPassword] = useState('');
-    const [imapMailbox, setImapMailbox] = useState('INBOX');
-    const [rssFeedUrl, setRssFeedUrl] = useState('');
-    const [rssHomepageUrl, setRssHomepageUrl] = useState('');
-    const [rssDisplayName, setRssDisplayName] = useState('');
-    const [bilibiliUid, setBilibiliUid] = useState('');
-    const [xUsername, setXUsername] = useState('');
-    const [xBearerToken, setXBearerToken] = useState('');
-    const [xAuthToken, setXAuthToken] = useState('');
-    const [xCt0, setXCt0] = useState('');
-    const [savingXConfig, setSavingXConfig] = useState(false);
-    const [savingXCookies, setSavingXCookies] = useState(false);
-    const { data: xApiConfig, mutate: mutateXApiConfig } = useSWR<XApiConfig>(
-        newProvider === 'x' ? 'x-api-config' : null,
-        () => getXApiConfig()
+  const [syncing, setSyncing] = useState<number | null>(null);
+  // Account State
+  const [newProvider, setNewProvider] = useState<SourceProvider>("gmail");
+  const [imapPreset, setImapPreset] = useState<
+    "gmail" | "outlook" | "icloud" | "qq" | "163" | "custom"
+  >("gmail");
+  const [showImapAdvanced, setShowImapAdvanced] = useState(false);
+  const [imapHost, setImapHost] = useState("");
+  const [imapPort, setImapPort] = useState("993");
+  const [imapUseSsl, setImapUseSsl] = useState(true);
+  const [imapUsername, setImapUsername] = useState("");
+  const [imapPassword, setImapPassword] = useState("");
+  const [imapMailbox, setImapMailbox] = useState("INBOX");
+  const [rssFeedUrl, setRssFeedUrl] = useState("");
+  const [rssHomepageUrl, setRssHomepageUrl] = useState("");
+  const [rssDisplayName, setRssDisplayName] = useState("");
+  const [bilibiliUid, setBilibiliUid] = useState("");
+  const [xUsername, setXUsername] = useState("");
+  const [xBearerToken, setXBearerToken] = useState("");
+  const [xAuthToken, setXAuthToken] = useState("");
+  const [xCt0, setXCt0] = useState("");
+  const [savingXConfig, setSavingXConfig] = useState(false);
+  const [savingXCookies, setSavingXCookies] = useState(false);
+  const { data: xApiConfig, mutate: mutateXApiConfig } = useSWR<XApiConfig>(
+    newProvider === "x" ? "x-api-config" : null,
+    () => getXApiConfig(),
+  );
+  const [douyinSecUid, setDouyinSecUid] = useState("");
+  const [xiaohongshuUserId, setXiaohongshuUserId] = useState("");
+  const [weiboUid, setWeiboUid] = useState("");
+  const [forwardSourceEmail, setForwardSourceEmail] = useState("");
+  const [githubConnectMode, setGithubConnectMode] =
+    useState<GithubConnectMode>("oauth");
+  const [githubIdentifier, setGithubIdentifier] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [oauthConnecting, setOauthConnecting] =
+    useState<null | OAuthSourceProvider>(null);
+  const [oauthClientIdInput, setOauthClientIdInput] = useState("");
+  const [oauthClientSecretInput, setOauthClientSecretInput] = useState("");
+  const [savingOAuthConfig, setSavingOAuthConfig] = useState(false);
+  const [latestForwardInfo, setLatestForwardInfo] =
+    useState<ForwardAccountInfo | null>(null);
+  const isOAuthProvider =
+    newProvider === "gmail" ||
+    newProvider === "outlook" ||
+    (newProvider === "github" && githubConnectMode === "oauth");
+  const { data: oauthProviderConfig, mutate: mutateOAuthProviderConfig } =
+    useSWR<OAuthProviderConfig>(
+      isOAuthProvider ? `oauth-config-${newProvider}` : null,
+      () => getOAuthProviderConfig(newProvider as OAuthSourceProvider),
     );
-    const [douyinSecUid, setDouyinSecUid] = useState('');
-    const [xiaohongshuUserId, setXiaohongshuUserId] = useState('');
-    const [weiboUid, setWeiboUid] = useState('');
-    const [forwardSourceEmail, setForwardSourceEmail] = useState('');
-    const [githubConnectMode, setGithubConnectMode] = useState<GithubConnectMode>('oauth');
-    const [githubIdentifier, setGithubIdentifier] = useState('');
-    const [githubToken, setGithubToken] = useState('');
-    const [addingAccount, setAddingAccount] = useState(false);
-    const [oauthConnecting, setOauthConnecting] = useState<null | OAuthSourceProvider>(null);
-    const [oauthClientIdInput, setOauthClientIdInput] = useState('');
-    const [oauthClientSecretInput, setOauthClientSecretInput] = useState('');
-    const [savingOAuthConfig, setSavingOAuthConfig] = useState(false);
-    const [latestForwardInfo, setLatestForwardInfo] = useState<ForwardAccountInfo | null>(null);
-    const isOAuthProvider =
-        newProvider === 'gmail' ||
-        newProvider === 'outlook' ||
-        (newProvider === 'github' && githubConnectMode === 'oauth');
-    const { data: oauthProviderConfig, mutate: mutateOAuthProviderConfig } = useSWR<OAuthProviderConfig>(
-        isOAuthProvider ? `oauth-config-${newProvider}` : null,
-        () => getOAuthProviderConfig(newProvider as OAuthSourceProvider)
-    );
 
-    useEffect(() => {
-        if (newProvider !== 'imap') return;
-        const presets = {
-            gmail: { host: 'imap.gmail.com', port: 993, ssl: true },
-            outlook: { host: 'outlook.office365.com', port: 993, ssl: true },
-            icloud: { host: 'imap.mail.me.com', port: 993, ssl: true },
-            qq: { host: 'imap.qq.com', port: 993, ssl: true },
-            '163': { host: 'imap.163.com', port: 993, ssl: true },
-            custom: { host: '', port: 993, ssl: true },
-        } as const;
+  useEffect(() => {
+    if (newProvider !== "imap") return;
+    const presets = {
+      gmail: { host: "imap.gmail.com", port: 993, ssl: true },
+      outlook: { host: "outlook.office365.com", port: 993, ssl: true },
+      icloud: { host: "imap.mail.me.com", port: 993, ssl: true },
+      qq: { host: "imap.qq.com", port: 993, ssl: true },
+      "163": { host: "imap.163.com", port: 993, ssl: true },
+      custom: { host: "", port: 993, ssl: true },
+    } as const;
 
-        if (imapPreset === 'custom') {
-            setShowImapAdvanced(true);
-            setImapHost('');
-            setImapPort('993');
-            setImapUseSsl(true);
-            return;
-        }
+    if (imapPreset === "custom") {
+      setShowImapAdvanced(true);
+      setImapHost("");
+      setImapPort("993");
+      setImapUseSsl(true);
+      return;
+    }
 
-        const preset = presets[imapPreset];
-        setImapHost(preset.host);
-        setImapPort(String(preset.port));
-        setImapUseSsl(preset.ssl);
-    }, [newProvider, imapPreset]);
+    const preset = presets[imapPreset];
+    setImapHost(preset.host);
+    setImapPort(String(preset.port));
+    setImapUseSsl(preset.ssl);
+  }, [newProvider, imapPreset]);
 
-    useEffect(() => {
-        if (newProvider !== 'forward') {
-            setLatestForwardInfo(null);
-        }
-    }, [newProvider]);
+  useEffect(() => {
+    if (newProvider !== "forward") {
+      setLatestForwardInfo(null);
+    }
+  }, [newProvider]);
 
-    useEffect(() => {
-        if (!isOAuthProvider) {
-            setOauthClientIdInput('');
-            setOauthClientSecretInput('');
-            return;
-        }
-        setOauthClientSecretInput('');
-    }, [isOAuthProvider, newProvider]);
+  useEffect(() => {
+    if (!isOAuthProvider) {
+      setOauthClientIdInput("");
+      setOauthClientSecretInput("");
+      return;
+    }
+    setOauthClientSecretInput("");
+  }, [isOAuthProvider, newProvider]);
 
-    const postConnectSync = async (accountId: number, connectedLabel: string) => {
-        try {
-            const res = await syncAccount(accountId);
-            showToast(`${connectedLabel}已连接并同步：+${res.inserted}`, 'success');
-        } catch (e) {
-            showToast(
-                e instanceof Error
-                    ? `${connectedLabel}已连接，首次同步失败（${e.message}）。可稍后手动点“同步”重试。`
-                    : `${connectedLabel}已连接，首次同步失败。可稍后手动点“同步”重试。`,
-                'warning',
-            );
-        }
-    };
+  const postConnectSync = async (accountId: number, connectedLabel: string) => {
+    try {
+      const res = await syncAccount(accountId);
+      showToast(`${connectedLabel}已连接并同步：+${res.inserted}`, "success");
+    } catch (e) {
+      showToast(
+        e instanceof Error
+          ? `${connectedLabel}已连接，首次同步失败（${e.message}）。可稍后手动点“同步”重试。`
+          : `${connectedLabel}已连接，首次同步失败。可稍后手动点“同步”重试。`,
+        "warning",
+      );
+    }
+  };
 
-    const connectAndSync = async (payload: Parameters<typeof createAccount>[0], connectedLabel: string) => {
-        const account = await createAccount(payload);
-        await postConnectSync(account.id, connectedLabel);
-        return account;
-    };
+  const connectAndSync = async (
+    payload: Parameters<typeof createAccount>[0],
+    connectedLabel: string,
+  ) => {
+    const account = await createAccount(payload);
+    await postConnectSync(account.id, connectedLabel);
+    return account;
+  };
 
-    const findNewOAuthAccount = async (
-        provider: OAuthSourceProvider,
-        knownAccountIds: Set<number>
-    ): Promise<ConnectedAccount | null> => {
-        try {
-            const latest = await listAccounts();
-            mutateAccounts(latest, { revalidate: false });
-            return (
-                latest
-                    .filter((item) => item.provider.toLowerCase() === provider && !knownAccountIds.has(item.id))
-                    .sort((a, b) => b.id - a.id)[0] ?? null
-            );
-        } catch {
-            return null;
-        }
-    };
+  const findNewOAuthAccount = async (
+    provider: OAuthSourceProvider,
+    knownAccountIds: Set<number>,
+  ): Promise<ConnectedAccount | null> => {
+    try {
+      const latest = await listAccounts();
+      mutateAccounts(latest, { revalidate: false });
+      return (
+        latest
+          .filter(
+            (item) =>
+              item.provider.toLowerCase() === provider &&
+              !knownAccountIds.has(item.id),
+          )
+          .sort((a, b) => b.id - a.id)[0] ?? null
+      );
+    } catch {
+      return null;
+    }
+  };
 
-    const showOAuthSetupGuide = (popup: Window, provider: OAuthSourceProvider, message: string): boolean => {
-        if (!message.includes('未配置 client_id/client_secret')) return false;
-        const envHint = provider === 'gmail'
-            ? 'MERCURYDESK_GMAIL_CLIENT_ID / MERCURYDESK_GMAIL_CLIENT_SECRET'
-            : provider === 'outlook'
-                ? 'MERCURYDESK_OUTLOOK_CLIENT_ID / MERCURYDESK_OUTLOOK_CLIENT_SECRET'
-                : 'MERCURYDESK_GITHUB_CLIENT_ID / MERCURYDESK_GITHUB_CLIENT_SECRET';
-        const callbackUrl = `http://127.0.0.1:8000/api/v1/accounts/oauth/${provider}/callback`;
-        popup.document.title = 'OAuth 未配置';
-        popup.document.body.innerHTML = `
+  const showOAuthSetupGuide = (
+    popup: Window,
+    provider: OAuthSourceProvider,
+    message: string,
+  ): boolean => {
+    if (!message.includes("未配置 client_id/client_secret")) return false;
+    const envHint =
+      provider === "gmail"
+        ? "MERCURYDESK_GMAIL_CLIENT_ID / MERCURYDESK_GMAIL_CLIENT_SECRET"
+        : provider === "outlook"
+          ? "MERCURYDESK_OUTLOOK_CLIENT_ID / MERCURYDESK_OUTLOOK_CLIENT_SECRET"
+          : "MERCURYDESK_GITHUB_CLIENT_ID / MERCURYDESK_GITHUB_CLIENT_SECRET";
+    const callbackUrl = `http://127.0.0.1:8000/api/v1/accounts/oauth/${provider}/callback`;
+    popup.document.title = "OAuth 未配置";
+    popup.document.body.innerHTML = `
           <div style="font-family:system-ui;padding:20px;line-height:1.65">
             <h3 style="margin:0 0 8px">未完成 ${OAUTH_PROVIDER_LABEL[provider]} OAuth 配置</h3>
             <p style="margin:0 0 12px">${message}</p>
@@ -229,1112 +235,594 @@ export function AccountsSection() {
             <p style="margin:0;color:#6b7280">提示：建议在 <code>backend</code> 目录启动后端。</p>
           </div>
         `;
-        return true;
-    };
+    return true;
+  };
 
-    const connectOAuth = async (provider: OAuthSourceProvider) => {
-        setOauthConnecting(provider);
-        const knownAccountIds = new Set<number>();
-        let allowFallback = false;
-        let popup: Window | null = null;
-        try {
-            if (newProvider === provider && oauthClientIdInput.trim() && oauthClientSecretInput.trim()) {
-                await saveOAuthConfig(provider, oauthClientIdInput, oauthClientSecretInput, { silent: true });
-            }
-            popup = openOAuthPopup(`oauth-${provider}`, '正在跳转到授权页面…');
+  const connectOAuth = async (provider: OAuthSourceProvider) => {
+    setOauthConnecting(provider);
+    const knownAccountIds = new Set<number>();
+    let allowFallback = false;
+    let popup: Window | null = null;
+    try {
+      if (
+        newProvider === provider &&
+        oauthClientIdInput.trim() &&
+        oauthClientSecretInput.trim()
+      ) {
+        await saveOAuthConfig(
+          provider,
+          oauthClientIdInput,
+          oauthClientSecretInput,
+          { silent: true },
+        );
+      }
+      popup = openOAuthPopup(`oauth-${provider}`, "正在跳转到授权页面…");
 
-            const baselineAccounts = await listAccounts().catch(() => accounts ?? []);
-            baselineAccounts
-                .filter((item) => item.provider.toLowerCase() === provider)
-                .forEach((item) => knownAccountIds.add(item.id));
+      const baselineAccounts = await listAccounts().catch(() => accounts ?? []);
+      baselineAccounts
+        .filter((item) => item.provider.toLowerCase() === provider)
+        .forEach((item) => knownAccountIds.add(item.id));
 
-            const started = await startAccountOAuth(provider);
-            const allowedOrigin = extractRedirectOriginFromAuthUrl(started.auth_url);
-            popup.location.href = started.auth_url;
-            allowFallback = true;
+      const started = await startAccountOAuth(provider);
+      const allowedOrigin = extractRedirectOriginFromAuthUrl(started.auth_url);
+      popup.location.href = started.auth_url;
+      allowFallback = true;
 
-            const result = await waitForOAuthPopupMessage(popup, { allowedOrigin });
+      const result = await waitForOAuthPopupMessage(popup, { allowedOrigin });
 
-            if (!result.ok || !result.account_id) {
-                throw new Error(result.error || '授权失败');
-            }
-            await postConnectSync(result.account_id, OAUTH_PROVIDER_LABEL[provider]);
-            mutateAccounts();
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (popup && !popup.closed && !showOAuthSetupGuide(popup, provider, message)) popup.close();
-            if (allowFallback) {
-                const fallbackAccount = await findNewOAuthAccount(provider, knownAccountIds);
-                if (fallbackAccount) {
-                    await postConnectSync(fallbackAccount.id, OAUTH_PROVIDER_LABEL[provider]);
-                    return;
-                }
-            }
-            throw new Error(message);
-        } finally {
-            setOauthConnecting(null);
+      if (!result.ok || !result.account_id) {
+        throw new Error(result.error || "授权失败");
+      }
+      await postConnectSync(result.account_id, OAUTH_PROVIDER_LABEL[provider]);
+      mutateAccounts();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        popup &&
+        !popup.closed &&
+        !showOAuthSetupGuide(popup, provider, message)
+      )
+        popup.close();
+      if (allowFallback) {
+        const fallbackAccount = await findNewOAuthAccount(
+          provider,
+          knownAccountIds,
+        );
+        if (fallbackAccount) {
+          await postConnectSync(
+            fallbackAccount.id,
+            OAUTH_PROVIDER_LABEL[provider],
+          );
+          return;
         }
-    };
+      }
+      throw new Error(message);
+    } finally {
+      setOauthConnecting(null);
+    }
+  };
 
-    const copyText = async (text: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            showToast('已复制到剪贴板', 'success');
-        } catch {
-            showToast('复制失败，请手动复制', 'error');
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("已复制到剪贴板", "success");
+    } catch {
+      showToast("复制失败，请手动复制", "error");
+    }
+  };
+
+  const openExternalPage = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const saveOAuthConfig = async (
+    provider: OAuthSourceProvider,
+    clientId: string,
+    clientSecret: string,
+    options?: { silent?: boolean },
+  ) => {
+    const clientIdTrimmed = clientId.trim();
+    const clientSecretTrimmed = clientSecret.trim();
+    if (!clientIdTrimmed || !clientSecretTrimmed) {
+      throw new Error("请填写 client_id 和 client_secret，或导入 OAuth JSON");
+    }
+    setSavingOAuthConfig(true);
+    try {
+      const updated = await updateOAuthProviderConfig(provider, {
+        client_id: clientIdTrimmed,
+        client_secret: clientSecretTrimmed,
+      });
+      mutateOAuthProviderConfig(updated, { revalidate: false });
+      setOauthClientIdInput(clientIdTrimmed);
+      setOauthClientSecretInput("");
+      if (!options?.silent) {
+        showToast(
+          `${OAUTH_PROVIDER_LABEL[provider]} OAuth 凭据已保存`,
+          "success",
+        );
+      }
+    } finally {
+      setSavingOAuthConfig(false);
+    }
+  };
+
+  const handleImportOAuthJson = async (
+    provider: OAuthSourceProvider,
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as any;
+      const candidate = parsed?.web || parsed?.installed || parsed;
+      const clientId = String(candidate?.client_id || "").trim();
+      const clientSecret = String(candidate?.client_secret || "").trim();
+      if (!clientId || !clientSecret) {
+        throw new Error("文件中未找到 client_id/client_secret");
+      }
+      setOauthClientIdInput(clientId);
+      setOauthClientSecretInput(clientSecret);
+      await saveOAuthConfig(provider, clientId, clientSecret);
+    } catch (e) {
+      showToast(
+        e instanceof Error ? `导入失败：${e.message}` : "导入失败",
+        "error",
+      );
+    }
+  };
+
+  const handleAddAccount = async () => {
+    setAddingAccount(true);
+    try {
+      if (newProvider === "gmail" || newProvider === "outlook") {
+        await connectOAuth(newProvider);
+      } else if (newProvider === "github") {
+        if (githubConnectMode === "oauth") {
+          await connectOAuth("github");
+        } else {
+          const token = githubToken.trim();
+          if (!token) throw new Error("请填写 GitHub Token");
+          await connectAndSync(
+            {
+              provider: "github",
+              identifier: githubIdentifier.trim() || "github",
+              access_token: token,
+            },
+            "GitHub",
+          );
         }
-    };
-
-    const openExternalPage = (url: string) => {
-        window.open(url, '_blank', 'noopener,noreferrer');
-    };
-
-    const saveOAuthConfig = async (
-        provider: OAuthSourceProvider,
-        clientId: string,
-        clientSecret: string,
-        options?: { silent?: boolean }
-    ) => {
-        const clientIdTrimmed = clientId.trim();
-        const clientSecretTrimmed = clientSecret.trim();
-        if (!clientIdTrimmed || !clientSecretTrimmed) {
-            throw new Error('请填写 client_id 和 client_secret，或导入 OAuth JSON');
+      } else if (newProvider === "forward") {
+        const sourceEmail = forwardSourceEmail.trim().toLowerCase();
+        if (!sourceEmail) throw new Error("请填写要接入的邮箱地址");
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sourceEmail)) {
+          throw new Error("请输入有效的邮箱地址");
         }
-        setSavingOAuthConfig(true);
-        try {
-            const updated = await updateOAuthProviderConfig(provider, {
-                client_id: clientIdTrimmed,
-                client_secret: clientSecretTrimmed,
-            });
-            mutateOAuthProviderConfig(updated, { revalidate: false });
-            setOauthClientIdInput(clientIdTrimmed);
-            setOauthClientSecretInput('');
-            if (!options?.silent) {
-                showToast(`${OAUTH_PROVIDER_LABEL[provider]} OAuth 凭据已保存`, 'success');
-            }
-        } finally {
-            setSavingOAuthConfig(false);
-        }
-    };
+        const created = await createAccount({
+          provider: "forward",
+          identifier: sourceEmail,
+          forward_source_email: sourceEmail,
+        });
+        const info = await getForwardAccountInfo(created.id);
+        setLatestForwardInfo(info);
+        showToast("转发地址已生成，请在邮箱里设置自动转发", "success");
+      } else if (newProvider === "imap") {
+        const email = imapUsername.trim();
+        const host = imapHost.trim();
+        const mailbox = (imapMailbox || "INBOX").trim();
+        if (!email || !imapPassword) throw new Error("请填写邮箱与授权码/密码");
+        if (!host)
+          throw new Error("请先选择邮箱服务商，或在高级设置中填写 IMAP 主机");
 
-    const handleImportOAuthJson = async (
-        provider: OAuthSourceProvider,
-        event: React.ChangeEvent<HTMLInputElement>
-    ) => {
-        const file = event.target.files?.[0];
-        event.target.value = '';
-        if (!file) return;
-        try {
-            const raw = await file.text();
-            const parsed = JSON.parse(raw) as any;
-            const candidate = parsed?.web || parsed?.installed || parsed;
-            const clientId = String(candidate?.client_id || '').trim();
-            const clientSecret = String(candidate?.client_secret || '').trim();
-            if (!clientId || !clientSecret) {
-                throw new Error('文件中未找到 client_id/client_secret');
-            }
-            setOauthClientIdInput(clientId);
-            setOauthClientSecretInput(clientSecret);
-            await saveOAuthConfig(provider, clientId, clientSecret);
-        } catch (e) {
-            showToast(e instanceof Error ? `导入失败：${e.message}` : '导入失败', 'error');
-        }
-    };
+        const port = Number(imapPort || 993);
+        await connectAndSync(
+          {
+            provider: "imap",
+            identifier: email,
+            imap_host: host,
+            imap_port: Number.isFinite(port) ? port : 993,
+            imap_use_ssl: imapUseSsl,
+            imap_username: email,
+            imap_password: imapPassword,
+            imap_mailbox: mailbox,
+          },
+          "邮箱",
+        );
+      } else if (newProvider === "rss") {
+        const feedUrl = rssFeedUrl.trim();
+        if (!feedUrl) throw new Error("请填写 RSS / Atom 订阅链接");
+        const displayName = rssDisplayName.trim();
+        const homepage = rssHomepageUrl.trim();
+        await connectAndSync(
+          {
+            provider: "rss",
+            identifier: displayName || homepage || feedUrl,
+            feed_url: feedUrl,
+            feed_homepage_url: homepage || undefined,
+            feed_display_name: displayName || undefined,
+          },
+          "RSS/Blog",
+        );
+      } else if (newProvider === "bilibili") {
+        const uid = bilibiliUid.trim();
+        if (!uid) throw new Error("请填写 Bilibili UP 主 UID");
+        await connectAndSync(
+          {
+            provider: "bilibili",
+            identifier: uid,
+            bilibili_uid: uid,
+            feed_display_name: `B站 UP ${uid}`,
+          },
+          "Bilibili",
+        );
+      } else if (newProvider === "x") {
+        const username = xUsername.trim().replace(/^@/, "");
+        if (!username) throw new Error("请填写 X 用户名");
+        await connectAndSync(
+          {
+            provider: "x",
+            identifier: username,
+            x_username: username,
+            feed_display_name: `X @${username}`,
+          },
+          "X",
+        );
+      } else if (newProvider === "douyin") {
+        const secUid = douyinSecUid.trim();
+        if (!secUid) throw new Error("请填写抖音号或 sec_uid");
+        await connectAndSync(
+          {
+            provider: "douyin",
+            identifier: secUid,
+            feed_url: "",
+            feed_homepage_url: secUid,
+            feed_display_name: "抖音用户",
+          },
+          "抖音",
+        );
+      } else if (newProvider === "xiaohongshu") {
+        const userId = xiaohongshuUserId.trim();
+        if (!userId) throw new Error("请填写小红书用户 UID");
+        await connectAndSync(
+          {
+            provider: "xiaohongshu",
+            identifier: userId,
+            feed_url: "",
+            feed_homepage_url: userId,
+            feed_display_name: "小红书用户",
+          },
+          "小红书",
+        );
+      } else if (newProvider === "weibo") {
+        const uid = weiboUid.trim();
+        if (!uid) throw new Error("请填写微博用户 UID");
+        await connectAndSync(
+          {
+            provider: "weibo",
+            identifier: uid,
+            feed_url: "",
+            feed_homepage_url: uid,
+            feed_display_name: "微博用户",
+          },
+          "微博",
+        );
+      } else {
+        await connectAndSync(
+          {
+            provider: "mock",
+            identifier: "demo",
+            access_token: "x",
+          },
+          "演示数据",
+        );
+      }
 
-    const handleAddAccount = async () => {
-        setAddingAccount(true);
-        try {
-            if (newProvider === 'gmail' || newProvider === 'outlook') {
-                await connectOAuth(newProvider);
-            } else if (newProvider === 'github') {
-                if (githubConnectMode === 'oauth') {
-                    await connectOAuth('github');
-                } else {
-                    const token = githubToken.trim();
-                    if (!token) throw new Error('请填写 GitHub Token');
-                    await connectAndSync(
-                        {
-                            provider: 'github',
-                            identifier: githubIdentifier.trim() || 'github',
-                            access_token: token,
-                        },
-                        'GitHub'
-                    );
-                }
-            } else if (newProvider === 'forward') {
-                const sourceEmail = forwardSourceEmail.trim().toLowerCase();
-                if (!sourceEmail) throw new Error('请填写要接入的邮箱地址');
-                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sourceEmail)) {
-                    throw new Error('请输入有效的邮箱地址');
-                }
-                const created = await createAccount({
-                    provider: 'forward',
-                    identifier: sourceEmail,
-                    forward_source_email: sourceEmail,
-                });
-                const info = await getForwardAccountInfo(created.id);
-                setLatestForwardInfo(info);
-                showToast('转发地址已生成，请在邮箱里设置自动转发', 'success');
-            } else if (newProvider === 'imap') {
-                const email = imapUsername.trim();
-                const host = imapHost.trim();
-                const mailbox = (imapMailbox || 'INBOX').trim();
-                if (!email || !imapPassword) throw new Error('请填写邮箱与授权码/密码');
-                if (!host) throw new Error('请先选择邮箱服务商，或在高级设置中填写 IMAP 主机');
+      mutateAccounts();
+      setImapPassword("");
+      setForwardSourceEmail("");
+      setRssFeedUrl("");
+      setRssHomepageUrl("");
+      setRssDisplayName("");
+      setBilibiliUid("");
+      setXUsername("");
+      setGithubToken("");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "连接失败", "error");
+    } finally {
+      setAddingAccount(false);
+    }
+  };
 
-                const port = Number(imapPort || 993);
-                await connectAndSync(
-                    {
-                        provider: 'imap',
-                        identifier: email,
-                        imap_host: host,
-                        imap_port: Number.isFinite(port) ? port : 993,
-                        imap_use_ssl: imapUseSsl,
-                        imap_username: email,
-                        imap_password: imapPassword,
-                        imap_mailbox: mailbox,
-                    },
-                    '邮箱'
-                );
-            } else if (newProvider === 'rss') {
-                const feedUrl = rssFeedUrl.trim();
-                if (!feedUrl) throw new Error('请填写 RSS / Atom 订阅链接');
-                const displayName = rssDisplayName.trim();
-                const homepage = rssHomepageUrl.trim();
-                await connectAndSync(
-                    {
-                        provider: 'rss',
-                        identifier: displayName || homepage || feedUrl,
-                        feed_url: feedUrl,
-                        feed_homepage_url: homepage || undefined,
-                        feed_display_name: displayName || undefined,
-                    },
-                    'RSS/Blog'
-                );
-            } else if (newProvider === 'bilibili') {
-                const uid = bilibiliUid.trim();
-                if (!uid) throw new Error('请填写 Bilibili UP 主 UID');
-                await connectAndSync(
-                    {
-                        provider: 'bilibili',
-                        identifier: uid,
-                        bilibili_uid: uid,
-                        feed_display_name: `B站 UP ${uid}`,
-                    },
-                    'Bilibili'
-                );
-            } else if (newProvider === 'x') {
-                const username = xUsername.trim().replace(/^@/, '');
-                if (!username) throw new Error('请填写 X 用户名');
-                await connectAndSync(
-                    {
-                        provider: 'x',
-                        identifier: username,
-                        x_username: username,
-                        feed_display_name: `X @${username}`,
-                    },
-                    'X'
-                );
-            } else if (newProvider === 'douyin') {
-                const secUid = douyinSecUid.trim();
-                if (!secUid) throw new Error('请填写抖音号或 sec_uid');
-                await connectAndSync(
-                    {
-                        provider: 'douyin',
-                        identifier: secUid,
-                        feed_url: '',
-                        feed_homepage_url: secUid,
-                        feed_display_name: '抖音用户',
-                    },
-                    '抖音'
-                );
-            } else if (newProvider === 'xiaohongshu') {
-                const userId = xiaohongshuUserId.trim();
-                if (!userId) throw new Error('请填写小红书用户 UID');
-                await connectAndSync(
-                    {
-                        provider: 'xiaohongshu',
-                        identifier: userId,
-                        feed_url: '',
-                        feed_homepage_url: userId,
-                        feed_display_name: '小红书用户',
-                    },
-                    '小红书'
-                );
-            } else if (newProvider === 'weibo') {
-                const uid = weiboUid.trim();
-                if (!uid) throw new Error('请填写微博用户 UID');
-                await connectAndSync(
-                    {
-                        provider: 'weibo',
-                        identifier: uid,
-                        feed_url: '',
-                        feed_homepage_url: uid,
-                        feed_display_name: '微博用户',
-                    },
-                    '微博'
-                );
-            } else {
-                await connectAndSync(
-                    {
-                        provider: 'mock',
-                        identifier: 'demo',
-                        access_token: 'x',
-                    },
-                    '演示数据'
-                );
-            }
+  const handleDeleteAccount = async (id: number) => {
+    const ok = await confirm({
+      title: "断开账户",
+      message: "确定要断开该账户吗？",
+      severity: "error",
+    });
+    if (!ok) return;
+    try {
+      await deleteAccount(id);
+      showToast("已断开连接", "success");
+      mutateAccounts();
+    } catch (e) {
+      showToast("断开失败", "error");
+    }
+  };
 
-            mutateAccounts();
-            setImapPassword('');
-            setForwardSourceEmail('');
-            setRssFeedUrl('');
-            setRssHomepageUrl('');
-            setRssDisplayName('');
-            setBilibiliUid('');
-            setXUsername('');
-            setGithubToken('');
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '连接失败', 'error');
-        } finally {
-            setAddingAccount(false);
-        }
-    };
+  const handleSync = async (id: number, forceFull = false) => {
+    setSyncing(id);
+    try {
+      const res = await syncAccount(id, forceFull);
+      showToast(`同步完成：+${res.inserted}`, "success");
+      mutateAccounts(); // Update last synced time
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "同步失败", "error");
+    } finally {
+      setSyncing(null);
+    }
+  };
 
-    const handleDeleteAccount = async (id: number) => {
-        const ok = await confirm({ title: '断开账户', message: '确定要断开该账户吗？', severity: 'error' });
-        if (!ok) return;
-        try {
-            await deleteAccount(id);
-            showToast('已断开连接', 'success');
-            mutateAccounts();
-        } catch (e) {
-            showToast('断开失败', 'error');
-        }
-    };
+  const handleForceSync = async (id: number) => {
+    const ok = await confirm({
+      title: "全量同步",
+      message: "全量重新同步？这会清除旧数据并重新拉取。",
+      severity: "warning",
+    });
+    if (!ok) return;
+    handleSync(id, true);
+  };
 
-    const handleSync = async (id: number, forceFull = false) => {
-        setSyncing(id);
-        try {
-            const res = await syncAccount(id, forceFull);
-            showToast(`同步完成：+${res.inserted}`, 'success');
-            mutateAccounts(); // Update last synced time
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '同步失败', 'error');
-        } finally {
-            setSyncing(null);
-        }
-    };
+  const handleSaveXConfig = async () => {
+    const token = xBearerToken.trim();
+    if (!token) {
+      showToast("请填写 X API Bearer Token", "error");
+      return;
+    }
+    setSavingXConfig(true);
+    try {
+      await updateXApiConfig(token);
+      mutateXApiConfig();
+      setXBearerToken("");
+      showToast("X API Token 已保存", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "保存失败", "error");
+    } finally {
+      setSavingXConfig(false);
+    }
+  };
 
-    const handleForceSync = async (id: number) => {
-        const ok = await confirm({ title: '全量同步', message: '全量重新同步？这会清除旧数据并重新拉取。', severity: 'warning' });
-        if (!ok) return;
-        handleSync(id, true);
-    };
+  const handleSaveXCookies = async () => {
+    const authToken = xAuthToken.trim();
+    const ct0 = xCt0.trim();
+    if (!authToken || !ct0) {
+      showToast("请填写 auth_token 与 ct0", "error");
+      return;
+    }
+    setSavingXCookies(true);
+    try {
+      await updateXAuthCookies(authToken, ct0);
+      mutateXApiConfig();
+      setXAuthToken("");
+      setXCt0("");
+      showToast("X Cookie 认证已保存", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "保存失败", "error");
+    } finally {
+      setSavingXCookies(false);
+    }
+  };
 
-    const handleSaveXConfig = async () => {
-        const token = xBearerToken.trim();
-        if (!token) {
-            showToast('请填写 X API Bearer Token', 'error');
-            return;
-        }
-        setSavingXConfig(true);
-        try {
-            await updateXApiConfig(token);
-            mutateXApiConfig();
-            setXBearerToken('');
-            showToast('X API Token 已保存', 'success');
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '保存失败', 'error');
-        } finally {
-            setSavingXConfig(false);
-        }
-    };
+  const handleDeleteXCookies = async () => {
+    try {
+      await deleteXAuthCookies();
+      mutateXApiConfig();
+      showToast("X Cookie 已删除", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "删除失败", "error");
+    }
+  };
 
-    const handleSaveXCookies = async () => {
-        const authToken = xAuthToken.trim();
-        const ct0 = xCt0.trim();
-        if (!authToken || !ct0) {
-            showToast('请填写 auth_token 与 ct0', 'error');
-            return;
-        }
-        setSavingXCookies(true);
-        try {
-            await updateXAuthCookies(authToken, ct0);
-            mutateXApiConfig();
-            setXAuthToken('');
-            setXCt0('');
-            showToast('X Cookie 认证已保存', 'success');
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '保存失败', 'error');
-        } finally {
-            setSavingXCookies(false);
-        }
-    };
+  const useOAuthConnectFlow =
+    newProvider === "gmail" ||
+    newProvider === "outlook" ||
+    (newProvider === "github" && githubConnectMode === "oauth");
+  const showGithubTokenForm =
+    newProvider === "github" && githubConnectMode === "token";
+  const addAccountButtonLabel = addingAccount
+    ? "连接中…"
+    : oauthConnecting
+      ? "授权中…"
+      : useOAuthConnectFlow
+        ? "开始授权连接"
+        : newProvider === "forward"
+          ? "生成转发地址"
+          : "连接并同步";
 
-    const handleDeleteXCookies = async () => {
-        try {
-            await deleteXAuthCookies();
-            mutateXApiConfig();
-            showToast('X Cookie 已删除', 'success');
-        } catch (e) {
-            showToast(e instanceof Error ? e.message : '删除失败', 'error');
-        }
-    };
+  return (
+    <>
+      {/* Connected Accounts */}
+      <Grid size={{ xs: 12 }}>
+        <Paper sx={{ p: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            已连接账户
+          </Typography>
+          <Typography variant="body2" color="textSecondary" mb={3}>
+            管理你的消息来源。推荐先用 Gmail/Outlook/GitHub
+            一键授权；也支持转发接入、IMAP 高级接入、RSS、Bilibili、X。
+          </Typography>
 
-    const useOAuthConnectFlow =
-        newProvider === 'gmail' ||
-        newProvider === 'outlook' ||
-        (newProvider === 'github' && githubConnectMode === 'oauth');
-    const showGithubTokenForm = newProvider === 'github' && githubConnectMode === 'token';
-    const addAccountButtonLabel = addingAccount
-        ? '连接中…'
-        : oauthConnecting
-            ? '授权中…'
-            : useOAuthConnectFlow
-                ? '开始授权连接'
-                : newProvider === 'forward'
-                    ? '生成转发地址'
-                    : '连接并同步';
+          <ConnectedAccountsList
+            accounts={accounts ?? []}
+            syncingAccountId={syncing}
+            accountIcon={accountIcon}
+            onSyncIncremental={handleSync}
+            onSyncFull={async (id) => {
+              const ok = await confirm({
+                title: "全量同步",
+                message: "全量重新同步？这会清除旧数据并重新拉取。",
+                severity: "warning",
+              });
+              if (!ok) return;
+              await handleSync(id, true);
+            }}
+            onDelete={handleDeleteAccount}
+          />
 
-    return (
-        <>
-                    {/* Connected Accounts */}
-                    <Grid size={{ xs: 12 }}>
-                        <Paper sx={{ p: 4 }}>
-                            <Typography variant="h6" gutterBottom>已连接账户</Typography>
-                            <Typography variant="body2" color="textSecondary" mb={3}>
-                                管理你的消息来源。推荐先用 Gmail/Outlook/GitHub 一键授权；也支持转发接入、IMAP 高级接入、RSS、Bilibili、X。
-                            </Typography>
-                            
-                            <List>
-                                {accounts?.map((account) => (
-                                    <React.Fragment key={account.id}>
-                                        <ListItem
-                                            secondaryAction={
-                                                <Box>
-                                                    <Tooltip title="左键：增量同步 | 右键：全量重新同步" arrow>
-                                                    <IconButton 
-                                                        edge="end" 
-                                                        onClick={() => handleSync(account.id)} 
-                                                        onContextMenu={async (e) => {
-                                                            e.preventDefault();
-                                                            const ok = await confirm({ title: '全量同步', message: '全量重新同步？这会清除旧数据并重新拉取。', severity: 'warning' });
-                                                            if (!ok) return;
-                                                            handleSync(account.id, true);
-                                                        }}
-                                                        disabled={syncing === account.id}
-                                                        sx={{ mr: 1 }}
-                                                    >
-                                                        {syncing === account.id ? <CircularProgress size={20} /> : <SyncIcon />}
-                                                    </IconButton>
-                                                    </Tooltip>
-                                                    <IconButton edge="end" onClick={() => handleDeleteAccount(account.id)} color="error">
-                                                        <DeleteIcon />
-                                                    </IconButton>
-                                                </Box>
-                                            }
-                                        >
-                                            <ListItemAvatar>
-                                                <Avatar sx={{ bgcolor: 'action.hover', color: 'text.primary' }}>
-                                                    {accountIcon(account.provider)}
-                                                </Avatar>
-                                            </ListItemAvatar>
-                                            <ListItemText 
-                                                primary={account.identifier}
-                                                secondary={`类型：${account.provider} • 上次同步：${account.last_synced_at ? new Date(account.last_synced_at).toLocaleString() : '从未'}`}
-                                            />
-                                        </ListItem>
-                                        <Divider variant="inset" component="li" />
-                                    </React.Fragment>
-                                ))}
-                            </List>
+          <Box
+            mt={4}
+            p={3}
+            bgcolor="action.hover"
+            borderRadius={0}
+            border={1}
+            borderColor="divider"
+          >
+            <Typography variant="subtitle2" fontWeight="bold" mb={0.5}>
+              连接新来源（简化版）
+            </Typography>
+            <Typography variant="caption" color="textSecondary">
+              只填必要字段，连接后自动同步一次验证。
+            </Typography>
 
-                            <Box mt={4} p={3} bgcolor="action.hover" borderRadius={0} border={1} borderColor="divider">
-                                <Typography variant="subtitle2" fontWeight="bold" mb={0.5}>连接新来源（简化版）</Typography>
-                                <Typography variant="caption" color="textSecondary">
-                                    只填必要字段，连接后自动同步一次验证。
-                                </Typography>
+            <Box mt={2.5}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    select
+                    fullWidth
+                    size="small"
+                    label="来源类型"
+                    value={newProvider}
+                    onChange={(e) =>
+                      setNewProvider(e.target.value as SourceProvider)
+                    }
+                    SelectProps={{ native: true }}
+                  >
+                    <option value="gmail">Gmail（一键授权，推荐）</option>
+                    <option value="outlook">Outlook（一键授权，推荐）</option>
+                    <option value="github">GitHub（OAuth / Token）</option>
+                    <option value="forward">邮箱转发接入（更简）</option>
+                    <option value="imap">邮箱（IMAP）</option>
+                    <option value="rss">RSS / Blog</option>
+                    <option value="bilibili">Bilibili UP 动态</option>
+                    <option value="x">X 用户更新</option>
+                    <option value="douyin">抖音用户动态</option>
+                    <option value="xiaohongshu">小红书用户笔记</option>
+                    <option value="weibo">微博用户动态</option>
+                    <option value="mock">演示数据</option>
+                  </TextField>
+                </Grid>
+                <AccountProviderFields
+                  newProvider={newProvider}
+                  githubConnectMode={githubConnectMode}
+                  onGithubConnectModeChange={setGithubConnectMode}
+                  useOAuthConnectFlow={useOAuthConnectFlow}
+                  showGithubTokenForm={showGithubTokenForm}
+                  oauthProviderConfig={oauthProviderConfig}
+                  oauthClientIdInput={oauthClientIdInput}
+                  onOauthClientIdInputChange={setOauthClientIdInput}
+                  oauthClientSecretInput={oauthClientSecretInput}
+                  onOauthClientSecretInputChange={setOauthClientSecretInput}
+                  savingOAuthConfig={savingOAuthConfig}
+                  onSaveOAuthConfig={async (
+                    provider,
+                    clientId,
+                    clientSecret,
+                  ) => {
+                    try {
+                      await saveOAuthConfig(provider, clientId, clientSecret);
+                    } catch (error) {
+                      showToast(
+                        error instanceof Error
+                          ? error.message
+                          : "保存 OAuth 配置失败",
+                        "error",
+                      );
+                    }
+                  }}
+                  onImportOAuthJson={handleImportOAuthJson}
+                  onOpenExternalPage={openExternalPage}
+                  githubIdentifier={githubIdentifier}
+                  onGithubIdentifierChange={setGithubIdentifier}
+                  githubToken={githubToken}
+                  onGithubTokenChange={setGithubToken}
+                  forwardSourceEmail={forwardSourceEmail}
+                  onForwardSourceEmailChange={setForwardSourceEmail}
+                  latestForwardInfo={latestForwardInfo}
+                  onCopyText={copyText}
+                  imapPreset={imapPreset}
+                  onImapPresetChange={setImapPreset}
+                  imapUsername={imapUsername}
+                  onImapUsernameChange={setImapUsername}
+                  imapPassword={imapPassword}
+                  onImapPasswordChange={setImapPassword}
+                  imapHost={imapHost}
+                  onImapHostChange={setImapHost}
+                  imapPort={imapPort}
+                  onImapPortChange={setImapPort}
+                  imapUseSsl={imapUseSsl}
+                  onImapUseSslChange={setImapUseSsl}
+                  imapMailbox={imapMailbox}
+                  onImapMailboxChange={setImapMailbox}
+                  showImapAdvanced={showImapAdvanced}
+                  onToggleImapAdvanced={() =>
+                    setShowImapAdvanced((value) => !value)
+                  }
+                  rssFeedUrl={rssFeedUrl}
+                  onRssFeedUrlChange={setRssFeedUrl}
+                  rssHomepageUrl={rssHomepageUrl}
+                  onRssHomepageUrlChange={setRssHomepageUrl}
+                  rssDisplayName={rssDisplayName}
+                  onRssDisplayNameChange={setRssDisplayName}
+                  onFillClaudeBlog={() => {
+                    setRssFeedUrl("https://claude.com/blog/");
+                    setRssHomepageUrl("https://claude.com/blog/");
+                    setRssDisplayName("Claude Blog");
+                  }}
+                  bilibiliUid={bilibiliUid}
+                  onBilibiliUidChange={setBilibiliUid}
+                  xUsername={xUsername}
+                  onXUsernameChange={setXUsername}
+                  xApiConfig={xApiConfig}
+                  xBearerToken={xBearerToken}
+                  onXBearerTokenChange={setXBearerToken}
+                  savingXConfig={savingXConfig}
+                  onSaveXConfig={handleSaveXConfig}
+                  xAuthToken={xAuthToken}
+                  onXAuthTokenChange={setXAuthToken}
+                  xCt0={xCt0}
+                  onXCt0Change={setXCt0}
+                  savingXCookies={savingXCookies}
+                  onSaveXCookies={handleSaveXCookies}
+                  onDeleteXCookies={handleDeleteXCookies}
+                  douyinSecUid={douyinSecUid}
+                  onDouyinSecUidChange={setDouyinSecUid}
+                  xiaohongshuUserId={xiaohongshuUserId}
+                  onXiaohongshuUserIdChange={setXiaohongshuUserId}
+                  weiboUid={weiboUid}
+                  onWeiboUidChange={setWeiboUid}
+                />{" "}
+                <Grid size={{ xs: 12 }}>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    onClick={handleAddAccount}
+                    disabled={
+                      addingAccount ||
+                      oauthConnecting !== null ||
+                      (useOAuthConnectFlow && savingOAuthConfig)
+                    }
+                  >
+                    {addAccountButtonLabel}
+                  </Button>
+                </Grid>
+              </Grid>
+            </Box>
+          </Box>
+        </Paper>
+      </Grid>
 
-                                <Box mt={2.5}>
-                                    <Grid container spacing={2} alignItems="center">
-                                        <Grid size={{ xs: 12, sm: 4 }}>
-                                            <TextField
-                                                select
-                                                fullWidth
-                                                size="small"
-                                                label="来源类型"
-                                                value={newProvider}
-                                                onChange={(e) => setNewProvider(e.target.value as SourceProvider)}
-                                                SelectProps={{ native: true }}
-                                            >
-                                                <option value="gmail">Gmail（一键授权，推荐）</option>
-                                                <option value="outlook">Outlook（一键授权，推荐）</option>
-                                                <option value="github">GitHub（OAuth / Token）</option>
-                                                <option value="forward">邮箱转发接入（更简）</option>
-                                                <option value="imap">邮箱（IMAP）</option>
-                                                <option value="rss">RSS / Blog</option>
-                                                <option value="bilibili">Bilibili UP 动态</option>
-                                                <option value="x">X 用户更新</option>
-                                                <option value="douyin">抖音用户动态</option>
-                                                <option value="xiaohongshu">小红书用户笔记</option>
-                                                <option value="weibo">微博用户动态</option>
-                                                <option value="mock">演示数据</option>
-                                            </TextField>
-                                        </Grid>
-
-                                        {(newProvider === 'gmail' || newProvider === 'outlook' || newProvider === 'github') && (
-                                            <>
-                                                {newProvider === 'github' && (
-                                                    <Grid size={{ xs: 12, sm: 5 }}>
-                                                        <TextField
-                                                            select
-                                                            fullWidth
-                                                            size="small"
-                                                            label="GitHub 接入方式"
-                                                            value={githubConnectMode}
-                                                            onChange={(e) => setGithubConnectMode(e.target.value as GithubConnectMode)}
-                                                            SelectProps={{ native: true }}
-                                                        >
-                                                            <option value="oauth">OAuth 一键授权（推荐）</option>
-                                                            <option value="token">手动 Token（兼容旧方式）</option>
-                                                        </TextField>
-                                                    </Grid>
-                                                )}
-
-                                                {useOAuthConnectFlow && (
-                                                    <>
-                                                        <Grid size={{ xs: 12 }}>
-                                                            <Alert severity="success" sx={{ borderRadius: 0 }}>
-                                                                推荐方式：点击下方按钮，跳转到
-                                                                {' '}
-                                                                {newProvider === 'gmail'
-                                                                    ? 'Google'
-                                                                    : newProvider === 'outlook'
-                                                                        ? 'Microsoft'
-                                                                        : 'GitHub'}
-                                                                {' '}
-                                                                官方授权页，完成一次授权即可接入
-                                                                {newProvider === 'github' ? '通知' : '邮件'}。
-                                                                {oauthProviderConfig?.configured ? '（当前已配置 OAuth 凭据）' : '（首次请先保存 OAuth 凭据，可在此页完成）'}
-                                                            </Alert>
-                                                        </Grid>
-                                                        <Grid size={{ xs: 12 }}>
-                                                            <Alert severity={oauthProviderConfig?.configured ? 'info' : 'warning'} sx={{ borderRadius: 0 }}>
-                                                                {oauthProviderConfig?.configured
-                                                                    ? `已保存 ${OAUTH_PROVIDER_LABEL[newProvider as OAuthSourceProvider]} OAuth 配置：${oauthProviderConfig.client_id_hint || '已隐藏'}`
-                                                                    : `尚未保存 ${OAUTH_PROVIDER_LABEL[newProvider as OAuthSourceProvider]} OAuth 配置。你可以直接在当前页面保存，无需改 .env。`}
-                                                            </Alert>
-                                                        </Grid>
-                                                        <Grid size={{ xs: 12, sm: 6 }}>
-                                                            <TextField
-                                                                fullWidth
-                                                                size="small"
-                                                                label="OAuth Client ID"
-                                                                value={oauthClientIdInput}
-                                                                onChange={(e) => setOauthClientIdInput(e.target.value)}
-                                                                placeholder={
-                                                                    newProvider === 'gmail'
-                                                                        ? 'xxx.apps.googleusercontent.com'
-                                                                        : newProvider === 'github'
-                                                                            ? 'Iv1.***'
-                                                                            : '应用 Client ID'
-                                                                }
-                                                            />
-                                                        </Grid>
-                                                        <Grid size={{ xs: 12, sm: 6 }}>
-                                                            <TextField
-                                                                fullWidth
-                                                                size="small"
-                                                                type="password"
-                                                                label="OAuth Client Secret"
-                                                                value={oauthClientSecretInput}
-                                                                onChange={(e) => setOauthClientSecretInput(e.target.value)}
-                                                                placeholder="输入后仅本次显示"
-                                                            />
-                                                        </Grid>
-                                                        <Grid size={{ xs: 12 }} display="flex" gap={1.2} flexWrap="wrap">
-                                                            <Button
-                                                                variant="outlined"
-                                                                disabled={savingOAuthConfig}
-                                                                onClick={() =>
-                                                                    saveOAuthConfig(
-                                                                        newProvider as OAuthSourceProvider,
-                                                                        oauthClientIdInput,
-                                                                        oauthClientSecretInput
-                                                                    ).catch((e) =>
-                                                                        showToast(e instanceof Error ? e.message : '保存 OAuth 配置失败', 'error')
-                                                                    )
-                                                                }
-                                                            >
-                                                                {savingOAuthConfig ? '保存中…' : '保存 OAuth 配置'}
-                                                            </Button>
-                                                            {newProvider !== 'github' && (
-                                                                <Button variant="text" component="label" disabled={savingOAuthConfig}>
-                                                                    导入 OAuth JSON 并保存
-                                                                    <input
-                                                                        hidden
-                                                                        type="file"
-                                                                        accept="application/json,.json"
-                                                                        onChange={(e) =>
-                                                                            handleImportOAuthJson(newProvider as OAuthSourceProvider, e)
-                                                                        }
-                                                                    />
-                                                                </Button>
-                                                            )}
-                                                            {newProvider === 'gmail' && (
-                                                                <>
-                                                                    <Button
-                                                                        variant="text"
-                                                                        onClick={() => openExternalPage(GMAIL_OAUTH_CONSOLE_URL)}
-                                                                        aria-label="在新窗口打开 OAuth 配置页"
-                                                                    >
-                                                                        跳转查看信息（OAuth 配置页，新窗口）
-                                                                    </Button>
-                                                                    <Button
-                                                                        variant="text"
-                                                                        onClick={() => openExternalPage(GMAIL_API_ENABLE_URL)}
-                                                                        aria-label="在新窗口打开 Gmail API 启用页面"
-                                                                    >
-                                                                        跳转启用 Gmail API（新窗口）
-                                                                    </Button>
-                                                                </>
-                                                            )}
-                                                            {newProvider === 'outlook' && (
-                                                                <Button
-                                                                    variant="text"
-                                                                    onClick={() => openExternalPage(OUTLOOK_OAUTH_PORTAL_URL)}
-                                                                    aria-label="在新窗口打开 Azure 应用注册页"
-                                                                >
-                                                                    跳转到 Azure 应用注册（新窗口）
-                                                                </Button>
-                                                            )}
-                                                            {newProvider === 'github' && (
-                                                                <>
-                                                                    <Button
-                                                                        variant="text"
-                                                                        onClick={() => openExternalPage(GITHUB_OAUTH_APPS_URL)}
-                                                                        aria-label="在新窗口打开 GitHub OAuth Apps 页面"
-                                                                    >
-                                                                        跳转到 GitHub OAuth Apps（新窗口）
-                                                                    </Button>
-                                                                    <Button
-                                                                        variant="text"
-                                                                        onClick={() => openExternalPage(GITHUB_OAUTH_DOCS_URL)}
-                                                                        aria-label="在新窗口打开 GitHub OAuth 文档"
-                                                                    >
-                                                                        跳转查看 GitHub OAuth 文档（新窗口）
-                                                                    </Button>
-                                                                </>
-                                                            )}
-                                                        </Grid>
-                                                    </>
-                                                )}
-
-                                                {showGithubTokenForm && (
-                                                    <>
-                                                        <Grid size={{ xs: 12 }}>
-                                                            <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                                兼容旧方式：可直接填写 GitHub Token 接入通知，无需 OAuth 应用。建议使用 Classic PAT 并授予
-                                                                {' '}
-                                                                <code>notifications</code>
-                                                                {' '}
-                                                                权限。
-                                                            </Alert>
-                                                        </Grid>
-                                                        <Grid size={{ xs: 12, sm: 6 }}>
-                                                            <TextField
-                                                                fullWidth
-                                                                size="small"
-                                                                label="GitHub 用户名（可选）"
-                                                                value={githubIdentifier}
-                                                                onChange={(e) => setGithubIdentifier(e.target.value)}
-                                                                placeholder="如：octocat"
-                                                            />
-                                                        </Grid>
-                                                        <Grid size={{ xs: 12, sm: 6 }}>
-                                                            <TextField
-                                                                fullWidth
-                                                                size="small"
-                                                                type="password"
-                                                                label="GitHub Token"
-                                                                value={githubToken}
-                                                                onChange={(e) => setGithubToken(e.target.value)}
-                                                                placeholder="ghp_xxx"
-                                                            />
-                                                        </Grid>
-                                                        <Grid size={{ xs: 12 }} display="flex" gap={1.2} flexWrap="wrap">
-                                                            <Button
-                                                                variant="text"
-                                                                onClick={() => openExternalPage(GITHUB_PAT_URL)}
-                                                                aria-label="在新窗口打开 GitHub Token 页面"
-                                                            >
-                                                                跳转创建 GitHub Token（新窗口）
-                                                            </Button>
-                                                            <Button
-                                                                variant="text"
-                                                                onClick={() => openExternalPage(GITHUB_PAT_DOCS_URL)}
-                                                                aria-label="在新窗口打开 GitHub Token 文档"
-                                                            >
-                                                                查看 GitHub Token 文档（新窗口）
-                                                            </Button>
-                                                        </Grid>
-                                                    </>
-                                                )}
-                                            </>
-                                        )}
-
-                                        {newProvider === 'forward' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="要接入的邮箱地址"
-                                                        value={forwardSourceEmail}
-                                                        onChange={(e) => setForwardSourceEmail(e.target.value)}
-                                                        placeholder="you@example.com"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                        创建后会生成一个专属转发地址。去你的邮箱设置里添加“自动转发到该地址”即可接入，无需再配置 Webhook。
-                                                    </Alert>
-                                                </Grid>
-                                                {latestForwardInfo && (
-                                                    <Grid size={{ xs: 12 }}>
-                                                        <Alert severity="success" sx={{ borderRadius: 0 }}>
-                                                            <Box display="flex" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap">
-                                                                <Typography variant="body2">
-                                                                    专属转发地址：{latestForwardInfo.forward_address}
-                                                                </Typography>
-                                                                <Button
-                                                                    size="small"
-                                                                    variant="outlined"
-                                                                    onClick={() => copyText(latestForwardInfo.forward_address)}
-                                                                >
-                                                                    复制地址
-                                                                </Button>
-                                                            </Box>
-                                                            <Typography variant="caption" display="block" sx={{ mt: 0.8 }}>
-                                                                已绑定邮箱：{latestForwardInfo.source_email}。完成邮箱端自动转发后，新邮件会自动进入 MercuryDesk。
-                                                            </Typography>
-                                                        </Alert>
-                                                    </Grid>
-                                                )}
-                                            </>
-                                        )}
-
-                                        {newProvider === 'imap' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 4 }}>
-                                                    <TextField
-                                                        select
-                                                        fullWidth
-                                                        size="small"
-                                                        label="邮箱服务商"
-                                                        value={imapPreset}
-                                                        onChange={(e) => setImapPreset(e.target.value as any)}
-                                                        SelectProps={{ native: true }}
-                                                    >
-                                                        <option value="gmail">Gmail</option>
-                                                        <option value="outlook">Outlook / Microsoft 365</option>
-                                                        <option value="icloud">iCloud</option>
-                                                        <option value="qq">QQ 邮箱</option>
-                                                        <option value="163">163 邮箱</option>
-                                                        <option value="custom">自定义</option>
-                                                    </TextField>
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 4 }}>
-                                                    <TextField 
-                                                        fullWidth 
-                                                        size="small" 
-                                                        label="邮箱" 
-                                                        value={imapUsername}
-                                                        onChange={(e) => setImapUsername(e.target.value)}
-                                                        placeholder="your@email.com"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 4 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="授权码 / 密码"
-                                                        type="password"
-                                                        value={imapPassword}
-                                                        onChange={(e) => setImapPassword(e.target.value)}
-                                                        placeholder="建议使用应用专用密码"
-                                                    />
-                                                </Grid>
-
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                        高级接入（兜底方案）：三步完成 ① 开启 IMAP ② 生成授权码 ③ 填写邮箱+授权码。优先推荐 Gmail/Outlook 一键授权。
-                                                    </Alert>
-                                                </Grid>
-
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Box display="flex" alignItems="center" justifyContent="space-between">
-                                                        <Typography variant="caption" color="textSecondary">
-                                                            当前：{imapHost || '未设置主机'}:{imapPort}（{imapUseSsl ? 'SSL' : '无 SSL'}）
-                                                        </Typography>
-                                                        <Button
-                                                            size="small"
-                                                            variant="text"
-                                                            onClick={() => setShowImapAdvanced((v) => !v)}
-                                                        >
-                                                            {showImapAdvanced ? '收起高级设置' : '高级设置'}
-                                                        </Button>
-                                                    </Box>
-                                                    <Collapse in={showImapAdvanced}>
-                                                        <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                                                            <Grid size={{ xs: 12, sm: 6 }}>
-                                                                <TextField
-                                                                    fullWidth
-                                                                    size="small"
-                                                                    label="IMAP 主机"
-                                                                    placeholder="imap.example.com"
-                                                                    value={imapHost}
-                                                                    onChange={(e) => setImapHost(e.target.value)}
-                                                                />
-                                                            </Grid>
-                                                            <Grid size={{ xs: 12, sm: 3 }}>
-                                                                <TextField
-                                                                    fullWidth
-                                                                    size="small"
-                                                                    label="端口"
-                                                                    value={imapPort}
-                                                                    onChange={(e) => setImapPort(e.target.value)}
-                                                                    inputProps={{ inputMode: 'numeric' }}
-                                                                />
-                                                            </Grid>
-                                                            <Grid size={{ xs: 12, sm: 3 }}>
-                                                                <Box display="flex" alignItems="center" justifyContent="space-between" height="100%">
-                                                                    <Typography variant="body2" color="textSecondary">
-                                                                        使用 SSL
-                                                                    </Typography>
-                                                                    <Switch
-                                                                        checked={imapUseSsl}
-                                                                        onChange={(e) => setImapUseSsl(e.target.checked)}
-                                                                    />
-                                                                </Box>
-                                                            </Grid>
-                                                            <Grid size={{ xs: 12, sm: 6 }}>
-                                                                <TextField
-                                                                    fullWidth
-                                                                    size="small"
-                                                                    label="邮箱文件夹"
-                                                                    placeholder="INBOX"
-                                                                    value={imapMailbox}
-                                                                    onChange={(e) => setImapMailbox(e.target.value)}
-                                                                />
-                                                            </Grid>
-                                                        </Grid>
-                                                    </Collapse>
-                                                </Grid>
-                                            </>
-                                        )}
-
-                                        {newProvider === 'rss' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 8 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="RSS / Atom 地址"
-                                                        value={rssFeedUrl}
-                                                        onChange={(e) => setRssFeedUrl(e.target.value)}
-                                                        placeholder="https://example.com/feed.xml"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 4 }}>
-                                                    <Button
-                                                        fullWidth
-                                                        variant="outlined"
-                                                        onClick={() => {
-                                                            setRssFeedUrl('https://claude.com/blog/');
-                                                            setRssHomepageUrl('https://claude.com/blog/');
-                                                            setRssDisplayName('Claude Blog');
-                                                        }}
-                                                    >
-                                                        一键填入 Claude Blog
-                                                    </Button>
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="显示名称（可选）"
-                                                        value={rssDisplayName}
-                                                        onChange={(e) => setRssDisplayName(e.target.value)}
-                                                        placeholder="例如：Claude Blog"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="主页链接（可选）"
-                                                        value={rssHomepageUrl}
-                                                        onChange={(e) => setRssHomepageUrl(e.target.value)}
-                                                        placeholder="https://example.com"
-                                                    />
-                                                </Grid>
-                                            </>
-                                        )}
-
-                                        {newProvider === 'bilibili' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="UP 主 UID"
-                                                        value={bilibiliUid}
-                                                        onChange={(e) => setBilibiliUid(e.target.value)}
-                                                        placeholder="如：546195"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                        使用 B 站公开页面抓取 UP 最新视频动态；若抓取失败会自动回退订阅源抓取。
-                                                    </Alert>
-                                                </Grid>
-                                            </>
-                                        )}
-
-                                        {newProvider === 'x' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="X 用户名"
-                                                        value={xUsername}
-                                                        onChange={(e) => setXUsername(e.target.value)}
-                                                        placeholder="@openai 或 openai"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                        {xApiConfig?.configured
-                                                            ? `已配置官方 X API（${xApiConfig.token_hint || '已隐藏'}），将优先使用官方 API 获取推文。`
-                                                            : '默认使用公共网页接口抓取；配置官方 API Bearer Token 可获得更稳定的抓取效果。'}
-                                                    </Alert>
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 8 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        type="password"
-                                                        label="X API Bearer Token（可选，推荐）"
-                                                        value={xBearerToken}
-                                                        onChange={(e) => setXBearerToken(e.target.value)}
-                                                        placeholder={xApiConfig?.configured ? '已配置（不显示）' : 'AAAA...'}
-                                                        helperText="从 developer.x.com 获取，配置后优先使用官方 API"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 4 }}>
-                                                    <Button
-                                                        fullWidth
-                                                        variant="outlined"
-                                                        disabled={!xBearerToken.trim() || savingXConfig}
-                                                        onClick={async () => {
-                                                            setSavingXConfig(true);
-                                                            try {
-                                                                const updated = await updateXApiConfig(xBearerToken.trim());
-                                                                mutateXApiConfig(updated, { revalidate: false });
-                                                                setXBearerToken('');
-                                                                showToast('X API Token 已保存', 'success');
-                                                            } catch (e) {
-                                                                showToast(e instanceof Error ? e.message : '保存失败', 'error');
-                                                            } finally {
-                                                                setSavingXConfig(false);
-                                                            }
-                                                        }}
-                                                        sx={{ height: '40px' }}
-                                                    >
-                                                        {savingXConfig ? '保存中…' : '保存 Token'}
-                                                    </Button>
-                                                </Grid>
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Button
-                                                        variant="text"
-                                                        size="small"
-                                                        onClick={() => window.open('https://developer.x.com/', '_blank', 'noopener,noreferrer')}
-                                                    >
-                                                        前往 X 开发者平台获取 Bearer Token（新窗口）
-                                                    </Button>
-                                                </Grid>
-
-                                                {/* Cookie Authentication Section */}
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity={xApiConfig?.cookies_configured ? 'success' : 'warning'} sx={{ borderRadius: 0 }}>
-                                                        {xApiConfig?.cookies_configured
-                                                            ? '已配置浏览器 Cookie 认证，将优先使用认证接口获取最新推文（支持按时间排序）。'
-                                                            : '推荐配置浏览器 Cookie：未认证接口只能获取热门推文（按互动量排序），可能遗漏最新推文。'}
-                                                    </Alert>
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        type="password"
-                                                        label="auth_token Cookie"
-                                                        value={xAuthToken}
-                                                        onChange={(e) => setXAuthToken(e.target.value)}
-                                                        placeholder={xApiConfig?.cookies_configured ? '已配置（不显示）' : '粘贴 auth_token 值'}
-                                                        helperText="从浏览器 DevTools → Application → Cookies → x.com 获取"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        type="password"
-                                                        label="ct0 Cookie"
-                                                        value={xCt0}
-                                                        onChange={(e) => setXCt0(e.target.value)}
-                                                        placeholder={xApiConfig?.cookies_configured ? '已配置（不显示）' : '粘贴 ct0 值'}
-                                                        helperText="同样从 Cookies 中获取 ct0 的值"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <Button
-                                                        fullWidth
-                                                        variant="outlined"
-                                                        disabled={(!xAuthToken.trim() || !xCt0.trim()) || savingXCookies}
-                                                        onClick={async () => {
-                                                            setSavingXCookies(true);
-                                                            try {
-                                                                await updateXAuthCookies(xAuthToken.trim(), xCt0.trim());
-                                                                mutateXApiConfig();
-                                                                setXAuthToken('');
-                                                                setXCt0('');
-                                                                showToast('X Cookie 认证已保存', 'success');
-                                                            } catch (e) {
-                                                                showToast(e instanceof Error ? e.message : '保存失败', 'error');
-                                                            } finally {
-                                                                setSavingXCookies(false);
-                                                            }
-                                                        }}
-                                                        sx={{ height: '40px' }}
-                                                    >
-                                                        {savingXCookies ? '保存中…' : '保存 Cookies'}
-                                                    </Button>
-                                                </Grid>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    {xApiConfig?.cookies_configured && (
-                                                        <Button
-                                                            fullWidth
-                                                            variant="outlined"
-                                                            color="error"
-                                                            onClick={async () => {
-                                                                try {
-                                                                    await deleteXAuthCookies();
-                                                                    mutateXApiConfig();
-                                                                    showToast('X Cookie 已删除', 'success');
-                                                                } catch (e) {
-                                                                    showToast(e instanceof Error ? e.message : '删除失败', 'error');
-                                                                }
-                                                            }}
-                                                            sx={{ height: '40px' }}
-                                                        >
-                                                            删除 Cookies
-                                                        </Button>
-                                                    )}
-                                                </Grid>
-                                            </>
-                                        )}
-
-                                        {newProvider === 'douyin' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="抖音号或 sec_uid"
-                                                        value={douyinSecUid}
-                                                        onChange={(e) => setDouyinSecUid(e.target.value)}
-                                                        placeholder="如：douyin123 或 MS4wLjABAAAA..."
-                                                        helperText="支持直接输入抖音号，系统会自动解析"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                        支持抖音号或 sec_uid，抓取用户最新视频动态。
-                                                    </Alert>
-                                                </Grid>
-                                            </>
-                                        )}
-
-                                        {newProvider === 'xiaohongshu' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="小红书用户 UID"
-                                                        value={xiaohongshuUserId}
-                                                        onChange={(e) => setXiaohongshuUserId(e.target.value)}
-                                                        placeholder="如：5a1234567890abcdef123456"
-                                                        helperText="从用户主页链接 /user/profile/xxx 中获取"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                        抓取小红书用户最新笔记动态。
-                                                    </Alert>
-                                                </Grid>
-                                            </>
-                                        )}
-
-                                        {newProvider === 'weibo' && (
-                                            <>
-                                                <Grid size={{ xs: 12, sm: 6 }}>
-                                                    <TextField
-                                                        fullWidth
-                                                        size="small"
-                                                        label="微博用户 UID"
-                                                        value={weiboUid}
-                                                        onChange={(e) => setWeiboUid(e.target.value)}
-                                                        placeholder="如：1234567890"
-                                                        helperText="从用户主页链接 weibo.com/u/xxx 中获取"
-                                                    />
-                                                </Grid>
-                                                <Grid size={{ xs: 12 }}>
-                                                    <Alert severity="info" sx={{ borderRadius: 0 }}>
-                                                        抓取微博用户最新动态。
-                                                    </Alert>
-                                                </Grid>
-                                            </>
-                                        )}
-
-                                        {newProvider === 'mock' && (
-                                            <Grid size={{ xs: 12 }}>
-                                                <Alert severity="success" sx={{ borderRadius: 0 }}>
-                                                    连接演示数据用于快速体验界面（不会访问真实邮箱）。
-                                                </Alert>
-                                            </Grid>
-                                        )}
-
-                                        <Grid size={{ xs: 12 }}>
-                                            <Button 
-                                                fullWidth 
-                                                variant="contained" 
-                                                onClick={handleAddAccount}
-                                                disabled={addingAccount || oauthConnecting !== null || (useOAuthConnectFlow && savingOAuthConfig)}
-                                            >
-                                                {addAccountButtonLabel}
-                                            </Button>
-                                        </Grid>
-                                    </Grid>
-                                </Box>
-                            </Box>
-                        </Paper>
-                    </Grid>
-
-            {ConfirmDialog}
-        </>
-    );
+      {ConfirmDialog}
+    </>
+  );
 }
