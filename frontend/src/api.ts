@@ -494,12 +494,20 @@ export type ForwardAccountInfo = {
   inbound_url: string;
 };
 
-const TOKEN_KEY = "mercurydesk_token";
+const LEGACY_TOKEN_KEY = "mercurydesk_token";
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
 const MOBILE_API_BASE_URL = String(import.meta.env.VITE_MOBILE_API_BASE_URL || "http://10.0.2.2:8000")
   .trim()
   .replace(/\/+$/, "");
-let tokenCache: string | null | undefined;
+
+function clearLegacyTokenStorage() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
+  } catch {
+    // ignore cleanup failures
+  }
+}
 
 function isNativeMobileShellRuntime(): boolean {
   if (typeof window === "undefined") return false;
@@ -520,17 +528,6 @@ function resolveApiUrl(path: string): string {
   return normalized;
 }
 
-export function getToken(): string | null {
-  if (tokenCache === undefined) tokenCache = localStorage.getItem(TOKEN_KEY);
-  return tokenCache;
-}
-
-export function setToken(token: string | null) {
-  tokenCache = token;
-  if (!token) localStorage.removeItem(TOKEN_KEY);
-  else localStorage.setItem(TOKEN_KEY, token);
-}
-
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -542,14 +539,9 @@ export class ApiError extends Error {
 async function apiFetch(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  clearLegacyTokenStorage();
 
   const resp = await fetch(resolveApiUrl(path), { ...init, headers });
-  if (resp.status === 401) {
-    setToken(null);
-    if (typeof window !== "undefined") window.dispatchEvent(new Event("mercurydesk:unauthorized"));
-  }
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     let message = text || `HTTP ${resp.status}`;
@@ -803,8 +795,7 @@ export async function testAgent(): Promise<{ ok: boolean; provider: string; mess
 
 async function* streamFetch(path: string, init: RequestInit = {}, signal?: AbortSignal): AsyncGenerator<string, void, unknown> {
   const headers = new Headers(init.headers);
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  clearLegacyTokenStorage();
 
   const response = await fetch(resolveApiUrl(path), { ...init, headers, signal });
   if (!response.ok) {

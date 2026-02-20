@@ -4,10 +4,8 @@ import Toolbar from '@mui/material/Toolbar';
 import IconButton from '@mui/material/IconButton';
 import InputBase from '@mui/material/InputBase';
 import { styled } from '@mui/material/styles';
-import { useAuth } from '../contexts/AuthContext';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
-import LogoutIcon from '@mui/icons-material/LogoutOutlined';
 import RefreshIcon from '@mui/icons-material/SyncOutlined';
 import SettingsIcon from '@mui/icons-material/Settings';
 import Box from '@mui/material/Box';
@@ -55,9 +53,9 @@ const StyledInputBase = styled(InputBase)(({ theme }) => ({
     padding: theme.spacing(1.25, 1, 1.25, 0),
     paddingLeft: `calc(1em + ${theme.spacing(4)})`,
     transition: theme.transitions.create('width', { duration: 200 }),
-      width: '100%',
-      fontSize: '0.9rem',
-      [theme.breakpoints.up('md')]: {
+    width: '100%',
+    fontSize: '0.9rem',
+    [theme.breakpoints.up('md')]: {
       width: '26ch',
       '&:focus': {
         width: '34ch',
@@ -76,7 +74,6 @@ interface TopBarProps {
 
 export const TopBar: React.FC<TopBarProps> = ({ onRefresh, onSearch, loading, hideSearch = false, hideSync = false }) => {
   const navigate = useNavigate();
-  const { logout } = useAuth();
   const [searchValue, setSearchValue] = useState('');
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -202,20 +199,6 @@ export const TopBar: React.FC<TopBarProps> = ({ onRefresh, onSearch, loading, hi
             }}
           >
             <SettingsIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-
-        <Tooltip title="退出登录">
-          <IconButton
-            size="medium"
-            onClick={logout}
-            sx={{
-              color: 'text.primary',
-              border: '1px solid transparent',
-              '&:hover': { color: '#ef4444', bgcolor: 'rgba(239,68,68,0.08)' },
-            }}
-          >
-            <LogoutIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </Toolbar>

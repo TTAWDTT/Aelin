@@ -17,7 +17,19 @@ from app.security import ALGORITHM, create_access_token
 from app.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
+
+
+def _ensure_local_user(db: Session) -> User:
+    """Single-user local fallback in no-login mode."""
+    user = db.scalar(select(User).order_by(User.id.asc()))
+    if user is not None:
+        return user
+    return crud.create_user(
+        db,
+        email="local@aelin.local",
+        password=f"local-{uuid4().hex}-{uuid4().hex}",
+    )
 
 
 @router.post("/register", response_model=UserOut)
@@ -38,7 +50,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     return Token(access_token=token)
 
 
-def get_current_user(db: Session = Depends(get_session), token: str = Depends(oauth2_scheme)) -> User:
+def get_current_user(db: Session = Depends(get_session), token: str | None = Depends(oauth2_scheme)) -> User:
+    fallback_user = _ensure_local_user(db)
+    if not token:
+        return fallback_user
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -48,14 +64,14 @@ def get_current_user(db: Session = Depends(get_session), token: str = Depends(oa
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         sub = payload.get("sub")
         if sub is None:
-            raise credentials_exception
+            return fallback_user
         user_id = int(sub)
     except (JWTError, ValueError):
-        raise credentials_exception
+        return fallback_user
 
     user = db.get(User, user_id)
     if user is None:
-        raise credentials_exception
+        return fallback_user
     return user
 
 
