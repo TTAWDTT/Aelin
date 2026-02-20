@@ -16,7 +16,7 @@ from app.schemas import Token, UserCreate, UserOut, UserUpdate
 from app.security import ALGORITHM, create_access_token
 from app.settings import settings
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"], deprecated=True)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
 
@@ -165,3 +165,4 @@ async def upload_my_avatar(
             except OSError:
                 pass
     return updated_user
+
