@@ -1,50 +1,47 @@
-import React, { Suspense } from "react";
-import { BrowserRouter, HashRouter, Navigate, Route, Routes } from "react-router-dom";
-import { SWRConfig } from "swr";
-import { isNativeMobileShell } from "./env";
-import { fetchJson } from "../api/client";
-import { Shell } from "./layout/Shell";
-import { PageLoading } from "./layout/PageLoading";
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { lazy, Suspense, useState, useCallback } from 'react'
+import { RootLayout } from './layout/RootLayout'
+import { AuthGate } from '@/features/auth/AuthGate'
 
-const ChatPage = React.lazy(() => import("../pages/ChatPage").then((m) => ({ default: m.ChatPage })));
-const SignalsPage = React.lazy(() => import("../pages/SignalsPage").then((m) => ({ default: m.SignalsPage })));
-const ContactThreadPage = React.lazy(() => import("../pages/SignalsThreadPage").then((m) => ({ default: m.SignalsThreadPage })));
-const MessagePage = React.lazy(() => import("../pages/MessagePage").then((m) => ({ default: m.MessagePage })));
-const TrackingPage = React.lazy(() => import("../pages/TrackingPage").then((m) => ({ default: m.TrackingPage })));
-const TrackingTargetPage = React.lazy(() => import("../pages/TrackingTargetPage").then((m) => ({ default: m.TrackingTargetPage })));
-const SettingsPage = React.lazy(() => import("../pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
-const NotFound = React.lazy(() => import("../pages/NotFound").then((m) => ({ default: m.NotFound })));
+const ChatPage = lazy(() => import('./routes/ChatPage'))
+const SignalsPage = lazy(() => import('./routes/SignalsPage'))
+const SignalThreadPage = lazy(() => import('./routes/SignalThreadPage'))
+const TrackingPage = lazy(() => import('./routes/TrackingPage'))
+const TrackingDetailPage = lazy(() => import('./routes/TrackingDetailPage'))
+const SettingsPage = lazy(() => import('./routes/SettingsPage'))
+
+function Loading() {
+  return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="w-5 h-5 rounded-full border-2 border-[var(--color-border-strong)] border-t-[var(--color-accent)] animate-spin" />
+    </div>
+  )
+}
 
 export function App() {
-  const Router = isNativeMobileShell() ? HashRouter : BrowserRouter;
+  const [authed, setAuthed] = useState(() => !!localStorage.getItem('token'))
+
+  const handleAuth = useCallback(() => setAuthed(true), [])
+
+  if (!authed) return <AuthGate onAuth={handleAuth} />
+
   return (
-    <SWRConfig
-      value={{
-        fetcher: (key: string) => fetchJson(key),
-        shouldRetryOnError: true,
-        errorRetryCount: 2,
-        errorRetryInterval: 1200,
-        revalidateOnFocus: true,
-        focusThrottleInterval: 10000,
-      }}
-    >
-      <Router>
-        <Suspense fallback={<PageLoading />}>
-          <Routes>
-            <Route element={<Shell />}>
-              <Route path="/" element={<ChatPage />} />
-              <Route path="/chat" element={<Navigate to="/" replace />} />
-              <Route path="/signals" element={<SignalsPage />} />
-              <Route path="/signals/contact/:contactId" element={<ContactThreadPage />} />
-              <Route path="/message/:messageId" element={<MessagePage />} />
-              <Route path="/tracking" element={<TrackingPage />} />
-              <Route path="/tracking/target/:targetId" element={<TrackingTargetPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
-        </Suspense>
-      </Router>
-    </SWRConfig>
-  );
+    <Suspense fallback={<Loading />}>
+      <Routes>
+        <Route element={<RootLayout />}>
+          <Route index element={<ChatPage />} />
+          <Route path="signals" element={<SignalsPage />} />
+          <Route path="signals/:contactId" element={<SignalThreadPage />} />
+          <Route path="tracking" element={<TrackingPage />} />
+          <Route path="tracking/:targetId" element={<TrackingDetailPage />} />
+          <Route path="settings/*" element={<SettingsPage />} />
+          {/* Compat redirects */}
+          <Route path="chat" element={<Navigate to="/" replace />} />
+          <Route path="desk" element={<Navigate to="/signals" replace />} />
+          <Route path="dashboard" element={<Navigate to="/signals" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
+  )
 }
