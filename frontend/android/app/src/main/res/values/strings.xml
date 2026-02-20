@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Aelin</string>
-    <string name="title_activity_main">Aelin</string>
-    <string name="package_name">com.ttawdtt.aelin</string>
-    <string name="custom_url_scheme">com.ttawdtt.aelin</string>
-</resources>

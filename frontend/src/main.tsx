@@ -1,13 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
-import "./styles.css";
-import { bootstrapNativeMobileShell } from "./mobile/runtime";
-
-void bootstrapNativeMobileShell();
+import { App } from "./app/App";
+import { ThemeProvider } from "./app/providers/ThemeProvider";
+import { ToastProvider } from "./app/providers/ToastProvider";
+import "./styles/globals.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
-  </React.StrictMode>
+    <ThemeProvider>
+      <ToastProvider>
+        <App />
+      </ToastProvider>
+    </ThemeProvider>
+  </React.StrictMode>,
 );
+

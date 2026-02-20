@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* brand-guidelines palette (expressed as r g b for Tailwind alpha support) */
+  --c-ink: 20 20 19; /* #141413 */
+  --c-paper: 250 249 245; /* #faf9f5 */
+  --c-stone: 176 174 165; /* #b0aea5 */
+  --c-mist: 232 230 220; /* #e8e6dc */
+  --c-accent-orange: 217 119 87; /* #d97757 */
+  --c-accent-blue: 106 155 204; /* #6a9bcc */
+  --c-accent-green: 120 140 93; /* #788c5d */
+
+  --radius: 14px;
+}
+
+html[data-theme="dark"] {
+  --c-ink: 250 249 245;
+  --c-paper: 20 20 19;
+  --c-stone: 176 174 165;
+  --c-mist: 45 45 43;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: theme("fontFamily.body");
+  background:
+    radial-gradient(1200px 700px at 25% -10%, rgba(217, 119, 87, 0.10), transparent 55%),
+    radial-gradient(1000px 650px at 85% 0%, rgba(106, 155, 204, 0.12), transparent 52%),
+    radial-gradient(900px 700px at 55% 110%, rgba(120, 140, 93, 0.08), transparent 55%),
+    linear-gradient(180deg, rgba(232, 230, 220, 0.25), rgba(232, 230, 220, 0.00) 55%),
+    rgb(var(--c-paper));
+  color: rgb(var(--c-ink));
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgba(217, 119, 87, 0.28);
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid rgb(var(--c-accent-blue));
+  outline-offset: 2px;
+}
