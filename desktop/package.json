@@ -5,7 +5,7 @@
   "description": "Aelin Desktop wrapper for MercuryDesk",
   "main": "src/main.cjs",
   "scripts": {
-    "dev": "cross-env MERCURYDESK_DESKTOP_DEV=1 electron .",
+    "dev": "node ./scripts/dev-electron.cjs",
     "build:backend": "node ./scripts/build-backend.cjs",
     "build:frontend": "npm --prefix ../frontend run build",
     "prepare:pack": "node ./scripts/prepare-pack.cjs",
