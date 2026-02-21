@@ -40,11 +40,11 @@ def _create_test_client() -> TestClient:
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
-    reg = client.post("/api/v1/auth/register", json={"email": "memory@example.com", "password": "password123"})
+    reg = client.post("/api/v1/register", json={"email": "memory@example.com", "password": "password123"})
     assert reg.status_code == 200, reg.text
 
     login = client.post(
-        "/api/v1/auth/token",
+        "/api/v1/token",
         data={"username": "memory@example.com", "password": "password123"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )

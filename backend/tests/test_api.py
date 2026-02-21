@@ -39,12 +39,12 @@ def test_register_login_sync_and_list():
         client = TestClient(app)
 
         # Register
-        reg = client.post("/api/v1/auth/register", json={"email": "demo@example.com", "password": "password123"})
+        reg = client.post("/api/v1/register", json={"email": "demo@example.com", "password": "password123"})
         assert reg.status_code == 200, reg.text
 
         # Login
         token = client.post(
-            "/api/v1/auth/token",
+            "/api/v1/token",
             data={"username": "demo@example.com", "password": "password123"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
@@ -54,7 +54,7 @@ def test_register_login_sync_and_list():
 
         # Upload avatar (multipart) and ensure it was saved.
         avatar = client.post(
-            "/api/v1/auth/me/avatar",
+            "/api/v1/me/avatar",
             files={"file": ("avatar.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
             headers=headers,
         )

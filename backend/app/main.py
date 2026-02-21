@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     app.include_router(auth.router, prefix="/api/v1")
+    app.include_router(auth.legacy_router, prefix="/api/v1")
     app.include_router(accounts.router, prefix="/api/v1")
     app.include_router(contacts.router, prefix="/api/v1")
     app.include_router(messages.router, prefix="/api/v1")
