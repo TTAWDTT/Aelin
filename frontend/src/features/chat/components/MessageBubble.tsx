@@ -18,7 +18,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   const [traceOpen, setTraceOpen] = useState(false)
 
   return (
-    <article className={cn('aelin-fade-up flex max-w-[90%] items-end gap-3', isUser ? 'ml-auto flex-row-reverse' : '')}>
+    <article className={cn('aelin-fade-up flex max-w-[82%] items-end gap-2.5', isUser ? 'ml-auto flex-row-reverse' : '')}>
       {/* Avatar */}
       {!isUser && (
         <div className="shrink-0">
@@ -26,20 +26,21 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
             size="sm"
             expression={message.expression}
             title={message.expression ? EXPRESSION_LABELS[message.expression] : 'Aelin'}
+            className="!rounded-[10px]"
           />
         </div>
       )}
       {isUser && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft)] text-[11px] font-semibold text-[var(--color-text-muted)]">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] text-[11px] font-semibold text-[var(--color-text-muted)]">
           你
         </div>
       )}
 
       <div className={cn(
-        'chat-elevate rounded-2xl px-4 py-3.5 max-w-full',
+        'chat-elevate max-w-full rounded-[14px] px-4 py-3',
         isUser
-          ? 'bg-[var(--color-accent)] text-[var(--color-bg)] rounded-tr-md'
-          : 'bg-[var(--color-accent-soft)] rounded-tl-md'
+          ? 'rounded-tr-[4px] border border-[var(--color-border)] bg-[var(--color-panel-alt)]'
+          : 'rounded-tl-[4px] border border-[var(--color-border)] bg-[var(--color-panel)]'
       )}>
         {/* Images */}
         {message.images && message.images.length > 0 && (
@@ -51,7 +52,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         )}
 
         {/* Content */}
-        <div className={cn('prose prose-sm max-w-none', isUser ? 'prose-invert' : '')}
+        <div className={cn('prose prose-sm max-w-none prose-neutral')}
           style={{ fontFamily: 'var(--font-body)', lineHeight: 1.64, fontSize: '0.94rem' }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : '…')}</ReactMarkdown>
         </div>
@@ -61,7 +62,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           <div className="mt-3.5 space-y-1.5">
             <div className="text-[11px] text-[var(--color-text-muted)] font-semibold uppercase tracking-wide">引用来源</div>
             {message.citations.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 rounded-lg bg-[var(--color-panel)] px-2.5 py-1.5 text-xs">
+              <div key={i} className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-1.5 text-xs">
                 <span>{sourceIcon(c.source)}</span>
                 <span className="font-medium truncate flex-1">[{i + 1}] {c.title}</span>
                 <span className="text-[var(--color-text-muted)]">{c.source_label}</span>
@@ -80,7 +81,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
               工具调用 ({message.toolTrace.length})
             </button>
             {traceOpen && (
-              <div className="mt-1 space-y-0.5 text-[11px] text-[var(--color-text-muted)]">
+              <div className="mt-1 space-y-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] p-2 text-[11px] text-[var(--color-text-muted)]">
                 {message.toolTrace.map((t, i) => (
                   <div key={i} className="flex items-center gap-1.5">
                     <span className={t.status === 'completed' ? 'text-[var(--color-green)]' : 'text-[var(--color-warning)]'}>
@@ -104,7 +105,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           </div>
         )}
 
-        <div className={cn('mt-2 text-[10px] tracking-wide', isUser ? 'text-[rgba(250,249,245,0.75)]' : 'text-[var(--color-text-muted)]')}>
+        <div className="mt-2 text-[10px] tracking-wide text-[var(--color-text-muted)]">
           {formatMessageTime(message.timestamp)}
         </div>
       </div>
@@ -123,7 +124,7 @@ function ActionChip({ action }: { action: { kind: string; title: string; detail?
   return (
     <button
       onClick={handleClick}
-      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-panel)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--color-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
+      className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--color-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
       title={action.detail}
     >
       {action.kind === 'open_url' && <ExternalLink size={12} />}
