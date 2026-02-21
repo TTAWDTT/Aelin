@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { aelinApi } from '@/shared/api/aelin'
-import { relativeTime, severityColor } from '@/shared/utils/format'
+import { relativeTime } from '@/shared/utils/format'
 import { cn } from '@/shared/utils/cn'
 import { Play, Plus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TrackConfirmSheet } from './components/TrackConfirmSheet'
+import { PageScaffold } from '@/shared/components/PageScaffold'
 
 export function TrackingView() {
   const navigate = useNavigate()
@@ -30,39 +31,37 @@ export function TrackingView() {
   const filters = ['all', 'active', 'paused', 'error'] as const
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-panel)] shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <h1 className="text-lg font-semibold" style={{ fontFamily: 'var(--font-heading)' }}>追踪中心</h1>
-          <button onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90">
-            <Plus size={14} /> 新建追踪
-          </button>
-        </div>
-        <div className="flex gap-1 text-xs">
-          {filters.map(f => (
-            <button key={f} onClick={() => setStatusFilter(f)}
-              className={cn('px-2.5 py-1 rounded-lg transition-colors',
-                statusFilter === f ? 'bg-[var(--color-accent)] text-[var(--color-bg)]' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
-              )}>
+    <PageScaffold
+      title="Tracking"
+      subtitle="查看被追踪的 Web / 帖子变化"
+      headerActions={
+        <button onClick={() => setShowCreate(true)} className="aelin-btn aelin-btn-primary">
+          <Plus size={14} />
+          新建追踪
+        </button>
+      }
+    >
+      <div className="space-y-3">
+        <div className="aelin-segment">
+          {filters.map((f) => (
+            <button key={f} data-active={statusFilter === f} onClick={() => setStatusFilter(f)}>
               {f === 'all' ? '全部' : f === 'active' ? '活跃' : f === 'paused' ? '暂停' : '异常'}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* List */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {isLoading && <div className="text-sm text-[var(--color-text-muted)] text-center py-8">加载中…</div>}
         {!isLoading && items.length === 0 && (
           <div className="text-center py-12 text-sm text-[var(--color-text-muted)]">
             暂无追踪目标。可以在对话中让 Aelin 帮你创建，或点击"新建追踪"。
           </div>
         )}
-        {items.map(item => (
-          <div key={item.target_id ?? item.target} onClick={() => item.target_id && navigate(`/tracking/${item.target_id}`)}
-            className="border border-[var(--color-border)] rounded-xl p-4 bg-[var(--color-panel)] hover:border-[var(--color-border-strong)] transition-colors cursor-pointer">
+        {items.map((item) => (
+          <div
+            key={item.target_id ?? item.target}
+            onClick={() => item.target_id && navigate(`/tracking/${item.target_id}`)}
+            className="aelin-card cursor-pointer p-4 transition-colors hover:border-[var(--color-border-strong)]"
+          >
             <div className="flex items-start justify-between gap-2 mb-1.5">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-sm">📡</span>
@@ -89,8 +88,13 @@ export function TrackingView() {
             )}
             {item.description && <div className="mt-1.5 text-xs text-[var(--color-text-muted)]">{item.description}</div>}
             <div className="flex gap-2 mt-3">
-              <button onClick={(e) => { e.stopPropagation(); item.target_id && runTarget.mutate(item.target_id) }}
-                className="flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md border border-[var(--color-border)] hover:bg-[var(--color-accent-soft)]">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  item.target_id && runTarget.mutate(item.target_id)
+                }}
+                className="aelin-btn h-7 px-2 text-[11px]"
+              >
                 <Play size={11} /> 立即运行
               </button>
             </div>
@@ -99,6 +103,6 @@ export function TrackingView() {
       </div>
 
       {showCreate && <TrackConfirmSheet onClose={() => setShowCreate(false)} />}
-    </div>
+    </PageScaffold>
   )
 }

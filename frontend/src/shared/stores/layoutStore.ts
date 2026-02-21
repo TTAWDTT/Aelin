@@ -5,12 +5,9 @@ type ThemeMode = 'light' | 'dark' | 'system'
 
 interface LayoutStore {
   theme: ThemeMode
-  contextPanelOpen: boolean
-  sidebarCollapsed: boolean
+  focusModeEnabled: boolean
   setTheme: (v: ThemeMode) => void
-  toggleContextPanel: () => void
-  setContextPanelOpen: (v: boolean) => void
-  setSidebarCollapsed: (v: boolean) => void
+  setFocusModeEnabled: (v: boolean) => void
   applyTheme: (v: ThemeMode) => void
 }
 
@@ -25,12 +22,9 @@ export const useLayoutStore = create<LayoutStore>()(
   persist(
     (set) => ({
       theme: 'system',
-      contextPanelOpen: false,
-      sidebarCollapsed: false,
+      focusModeEnabled: false,
       setTheme: (v) => set({ theme: v }),
-      toggleContextPanel: () => set(s => ({ contextPanelOpen: !s.contextPanelOpen })),
-      setContextPanelOpen: (v) => set({ contextPanelOpen: v }),
-      setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
+      setFocusModeEnabled: (v) => set({ focusModeEnabled: v }),
       applyTheme: (v) => applyTheme(v),
     }),
     { name: 'aelin-layout' }

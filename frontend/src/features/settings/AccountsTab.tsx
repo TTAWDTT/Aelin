@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { accountsApi } from '@/shared/api/accounts'
-import type { ConnectedAccountCreate, ConnectedAccountOut } from '@/shared/api/types'
+import type { ConnectedAccountCreate } from '@/shared/api/types'
 import { sourceIcon, relativeTime } from '@/shared/utils/format'
-import { cn } from '@/shared/utils/cn'
 import { Plus, Trash2, RefreshCw, ExternalLink, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -45,8 +44,7 @@ export function AccountsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <span className="text-xs text-[var(--color-text-muted)]">{accounts.length} 个数据源</span>
-        <button onClick={() => setShowAdd(true)}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90">
+        <button onClick={() => setShowAdd(true)} className="aelin-btn aelin-btn-primary">
           <Plus size={13} /> 添加数据源
         </button>
       </div>
@@ -55,7 +53,7 @@ export function AccountsTab() {
 
       <div className="space-y-2">
         {accounts.map(acc => (
-          <div key={acc.id} className="flex items-center gap-3 border border-[var(--color-border)] rounded-xl p-3">
+          <div key={acc.id} className="aelin-card flex items-center gap-3 p-3">
             <span className="text-lg">{sourceIcon(acc.provider)}</span>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium truncate">{acc.identifier || acc.provider}</div>
@@ -63,12 +61,10 @@ export function AccountsTab() {
                 {acc.provider}{acc.last_synced_at ? ` · 同步于 ${relativeTime(acc.last_synced_at)}` : ''}
               </div>
             </div>
-            <button onClick={() => syncMut.mutate(acc.id)} title="同步"
-              className="p-1.5 rounded-md hover:bg-[var(--color-accent-soft)]">
+            <button onClick={() => syncMut.mutate(acc.id)} title="同步" className="aelin-btn h-8 w-8 p-0">
               <RefreshCw size={14} />
             </button>
-            <button onClick={() => { if (confirm('确定删除？')) remove.mutate(acc.id) }} title="移除"
-              className="p-1.5 rounded-md hover:bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] text-[var(--color-danger)]">
+            <button onClick={() => { if (confirm('确定删除？')) remove.mutate(acc.id) }} title="移除" className="aelin-btn h-8 w-8 p-0">
               <Trash2 size={14} />
             </button>
           </div>
@@ -114,8 +110,7 @@ function AddAccountSheet({ onClose }: { onClose: () => void }) {
 
         <label className="block text-xs space-y-1">
           <span className="text-[var(--color-text-muted)]">类型</span>
-          <select value={provider} onChange={e => { setProvider(e.target.value); setForm({}) }}
-            className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]">
+          <select value={provider} onChange={e => { setProvider(e.target.value); setForm({}) }} className="aelin-select">
             <option value="">选择数据源…</option>
             {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
@@ -123,8 +118,7 @@ function AddAccountSheet({ onClose }: { onClose: () => void }) {
 
         {/* OAuth providers */}
         {provider === 'gmail' && (
-          <button onClick={() => oauthStart.mutate('gmail')}
-            className="w-full py-2.5 text-sm font-medium rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-accent-soft)] flex items-center justify-center gap-2">
+          <button onClick={() => oauthStart.mutate('gmail')} className="aelin-btn w-full justify-center">
             <ExternalLink size={14} /> 通过 Google 授权
           </button>
         )}
@@ -172,8 +166,7 @@ function AddAccountSheet({ onClose }: { onClose: () => void }) {
         )}
 
         {provider && provider !== 'gmail' && (
-          <button onClick={() => createMut.mutate()} disabled={createMut.isPending}
-            className="w-full py-2.5 text-sm font-medium rounded-xl bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90 disabled:opacity-50">
+          <button onClick={() => createMut.mutate()} disabled={createMut.isPending} className="aelin-btn aelin-btn-primary w-full justify-center">
             {createMut.isPending ? '添加中…' : '确认添加'}
           </button>
         )}
@@ -188,8 +181,7 @@ function Field({ label, value, onChange, placeholder, type = 'text' }: {
   return (
     <label className="block text-xs space-y-1">
       <span className="text-[var(--color-text-muted)]">{label}</span>
-      <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]" />
+      <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="aelin-input" />
     </label>
   )
 }

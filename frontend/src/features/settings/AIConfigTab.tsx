@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { agentApi } from '@/shared/api/agent'
 import toast from 'react-hot-toast'
-import { FlaskConical, CheckCircle2, XCircle } from 'lucide-react'
+import { FlaskConical } from 'lucide-react'
 
 export function AIConfigTab() {
   const qc = useQueryClient()
@@ -58,8 +58,7 @@ export function AIConfigTab() {
       {/* Provider */}
       <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">AI 提供商</span>
-        <select value={form.provider} onChange={e => setForm(p => ({...p, provider: e.target.value, model: ''}))}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]">
+        <select value={form.provider} onChange={e => setForm(p => ({...p, provider: e.target.value, model: ''}))} className="aelin-select">
           <option value="">选择提供商…</option>
           {providers.map(p => <option key={p.id} value={p.id}>{p.name} ({p.model_count} 模型)</option>)}
         </select>
@@ -68,8 +67,7 @@ export function AIConfigTab() {
       {/* Model */}
       <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">模型</span>
-        <select value={form.model} onChange={e => setForm(p => ({...p, model: e.target.value}))}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]">
+        <select value={form.model} onChange={e => setForm(p => ({...p, model: e.target.value}))} className="aelin-select">
           <option value="">选择模型…</option>
           {(currentProvider?.models ?? []).map(m => (
             <option key={m.id} value={m.id}>
@@ -82,15 +80,13 @@ export function AIConfigTab() {
       {/* Base URL */}
       <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">API 地址（可选）</span>
-        <input value={form.base_url} onChange={e => setForm(p => ({...p, base_url: e.target.value}))} placeholder="留空则使用默认"
-          className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]" />
+        <input value={form.base_url} onChange={e => setForm(p => ({...p, base_url: e.target.value}))} placeholder="留空则使用默认" className="aelin-input" />
       </label>
 
       {/* API Key */}
       <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">API Key {config?.has_api_key && <span className="text-[var(--color-green)]">（已配置）</span>}</span>
-        <input type="password" value={form.api_key} onChange={e => setForm(p => ({...p, api_key: e.target.value}))} placeholder={config?.has_api_key ? '输入新 Key 覆盖' : '输入 API Key'}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]" />
+        <input type="password" value={form.api_key} onChange={e => setForm(p => ({...p, api_key: e.target.value}))} placeholder={config?.has_api_key ? '输入新 Key 覆盖' : '输入 API Key'} className="aelin-input" />
       </label>
 
       {/* Temperature */}
@@ -101,12 +97,10 @@ export function AIConfigTab() {
       </label>
 
       <div className="flex gap-3">
-        <button onClick={() => save.mutate()} disabled={save.isPending}
-          className="px-4 py-2 text-sm font-medium rounded-xl bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90 disabled:opacity-50">
+        <button onClick={() => save.mutate()} disabled={save.isPending} className="aelin-btn aelin-btn-primary">
           {save.isPending ? '保存中…' : '保存配置'}
         </button>
-        <button onClick={() => test.mutate()} disabled={test.isPending}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-accent-soft)] disabled:opacity-50">
+        <button onClick={() => test.mutate()} disabled={test.isPending} className="aelin-btn flex items-center gap-1.5">
           <FlaskConical size={14} /> {test.isPending ? '测试中…' : '测试连接'}
         </button>
       </div>

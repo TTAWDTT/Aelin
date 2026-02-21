@@ -2,8 +2,10 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { aelinApi } from '@/shared/api/aelin'
 import { Cpu, Zap, Shield } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { useNavigate } from 'react-router-dom'
 
 export function DeviceTab() {
+  const navigate = useNavigate()
   const { data: caps, isLoading: capsLoading } = useQuery({
     queryKey: ['device-caps'],
     queryFn: aelinApi.deviceCapabilities,
@@ -34,8 +36,13 @@ export function DeviceTab() {
 
   return (
     <div className="space-y-6">
+      <div className="aelin-card p-3">
+        <div className="text-xs text-[var(--color-text-muted)] mb-2">进程中心</div>
+        <button className="aelin-btn" onClick={() => navigate('/processes')}>打开独立进程管理页</button>
+      </div>
+
       {/* Capabilities */}
-      <div>
+      <div className="aelin-card p-3">
         <div className="text-xs text-[var(--color-text-muted)] mb-2 flex items-center gap-1"><Shield size={13} /> 设备信息</div>
         {capsLoading ? <div className="text-xs text-[var(--color-text-muted)]">加载中…</div> : (
           <div className="text-xs space-y-1">
@@ -46,12 +53,12 @@ export function DeviceTab() {
       </div>
 
       {/* Quick Modes */}
-      <div>
+      <div className="aelin-card p-3">
         <div className="text-xs text-[var(--color-text-muted)] mb-2">快捷模式</div>
         <div className="flex gap-2 flex-wrap">
           {['focus', 'performance', 'battery'].map(mode => (
             <button key={mode} onClick={() => applyMode.mutate(mode)}
-              className="px-3 py-1.5 text-xs rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-accent-soft)]">
+              className="aelin-btn h-8 px-3 text-xs">
               {mode === 'focus' ? '🎯 专注' : mode === 'performance' ? '⚡ 性能' : '🔋 省电'}
             </button>
           ))}
@@ -61,7 +68,7 @@ export function DeviceTab() {
       {/* Optimize */}
       <div className="flex items-center gap-3">
         <button onClick={() => optimize.mutate()} disabled={optimize.isPending}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90 disabled:opacity-50">
+          className="aelin-btn aelin-btn-primary flex items-center gap-1.5">
           <Zap size={13} /> {optimize.isPending ? '优化中…' : '一键优化'}
         </button>
       </div>
@@ -71,7 +78,7 @@ export function DeviceTab() {
         <div className="text-xs text-[var(--color-text-muted)] mb-2 flex items-center gap-1"><Cpu size={13} /> 进程 (Top {procs?.items?.length ?? 0})</div>
         <div className="space-y-1.5">
           {(procs?.items ?? []).slice(0, 15).map(p => (
-            <div key={p.pid} className="flex items-center gap-2 text-xs py-1 px-2 rounded-lg border border-[var(--color-border)]">
+            <div key={p.pid} className="aelin-card flex items-center gap-2 px-2 py-1 text-xs">
               <span className="flex-1 truncate font-mono">{p.name}</span>
               <span className="text-[var(--color-text-muted)] w-14 text-right">{p.cpu_percent.toFixed(1)}%</span>
               <span className="text-[var(--color-text-muted)] w-14 text-right">{p.memory_mb.toFixed(0)} MB</span>

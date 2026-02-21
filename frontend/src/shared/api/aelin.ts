@@ -6,6 +6,7 @@ import type {
   AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
   AelinTrackingItem, AelinTrackingRunResponse,
   AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
+  AelinTrackingFileMemorySearchResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse,
 } from './types'
@@ -47,7 +48,7 @@ export const aelinApi = {
     fetchJson<AelinTrackingSnapshotListResponse>(`/api/v1/aelin/tracking/targets/${targetId}/snapshots${params ? '?' + new URLSearchParams(params) : ''}`),
 
   fileMemorySearch: (params: Record<string, string>) =>
-    fetchJson(`/api/v1/aelin/tracking/file-memory/search?${new URLSearchParams(params)}`),
+    fetchJson<AelinTrackingFileMemorySearchResponse>(`/api/v1/aelin/tracking/file-memory/search?${new URLSearchParams(params)}`),
 
   // Device
   deviceCapabilities: () =>
@@ -62,7 +63,7 @@ export const aelinApi = {
   deviceOptimize: () =>
     fetchJson<AelinDeviceOptimizeResponse>('/api/v1/aelin/device/processes/optimize', { method: 'POST' }),
 
-  deviceMode: () => fetchJson<{ mode: string }>('/api/v1/aelin/device/mode'),
+  deviceMode: () => fetchJson<AelinDeviceModeApplyResponse>('/api/v1/aelin/device/mode'),
 
   deviceModeApply: (mode: string) =>
     fetchJson<AelinDeviceModeApplyResponse>('/api/v1/aelin/device/mode/apply', { method: 'POST', body: JSON.stringify({ mode }) }),

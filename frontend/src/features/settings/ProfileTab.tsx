@@ -1,19 +1,21 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { authApi } from '@/shared/api/auth'
 import toast from 'react-hot-toast'
-import { Camera, LogOut } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Camera } from 'lucide-react'
 
 export function ProfileTab() {
   const qc = useQueryClient()
-  const navigate = useNavigate()
   const fileRef = useRef<HTMLInputElement>(null)
 
   const { data: user, isLoading } = useQuery({ queryKey: ['me'], queryFn: authApi.me })
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+
+  useEffect(() => {
+    if (user?.email) setEmail(user.email)
+  }, [user?.email])
 
   const update = useMutation({
     mutationFn: () => {
@@ -31,12 +33,6 @@ export function ProfileTab() {
     onSuccess: () => { toast.success('头像已更新'); qc.invalidateQueries({ queryKey: ['me'] }) },
     onError: () => toast.error('上传失败'),
   })
-
-  const logout = () => {
-    localStorage.removeItem('token')
-    navigate('/')
-    window.location.reload()
-  }
 
   if (isLoading) return <div className="text-sm text-[var(--color-text-muted)]">加载中…</div>
 
@@ -64,27 +60,23 @@ export function ProfileTab() {
       </div>
 
       {/* Email */}
-      <label className="block text-xs space-y-1">
+      <label className="block space-y-1 text-xs">
         <span className="text-[var(--color-text-muted)]">邮箱</span>
-        <input type="email" value={email || user?.email || ''} onChange={e => setEmail(e.target.value)} placeholder={user?.email}
-          className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]" />
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={user?.email} className="aelin-input" />
       </label>
 
       {/* Password */}
-      <label className="block text-xs space-y-1">
+      <label className="block space-y-1 text-xs">
         <span className="text-[var(--color-text-muted)]">修改密码</span>
-        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入新密码（至少 8 位）"
-          className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--color-border)] bg-transparent focus:outline-none focus:border-[var(--color-accent)]" />
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入新密码（至少 8 位）" className="aelin-input" />
       </label>
 
       <div className="flex gap-3">
-        <button onClick={() => update.mutate()} disabled={update.isPending || (!email.trim() && !password.trim())}
-          className="px-4 py-2 text-sm font-medium rounded-xl bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90 disabled:opacity-50">
+        <button
+          onClick={() => update.mutate()}
+          disabled={update.isPending || (email.trim() === (user?.email ?? '').trim() && !password.trim())}
+          className="aelin-btn aelin-btn-primary">
           {update.isPending ? '保存中…' : '保存'}
-        </button>
-        <button onClick={logout}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl border border-[var(--color-danger)] text-[var(--color-danger)] hover:bg-[color-mix(in_srgb,var(--color-danger)_8%,transparent)]">
-          <LogOut size={14} /> 退出登录
         </button>
       </div>
     </div>

@@ -32,20 +32,6 @@ export interface SyncJobStatusResponse {
   created_at: string; started_at?: string; finished_at?: string
 }
 
-/* ─── Contacts & Messages ─── */
-export interface ContactOut {
-  id: number; display_name: string; handle: string; avatar_url?: string
-  last_message_at?: string; unread_count: number
-  latest_subject?: string; latest_preview?: string
-  latest_source?: string; latest_received_at?: string
-}
-export interface MessageOut {
-  id: number; contact_id: number; source: string; sender: string
-  subject: string; body_preview: string; received_at: string
-  is_read: boolean; summary?: string
-}
-export interface MessageDetail extends MessageOut { body: string }
-
 /* ─── Aelin Chat ─── */
 export interface AelinChatRequest {
   query: string; use_memory?: boolean; max_citations?: number
@@ -159,6 +145,14 @@ export interface AelinTrackingSnapshotItem {
   fetched_at?: string; normalized_payload_json?: Record<string, unknown>
 }
 export interface AelinTrackingSnapshotListResponse { total: number; items: AelinTrackingSnapshotItem[]; generated_at: string }
+export interface AelinTrackingFileMemoryItem {
+  path: string; title: string; preview: string; score: number
+  updated_at: string; canonical_id: string; target: string
+  source: string; kind: string
+}
+export interface AelinTrackingFileMemorySearchResponse {
+  workspace: string; total: number; items: AelinTrackingFileMemoryItem[]; generated_at: string
+}
 
 /* ─── Device Center ─── */
 export interface AelinDeviceProcessItem {

@@ -35,7 +35,7 @@ export function AppearanceTab() {
 
       <div>
         <div className="text-xs text-[var(--color-text-muted)] mb-1.5">关于</div>
-        <div className="text-xs text-[var(--color-text-muted)] space-y-1">
+        <div className="aelin-card p-3 text-xs text-[var(--color-text-muted)] space-y-1">
           <p>Aelin — 你的私人信息管家</p>
           <p>Frontend v0.1.0 · React 19 + Vite 6</p>
         </div>
