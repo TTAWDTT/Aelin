@@ -1,21 +1,6 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #ffffff;
-  --color-bg-elevated: #ffffff;
-  --color-panel: #ffffff;
-  --color-panel-alt: #ffffff;
-  --color-text: #000000;
-  --color-text-muted: #6b6b6b;
-  --color-border: #e7e7e7;
-  --color-border-strong: #cfcfcf;
-  --color-accent: #000000;
-  --color-accent-soft: #f5f5f5;
-  --color-orange: #000000;
-  --color-blue: #000000;
-  --color-green: #000000;
-  --color-danger: #000000;
-  --color-warning: #000000;
   --font-heading: 'Poppins', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-body: 'Lora', 'Noto Serif SC', 'Songti SC', 'STSong', serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Consolas', monospace;
@@ -23,33 +8,36 @@
 
 :root {
   --color-bg: #ffffff;
-  --color-bg-elevated: #ffffff;
+  --color-bg-elevated: #f6f6f6;
   --color-panel: #ffffff;
-  --color-panel-alt: #ffffff;
-  --color-text: #000000;
-  --color-text-muted: #6b6b6b;
-  --color-border: #e7e7e7;
+  --color-panel-alt: #f8f8f8;
+  --color-text: #0f0f0f;
+  --color-text-muted: #757575;
+  --color-border: #e8e8e8;
   --color-border-strong: #cfcfcf;
-  --color-accent: #000000;
-  --color-accent-soft: #f5f5f5;
-  --color-orange: #000000;
-  --color-blue: #000000;
-  --color-green: #000000;
-  --color-danger: #000000;
-  --color-warning: #000000;
+  --color-accent: #111111;
+  --color-accent-soft: #f2f2f2;
+  --color-orange: #1a1a1a;
+  --color-blue: #1a1a1a;
+  --color-green: #1a1a1a;
+  --color-danger: #1a1a1a;
+  --color-warning: #1a1a1a;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
 }
 
 [data-theme='dark'] {
   --color-bg: #000000;
-  --color-bg-elevated: #000000;
+  --color-bg-elevated: #090909;
   --color-panel: #000000;
-  --color-panel-alt: #000000;
+  --color-panel-alt: #080808;
   --color-text: #ffffff;
-  --color-text-muted: #a8a8a8;
-  --color-border: #262626;
-  --color-border-strong: #3d3d3d;
+  --color-text-muted: #a0a0a0;
+  --color-border: #1f1f1f;
+  --color-border-strong: #393939;
   --color-accent: #ffffff;
-  --color-accent-soft: #111111;
+  --color-accent-soft: #101010;
   --color-orange: #ffffff;
   --color-blue: #ffffff;
   --color-green: #ffffff;
@@ -71,6 +59,7 @@ html, body, #root {
 
 body {
   background-image: none;
+  overflow: hidden;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -99,16 +88,170 @@ code, pre, .font-mono {
   }
 }
 
+.aelin-app {
+  height: 100dvh;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.aelin-sidebar {
+  width: 78px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.aelin-page {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+.aelin-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 14px 16px;
+}
+
+.aelin-page-title {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+  color: var(--color-text);
+}
+
+.aelin-page-subtitle {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.aelin-page-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.aelin-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+
+.aelin-input,
+.aelin-select,
+.aelin-textarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.aelin-input,
+.aelin-select {
+  height: 38px;
+  padding: 0 12px;
+}
+
+.aelin-textarea {
+  min-height: 96px;
+  resize: vertical;
+  padding: 10px 12px;
+}
+
+.aelin-input::placeholder,
+.aelin-textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.aelin-input:focus,
+.aelin-select:focus,
+.aelin-textarea:focus {
+  border-color: var(--color-border-strong);
+}
+
+.aelin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-weight: 500;
+  transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.aelin-btn:hover {
+  background: var(--color-accent-soft);
+}
+
+.aelin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.aelin-btn-primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.aelin-btn-primary:hover {
+  opacity: 0.88;
+  background: var(--color-accent);
+}
+
+.aelin-segment {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 2px;
+  background: var(--color-panel);
+}
+
+.aelin-segment button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  padding: 6px 11px;
+}
+
+.aelin-segment button[data-active='true'] {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.aelin-list-divider > * + * {
+  border-top: 1px solid var(--color-border);
+}
+
 .aelin-avatar {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 50%;
   padding: 0;
   border: 1px solid var(--color-border);
   background: var(--color-panel);
-  box-shadow: none;
 }
 
 .aelin-avatar-inner {
@@ -142,11 +285,11 @@ code, pre, .font-mono {
 }
 
 .aelin-avatar-pulse {
-  animation: aelin-avatar-pulse 1.9s ease-in-out infinite;
+  animation: aelin-avatar-pulse 2.2s ease-in-out infinite;
 }
 
 .aelin-fade-up {
-  animation: aelin-fade-up 220ms ease-out both;
+  animation: aelin-fade-up 180ms ease-out both;
 }
 
 .chat-elevate {
@@ -159,7 +302,7 @@ code, pre, .font-mono {
 
 @keyframes aelin-avatar-pulse {
   0%, 100% { transform: scale(1); }
-  45% { transform: scale(1.04); }
+  45% { transform: scale(1.03); }
 }
 
 @keyframes aelin-fade-up {

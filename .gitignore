@@ -15,6 +15,7 @@ backend/.desktop-build-venv/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+*.tsbuildinfo
 
 desktop/node_modules/
 desktop/release/
