@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 
 from app.db import get_engine
 from app.models import Base
-from app.routers import accounts, agent, aelin, auth, contacts, inbound, messages
+from app.routers import accounts, agent, aelin, auth, contacts, desk, inbound, messages
 from app.settings import settings
 from app.services.tracking_autonomy import tracking_autonomy_service
 
@@ -83,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(messages.router, prefix="/api/v1")
     app.include_router(agent.router, prefix="/api/v1")
     app.include_router(aelin.router, prefix="/api/v1")
+    app.include_router(desk.router, prefix="/api/v1")
     app.include_router(inbound.router, prefix="/api/v1")
 
     return app

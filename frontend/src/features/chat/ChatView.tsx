@@ -10,7 +10,7 @@ import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
-  const session = sessions.find(s => s.id === activeSessionId)
+  const session = sessions.find((s) => s.id === activeSessionId)
   const messages = session?.messages ?? []
   const { send, stop } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -26,7 +26,6 @@ export function ChatView() {
     send(text, images)
   }
 
-  // Ensure there's at least one session
   useEffect(() => {
     if (sessions.length === 0) createSession()
   }, [sessions.length, createSession])
@@ -36,7 +35,7 @@ export function ChatView() {
       title="Chat"
       subtitle="Aelin 在线中"
       contentClassName="flex flex-1 min-h-0 flex-col p-0"
-      headerActions={<SessionTabs className="max-w-[360px]" />}
+      headerActions={<SessionTabs className="max-w-[420px]" />}
     >
       <ChatStatusBar isStreaming={isStreaming} statusText={statusText} />
       <ChatTimeline

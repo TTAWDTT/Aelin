@@ -35,6 +35,7 @@ from app.services.llm import LLMService
 from app.services.oauth_clients import refresh_access_token
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.avatar import gravatar_url_for_email, normalize_http_avatar_url
+from app.services import content_tagging
 from app.schemas import AgentConfigOut
 from app.settings import settings
 
@@ -421,6 +422,7 @@ def sync_account(db: Session, *, account: ConnectedAccount, force_full: bool = F
         )
 
     inserted = 0
+    inserted_message_ids: list[int] = []
     for incoming in incoming_messages:
         contact = contacts_by_handle[incoming.sender]
         if incoming.sender_avatar_url:
@@ -468,9 +470,18 @@ def sync_account(db: Session, *, account: ConnectedAccount, force_full: bool = F
         )
         if msg is None:
             continue
+        if getattr(msg, "id", None) is None:
+            db.flush()
         inserted += 1
+        inserted_message_ids.append(int(msg.id))
         touch_contact_last_message(db, contact=contact, received_at=received_at)
 
     touch_account_sync(db, account=account)
     db.commit()
+    if inserted_message_ids:
+        content_tagging.enqueue_tagging_job(
+            user_id=account.user_id,
+            message_ids=inserted_message_ids,
+            allow_llm=True,
+        )
     return inserted

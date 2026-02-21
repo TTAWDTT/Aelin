@@ -255,6 +255,11 @@ def collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDevic
         return []
 
     max_items = max(1, min(200, int(limit or 40)))
+    logical_cpus = 1
+    try:
+        logical_cpus = max(1, int(psutil.cpu_count(logical=True) or 1))
+    except Exception:
+        logical_cpus = 1
     sort_key = "memory" if str(sort_by or "").strip().lower() == "memory" else "cpu"
     current_user = str(os.environ.get("USERNAME") or os.environ.get("USER") or "").strip().lower()
     critical_names = {
@@ -286,7 +291,8 @@ def collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDevic
                 name = str(proc.info.get("name") or proc.name() or f"pid-{pid}").strip()
                 username = str(proc.info.get("username") or "").strip()
                 status = str(proc.info.get("status") or proc.status() or "").strip().lower()
-                cpu = float(proc.cpu_percent(None) or 0.0)
+                raw_cpu = float(proc.cpu_percent(None) or 0.0)
+                cpu = max(0.0, min(100.0, raw_cpu / logical_cpus))
                 mem = proc.info.get("memory_info") or proc.memory_info()
                 memory_mb = float(getattr(mem, "rss", 0) / (1024 * 1024))
                 created = proc.info.get("create_time") or proc.create_time()

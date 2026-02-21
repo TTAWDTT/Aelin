@@ -194,3 +194,40 @@ export interface ModelProviderInfo {
 export interface ModelCatalogResponse { source_url: string; fetched_at: string; providers: ModelProviderInfo[] }
 export interface AgentTodoCreate { title: string; detail?: string; due_at?: string; priority?: string; contact_id?: number; message_id?: number }
 export interface AgentTodoUpdate { done?: boolean; title?: string; detail?: string; due_at?: string; priority?: string }
+
+/* Desk Feed */
+export interface DeskFeedItem {
+  message_id: number
+  contact_id: number
+  source: string
+  source_label: string
+  sender: string
+  sender_avatar_url?: string | null
+  title: string
+  preview: string
+  image_url?: string | null
+  external_url?: string | null
+  received_at: string
+  is_read: boolean
+  tags: string[]
+  primary_tag: string
+}
+
+export interface DeskFeedResponse {
+  items: DeskFeedItem[]
+  next_before_received_at?: string | null
+  next_before_id?: number | null
+}
+
+export interface DeskTagItem {
+  tag: string
+  count_7d: number
+  last_seen_at?: string | null
+  score: number
+}
+
+export interface DeskTagResponse {
+  followed: DeskTagItem[]
+  recommended: DeskTagItem[]
+  discover: DeskTagItem[]
+}

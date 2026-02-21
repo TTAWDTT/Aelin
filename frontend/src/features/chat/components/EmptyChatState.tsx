@@ -8,8 +8,8 @@ interface EmptyChatStateProps {
 export function EmptyChatState({ onQuickPrompt }: EmptyChatStateProps) {
   return (
     <div className="flex min-h-full items-center justify-center py-8">
-      <div className="aelin-fade-up w-full max-w-[760px]">
-        <div className="mx-auto max-w-[560px] rounded-[18px] border border-[var(--color-border)] bg-[var(--color-panel)] p-6">
+      <div className="aelin-fade-up w-full max-w-[1040px]">
+        <div className="mx-auto max-w-[760px] rounded-[18px] border border-[var(--color-border)] bg-[var(--color-panel)] p-6">
           <div className="mb-3 flex items-center gap-3 text-[var(--color-text-muted)]">
             <AelinAvatar size="md" className="!rounded-[10px]" />
             <span className="text-xs">{CHAT_EMPTY_GREETING}</span>

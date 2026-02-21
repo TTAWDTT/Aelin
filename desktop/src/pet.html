@@ -67,6 +67,27 @@
       let moved = false;
       let startX = 0;
       let startY = 0;
+      let pointerActive = false;
+
+      function isInsidePet(clientX, clientY) {
+        const rect = pet.getBoundingClientRect();
+        if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+          return false;
+        }
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dx = clientX - cx;
+        const dy = clientY - cy;
+        const radius = rect.width / 2;
+        return dx * dx + dy * dy <= radius * radius * 1.06;
+      }
+
+      function setPointerActive(next) {
+        const active = Boolean(next);
+        if (pointerActive === active) return;
+        pointerActive = active;
+        window.petBridge?.setPointerActive(active);
+      }
 
       pet.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -87,6 +108,7 @@
       pet.addEventListener("mousedown", (event) => {
         if (event.button !== 0) return;
         event.preventDefault();
+        setPointerActive(true);
         dragging = true;
         moved = false;
         startX = event.screenX;
@@ -97,7 +119,10 @@
       });
 
       window.addEventListener("mousemove", (event) => {
-        if (!dragging) return;
+        if (!dragging) {
+          setPointerActive(isInsidePet(event.clientX, event.clientY));
+          return;
+        }
         const dx = Math.abs(event.screenX - startX);
         const dy = Math.abs(event.screenY - startY);
         if (dx > 2 || dy > 2) moved = true;
@@ -113,11 +138,16 @@
         if (!moved && event.button === 0) {
           window.petBridge?.openChat();
         }
+        setPointerActive(isInsidePet(event.clientX, event.clientY));
       });
 
       pet.addEventListener("dblclick", (event) => {
         event.preventDefault();
         window.petBridge?.openChat();
+      });
+
+      window.addEventListener("mouseleave", () => {
+        if (!dragging) setPointerActive(false);
       });
     </script>
   </body>

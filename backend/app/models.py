@@ -50,6 +50,14 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    message_topic_tags: Mapped[list["MessageTopicTag"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    followed_tags: Mapped[list["UserFollowedTag"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class ConnectedAccount(Base):
@@ -364,4 +372,48 @@ class Message(Base):
 
     user: Mapped["User"] = relationship(back_populates="messages")
     contact: Mapped["Contact"] = relationship(back_populates="messages")
+    topic_tags: Mapped[list["MessageTopicTag"]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+    )
+
+
+class MessageTopicTag(Base):
+    __tablename__ = "message_topic_tags"
+    __table_args__ = (
+        UniqueConstraint("user_id", "message_id", "tag", name="uq_message_topic_tag"),
+        Index("ix_message_topic_tags_user_message", "user_id", "message_id"),
+        Index("ix_message_topic_tags_user_tag", "user_id", "tag"),
+        Index("ix_message_topic_tags_user_updated", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), index=True)
+    tag: Mapped[str] = mapped_column(String(64), index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    method: Mapped[str] = mapped_column(String(16), default="rule")  # rule | llm | hybrid
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="message_topic_tags")
+    message: Mapped["Message"] = relationship(back_populates="topic_tags")
+
+
+class UserFollowedTag(Base):
+    __tablename__ = "user_followed_tags"
+    __table_args__ = (
+        UniqueConstraint("user_id", "tag", name="uq_user_followed_tag"),
+        Index("ix_user_followed_tags_user_updated", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tag: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="followed_tags")
 

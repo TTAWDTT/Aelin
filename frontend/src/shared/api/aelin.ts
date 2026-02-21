@@ -7,6 +7,7 @@ import type {
   AelinTrackingItem, AelinTrackingRunResponse,
   AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
   AelinTrackingFileMemorySearchResponse,
+  DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse,
 } from './types'
@@ -67,4 +68,36 @@ export const aelinApi = {
 
   deviceModeApply: (mode: string) =>
     fetchJson<AelinDeviceModeApplyResponse>('/api/v1/aelin/device/mode/apply', { method: 'POST', body: JSON.stringify({ mode }) }),
+
+  deskFeed: (params?: {
+    tag?: string
+    source?: string
+    q?: string
+    limit?: number
+    before_received_at?: string
+    before_id?: number
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.tag) qs.set('tag', params.tag)
+    if (params?.source) qs.set('source', params.source)
+    if (params?.q) qs.set('q', params.q)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.before_received_at) qs.set('before_received_at', params.before_received_at)
+    if (params?.before_id) qs.set('before_id', String(params.before_id))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return fetchJson<DeskFeedResponse>(`/api/v1/desk/feed${suffix}`)
+  },
+
+  deskTags: () => fetchJson<DeskTagResponse>('/api/v1/desk/tags'),
+
+  deskFollowTag: (tag: string) =>
+    fetchJson<DeskTagItem>('/api/v1/desk/tags/follow', {
+      method: 'POST',
+      body: JSON.stringify({ tag }),
+    }),
+
+  deskUnfollowTag: (tag: string) =>
+    fetchJson<{ deleted: boolean; tag: string }>(`/api/v1/desk/tags/follow/${encodeURIComponent(tag)}`, {
+      method: 'DELETE',
+    }),
 }

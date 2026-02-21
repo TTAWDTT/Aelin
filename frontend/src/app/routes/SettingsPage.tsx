@@ -23,7 +23,7 @@ export default function SettingsPage() {
 
   return (
     <PageScaffold title="Settings" subtitle="账号、模型、数据源与外观设置">
-      <div className="space-y-4">
+      <div className="mx-auto w-full max-w-[1220px] space-y-4">
         <div className="flex gap-1 text-xs overflow-x-auto">
           {tabs.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}

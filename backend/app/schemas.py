@@ -622,6 +622,46 @@ class AgentAdvancedSearchResponse(BaseModel):
     items: list[AgentAdvancedSearchItem] = Field(default_factory=list)
 
 
+class DeskFeedItem(BaseModel):
+    message_id: int
+    contact_id: int
+    source: str
+    source_label: str
+    sender: str
+    sender_avatar_url: Optional[str] = None
+    title: str
+    preview: str
+    image_url: Optional[str] = None
+    external_url: Optional[str] = None
+    received_at: str
+    is_read: bool
+    tags: list[str] = Field(default_factory=list)
+    primary_tag: str = ""
+
+
+class DeskFeedResponse(BaseModel):
+    items: list[DeskFeedItem] = Field(default_factory=list)
+    next_before_received_at: Optional[str] = None
+    next_before_id: Optional[int] = None
+
+
+class DeskTagItem(BaseModel):
+    tag: str
+    count_7d: int = 0
+    last_seen_at: Optional[str] = None
+    score: float = 0.0
+
+
+class DeskTagResponse(BaseModel):
+    followed: list[DeskTagItem] = Field(default_factory=list)
+    recommended: list[DeskTagItem] = Field(default_factory=list)
+    discover: list[DeskTagItem] = Field(default_factory=list)
+
+
+class DeskTagFollowRequest(BaseModel):
+    tag: str = Field(min_length=1, max_length=64)
+
+
 class AgentSummarizeRequest(BaseModel):
     text: str
 

@@ -72,6 +72,7 @@ from app.schemas import (
     AgentMemoryNoteOut,
 )
 from app.services.agent_memory import AgentMemoryService
+from app.services import content_tagging
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
 from app.services.openviking_bridge import tracking_file_memory_bridge
@@ -3108,6 +3109,11 @@ def _persist_web_search_results(
         )
     if citations:
         db.flush()
+        content_tagging.enqueue_tagging_job(
+            user_id=user_id,
+            message_ids=[int(item.message_id) for item in citations],
+            allow_llm=True,
+        )
     return citations
 
 
@@ -5815,8 +5821,9 @@ def confirm_track_subscription(
     except Exception:
         pass
 
+    tracking_event_message_id: int | None = None
     try:
-        _append_tracking_contact_event(
+        tracking_event_message_id = _append_tracking_contact_event(
             db,
             user_id=current_user.id,
             target=target,
@@ -5827,18 +5834,25 @@ def confirm_track_subscription(
     except Exception:
         pass
 
-    db.commit()
-
+    target_id = int(row.id)
+    target_workspace = str(getattr(row, "workspace", payload.workspace) or payload.workspace or "default")
     next_run = row.next_run_at.isoformat() if row.next_run_at else None
+    db.commit()
+    if tracking_event_message_id:
+        content_tagging.enqueue_tagging_job(
+            user_id=current_user.id,
+            message_ids=[tracking_event_message_id],
+            allow_llm=True,
+        )
     if not config_ready:
-        payload_settings = {"path": "/settings", "provider": source, "target_id": str(row.id)}
+        payload_settings = {"path": "/settings", "provider": source, "target_id": str(target_id)}
         if target:
             payload_settings["target"] = target[:120]
         return AelinTrackConfirmResponse(
             status="needs_config",
             message=f"已创建追踪目标“{target}”，但当前缺少 {source} 配置。",
             provider=source,
-            target_id=int(row.id),
+            target_id=target_id,
             next_run_at=next_run,
             actions=[
                 AelinAction(
@@ -5852,19 +5866,19 @@ def confirm_track_subscription(
         )
 
     _tracking.wake_up()
-    run_result = _tracking.run_target_now(user_id=current_user.id, target_id=int(row.id))
+    run_result = _tracking.run_target_now(user_id=current_user.id, target_id=target_id)
     return AelinTrackConfirmResponse(
         status="tracking_enabled",
         message=f"已开启“{target}”的持续跟踪。{str(run_result.get('message') or '')}",
         provider=(source or "web"),
-        target_id=int(row.id),
+        target_id=target_id,
         next_run_at=next_run,
         actions=[
             AelinAction(
                 kind="open_tracking",
                 title="查看追踪详情",
                 detail="打开追踪悬浮窗查看变化流与快照",
-                payload={"target_id": str(row.id), "workspace": row.workspace},
+                payload={"target_id": str(target_id), "workspace": target_workspace},
             )
         ],
         generated_at=datetime.now(timezone.utc),

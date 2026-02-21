@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.crud import create_message, touch_account_sync, touch_contact_last_message
 from app.db import get_session
 from app.models import ConnectedAccount, Contact, ForwardAccountConfig
+from app.services import content_tagging
 from app.services.forwarding import parse_forward_recipient, verify_forward_signature
 from app.services.summarizer import RuleBasedSummarizer
 
@@ -176,10 +177,20 @@ def _ingest_forward_message(
         summary=summarizer.summarize(body),
         skip_external_id_check=False,
     )
+    tagged_message_ids: list[int] = []
     if msg is not None:
+        if getattr(msg, "id", None) is None:
+            db.flush()
+        tagged_message_ids.append(int(msg.id))
         touch_contact_last_message(db, contact=contact, received_at=received_at_utc)
     touch_account_sync(db, account=account)
     db.commit()
+    if tagged_message_ids:
+        content_tagging.enqueue_tagging_job(
+            user_id=account.user_id,
+            message_ids=tagged_message_ids,
+            allow_llm=True,
+        )
 
 
 @router.post("/forward/{secret}")

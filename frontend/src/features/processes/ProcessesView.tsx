@@ -60,7 +60,8 @@ export function ProcessesView() {
     if (!keyword) return rows
     return rows.filter((item) => item.name.toLowerCase().includes(keyword) || String(item.pid).includes(keyword))
   }, [rows, query])
-  const maxCpu = Math.max(1, ...filteredRows.map((item) => item.cpu_percent))
+  const normalizeCpuPercent = (value: number) => Math.max(0, Math.min(100, Number(value || 0)))
+  const maxCpu = 100
   const maxMem = Math.max(1, ...filteredRows.map((item) => item.memory_mb))
 
   return (
@@ -68,7 +69,7 @@ export function ProcessesView() {
       title="进程管理"
       subtitle="mac 风格任务管理器 · Activity Monitor"
       headerActions={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <div className="aelin-segment">
             <button data-active={sortBy === 'cpu'} onClick={() => setSortBy('cpu')}>CPU</button>
             <button data-active={sortBy === 'memory'} onClick={() => setSortBy('memory')}>内存</button>
@@ -80,25 +81,25 @@ export function ProcessesView() {
         </div>
       }
     >
-      <div className="space-y-4">
+      <div className="mx-auto w-full max-w-[1360px] space-y-4">
         <div className="aelin-card p-3">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
               <span className="inline-flex items-center gap-1">
                 <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
                 <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
                 <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
               </span>
               <Shield size={14} />
-              平台：{capabilities?.platform ?? 'unknown'}
+              <span className="truncate">平台：{capabilities?.platform ?? 'unknown'}</span>
             </div>
-            <div className="relative w-[180px]">
-              <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+            <div className="flex h-8 w-full items-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-panel)] px-2.5 sm:w-[220px] md:w-[240px]">
+              <Search size={12} className="shrink-0 text-[var(--color-text-muted)]" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="过滤进程"
-                className="aelin-input h-8 pl-7 text-xs"
+                className="ml-1.5 min-w-0 flex-1 border-0 bg-transparent p-0 text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
               />
             </div>
           </div>
@@ -132,8 +133,10 @@ export function ProcessesView() {
             <span className="text-right">异常</span>
             <span className="text-right">操作</span>
           </div>
-          <div className="max-h-[62vh] overflow-y-auto">
-            {filteredRows.map((process, index) => (
+          <div className="max-h-[72vh] overflow-y-auto">
+            {filteredRows.map((process, index) => {
+              const displayCpu = normalizeCpuPercent(process.cpu_percent)
+              return (
               <div
                 key={process.pid}
                 className={cn(
@@ -146,11 +149,11 @@ export function ProcessesView() {
                   <p className="text-[11px] text-[var(--color-text-muted)]">PID {process.pid}</p>
                 </div>
                 <div className="ml-auto w-[90px] text-right">
-                  <p>{process.cpu_percent.toFixed(1)}%</p>
+                  <p>{displayCpu.toFixed(1)}%</p>
                   <div className="mt-1 h-1.5 rounded-full bg-[var(--color-border)]">
                     <div
                       className="h-full rounded-full bg-[var(--color-accent)]"
-                      style={{ width: `${Math.min(100, (process.cpu_percent / maxCpu) * 100)}%` }}
+                      style={{ width: `${Math.min(100, (displayCpu / maxCpu) * 100)}%` }}
                     />
                   </div>
                 </div>
@@ -164,7 +167,7 @@ export function ProcessesView() {
                   </div>
                 </div>
                 <div className="text-right text-[11px]">
-                  {process.anomaly_score > 0.5 ? <span>⚠ {Math.round(process.anomaly_score * 100)}</span> : <span>—</span>}
+                  {process.anomaly_score > 0.5 ? <span>⚠ {process.anomaly_score.toFixed(1)}</span> : <span>—</span>}
                 </div>
                 <div className="text-right">
                   {process.safe_to_terminate ? (
@@ -176,7 +179,8 @@ export function ProcessesView() {
                   )}
                 </div>
               </div>
-            ))}
+              )
+            })}
             {filteredRows.length === 0 && (
               <div className="px-3 py-8 text-center text-xs text-[var(--color-text-muted)]">暂无进程数据</div>
             )}

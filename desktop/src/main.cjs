@@ -22,6 +22,7 @@ let frontendServer = null;
 let closing = false;
 let petDragState = null;
 let petIpcHandlersRegistered = false;
+let petPointerActive = false;
 
 function projectRoot() {
   return path.resolve(__dirname, "..", "..");
@@ -492,6 +493,18 @@ function ensurePetVisible() {
   petWindow.setAlwaysOnTop(true, "screen-saver");
 }
 
+function setPetPointerActive(active) {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const next = !!active;
+  if (petPointerActive === next) return;
+  petPointerActive = next;
+  // Passive mode: click-through window while still forwarding mouse move for hit-testing.
+  petWindow.setIgnoreMouseEvents(!next, { forward: !next });
+  if (!next) {
+    petDragState = null;
+  }
+}
+
 function setupPetIpcHandlers() {
   if (petIpcHandlersRegistered) return;
   petIpcHandlersRegistered = true;
@@ -505,6 +518,11 @@ function setupPetIpcHandlers() {
     openModule("/");
   });
 
+  ipcMain.on("pet:set-pointer-active", (event, payload) => {
+    if (!fromPet(event)) return;
+    setPetPointerActive(Boolean(payload?.active));
+  });
+
   ipcMain.on("pet:open-menu", (event, payload) => {
     if (!fromPet(event)) return;
     popupPetMenu({
@@ -515,6 +533,7 @@ function setupPetIpcHandlers() {
 
   ipcMain.on("pet:drag-start", (event, payload) => {
     if (!fromPet(event) || !petWindow || petWindow.isDestroyed()) return;
+    setPetPointerActive(true);
     const x = Number(payload?.screenX);
     const y = Number(payload?.screenY);
     const bounds = petWindow.getBounds();
@@ -598,6 +617,8 @@ function createPetWindow() {
   petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   petWindow.setSkipTaskbar(true);
   petWindow.setMenuBarVisibility(false);
+  petPointerActive = false;
+  petWindow.setIgnoreMouseEvents(true, { forward: true });
 
   petWindow.loadFile(path.join(__dirname, "pet.html"), {
     query: {

@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("petBridge", {
+  setPointerActive(active) {
+    ipcRenderer.send("pet:set-pointer-active", { active: !!active });
+  },
   openMenu(payload) {
     ipcRenderer.send("pet:open-menu", payload || {});
   },
