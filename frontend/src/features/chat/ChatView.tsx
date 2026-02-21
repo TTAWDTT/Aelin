@@ -9,7 +9,7 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 
 export function ChatView() {
-  const { sessions, activeSessionId, isStreaming, statusText, searchMode, setSearchMode, createSession } = useChatStore()
+  const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
   const session = sessions.find(s => s.id === activeSessionId)
   const messages = session?.messages ?? []
   const { send, stop } = useChatStream()
@@ -49,8 +49,6 @@ export function ChatView() {
         onSend={handleSend}
         onStop={stop}
         isStreaming={isStreaming}
-        searchMode={searchMode}
-        onSearchModeChange={setSearchMode}
       />
     </PageScaffold>
   )

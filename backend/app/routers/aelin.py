@@ -1720,11 +1720,6 @@ def _build_trace_context_boundaries(
 
 
 def _normalize_search_mode(raw: str) -> str:
-    text = (raw or "").strip().lower()
-    if text in {"local", "localonly", "local_only", "only_local"}:
-        return "local_only"
-    if text in {"web", "webonly", "web_only", "only_web", "force_web"}:
-        return "web_only"
     return "auto"
 
 
@@ -3702,26 +3697,6 @@ def _aelin_chat_impl(
         need_web_search=need_web_search,
         web_queries=web_queries,
     )
-    if search_mode == "local_only":
-        context_boundaries = [it for it in context_boundaries if str(it.get("kind") or "") == "local"]
-        if not context_boundaries:
-            context_boundaries = [
-                {
-                    "kind": "local",
-                    "query": payload.query.strip()[:180],
-                    "scope": "forced local",
-                }
-            ]
-        planning_reason += ";search_mode=local_only"
-    elif search_mode == "web_only":
-        context_boundaries = [it for it in context_boundaries if str(it.get("kind") or "") == "web"]
-        if not context_boundaries:
-            fallback_web = _normalize_web_queries(payload.query, web_queries, limit=_MAX_WEB_SUBAGENTS)
-            context_boundaries = [
-                {"kind": "web", "query": q, "scope": q}
-                for q in (fallback_web or [payload.query.strip()[:180]])
-            ]
-        planning_reason += ";search_mode=web_only"
 
     local_boundaries = [it for it in context_boundaries if str(it.get("kind") or "") == "local"][:_MAX_LOCAL_SUBAGENTS]
     web_boundaries = [it for it in context_boundaries if str(it.get("kind") or "") == "web"][:_MAX_WEB_SUBAGENTS]
@@ -3783,14 +3758,6 @@ def _aelin_chat_impl(
         intent_contract=intent_contract,
         tracking_snapshot=tracking_snapshot,
     )
-    if search_mode == "local_only":
-        trace_context_boundaries = [
-            it for it in trace_context_boundaries if str(it.get("kind") or "") == "local"
-        ]
-    elif search_mode == "web_only":
-        trace_context_boundaries = [
-            it for it in trace_context_boundaries if str(it.get("kind") or "") == "web"
-        ]
     trace_local_boundaries = [
         it for it in trace_context_boundaries if str(it.get("kind") or "") == "local"
     ][:2]

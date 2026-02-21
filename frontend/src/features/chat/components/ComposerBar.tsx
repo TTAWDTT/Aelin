@@ -2,15 +2,10 @@ import { useEffect, useState, useRef, type ChangeEvent, type KeyboardEvent } fro
 import { Send, Square, ImagePlus } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 
-const SEARCH_MODES = ['auto', 'local', 'web'] as const
-const SEARCH_MODE_LABELS = { auto: '自动', local: '本地', web: '网络' } as const
-
 interface Props {
   onSend: (text: string, images?: { dataUrl: string; name: string }[]) => void
   onStop: () => void
   isStreaming: boolean
-  searchMode: 'auto' | 'local' | 'web'
-  onSearchModeChange: (v: 'auto' | 'local' | 'web') => void
   placeholder?: string
 }
 
@@ -18,8 +13,6 @@ export function ComposerBar({
   onSend,
   onStop,
   isStreaming,
-  searchMode,
-  onSearchModeChange,
   placeholder = '输入消息…',
 }: Props) {
   const [text, setText] = useState('')
@@ -119,16 +112,6 @@ export function ComposerBar({
             >
               {isStreaming ? <Square size={15} /> : <Send size={15} />}
             </button>
-          </div>
-
-          <div className="mt-2 flex items-center justify-end">
-            <div className="aelin-segment">
-              {SEARCH_MODES.map((m) => (
-                <button key={m} data-active={searchMode === m} onClick={() => onSearchModeChange(m)}>
-                  {SEARCH_MODE_LABELS[m]}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </div>

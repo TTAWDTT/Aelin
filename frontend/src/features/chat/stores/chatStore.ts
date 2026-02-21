@@ -28,7 +28,6 @@ interface ChatStore {
   activeSessionId: string | null
   isStreaming: boolean
   statusText: string
-  searchMode: 'auto' | 'local' | 'web'
 
   createSession: (workspace?: string) => string
   switchSession: (id: string) => void
@@ -39,7 +38,6 @@ interface ChatStore {
   appendContent: (sessionId: string, chunk: string) => void
   setStreaming: (v: boolean) => void
   setStatusText: (v: string) => void
-  setSearchMode: (v: 'auto' | 'local' | 'web') => void
   getActiveSession: () => ChatSession | undefined
 }
 
@@ -50,7 +48,6 @@ export const useChatStore = create<ChatStore>()(
       activeSessionId: null,
       isStreaming: false,
       statusText: '',
-      searchMode: 'auto',
 
       createSession: (workspace = 'default') => {
         const id = crypto.randomUUID()
@@ -98,7 +95,6 @@ export const useChatStore = create<ChatStore>()(
 
       setStreaming: (v) => set({ isStreaming: v }),
       setStatusText: (v) => set({ statusText: v }),
-      setSearchMode: (v) => set({ searchMode: v }),
       getActiveSession: () => {
         const s = get()
         return s.sessions.find(x => x.id === s.activeSessionId)

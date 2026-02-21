@@ -37,7 +37,6 @@ export interface AelinChatRequest {
   query: string; use_memory?: boolean; max_citations?: number
   workspace?: string; images?: AelinImageInput[]
   history?: { role: string; content: string }[]
-  search_mode?: string
 }
 export interface AelinImageInput { data_url: string; name?: string }
 export interface AelinCitation {

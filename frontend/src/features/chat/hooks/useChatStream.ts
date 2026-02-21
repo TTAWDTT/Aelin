@@ -38,7 +38,6 @@ export function useChatStream() {
 
     const body: AelinChatRequest = {
       query: text,
-      search_mode: store.searchMode,
       history,
       images: images?.map(i => ({ data_url: i.dataUrl, name: i.name })),
     }
