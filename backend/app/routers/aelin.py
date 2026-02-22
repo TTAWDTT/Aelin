@@ -82,12 +82,14 @@ from app.services.agent_memory import AgentMemoryService
 from app.services import content_tagging
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
+from app.services.memory_draft import ParallelMemoryDraftResult, build_parallel_memory_draft
 from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
 from app.services.openviking_bridge import tracking_file_memory_bridge
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
 from app.services.web_search import WebSearchResult, WebSearchService
 from app.services.tracking_autonomy import tracking_autonomy_service
+from app.settings import settings
 from app.services.device_center import (
     apply_device_mode as device_apply_mode,
     collect_device_process_items as device_collect_process_items,
@@ -110,6 +112,10 @@ _web_search = WebSearchService()
 _tracking = tracking_autonomy_service
 _tracking_file_memory = tracking_file_memory_bridge
 _media_ingest = MediaIngestService()
+_memory_draft_executor = ThreadPoolExecutor(
+    max_workers=max(1, min(8, int(getattr(settings, "aelin_parallel_memory_draft_workers", 4) or 4))),
+    thread_name_prefix="aelin-memory-draft",
+)
 
 _TRACKABLE_SOURCES = {
     "auto",
@@ -3696,6 +3702,111 @@ def _save_chat_diary_entry(
     return {"written": True, "reason": "", "path": str(out_path)}
 
 
+def _save_parallel_draft_entry(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: str,
+    query: str,
+    answer: str,
+    draft_result: ParallelMemoryDraftResult | None,
+    quality_passed: bool,
+) -> dict[str, Any]:
+    if draft_result is None:
+        return {"written": False, "reason": "draft_missing", "path": ""}
+    if not quality_passed:
+        return {"written": False, "reason": "verifier_not_passed", "path": ""}
+    min_conf = max(0.0, min(1.0, float(getattr(settings, "aelin_parallel_memory_draft_min_confidence", 0.58) or 0.58)))
+    if float(draft_result.confidence or 0.0) < min_conf:
+        return {"written": False, "reason": "draft_low_confidence", "path": ""}
+    if int(draft_result.evidence_count or 0) <= 0:
+        return {"written": False, "reason": "draft_no_evidence", "path": ""}
+
+    now = datetime.now(timezone.utc)
+    query_text = re.sub(r"\s+", " ", str(query or "").strip())[:320]
+    topic_path = [
+        *(draft_result.topic_path[:4] if isinstance(draft_result.topic_path, list) and draft_result.topic_path else ["并行记忆"]),
+        now.strftime("%Y"),
+        now.strftime("%m"),
+        now.strftime("%d"),
+    ]
+    source_key = f"parallel:{now.strftime('%Y-%m-%d')}:{hashlib.sha1(query_text.encode('utf-8')).hexdigest()[:16]}"
+    target = SimpleNamespace(
+        user_id=user_id,
+        workspace=workspace,
+        source_type="chat",
+        track_type="conversation",
+        source_key=source_key,
+        display_name="并行记忆草稿",
+    )
+    source_indices = []
+    seen_refs: set[str] = set()
+    for row in (draft_result.source_indices or [])[:24]:
+        if not isinstance(row, dict):
+            continue
+        source_type = str(row.get("type") or "unknown").strip()[:32]
+        label = str(row.get("label") or "").strip()[:220]
+        message_id = int(row.get("message_id") or 0)
+        path = str(row.get("path") or "").strip()[:500]
+        url = str(row.get("url") or "").strip()[:500]
+        dedupe_key = f"{source_type}:{message_id}:{path}:{url}:{label}".lower()
+        if dedupe_key in seen_refs:
+            continue
+        seen_refs.add(dedupe_key)
+        source_indices.append(
+            {
+                "type": source_type,
+                "label": label,
+                "message_id": message_id,
+                "path": path,
+                "url": url,
+            }
+        )
+    source_indices.insert(
+        0,
+        {
+            "type": "query",
+            "label": query_text[:220],
+            "message_id": 0,
+            "path": "",
+            "url": "",
+        },
+    )
+    merged_markdown = "\n".join(
+        [
+            draft_result.markdown.strip(),
+            "",
+            "## 最终回答归档",
+            "",
+            _sanitize_diary_answer(answer),
+        ]
+    ).strip()
+    out_path = _tracking_file_memory.append_insight(
+        target=target,
+        title=str(draft_result.title or "并行记忆草稿")[:120],
+        markdown=merged_markdown,
+        reason="parallel_draft_commit",
+        confidence=float(draft_result.confidence or 0.0),
+        source_query=query_text,
+        topic_path=topic_path,
+        source_indices=source_indices[:28],
+        entry_kind="chat_parallel_draft",
+    )
+    if out_path is None:
+        return {"written": False, "reason": "file_write_failed", "path": ""}
+    try:
+        _memory.add_note(
+            db,
+            user_id,
+            f"[parallel-draft] {draft_result.title}\npath: {str(out_path)}",
+            kind="tracking_insight",
+            source="chat:parallel-draft",
+        )
+    except Exception:
+        pass
+    return {"written": True, "reason": "", "path": str(out_path)}
+
+
 def _pick_tracking_target_for_insight(
     db: Session,
     *,
@@ -3982,6 +4093,9 @@ def _aelin_chat_impl(
     media_result: MediaIngestOutput | None = None
     media_save_state: dict[str, Any] = {"written": False, "diary_path": "", "note_added": False}
     media_summary_intent = False
+    parallel_draft_future: Any | None = None
+    parallel_draft_result: ParallelMemoryDraftResult | None = None
+    parallel_draft_commit: dict[str, Any] = {"written": False, "reason": "not_evaluated", "path": ""}
 
     media_hit = _extract_first_supported_media_url(payload.query)
     if media_hit is not None:
@@ -4641,6 +4755,48 @@ def _aelin_chat_impl(
         detail="file memory hits merged" if file_memory_items else "no file memory hits",
         count=len(file_memory_items),
     )
+    if bool(getattr(settings, "aelin_parallel_memory_draft_enabled", True)):
+        draft_citation_rows = [
+            {
+                "message_id": int(it.message_id or 0),
+                "source": str(it.source or ""),
+                "source_label": str(it.source_label or ""),
+                "sender": str(it.sender or ""),
+                "title": str(it.title or ""),
+            }
+            for it in citations[:12]
+        ]
+        draft_web_rows = [
+            {
+                "title": str(getattr(row, "title", "") or ""),
+                "url": str(getattr(row, "url", "") or ""),
+                "host": _domain_from_url(str(getattr(row, "url", "") or "")),
+                "snippet": (
+                    (str(getattr(row, "fetched_excerpt", "") or "").strip() or str(getattr(row, "snippet", "") or "").strip())
+                )[:260],
+            }
+            for row in web_results_for_answer[:10]
+        ]
+        if draft_citation_rows or file_memory_items or draft_web_rows:
+            add_trace(
+                "parallel_draft",
+                status="running",
+                detail=f"parallel draft start local={len(draft_citation_rows)} web={len(draft_web_rows)} file={len(file_memory_items)}",
+                count=len(draft_citation_rows) + len(draft_web_rows) + len(file_memory_items),
+            )
+            parallel_draft_future = _memory_draft_executor.submit(
+                build_parallel_memory_draft,
+                query=payload.query,
+                citations=draft_citation_rows,
+                file_memory_items=file_memory_items[:8],
+                web_results=draft_web_rows,
+                memory_summary=memory_summary,
+                brief_summary=brief_summary,
+            )
+        else:
+            add_trace("parallel_draft", status="skipped", detail="no retrieval evidence", count=0)
+    else:
+        add_trace("parallel_draft", status="skipped", detail="disabled by settings", count=0)
 
     pin_lines = [
         f"{item.display_name}(score {item.score:.1f}, unread {item.unread_count})"
@@ -5041,6 +5197,25 @@ def _aelin_chat_impl(
         detail=verifier_detail,
         count=len(citations),
     )
+    if parallel_draft_future is not None and parallel_draft_result is None:
+        timeout_seconds = max(
+            0.3,
+            min(6.0, float(getattr(settings, "aelin_parallel_memory_draft_timeout_seconds", 2.0) or 2.0)),
+        )
+        try:
+            parallel_draft_result = parallel_draft_future.result(timeout=timeout_seconds)
+            add_trace(
+                "parallel_draft",
+                status="completed",
+                detail=(
+                    f"draft ready; evidence={int(parallel_draft_result.evidence_count or 0)}; "
+                    f"conf={float(parallel_draft_result.confidence or 0.0):.2f}"
+                ),
+                count=int(parallel_draft_result.evidence_count or 0),
+            )
+        except Exception as exc:
+            add_trace("parallel_draft", status="failed", detail=f"draft timeout/error:{str(exc)[:140]}", count=0)
+
     answer = _enforce_answer_first(
         query=payload.query,
         answer=answer,
@@ -5301,6 +5476,47 @@ def _aelin_chat_impl(
             )
     except Exception as exc:
         add_trace("chat_diary_write", status="failed", detail=f"{str(exc)[:160]}", count=0)
+    if parallel_draft_result is None and parallel_draft_future is not None and parallel_draft_future.done():
+        try:
+            parallel_draft_result = parallel_draft_future.result()
+            add_trace(
+                "parallel_draft",
+                status="completed",
+                detail=(
+                    f"draft ready (late); evidence={int(parallel_draft_result.evidence_count or 0)}; "
+                    f"conf={float(parallel_draft_result.confidence or 0.0):.2f}"
+                ),
+                count=int(parallel_draft_result.evidence_count or 0),
+            )
+        except Exception as exc:
+            add_trace("parallel_draft", status="failed", detail=f"draft late error:{str(exc)[:140]}", count=0)
+
+    try:
+        parallel_draft_commit = _save_parallel_draft_entry(
+            db,
+            user_id=current_user.id,
+            workspace=_normalize_workspace(payload.workspace),
+            query=payload.query,
+            answer=answer,
+            draft_result=parallel_draft_result,
+            quality_passed=bool(verified and grounded and coverage_ok),
+        )
+        if bool(parallel_draft_commit.get("written")):
+            add_trace(
+                "parallel_draft_commit",
+                status="completed",
+                detail=str(parallel_draft_commit.get("path") or "")[:220],
+                count=1,
+            )
+        else:
+            add_trace(
+                "parallel_draft_commit",
+                status="skipped",
+                detail=str(parallel_draft_commit.get("reason") or "skip")[:160],
+                count=0,
+            )
+    except Exception as exc:
+        add_trace("parallel_draft_commit", status="failed", detail=f"{str(exc)[:160]}", count=0)
 
     try:
         should_commit = False
@@ -5311,6 +5527,8 @@ def _aelin_chat_impl(
         elif bool(insight_write_result.get("written")):
             should_commit = True
         elif bool(chat_diary_result.get("written")):
+            should_commit = True
+        elif bool(parallel_draft_commit.get("written")):
             should_commit = True
         elif bool(media_save_state.get("written")) or bool(media_save_state.get("note_added")):
             should_commit = True
@@ -5352,6 +5570,16 @@ def _aelin_chat_impl(
                     "target_id": str(target_id) if target_id > 0 else "",
                     "workspace": payload.workspace,
                 },
+            ),
+        )
+    if bool(parallel_draft_commit.get("written")):
+        actions.insert(
+            0,
+            AelinAction(
+                kind="open_tracking",
+                title="查看并行记忆草稿",
+                detail=str(parallel_draft_commit.get("path") or "").strip()[:220],
+                payload={"workspace": payload.workspace, "query": payload.query[:120]},
             ),
         )
 

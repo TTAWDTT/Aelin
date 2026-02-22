@@ -643,6 +643,8 @@ class TrackingFileMemoryBridge:
             score -= 0.2
         if "- entry_kind: chat_diary" in lowered:
             score += 1.8
+        if "- entry_kind: chat_parallel_draft" in lowered:
+            score += 1.6
         if "- entry_kind: media_insight" in lowered:
             score += 1.4
         if "- entry_kind: tracking_insight" in lowered:
