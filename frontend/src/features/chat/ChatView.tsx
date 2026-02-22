@@ -8,6 +8,7 @@ import { PageScaffold } from '@/shared/components/PageScaffold'
 import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
+import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
@@ -16,6 +17,7 @@ export function ChatView() {
   const { send, stop } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
+  const viewportWidth = useViewportWidth()
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -37,7 +39,7 @@ export function ChatView() {
       title="Chat"
       subtitle="Aelin 在线中"
       contentClassName="flex flex-1 min-h-0 flex-col p-0"
-      headerActions={<SessionTabs className="max-w-full sm:max-w-[420px]" />}
+      headerActions={<SessionTabs className="min-w-0 max-w-full sm:max-w-[420px]" />}
     >
       <ChatStatusBar isStreaming={isStreaming} statusText={statusText} compact={compact} />
       <ChatTimeline
@@ -46,6 +48,7 @@ export function ChatView() {
         isStreaming={isStreaming}
         statusText={statusText}
         compact={compact}
+        viewportWidth={viewportWidth}
         onQuickPrompt={handleSend}
       />
       <ComposerBar

@@ -94,11 +94,11 @@ export function AgentTracePanel({
     <section className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between rounded-lg px-1 text-left"
+        className="flex w-full min-w-0 items-center justify-between rounded-lg px-1 text-left"
       >
         <div className="flex items-center gap-2">
           <span className={cn('inline-flex h-2 w-2 rounded-full', live || runningCount ? 'animate-pulse bg-[var(--color-accent)]' : 'bg-[var(--color-text-muted)]')} />
-          <span className="text-[11px] font-semibold tracking-wide text-[var(--color-text)]">Agent 链路</span>
+          <span className="truncate text-[11px] font-semibold tracking-wide text-[var(--color-text)]">Agent 链路</span>
           <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
             {items.length} 步
           </span>
@@ -142,11 +142,11 @@ export function AgentTracePanel({
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
+                        <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
                         <span className="text-[10px] text-[var(--color-text-muted)]">{(STATUS_TEXT[status] ?? status) || '未知'}</span>
                       </div>
                       {step.detail && (
-                        <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                        <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
                           {step.detail}
                         </div>
                       )}

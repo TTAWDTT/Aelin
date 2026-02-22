@@ -18,42 +18,47 @@ interface MessageBubbleProps {
   isThinking?: boolean
   thinkingText?: string
   compact?: boolean
+  viewportWidth: number
 }
 
-export function MessageBubble({ message, isThinking = false, thinkingText, compact = false }: MessageBubbleProps) {
+function calculateCompactMaxWidth(viewportWidth: number) {
+  const width = Number.isFinite(viewportWidth) ? viewportWidth : 960
+  const ratio = 0.72
+  const minWidth = 220
+  return Math.max(minWidth, Math.floor(width * ratio))
+}
+
+export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth }: MessageBubbleProps) {
   const isUser = message.role === 'user'
+  const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
 
   return (
     <article className={cn(
-      'aelin-fade-up flex items-end',
-      compact ? 'max-w-[98%] gap-1.5' : 'max-w-[94%] gap-2 sm:max-w-[86%] sm:gap-2.5 md:max-w-[80%]',
+      'aelin-fade-up flex min-w-0 w-full',
+      compact ? 'max-w-full items-start gap-1.5' : 'max-w-[94%] items-end gap-2 sm:max-w-[86%] sm:gap-2.5 md:max-w-[80%]',
       isUser ? 'ml-auto flex-row-reverse' : ''
     )}>
       {/* Avatar */}
       {!isUser && (
-        <div className="shrink-0">
+        <div className="shrink-0 max-[500px]:hidden">
           <AelinAvatar
             size="sm"
             expression={message.expression}
             title={message.expression ? EXPRESSION_LABELS[message.expression] : 'Aelin'}
-            className="!rounded-[10px]"
+            className={cn('!rounded-[10px]', compact && '!h-6 !w-6')}
           />
-        </div>
-      )}
-      {isUser && (
-        <div className={`flex shrink-0 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] font-semibold text-[var(--color-text-muted)] ${compact ? 'h-6 w-6 text-[10px]' : 'h-7 w-7 text-[10px] sm:h-8 sm:w-8 sm:text-[11px]'}`}>
-          你
         </div>
       )}
 
       <div className={cn(
-        'chat-elevate max-w-full rounded-[16px]',
+        'chat-elevate min-w-0 rounded-[16px]',
+        'max-w-full',
         compact ? 'px-2.5 py-2' : 'px-3 py-2.5 sm:px-4 sm:py-3.5',
         isThinking && !isUser && 'chat-thinking-bubble',
         isUser
           ? 'rounded-tr-[6px] border border-[var(--color-border)] bg-[var(--color-panel-alt)]'
           : 'rounded-tl-[6px] border border-[var(--color-border)] bg-[var(--color-panel)]'
-      )}>
+      )} style={compact ? { maxWidth: `${compactMaxWidth}px` } : undefined}>
         {!isUser && isThinking && (
           <div className="mb-2 flex items-center gap-2">
             <img
@@ -85,8 +90,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
         {/* Content */}
         <div
           className={cn(
-            'prose prose-sm max-w-none prose-neutral',
-            '[&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_li]:my-0.5 [&_pre]:my-2 [&_blockquote]:my-2'
+            'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
           )}
           style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
@@ -99,7 +103,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
             {message.citations.map((c, i) => (
               <div key={i} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1.5 text-[11px] sm:flex-nowrap sm:gap-2 sm:px-2.5 sm:text-xs">
                 <span>{sourceIcon(c.source)}</span>
-                <span className="font-medium truncate flex-1">[{i + 1}] {c.title}</span>
+                <span className="font-medium min-w-0 flex-1 break-all sm:truncate">[{i + 1}] {c.title}</span>
                 <span className="text-[var(--color-text-muted)]">{c.source_label}</span>
                 <span className="text-[var(--color-text-muted)] sm:inline">{relativeTime(c.received_at)}</span>
               </div>

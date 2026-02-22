@@ -49,9 +49,9 @@ export function ComposerBar({
   const canSend = !!text.trim() || images.length > 0
 
   return (
-    <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
-      <div className="mx-auto w-full max-w-[880px]">
-        <div className={`aelin-card rounded-[16px] bg-[var(--color-panel)] transition-shadow duration-200 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_12%,transparent)] ${compact ? 'p-2' : 'p-2.5'}`}>
+    <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
+      <div className="mx-auto min-w-0 w-full max-w-[880px]">
+        <div className={`aelin-card min-w-0 rounded-[16px] bg-[var(--color-panel)] transition-shadow duration-200 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_12%,transparent)] ${compact ? 'p-2 max-[500px]:p-1.5' : 'p-2.5'}`}>
           {images.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
               {images.map((img, i) => (
@@ -69,7 +69,7 @@ export function ComposerBar({
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2 max-[500px]:gap-1">
             <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleImage} className="hidden" />
             <button
               onClick={() => fileRef.current?.click()}
@@ -86,7 +86,7 @@ export function ComposerBar({
               onChange={(e) => setText(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
-              className={`flex-1 border-none bg-transparent px-1 outline-none placeholder:text-[var(--color-text-muted)] ${compact ? 'h-8 text-[13px]' : 'h-9 text-[14px]'}`}
+              className={`min-w-0 flex-1 border-none bg-transparent px-1 outline-none placeholder:text-[var(--color-text-muted)] ${compact ? 'h-8 text-[13px] max-[500px]:text-[12px]' : 'h-9 text-[14px]'}`}
               style={{ fontFamily: 'var(--font-body)' }}
             />
 

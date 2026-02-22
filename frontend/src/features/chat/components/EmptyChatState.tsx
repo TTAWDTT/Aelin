@@ -8,16 +8,16 @@ interface EmptyChatStateProps {
 export function EmptyChatState({ onQuickPrompt }: EmptyChatStateProps) {
   return (
     <div className="flex min-h-full items-center justify-center py-4 sm:py-8">
-      <div className="aelin-fade-up w-full max-w-[1040px]">
-        <div className="mx-auto max-w-[760px] rounded-[18px] border border-[var(--color-border)] bg-[var(--color-panel)] p-4 sm:p-6">
-          <div className="mb-3 flex items-center gap-2.5 text-[var(--color-text-muted)] sm:gap-3">
+      <div className="aelin-fade-up min-w-0 w-full max-w-[1040px]">
+        <div className="mx-auto min-w-0 max-w-[760px] rounded-[18px] border border-[var(--color-border)] bg-[var(--color-panel)] p-4 sm:p-6 max-[500px]:rounded-[14px] max-[500px]:p-3">
+          <div className="mb-3 flex min-w-0 items-center gap-2.5 text-[var(--color-text-muted)] sm:gap-3">
             <AelinAvatar size="md" className="!rounded-[10px]" />
-            <span className="text-xs">{CHAT_EMPTY_GREETING}</span>
+            <span className="truncate text-xs">{CHAT_EMPTY_GREETING}</span>
           </div>
-          <h1 className="mb-2 text-xl font-semibold tracking-tight text-[var(--color-text)] sm:text-2xl" style={{ fontFamily: 'var(--font-heading)' }}>
+          <h1 className="mb-2 break-words text-xl font-semibold tracking-tight text-[var(--color-text)] sm:text-2xl max-[500px]:text-lg" style={{ fontFamily: 'var(--font-heading)' }}>
             {CHAT_EMPTY_TITLE}
           </h1>
-          <p className="mb-4 text-[13px] text-[var(--color-text-muted)] sm:mb-5 sm:text-sm">输入消息后，Aelin 会继续在底部输入框中保持会话。</p>
+          <p className="mb-4 break-words text-[13px] text-[var(--color-text-muted)] sm:mb-5 sm:text-sm max-[500px]:text-[12px]">输入消息后，Aelin 会继续在底部输入框中保持会话。</p>
           <div className="flex flex-wrap gap-2">
             {CHAT_QUICK_PROMPTS.map((prompt) => (
               <button

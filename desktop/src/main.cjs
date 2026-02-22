@@ -119,10 +119,36 @@ function isMainWindowAtMinimumSize() {
   return width <= minWidth + 1 && height <= minHeight + 1;
 }
 
+function getMainWindowTopLevel() {
+  return "screen-saver";
+}
+
+function getPetWindowTopLevel() {
+  return "screen-saver";
+}
+
+function syncWindowZOrder() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindowPinned) {
+      mainWindow.setAlwaysOnTop(true, getMainWindowTopLevel());
+      if (typeof mainWindow.moveTop === "function") {
+        mainWindow.moveTop();
+      }
+    } else {
+      mainWindow.setAlwaysOnTop(false, "normal");
+    }
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.setAlwaysOnTop(true, getPetWindowTopLevel());
+    if (!mainWindowPinned && typeof petWindow.moveTop === "function") {
+      petWindow.moveTop();
+    }
+  }
+}
+
 function setMainWindowPinned(pinned) {
   mainWindowPinned = Boolean(pinned);
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.setAlwaysOnTop(mainWindowPinned, mainWindowPinned ? "floating" : "normal");
+  syncWindowZOrder();
 }
 
 function toggleMainWindowPinned() {
@@ -770,6 +796,7 @@ function openModule(route = "/") {
   }
   mainWindow.show();
   mainWindow.focus();
+  syncWindowZOrder();
   pushPetState(true);
 }
 
@@ -818,8 +845,13 @@ function popupPetMenu(options = {}) {
     y: Math.max(0, Math.floor(resolvedLocalY)),
     callback: () => {
       if (!petWindow || petWindow.isDestroyed()) return;
-      petWindow.setAlwaysOnTop(true, "screen-saver");
-      petWindow.focus();
+      syncWindowZOrder();
+      if (mainWindowPinned && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      } else {
+        petWindow.focus();
+      }
     },
   });
 }
@@ -841,7 +873,7 @@ function ensurePetVisible() {
   if (!petWindow.isVisible()) {
     petWindow.showInactive();
   }
-  petWindow.setAlwaysOnTop(true, "screen-saver");
+  syncWindowZOrder();
   syncPetMenu();
   pushPetConfig();
   pushPetState(true);
@@ -1241,7 +1273,7 @@ function createPetWindow() {
     },
   });
 
-  petWindow.setAlwaysOnTop(true, "screen-saver");
+  syncWindowZOrder();
   petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   petWindow.setSkipTaskbar(true);
   petWindow.setMenuBarVisibility(false);
@@ -1328,7 +1360,7 @@ function createPetWindow() {
 
   petWindow.on("blur", () => {
     if (!petWindow || petWindow.isDestroyed()) return;
-    petWindow.setAlwaysOnTop(true, "screen-saver");
+    syncWindowZOrder();
   });
 
   petWindow.on("closed", () => {
