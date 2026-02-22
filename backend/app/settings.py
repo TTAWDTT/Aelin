@@ -81,7 +81,12 @@ class Settings(BaseSettings):
     media_ingest_douyin_browser_profile_dir: str = "./browser_data/douyin_media"
     media_ingest_douyin_login_url: str = "https://www.douyin.com/"
     media_ingest_douyin_asr_enabled: bool = True
+    media_ingest_douyin_asr_backend: str = "auto"  # auto | faster_whisper | openai
     media_ingest_douyin_asr_model: str = "whisper-1"
+    media_ingest_douyin_asr_local_model: str = "small"
+    media_ingest_douyin_asr_local_device: str = "auto"  # auto | cpu | cuda
+    media_ingest_douyin_asr_local_compute_type: str = "int8"
+    media_ingest_douyin_asr_local_beam_size: int = 4
     media_ingest_douyin_asr_max_audio_seconds: int = 120
     media_ingest_douyin_asr_timeout_seconds: int = 80
 

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse, urlunparse
 
+from app.services.asr_text import ASRTextProcessor
 from app.services.llm import LLMService
 from app.services.summarizer import RuleBasedSummarizer
 from app.settings import settings
@@ -43,6 +44,7 @@ _DOUYIN_AUTH_COOKIE_NAMES = {
     "sid_tt",
     "sid_guard",
 }
+_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mkv", ".mov", ".flv", ".m4v"}
 _CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -97,12 +99,19 @@ class MediaIngestService:
     def __init__(self) -> None:
         self._fallback = RuleBasedSummarizer()
         self._subtitle_min_chars = 120
+        self._asr_min_chars = 80
         self._description_min_chars = 80
         self._description_min_sentences = 2
         self._description_min_quality = 0.64
         self._subtitle_auto_min_quality = 0.52
         self._subtitle_manual_min_quality = 0.46
         self._max_model_input_chars = 12000
+        self._asr_text_processor = ASRTextProcessor(
+            normalize_text=self._normalize_text,
+            split_sentences=self._split_sentences,
+            is_low_signal_fragment=self._is_low_signal_fragment,
+            max_model_input_chars=self._max_model_input_chars,
+        )
         self._run_timeout_seconds = 140
         self._cookie_mode = str(getattr(settings, "media_ingest_cookie_mode", "off") or "off").strip().lower()
         self._cookie_browser = str(getattr(settings, "media_ingest_cookie_browser", "chrome") or "chrome").strip()
@@ -126,9 +135,29 @@ class MediaIngestService:
         self._douyin_asr_enabled = bool(
             getattr(settings, "media_ingest_douyin_asr_enabled", True)
         )
+        self._douyin_asr_backend = str(
+            getattr(settings, "media_ingest_douyin_asr_backend", "auto") or "auto"
+        ).strip().lower()
+        if self._douyin_asr_backend not in {"auto", "openai", "faster_whisper"}:
+            self._douyin_asr_backend = "auto"
         self._douyin_asr_model = str(
             getattr(settings, "media_ingest_douyin_asr_model", "whisper-1") or "whisper-1"
         ).strip()
+        self._douyin_asr_local_model = str(
+            getattr(settings, "media_ingest_douyin_asr_local_model", "small") or "small"
+        ).strip()
+        self._douyin_asr_local_device = str(
+            getattr(settings, "media_ingest_douyin_asr_local_device", "auto") or "auto"
+        ).strip().lower()
+        if self._douyin_asr_local_device not in {"auto", "cpu", "cuda"}:
+            self._douyin_asr_local_device = "auto"
+        self._douyin_asr_local_compute_type = str(
+            getattr(settings, "media_ingest_douyin_asr_local_compute_type", "int8") or "int8"
+        ).strip()
+        self._douyin_asr_local_beam_size = max(
+            1,
+            min(8, int(getattr(settings, "media_ingest_douyin_asr_local_beam_size", 4) or 4)),
+        )
         self._douyin_asr_max_audio_seconds = max(
             30,
             min(360, int(getattr(settings, "media_ingest_douyin_asr_max_audio_seconds", 120) or 120)),
@@ -137,6 +166,10 @@ class MediaIngestService:
             20,
             min(300, int(getattr(settings, "media_ingest_douyin_asr_timeout_seconds", 80) or 80)),
         )
+        self._ffmpeg_command = self._resolve_ffmpeg_command()
+        self._douyin_asr_openai_available = True
+        self._faster_whisper_model: Any | None = None
+        self._faster_whisper_failed = False
 
     def ingest(
         self,
@@ -369,6 +402,20 @@ class MediaIngestService:
         except Exception:
             return None
         return None
+
+    def _resolve_ffmpeg_command(self) -> str:
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if ffmpeg_bin:
+            return ffmpeg_bin
+        try:
+            import imageio_ffmpeg  # type: ignore
+
+            candidate = str(imageio_ffmpeg.get_ffmpeg_exe() or "").strip()
+            if candidate and Path(candidate).exists():
+                return candidate
+        except Exception:
+            pass
+        return ""
 
     def _run_ytdlp(
         self,
@@ -1030,6 +1077,8 @@ class MediaIngestService:
         if prefer_platform_text and len(fallback_desc) >= self._description_min_chars:
             asr_text = self._transcribe_douyin_audio(
                 video_url=video_url,
+                page_url=url,
+                ytdlp_cmd=ytdlp_cmd,
                 service=service,
                 provider=provider,
             )
@@ -1069,32 +1118,129 @@ class MediaIngestService:
         self,
         *,
         video_url: str,
+        page_url: str = "",
+        ytdlp_cmd: list[str] | None = None,
         service: LLMService | None,
         provider: str,
     ) -> str:
         if not self._douyin_asr_enabled:
             return ""
-        if provider == "rule_based" or service is None or not service.is_configured():
-            return ""
-        client = getattr(service, "client", None)
-        if client is None:
-            return ""
         source_url = str(video_url or "").strip()
-        if not source_url.startswith("http"):
-            return ""
-        if shutil.which("ffmpeg") is None:
+        ffmpeg_cmd = str(self._ffmpeg_command or "").strip() or self._resolve_ffmpeg_command()
+        if not ffmpeg_cmd:
             _LOG.warning("douyin asr skipped: ffmpeg not found")
             return ""
+        self._ffmpeg_command = ffmpeg_cmd
 
         with tempfile.TemporaryDirectory(prefix="aelin-douyin-asr-") as tmpdir:
             audio_path = Path(tmpdir) / "douyin_audio.mp3"
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-loglevel",
-                "error",
-                "-headers",
-                f"User-Agent: {_CHROME_UA}\r\nReferer: https://www.douyin.com/\r\n",
+            extracted = False
+            if source_url.startswith("http"):
+                extracted = self._extract_audio_for_asr(
+                    ffmpeg_cmd=ffmpeg_cmd,
+                    source_url=source_url,
+                    audio_path=audio_path,
+                    add_headers=True,
+                )
+            if not extracted and ytdlp_cmd and str(page_url or "").startswith("http"):
+                downloaded_video = self._download_douyin_video_for_asr(
+                    ytdlp_cmd=ytdlp_cmd,
+                    page_url=page_url,
+                    workdir=Path(tmpdir),
+                )
+                if downloaded_video is not None:
+                    extracted = self._extract_audio_for_asr(
+                        ffmpeg_cmd=ffmpeg_cmd,
+                        source_url=str(downloaded_video),
+                        audio_path=audio_path,
+                        add_headers=False,
+                    )
+            if not extracted:
+                return ""
+            for backend in self._resolve_douyin_asr_backend_order():
+                text = ""
+                if backend == "faster_whisper":
+                    text = self._transcribe_douyin_audio_with_faster_whisper(audio_path=audio_path)
+                elif backend == "openai":
+                    text = self._transcribe_douyin_audio_with_openai(
+                        audio_path=audio_path,
+                        service=service,
+                        provider=provider,
+                    )
+                if text:
+                    return text[: self._max_model_input_chars]
+        return ""
+
+    def _resolve_douyin_asr_backend_order(self) -> list[str]:
+        mode = self._douyin_asr_backend
+        if mode == "openai":
+            return ["openai"] if self._douyin_asr_openai_available else []
+        if mode == "faster_whisper":
+            return ["faster_whisper"]
+        out = ["faster_whisper"]
+        if self._douyin_asr_openai_available:
+            out.append("openai")
+        return out
+
+    def _download_douyin_video_for_asr(self, *, ytdlp_cmd: list[str], page_url: str, workdir: Path) -> Path | None:
+        args = [
+            "--no-playlist",
+            "--no-warnings",
+            "--format",
+            "bv*+ba/best",
+            "--output",
+            "aelin_douyin_asr.%(ext)s",
+        ]
+        network_args = self._build_network_args(platform="douyin")
+        proc = self._run_ytdlp(
+            ytdlp_cmd=ytdlp_cmd,
+            args=args,
+            url=page_url,
+            cwd=workdir,
+            network_args=network_args,
+        )
+        if proc.returncode != 0 and network_args and self._is_cookie_bootstrap_error(proc.stderr or "", proc.stdout or ""):
+            proc = self._run_ytdlp(
+                ytdlp_cmd=ytdlp_cmd,
+                args=args,
+                url=page_url,
+                cwd=workdir,
+                network_args=[],
+            )
+        if proc.returncode != 0:
+            return None
+        candidates = [
+            path
+            for path in workdir.glob("aelin_douyin_asr.*")
+            if path.is_file() and path.suffix.lower() in _VIDEO_EXTENSIONS and path.stat().st_size >= 20 * 1024
+        ]
+        if not candidates:
+            return None
+        return sorted(candidates, key=lambda item: item.stat().st_size, reverse=True)[0]
+
+    def _extract_audio_for_asr(
+        self,
+        *,
+        ffmpeg_cmd: str,
+        source_url: str,
+        audio_path: Path,
+        add_headers: bool = True,
+    ) -> bool:
+        cmd = [
+            ffmpeg_cmd,
+            "-y",
+            "-loglevel",
+            "error",
+        ]
+        if add_headers:
+            cmd.extend(
+                [
+                    "-headers",
+                    f"User-Agent: {_CHROME_UA}\r\nReferer: https://www.douyin.com/\r\n",
+                ]
+            )
+        cmd.extend(
+            [
                 "-i",
                 source_url,
                 "-t",
@@ -1108,31 +1254,123 @@ class MediaIngestService:
                 "mp3",
                 str(audio_path),
             ]
-            try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=self._douyin_asr_timeout_seconds,
-                    encoding="utf-8",
-                    errors="ignore",
-                )
-            except Exception as exc:
-                _LOG.warning("douyin asr ffmpeg failed: %s", exc)
-                return ""
-            if proc.returncode != 0 or not audio_path.exists() or audio_path.stat().st_size < 4096:
-                return ""
-            try:
-                with audio_path.open("rb") as audio_file:
-                    transcript = client.audio.transcriptions.create(
-                        model=self._douyin_asr_model,
-                        file=audio_file,
-                        language="zh",
+        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._douyin_asr_timeout_seconds,
+                encoding="utf-8",
+                errors="ignore",
+            )
+        except Exception as exc:
+            _LOG.warning("douyin asr ffmpeg failed: %s", exc)
+            return False
+        return proc.returncode == 0 and audio_path.exists() and audio_path.stat().st_size >= 4096
+
+    def _resolve_faster_whisper_device(self) -> str:
+        if self._douyin_asr_local_device in {"cpu", "cuda"}:
+            return self._douyin_asr_local_device
+        if shutil.which("nvidia-smi"):
+            return "cuda"
+        return "cpu"
+
+    def _get_faster_whisper_model(self) -> Any | None:
+        if self._faster_whisper_model is not None:
+            return self._faster_whisper_model
+        if self._faster_whisper_failed:
+            return None
+        try:
+            from faster_whisper import WhisperModel  # type: ignore
+        except Exception as exc:
+            _LOG.warning("douyin asr faster-whisper unavailable: %s", exc)
+            self._faster_whisper_failed = True
+            return None
+        device = self._resolve_faster_whisper_device()
+        try:
+            self._faster_whisper_model = WhisperModel(
+                self._douyin_asr_local_model,
+                device=device,
+                compute_type=self._douyin_asr_local_compute_type,
+            )
+        except Exception as exc:
+            if device == "cuda":
+                try:
+                    self._faster_whisper_model = WhisperModel(
+                        self._douyin_asr_local_model,
+                        device="cpu",
+                        compute_type=self._douyin_asr_local_compute_type,
                     )
-            except Exception as exc:
-                _LOG.warning("douyin asr transcription failed: %s", exc)
+                    return self._faster_whisper_model
+                except Exception:
+                    pass
+            _LOG.warning("douyin asr faster-whisper init failed: %s", exc)
+            self._faster_whisper_failed = True
+            return None
+        return self._faster_whisper_model
+
+    def _transcribe_douyin_audio_with_faster_whisper(self, *, audio_path: Path) -> str:
+        model = self._get_faster_whisper_model()
+        if model is None:
+            return ""
+        try:
+            segments, _info = model.transcribe(
+                str(audio_path),
+                language="zh",
+                beam_size=self._douyin_asr_local_beam_size,
+                vad_filter=True,
+            )
+            parts: list[str] = []
+            total = 0
+            for segment in segments:
+                snippet = self._normalize_paragraph(str(getattr(segment, "text", "") or ""), max_len=220)
+                if not snippet:
+                    continue
+                parts.append(snippet)
+                total += len(snippet)
+                if total >= self._max_model_input_chars:
+                    break
+            text = self._sanitize_asr_text(" ".join(parts))
+            if len(text) < self._asr_min_chars or self._asr_noise_score(text) >= 0.58:
                 return ""
-        text = self._normalize_text(str(getattr(transcript, "text", "") or ""))
+            return text[: self._max_model_input_chars]
+        except Exception as exc:
+            _LOG.warning("douyin asr faster-whisper transcription failed: %s", exc)
+            return ""
+
+    def _transcribe_douyin_audio_with_openai(
+        self,
+        *,
+        audio_path: Path,
+        service: LLMService | None,
+        provider: str,
+    ) -> str:
+        if not self._douyin_asr_openai_available:
+            return ""
+        if provider == "rule_based" or service is None or not service.is_configured():
+            return ""
+        client = getattr(service, "client", None)
+        if client is None:
+            return ""
+        try:
+            with audio_path.open("rb") as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model=self._douyin_asr_model,
+                    file=audio_file,
+                    language="zh",
+                )
+        except Exception as exc:
+            err = str(exc)
+            if "404" in err or "not found" in err.lower():
+                _LOG.warning("douyin asr transcription endpoint unsupported, disabling openai-asr: %s", exc)
+                self._douyin_asr_openai_available = False
+            else:
+                _LOG.warning("douyin asr transcription failed: %s", exc)
+            return ""
+        text = self._sanitize_asr_text(str(getattr(transcript, "text", "") or ""))
+        if len(text) < self._asr_min_chars or self._asr_noise_score(text) >= 0.58:
+            return ""
         return text[: self._max_model_input_chars]
 
     def _extract_subtitles(
@@ -1275,6 +1513,7 @@ class MediaIngestService:
                 "说明：overview 是“总结”（讲这条内容在说什么）；information_note 是“提炼信息”（自然语言日记笔记，不要强制分点）。"
                 "其中 key_points/evidence/actions 必须是字符串数组，作为内部校验依据。confidence 为 0~1 数字。"
                 "要求：不要复述长链接、标签堆砌和营销文案；优先提取可验证事实。"
+                "若 source_type=subtitle_asr，先去掉口语重复和疑似识别噪声，再输出。"
                 "若文本信息不足，必须明确说明“信息不足”，并将 confidence 控制在 0.35 以下。"
             )
             user_prompt = (
@@ -1552,6 +1791,12 @@ class MediaIngestService:
         compact = _MULTISPACE_RE.sub(" ", without_promos).strip()
         return compact[:2600]
 
+    def _sanitize_asr_text(self, text: str) -> str:
+        return self._asr_text_processor.sanitize(text)
+
+    def _asr_noise_score(self, text: str) -> float:
+        return self._asr_text_processor.noise_score(text)
+
     def _is_low_signal_fragment(self, text: str) -> bool:
         snippet = str(text or "").strip()
         if not snippet:
@@ -1597,6 +1842,7 @@ class MediaIngestService:
         hashtag_count = len(_HASHTAG_RE.findall(text))
         tokens = [tok.lower() for tok in _TOKEN_RE.findall(text)]
         unique_ratio = (len(set(tokens)) / max(1, len(tokens))) if tokens else 0.0
+        asr_noise = self._asr_noise_score(text) if source_type == "subtitle_asr" else 0.0
 
         source_base = {
             "subtitle_manual": 0.42,
@@ -1653,6 +1899,9 @@ class MediaIngestService:
         if confidence < 0.28:
             score -= 0.06
             flags.append("confidence_low")
+        if source_type == "subtitle_asr" and asr_noise >= 0.42:
+            score -= min(0.22, asr_noise * 0.25)
+            flags.append("asr_noise_high")
 
         bounded_score = round(max(0.0, min(1.0, score)), 3)
         min_quality = self._subtitle_auto_min_quality
@@ -1682,6 +1931,8 @@ class MediaIngestService:
             critical_reasons.append(("douyin_api_text_short", "抖音页面文本过短，信息密度不足"))
         if source_type == "douyin_api" and len(evidence) < 1:
             critical_reasons.append(("douyin_api_evidence_sparse", "抖音抓取文本缺少可引用证据"))
+        if source_type == "subtitle_asr" and asr_noise >= 0.6:
+            critical_reasons.append(("asr_noise_high", "ASR 转写噪声较高，当前文本不稳定"))
         if url_ratio > 0.28:
             critical_reasons.append(("url_density_high", "文本以链接为主，缺乏可用语义"))
         if bounded_score < min_quality:

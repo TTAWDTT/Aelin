@@ -541,12 +541,240 @@ def test_media_ingest_sanitize_douyin_body_preview_removes_noise():
 
 def test_media_ingest_transcribe_douyin_audio_skips_without_config():
     svc = MediaIngestService()
+    svc._douyin_asr_backend = "openai"
     text = svc._transcribe_douyin_audio(
         video_url="https://v3-dy.example.com/video.mp4",
         service=None,
         provider="rule_based",
     )
     assert text == ""
+
+
+def test_media_ingest_transcribe_douyin_audio_uses_resolved_ffmpeg(monkeypatch):
+    svc = MediaIngestService()
+    svc._douyin_asr_backend = "openai"
+    svc._ffmpeg_command = ""
+    monkeypatch.setattr(svc, "_resolve_ffmpeg_command", lambda: "ffmpeg-fallback")
+
+    class _FakeTranscriptions:
+        @staticmethod
+        def create(**kwargs):
+            _ = kwargs
+            return SimpleNamespace(
+                text=(
+                    "这条视频在讲内容创作的方法。作者先给出背景，再拆解案例。"
+                    "第一部分讨论选题，强调关注真实场景。第二部分讲剪辑，建议先保留关键证据。"
+                    "第三部分讲发布节奏，推荐固定时间更新。最后提醒要复盘数据并持续优化表达。"
+                    "同时补充了封面文案的写法、标题避坑方式、评论区互动策略，以及常见的转化误区。"
+                    "作者建议先做小样本测试，再根据完播率和互动率逐步调整选题方向。"
+                )
+            )
+
+    class _FakeService:
+        def __init__(self):
+            self.client = SimpleNamespace(audio=SimpleNamespace(transcriptions=_FakeTranscriptions()))
+
+        @staticmethod
+        def is_configured() -> bool:
+            return True
+
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd, **kwargs):
+        _ = kwargs
+        captured["cmd"] = cmd
+        out_path = Path(str(cmd[-1]))
+        out_path.write_bytes(b"x" * 6000)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("app.services.media_ingest.subprocess.run", _fake_run)
+
+    text = svc._transcribe_douyin_audio(
+        video_url="https://v3-dy.example.com/video.mp4",
+        service=_FakeService(),
+        provider="openai",
+    )
+    assert text
+    cmd = captured.get("cmd")
+    assert isinstance(cmd, list) and cmd
+    assert str(cmd[0]) == "ffmpeg-fallback"
+
+
+def test_media_ingest_transcribe_douyin_audio_disables_asr_on_404(monkeypatch):
+    svc = MediaIngestService()
+    svc._douyin_asr_backend = "openai"
+    svc._ffmpeg_command = "ffmpeg-fallback"
+    svc._douyin_asr_enabled = True
+
+    class _FailingTranscriptions:
+        @staticmethod
+        def create(**kwargs):
+            _ = kwargs
+            raise RuntimeError("Error code: 404")
+
+    class _FakeService:
+        def __init__(self):
+            self.client = SimpleNamespace(audio=SimpleNamespace(transcriptions=_FailingTranscriptions()))
+
+        @staticmethod
+        def is_configured() -> bool:
+            return True
+
+    def _fake_run(cmd, **kwargs):
+        _ = kwargs
+        out_path = Path(str(cmd[-1]))
+        out_path.write_bytes(b"x" * 6000)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("app.services.media_ingest.subprocess.run", _fake_run)
+
+    text = svc._transcribe_douyin_audio(
+        video_url="https://v3-dy.example.com/video.mp4",
+        service=_FakeService(),
+        provider="openai",
+    )
+    assert text == ""
+    assert svc._douyin_asr_enabled is True
+    assert svc._douyin_asr_openai_available is False
+
+
+def test_media_ingest_transcribe_douyin_audio_auto_prefers_local_then_stops(monkeypatch):
+    svc = MediaIngestService()
+    svc._douyin_asr_backend = "auto"
+    svc._ffmpeg_command = "ffmpeg-fallback"
+    calls: list[str] = []
+
+    monkeypatch.setattr(svc, "_extract_audio_for_asr", lambda **kwargs: True)
+    monkeypatch.setattr(
+        svc,
+        "_transcribe_douyin_audio_with_faster_whisper",
+        lambda **kwargs: calls.append("local") or "本地转写结果",
+    )
+    monkeypatch.setattr(
+        svc,
+        "_transcribe_douyin_audio_with_openai",
+        lambda **kwargs: calls.append("openai") or "远端转写结果",
+    )
+
+    text = svc._transcribe_douyin_audio(
+        video_url="https://v3-dy.example.com/video.mp4",
+        service=None,
+        provider="rule_based",
+    )
+    assert text == "本地转写结果"
+    assert calls == ["local"]
+
+
+def test_media_ingest_transcribe_douyin_audio_auto_falls_back_to_openai(monkeypatch):
+    svc = MediaIngestService()
+    svc._douyin_asr_backend = "auto"
+    svc._ffmpeg_command = "ffmpeg-fallback"
+    calls: list[str] = []
+
+    monkeypatch.setattr(svc, "_extract_audio_for_asr", lambda **kwargs: True)
+    monkeypatch.setattr(
+        svc,
+        "_transcribe_douyin_audio_with_faster_whisper",
+        lambda **kwargs: calls.append("local") or "",
+    )
+    monkeypatch.setattr(
+        svc,
+        "_transcribe_douyin_audio_with_openai",
+        lambda **kwargs: calls.append("openai") or "远端转写结果",
+    )
+
+    text = svc._transcribe_douyin_audio(
+        video_url="https://v3-dy.example.com/video.mp4",
+        service=SimpleNamespace(),
+        provider="openai",
+    )
+    assert text == "远端转写结果"
+    assert calls == ["local", "openai"]
+
+
+def test_media_ingest_download_douyin_video_for_asr_selects_video_file(monkeypatch, tmp_path: Path):
+    svc = MediaIngestService()
+    monkeypatch.setattr(svc, "_build_network_args", lambda **kwargs: [])
+
+    def _fake_run_ytdlp(**kwargs):
+        workdir = kwargs["cwd"]
+        (workdir / "aelin_douyin_asr.mp4").write_bytes(b"x" * (30 * 1024))
+        (workdir / "aelin_douyin_asr.json").write_text("{}", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(svc, "_run_ytdlp", _fake_run_ytdlp)
+
+    path = svc._download_douyin_video_for_asr(
+        ytdlp_cmd=["yt-dlp"],
+        page_url="https://www.douyin.com/video/7110472242345069824",
+        workdir=tmp_path,
+    )
+    assert path is not None
+    assert path.suffix.lower() == ".mp4"
+
+
+def test_media_ingest_transcribe_douyin_audio_uses_ytdlp_download_fallback(monkeypatch, tmp_path: Path):
+    svc = MediaIngestService()
+    svc._douyin_asr_backend = "faster_whisper"
+    svc._ffmpeg_command = "ffmpeg-fallback"
+
+    downloaded = tmp_path / "fallback_video.mp4"
+    downloaded.write_bytes(b"x" * (30 * 1024))
+    monkeypatch.setattr(
+        svc,
+        "_download_douyin_video_for_asr",
+        lambda **kwargs: downloaded,
+    )
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_extract(**kwargs):
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(svc, "_extract_audio_for_asr", _fake_extract)
+    monkeypatch.setattr(
+        svc,
+        "_transcribe_douyin_audio_with_faster_whisper",
+        lambda **kwargs: "本地转写结果",
+    )
+
+    text = svc._transcribe_douyin_audio(
+        video_url="",
+        page_url="https://www.douyin.com/video/7110472242345069824",
+        ytdlp_cmd=["yt-dlp"],
+        service=None,
+        provider="rule_based",
+    )
+    assert text == "本地转写结果"
+    assert calls
+    assert calls[0]["add_headers"] is False
+    assert str(calls[0]["source_url"]).endswith("fallback_video.mp4")
+
+
+def test_media_ingest_sanitize_asr_text_reduces_repetition():
+    svc = MediaIngestService()
+    raw = (
+        "我恋我恋我恋我恋我恋。"
+        "抖音热榜今天更新。"
+        "抖音热榜今天更新。"
+        "第十名点赞一百三十八万。"
+        "第十名点赞一百三十八万。"
+    )
+    text = svc._sanitize_asr_text(raw)
+    assert "我恋我恋我恋我恋我恋" not in text
+    assert text.count("抖音热榜今天更新") <= 1
+    assert text.count("第十名点赞一百三十八万") <= 1
+
+
+def test_media_ingest_asr_noise_score_distinguishes_clean_text():
+    svc = MediaIngestService()
+    noisy = "我恋我恋我恋我恋我恋 我恋我恋我恋我恋我恋 抖音抖音抖音抖音"
+    clean = (
+        "这条视频分析了抖音热榜内容策略，提到第十名视频点赞超过一百万。"
+        "作者给出了选题、剪辑和发布节奏三个可执行建议，并提醒复盘数据。"
+    )
+    assert svc._asr_noise_score(noisy) > svc._asr_noise_score(clean)
 
 
 def test_media_ingest_quality_gate_rejects_description_link_spam():

@@ -11,6 +11,9 @@ feedparser>=6.0
 playwright>=1.40
 psutil>=5.9
 yt-dlp>=2025.1.0
+imageio-ffmpeg>=0.5.1
+faster-whisper>=1.1.1
+requests>=2.32
 
 # test
 pytest>=7.0
