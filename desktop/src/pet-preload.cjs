@@ -19,4 +19,19 @@ contextBridge.exposeInMainWorld("petBridge", {
   dragEnd() {
     ipcRenderer.send("pet:drag-end");
   },
+  getConfig() {
+    return ipcRenderer.invoke("pet:get-config");
+  },
+  onState(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload || {});
+    ipcRenderer.on("pet:state", handler);
+    return () => ipcRenderer.removeListener("pet:state", handler);
+  },
+  onConfig(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload || {});
+    ipcRenderer.on("pet:config", handler);
+    return () => ipcRenderer.removeListener("pet:config", handler);
+  },
 });

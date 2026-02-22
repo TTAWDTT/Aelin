@@ -17,57 +17,160 @@
         place-items: center;
         user-select: none;
       }
+      #petWrap {
+        position: relative;
+        width: 96px;
+        height: 96px;
+        pointer-events: none;
+      }
       #pet {
-        width: 84px;
-        height: 84px;
-        border-radius: 50%;
-        border: 1px solid rgba(255, 255, 255, 0.28);
-        box-shadow: 0 12px 26px rgba(0, 0, 0, 0.38);
+        width: 96px;
+        height: 96px;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        box-shadow: 0 12px 26px rgba(0, 0, 0, 0.34);
         object-fit: cover;
         cursor: grab;
         transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
-        animation: floaty 2.6s ease-in-out infinite;
-      }
-      #pet::selection {
-        background: transparent;
+        pointer-events: auto;
       }
       #pet:hover {
-        transform: scale(1.04);
-        box-shadow: 0 16px 30px rgba(0, 0, 0, 0.45);
-        filter: saturate(1.1);
+        transform: scale(1.035);
+        box-shadow: 0 16px 30px rgba(0, 0, 0, 0.4);
       }
       #pet.dragging {
         cursor: grabbing;
-        transform: scale(0.97);
-        animation: none;
+        transform: none;
+        transition: none;
+      }
+      #pet.dragging:hover {
+        transform: none;
+        box-shadow: 0 12px 26px rgba(0, 0, 0, 0.34);
       }
       #pet.pressing {
-        transform: scale(0.96);
+        transform: none;
       }
-      @keyframes floaty {
-        0%,
-        100% {
-          transform: translateY(0);
-        }
-        50% {
-          transform: translateY(-2px);
-        }
+      #pet[data-state="idle"] {
+        filter: saturate(0.92) brightness(0.94);
+      }
+      #pet[data-state="busy"] {
+        filter: saturate(1.18) brightness(1.02);
+      }
+      #pet[data-state="sleep"] {
+        filter: grayscale(0.24) brightness(0.86);
+      }
+      #pet[data-state="focus"] {
+        filter: saturate(1.1) contrast(1.08);
+      }
+      #stateBadge {
+        position: absolute;
+        left: 50%;
+        bottom: -10px;
+        transform: translateX(-50%);
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        line-height: 14px;
+        color: #f4f4f5;
+        background: rgba(15, 23, 42, 0.74);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        backdrop-filter: blur(6px);
+        white-space: nowrap;
+        pointer-events: none;
       }
     </style>
   </head>
   <body>
-    <img id="pet" alt="Aelin" draggable="false" />
+    <div id="petWrap">
+      <img id="pet" alt="Aelin" draggable="false" />
+      <div id="stateBadge">活跃</div>
+    </div>
     <script>
       const params = new URLSearchParams(location.search);
-      const icon = params.get("icon") || "";
+      let fallbackIcon = params.get("icon") || "";
       const pet = document.getElementById("pet");
-      if (icon) pet.src = icon;
+      const badge = document.getElementById("stateBadge");
+      const stateLabels = {
+        active: "活跃",
+        idle: "休息",
+        busy: "忙碌",
+        sleep: "睡眠",
+        focus: "监控",
+      };
 
+      let stateAssets = {};
+      let clickThroughEnabled = true;
+      let currentState = "active";
       let dragging = false;
       let moved = false;
       let startX = 0;
       let startY = 0;
+      let activePointerId = null;
       let pointerActive = false;
+      let deactivateTimer = null;
+      const DEACTIVATE_DELAY_MS = 90;
+
+      function normalizeState(raw) {
+        const value = String(raw || "").trim().toLowerCase();
+        if (value === "idle" || value === "busy" || value === "sleep" || value === "focus") return value;
+        return "active";
+      }
+
+      function stateLabel(state, payload) {
+        const base = stateLabels[state] || stateLabels.active;
+        const idleSec = Number(payload?.idleSec || 0);
+        if (state === "idle" && idleSec > 0) {
+          return `${base} ${Math.floor(idleSec)}s`;
+        }
+        if (state === "busy") {
+          const cpuUsage = Number(payload?.cpuUsage || 0);
+          if (cpuUsage > 0) return `${base} ${(cpuUsage * 100).toFixed(0)}%`;
+        }
+        return base;
+      }
+
+      function sourceForState(state) {
+        return (
+          stateAssets[state] ||
+          stateAssets.active ||
+          fallbackIcon ||
+          ""
+        );
+      }
+
+      function applyState(payload, force = false) {
+        const nextState = normalizeState(payload?.state || currentState);
+        if (!force && nextState === currentState) {
+          badge.textContent = stateLabel(nextState, payload);
+          return;
+        }
+        currentState = nextState;
+        pet.dataset.state = nextState;
+        const src = sourceForState(nextState);
+        if (src && pet.src !== src) {
+          pet.src = src;
+        }
+        badge.textContent = stateLabel(nextState, payload);
+      }
+
+      function applyConfig(config, force = false) {
+        if (config && typeof config === "object") {
+          if (config.icon) fallbackIcon = String(config.icon);
+          if (config.stateAssets && typeof config.stateAssets === "object") {
+            stateAssets = { ...config.stateAssets };
+          }
+          if (typeof config.clickThroughEnabled === "boolean") {
+            clickThroughEnabled = config.clickThroughEnabled;
+            if (!clickThroughEnabled) {
+              clearDeactivateTimer();
+              setPointerActive(true);
+            } else {
+              setPointerActive(false);
+            }
+          }
+        }
+        applyState({ state: config?.state || currentState }, force);
+      }
 
       function isInsidePet(clientX, clientY) {
         const rect = pet.getBoundingClientRect();
@@ -79,11 +182,47 @@
         const dx = clientX - cx;
         const dy = clientY - cy;
         const radius = rect.width / 2;
-        return dx * dx + dy * dy <= radius * radius * 1.06;
+        // Slightly shrink active hit area to avoid blocking clicks around transparent corners.
+        return dx * dx + dy * dy <= radius * radius * 0.94;
+      }
+
+      function clearDeactivateTimer() {
+        if (!deactivateTimer) return;
+        clearTimeout(deactivateTimer);
+        deactivateTimer = null;
+      }
+
+      function schedulePointerInactive() {
+        if (!clickThroughEnabled || dragging) return;
+        clearDeactivateTimer();
+        deactivateTimer = setTimeout(() => {
+          deactivateTimer = null;
+          setPointerActive(false);
+        }, DEACTIVATE_DELAY_MS);
+      }
+
+      function syncPointerByPoint(clientX, clientY) {
+        if (!clickThroughEnabled) {
+          setPointerActive(true);
+          return;
+        }
+        if (isInsidePet(clientX, clientY)) {
+          clearDeactivateTimer();
+          setPointerActive(true);
+          return;
+        }
+        schedulePointerInactive();
       }
 
       function setPointerActive(next) {
         const active = Boolean(next);
+        if (!clickThroughEnabled) {
+          if (!pointerActive) {
+            pointerActive = true;
+            window.petBridge?.setPointerActive(true);
+          }
+          return;
+        }
         if (pointerActive === active) return;
         pointerActive = active;
         window.petBridge?.setPointerActive(active);
@@ -96,6 +235,7 @@
           screenY: event.screenY,
         });
       });
+
       pet.addEventListener("mouseup", (event) => {
         if (event.button !== 2) return;
         event.preventDefault();
@@ -105,40 +245,88 @@
         });
       });
 
-      pet.addEventListener("mousedown", (event) => {
-        if (event.button !== 0) return;
+      pet.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault();
+        clearDeactivateTimer();
         setPointerActive(true);
         dragging = true;
         moved = false;
+        activePointerId = event.pointerId;
         startX = event.screenX;
         startY = event.screenY;
+        if (typeof pet.setPointerCapture === "function") {
+          try {
+            pet.setPointerCapture(event.pointerId);
+          } catch {
+            // ignore capture failures
+          }
+        }
+        const localX = event.clientX;
+        const localY = event.clientY;
         pet.classList.add("dragging");
         pet.classList.add("pressing");
-        window.petBridge?.dragStart({ screenX: event.screenX, screenY: event.screenY });
+        window.petBridge?.dragStart({
+          screenX: event.screenX,
+          screenY: event.screenY,
+          localX,
+          localY,
+        });
       });
 
-      window.addEventListener("mousemove", (event) => {
-        if (!dragging) {
-          setPointerActive(isInsidePet(event.clientX, event.clientY));
-          return;
-        }
+      pet.addEventListener("pointermove", (event) => {
+        if (!dragging) return;
+        if (!event.isPrimary || event.pointerId !== activePointerId) return;
         const dx = Math.abs(event.screenX - startX);
         const dy = Math.abs(event.screenY - startY);
         if (dx > 2 || dy > 2) moved = true;
         window.petBridge?.dragMove({ screenX: event.screenX, screenY: event.screenY });
       });
 
-      window.addEventListener("mouseup", (event) => {
+      function finishPointerDrag(event, cancelled = false) {
         if (!dragging) return;
+        if (event && event.pointerId !== undefined && event.pointerId !== activePointerId) return;
+        const wasMoved = moved;
         dragging = false;
+        moved = false;
+        const pointerId = activePointerId;
+        activePointerId = null;
+        if (pointerId !== null && typeof pet.releasePointerCapture === "function") {
+          try {
+            if (typeof pet.hasPointerCapture !== "function" || pet.hasPointerCapture(pointerId)) {
+              pet.releasePointerCapture(pointerId);
+            }
+          } catch {
+            // ignore release capture failures
+          }
+        }
         pet.classList.remove("dragging");
         pet.classList.remove("pressing");
         window.petBridge?.dragEnd();
-        if (!moved && event.button === 0) {
+        if (!cancelled && !wasMoved && event?.button === 0) {
           window.petBridge?.openChat();
         }
-        setPointerActive(isInsidePet(event.clientX, event.clientY));
+        if (event) {
+          syncPointerByPoint(event.clientX, event.clientY);
+        } else {
+          schedulePointerInactive();
+        }
+      }
+
+      pet.addEventListener("pointerup", (event) => {
+        if (!event.isPrimary) return;
+        finishPointerDrag(event, false);
+      });
+
+      pet.addEventListener("pointercancel", (event) => {
+        if (!event.isPrimary) return;
+        finishPointerDrag(event, true);
+      });
+
+      window.addEventListener("mousemove", (event) => {
+        if (!dragging) {
+          syncPointerByPoint(event.clientX, event.clientY);
+        }
       });
 
       pet.addEventListener("dblclick", (event) => {
@@ -146,9 +334,41 @@
         window.petBridge?.openChat();
       });
 
+      pet.addEventListener("mouseenter", (event) => {
+        if (dragging) return;
+        syncPointerByPoint(event.clientX, event.clientY);
+      });
+
+      pet.addEventListener("mouseleave", () => {
+        if (!dragging) schedulePointerInactive();
+      });
+
       window.addEventListener("mouseleave", () => {
-        if (!dragging) setPointerActive(false);
+        if (!dragging) schedulePointerInactive();
+      });
+
+      const offState = window.petBridge?.onState?.((payload) => {
+        applyState(payload || {});
+      });
+      const offConfig = window.petBridge?.onConfig?.((payload) => {
+        applyConfig(payload || {});
+      });
+
+      window.petBridge?.getConfig?.().then((config) => {
+        applyConfig(config || {}, true);
+      }).catch(() => {
+        if (fallbackIcon) pet.src = fallbackIcon;
+      });
+
+      if (fallbackIcon && !pet.getAttribute("src")) {
+        pet.src = fallbackIcon;
+      }
+
+      window.addEventListener("beforeunload", () => {
+        clearDeactivateTimer();
+        if (typeof offState === "function") offState();
+        if (typeof offConfig === "function") offConfig();
       });
     </script>
   </body>
-  </html>
+</html>

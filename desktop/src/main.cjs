@@ -1,17 +1,20 @@
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor } = require("electron");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { StringDecoder } = require("string_decoder");
+const { pathToFileURL } = require("url");
 const { getWindowPreset } = require("./window-presets.cjs");
 
 const isDev = process.env.MERCURYDESK_DESKTOP_DEV === "1" || !app.isPackaged;
 const backendPort = Number(process.env.MERCURYDESK_BACKEND_PORT || (isDev ? 8000 : 18080));
 const frontendPort = Number(process.env.MERCURYDESK_DESKTOP_PORT || (isDev ? 5173 : 1420));
 const desktopZoom = Number(process.env.MERCURYDESK_DESKTOP_ZOOM || "1.0");
+const PET_WINDOW_SIZE = 108;
 
 let mainWindow = null;
 let petWindow = null;
@@ -21,8 +24,17 @@ let frontendDevProc = null;
 let frontendServer = null;
 let closing = false;
 let petDragState = null;
+let petDragTimer = null;
 let petIpcHandlersRegistered = false;
 let petPointerActive = false;
+let petVisible = true;
+let petClickThroughEnabled = true;
+let petStateAssets = {};
+let petStateTimer = null;
+let petStateLastKey = "";
+let petLastState = "active";
+let petCpuSnapshot = null;
+let petPowerEventsBound = false;
 
 function projectRoot() {
   return path.resolve(__dirname, "..", "..");
@@ -99,6 +111,216 @@ function resolveTrayIconPath() {
     }
   }
   return process.execPath;
+}
+
+function resolvePetGifDir() {
+  const candidates = app.isPackaged
+    ? [
+      path.join(app.getAppPath(), "gif"),
+      path.join(process.resourcesPath, "gif"),
+      path.join(process.resourcesPath, "app.asar.unpacked", "gif"),
+    ]
+    : [
+      path.join(projectRoot(), "desktop", "gif"),
+      path.join(__dirname, "..", "gif"),
+    ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+    } catch {
+      // ignore path check failures
+    }
+  }
+  return "";
+}
+
+function listPetGifFiles() {
+  const dir = resolvePetGifDir();
+  if (!dir) return [];
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((name) => /\.gif$/i.test(name))
+      .sort((a, b) => a.localeCompare(b, "en"))
+      .map((name) => path.join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+function pickGifByHints(files, hints, fallbackIndex) {
+  for (const file of files) {
+    const base = path.basename(file).toLowerCase();
+    if (hints.some((hint) => base.includes(hint))) {
+      return file;
+    }
+  }
+  if (!files.length) return "";
+  const idx = Math.max(0, Math.min(files.length - 1, fallbackIndex));
+  return files[idx];
+}
+
+function buildPetStateAssets() {
+  const files = listPetGifFiles();
+  const resolved = {
+    active: pickGifByHints(files, ["active", "normal", "default", "action_02"], 0),
+    idle: pickGifByHints(files, ["idle", "rest", "wait", "action_03"], 1),
+    busy: pickGifByHints(files, ["busy", "alert", "hot", "action_04"], 2),
+    sleep: pickGifByHints(files, ["sleep", "night", "zzz", "action_05"], 3),
+    focus: pickGifByHints(files, ["focus", "monitor", "action_06"], 4),
+  };
+  return Object.fromEntries(
+    Object.entries(resolved)
+      .filter(([, filePath]) => !!filePath)
+      .map(([key, filePath]) => [key, pathToFileURL(filePath).href])
+  );
+}
+
+function buildPetConfigPayload() {
+  return {
+    icon: `http://127.0.0.1:${frontendPort}/aelin-icon.ico`,
+    stateAssets: petStateAssets,
+    clickThroughEnabled: petClickThroughEnabled,
+    visible: petVisible,
+    state: petLastState,
+  };
+}
+
+function syncPetMenu() {
+  if (!tray) return;
+  tray.setContextMenu(createPetMenu());
+}
+
+function pushPetConfig() {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  petWindow.webContents.send("pet:config", buildPetConfigPayload());
+}
+
+function sampleSystemCpuUsage() {
+  let cores = [];
+  try {
+    cores = os.cpus() || [];
+  } catch {
+    cores = [];
+  }
+  if (!Array.isArray(cores) || !cores.length) return 0;
+  let idle = 0;
+  let total = 0;
+  for (const core of cores) {
+    const times = core && core.times ? core.times : {};
+    const user = Number(times.user || 0);
+    const nice = Number(times.nice || 0);
+    const sys = Number(times.sys || 0);
+    const irq = Number(times.irq || 0);
+    const idlePart = Number(times.idle || 0);
+    idle += idlePart;
+    total += user + nice + sys + irq + idlePart;
+  }
+  const now = { idle, total };
+  if (!petCpuSnapshot) {
+    petCpuSnapshot = now;
+    return 0;
+  }
+  const idleDelta = now.idle - petCpuSnapshot.idle;
+  const totalDelta = now.total - petCpuSnapshot.total;
+  petCpuSnapshot = now;
+  if (totalDelta <= 0) return 0;
+  const usage = 1 - idleDelta / totalDelta;
+  return Math.max(0, Math.min(1, usage));
+}
+
+function getMainRoute() {
+  if (!mainWindow || mainWindow.isDestroyed()) return "/";
+  const raw = String(mainWindow.webContents.getURL() || "");
+  if (!raw) return "/";
+  try {
+    return normalizeRoute(new URL(raw).pathname || "/");
+  } catch {
+    return "/";
+  }
+}
+
+function computePetRuntimeState() {
+  let idleSec = 0;
+  let idleState = "active";
+  try {
+    idleSec = Math.max(0, Number(powerMonitor.getSystemIdleTime() || 0));
+    idleState = String(powerMonitor.getSystemIdleState(60) || "active").toLowerCase();
+  } catch {
+    idleSec = 0;
+    idleState = "active";
+  }
+  const cpuUsage = sampleSystemCpuUsage();
+  const route = getMainRoute();
+  let state = "active";
+  if (idleState === "locked" || idleSec >= 300) {
+    state = "sleep";
+  } else if (idleState === "idle" || idleSec >= 90) {
+    state = "idle";
+  } else if (route.startsWith("/processes")) {
+    state = "focus";
+  } else if (cpuUsage >= 0.78) {
+    state = "busy";
+  }
+  petLastState = state;
+  return {
+    state,
+    idleSec,
+    idleState,
+    cpuUsage: Number(cpuUsage.toFixed(3)),
+    route,
+    ts: Date.now(),
+  };
+}
+
+function pushPetState(force = false) {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const payload = computePetRuntimeState();
+  const key = `${payload.state}|${payload.idleState}|${Math.round(payload.cpuUsage * 100)}|${payload.route}`;
+  if (!force && key === petStateLastKey) return;
+  petStateLastKey = key;
+  petWindow.webContents.send("pet:state", payload);
+}
+
+function stopPetStateTicker() {
+  if (petStateTimer) {
+    clearInterval(petStateTimer);
+    petStateTimer = null;
+  }
+}
+
+function startPetStateTicker() {
+  stopPetStateTicker();
+  petCpuSnapshot = null;
+  sampleSystemCpuUsage();
+  petStateTimer = setInterval(() => {
+    pushPetState(false);
+  }, 8000);
+  pushPetState(true);
+}
+
+function bindPetPowerEvents() {
+  if (petPowerEventsBound) return;
+  petPowerEventsBound = true;
+  const events = [
+    "lock-screen",
+    "unlock-screen",
+    "suspend",
+    "resume",
+    "user-did-become-active",
+    "user-did-resign-active",
+  ];
+  for (const eventName of events) {
+    try {
+      powerMonitor.on(eventName, () => {
+        setTimeout(() => pushPetState(true), 120);
+      });
+    } catch {
+      // ignore unsupported power events
+    }
+  }
 }
 
 function sqliteUrl(absPath) {
@@ -271,7 +493,7 @@ function startBackend() {
     const exeName = process.platform === "win32" ? "aelin-backend.exe" : "aelin-backend";
     const exePath = path.join(runtimeRoot, exeName);
     if (!fs.existsSync(exePath)) {
-      throw new Error(`内置后端不可用: ${exePath}`);
+      throw new Error(`Bundled backend unavailable: ${exePath}`);
     }
     backendProc = spawn(exePath, [], {
       cwd: runtimeRoot,
@@ -282,14 +504,14 @@ function startBackend() {
     pipeTaggedLog(backendProc, "backend");
     backendProc.on("error", (err) => {
       if (closing) return;
-      dialog.showErrorBox("后端启动失败", String(err?.message || err));
+      dialog.showErrorBox("Backend startup failed", String(err?.message || err));
     });
     return;
   }
 
   const root = backendDir();
   if (!fs.existsSync(root)) {
-    throw new Error(`backend 目录不存在: ${root}`);
+    throw new Error(`Backend directory missing: ${root}`);
   }
 
   const requestedPython = String(process.env.MERCURYDESK_PYTHON || "");
@@ -317,14 +539,14 @@ function startBackend() {
   }
 
   if (!backendProc) {
-    const details = failed.length ? `\n候选失败:\n- ${failed.join("\n- ")}` : "";
-    throw new Error(`无法启动后端 Python 进程。${details}`);
+    const details = failed.length ? `\nCandidate probe failed:\n- ${failed.join("\n- ")}` : "";
+    throw new Error(`Unable to start backend Python process.${details}`);
   }
 
   pipeTaggedLog(backendProc, "backend");
   backendProc.on("error", (err) => {
     if (closing) return;
-    dialog.showErrorBox("后端启动失败", String(err?.message || err));
+    dialog.showErrorBox("Backend startup failed", String(err?.message || err));
   });
 }
 
@@ -349,7 +571,7 @@ function startFrontendDev() {
 function startFrontendServer() {
   const dist = frontendDistDir();
   if (!fs.existsSync(dist)) {
-    throw new Error(`frontend dist 不存在: ${dist}，请先执行桌面构建流程中的前端 build。`);
+    throw new Error(`Frontend dist missing: ${dist}. Please run frontend build first.`);
   }
 
   const web = express();
@@ -409,6 +631,9 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
   });
   mainWindow.on("closed", () => {
     mainWindow = null;
+    if (!closing) {
+      setTimeout(() => ensurePetVisible(), 30);
+    }
   });
 }
 
@@ -428,22 +653,25 @@ function openModule(route = "/") {
   }
   mainWindow.show();
   mainWindow.focus();
+  pushPetState(true);
 }
 
 function createPetMenu() {
   return Menu.buildFromTemplate([
     { label: "Chat", click: () => openModule("/") },
     { label: "Settings", click: () => openModule("/settings") },
-    { label: "进程管理（Mac 风格）", click: () => openModule("/processes") },
-    { label: "追踪 Web / 帖子", click: () => openModule("/tracking") },
-    { label: "Aelinの日记", click: () => openModule("/diary") },
+    { label: "Processes", click: () => openModule("/processes") },
+    { label: "Tracking", click: () => openModule("/tracking") },
+    { label: "Diary", click: () => openModule("/diary") },
     { type: "separator" },
-    { label: "专注模式", click: () => openModule("/focus") },
+    { label: petVisible ? "收起桌宠" : "显示桌宠", click: () => setPetVisible(!petVisible) },
+    { label: petClickThroughEnabled ? "关闭点击穿透" : "开启点击穿透", click: () => setPetClickThroughEnabled(!petClickThroughEnabled) },
+    { type: "separator" },
+    { label: "Focus", click: () => openModule("/focus") },
     { type: "separator" },
     { label: "退出 Aelin", click: () => app.quit() },
   ]);
 }
-
 function popupPetMenu(options = {}) {
   if (!petWindow || petWindow.isDestroyed()) return;
   const menu = createPetMenu();
@@ -480,8 +708,10 @@ function popupPetMenuAtCursor() {
 }
 
 function ensurePetVisible() {
+  petVisible = true;
   if (!petWindow || petWindow.isDestroyed()) {
     createPetWindow();
+    syncPetMenu();
     return;
   }
   if (petWindow.isMinimized()) {
@@ -491,18 +721,281 @@ function ensurePetVisible() {
     petWindow.showInactive();
   }
   petWindow.setAlwaysOnTop(true, "screen-saver");
+  syncPetMenu();
+  pushPetConfig();
+  pushPetState(true);
+}
+
+function setPetVisible(visible) {
+  const next = !!visible;
+  if (petVisible === next) return;
+  petVisible = next;
+  if (!petWindow || petWindow.isDestroyed()) {
+    if (next) {
+      createPetWindow();
+    }
+    syncPetMenu();
+    return;
+  }
+  if (next) {
+    ensurePetVisible();
+  } else {
+    petWindow.hide();
+    syncPetMenu();
+    pushPetConfig();
+  }
+}
+
+function applyPetMouseMode() {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  if (!petClickThroughEnabled) {
+    petWindow.setIgnoreMouseEvents(false, { forward: false });
+    return;
+  }
+  petWindow.setIgnoreMouseEvents(!petPointerActive, { forward: !petPointerActive });
+}
+
+function setPetClickThroughEnabled(enabled) {
+  const next = !!enabled;
+  if (petClickThroughEnabled === next) return;
+  petClickThroughEnabled = next;
+  if (!petClickThroughEnabled) {
+    petPointerActive = true;
+  }
+  applyPetMouseMode();
+  syncPetMenu();
+  pushPetConfig();
 }
 
 function setPetPointerActive(active) {
   if (!petWindow || petWindow.isDestroyed()) return;
   const next = !!active;
-  if (petPointerActive === next) return;
+  if (petPointerActive === next && petClickThroughEnabled) return;
   petPointerActive = next;
-  // Passive mode: click-through window while still forwarding mouse move for hit-testing.
-  petWindow.setIgnoreMouseEvents(!next, { forward: !next });
+  applyPetMouseMode();
   if (!next) {
     petDragState = null;
+    stopPetDragLoop();
   }
+}
+
+function payloadToDipPoint(payload) {
+  const rawX = Number(payload?.screenX);
+  const rawY = Number(payload?.screenY);
+  if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
+  return { x: Math.round(rawX), y: Math.round(rawY) };
+}
+
+function getCursorDipPoint() {
+  const point = screen.getCursorScreenPoint();
+  return {
+    x: Number(point?.x || 0),
+    y: Number(point?.y || 0),
+  };
+}
+
+function isFinitePoint(point) {
+  return !!point && Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+function ensurePetWindowCompactBounds() {
+  if (!petWindow || petWindow.isDestroyed()) return null;
+  let bounds = petWindow.getBounds();
+  const target = PET_WINDOW_SIZE;
+  const invalidSize = Math.abs(Number(bounds.width || 0) - target) > 2
+    || Math.abs(Number(bounds.height || 0) - target) > 2;
+  if (!invalidSize) return bounds;
+  const before = {
+    x: Number(bounds.x || 0),
+    y: Number(bounds.y || 0),
+    width: Number(bounds.width || 0),
+    height: Number(bounds.height || 0),
+  };
+  try {
+    if (typeof petWindow.isMaximized === "function" && petWindow.isMaximized()) {
+      petWindow.unmaximize();
+    }
+  } catch {
+    // ignore unmaximize failures
+  }
+  try {
+    if (typeof petWindow.isFullScreen === "function" && petWindow.isFullScreen()) {
+      petWindow.setFullScreen(false);
+    }
+  } catch {
+    // ignore fullscreen reset failures
+  }
+  try {
+    petWindow.restore();
+  } catch {
+    // ignore restore failures
+  }
+  try {
+    petWindow.setResizable(true);
+    petWindow.setMinimumSize(target, target);
+    petWindow.setMaximumSize(target, target);
+    petWindow.setBounds({
+      x: Number(bounds.x || 0),
+      y: Number(bounds.y || 0),
+      width: target,
+      height: target,
+    }, false);
+    petWindow.setResizable(false);
+  } catch {
+    // ignore set bounds failures
+  }
+  bounds = petWindow.getBounds();
+  if (Math.abs(Number(bounds.width || 0) - target) > 2 || Math.abs(Number(bounds.height || 0) - target) > 2) {
+    const cursor = getCursorDipPoint();
+    const fallbackX = Math.round(Number(cursor.x || 0) - target / 2);
+    const fallbackY = Math.round(Number(cursor.y || 0) - target / 2);
+    try {
+      petWindow.setBounds({
+        x: fallbackX,
+        y: fallbackY,
+        width: target,
+        height: target,
+      }, false);
+    } catch {
+      // ignore fallback set bounds failures
+    }
+    bounds = petWindow.getBounds();
+  }
+  return bounds;
+}
+
+function chooseDragAnchor(payload, bounds) {
+  const payloadPoint = payloadToDipPoint(payload);
+  const cursorPoint = getCursorDipPoint();
+  const localX = Number(payload?.localX);
+  const localY = Number(payload?.localY);
+  const targetX = Number.isFinite(localX)
+    ? Math.max(0, Math.min(Number(bounds.width || 0), Math.round(localX)))
+    : Math.round(Number(bounds.width || 0) / 2);
+  const targetY = Number.isFinite(localY)
+    ? Math.max(0, Math.min(Number(bounds.height || 0), Math.round(localY)))
+    : Math.round(Number(bounds.height || 0) / 2);
+  const width = Number(bounds.width || PET_WINDOW_SIZE);
+  const height = Number(bounds.height || PET_WINDOW_SIZE);
+  const rawAnchorX = isFinitePoint(cursorPoint) ? Number(cursorPoint.x || 0) - Number(bounds.x || 0) : NaN;
+  const rawAnchorY = isFinitePoint(cursorPoint) ? Number(cursorPoint.y || 0) - Number(bounds.y || 0) : NaN;
+  const localInRangeX = Number.isFinite(localX) && localX >= 0 && localX <= width;
+  const localInRangeY = Number.isFinite(localY) && localY >= 0 && localY <= height;
+  const anchorXRaw = Number.isFinite(rawAnchorX)
+    ? rawAnchorX
+    : localInRangeX
+      ? localX
+      : targetX;
+  const anchorYRaw = Number.isFinite(rawAnchorY)
+    ? rawAnchorY
+    : localInRangeY
+      ? localY
+      : targetY;
+  const anchorX = Math.max(0, Math.min(width, Number(anchorXRaw || 0)));
+  const anchorY = Math.max(0, Math.min(height, Number(anchorYRaw || 0)));
+
+  const pointer = isFinitePoint(cursorPoint)
+    ? cursorPoint
+    : isFinitePoint(payloadPoint)
+      ? payloadPoint
+      : { x: Number(bounds.x || 0) + anchorX, y: Number(bounds.y || 0) + anchorY };
+  const source = isFinitePoint(cursorPoint) ? "cursor" : isFinitePoint(payloadPoint) ? "payload" : "fallback";
+
+  return {
+    source,
+    multiplier: 1,
+    pointer: {
+      x: Math.round(pointer.x),
+      y: Math.round(pointer.y),
+    },
+    anchorX: Math.round(anchorX),
+    anchorY: Math.round(anchorY),
+    scaleFactor: 1,
+    targetX,
+    targetY,
+  };
+}
+
+function resolveDragPointer(payload, dragState) {
+  const payloadPoint = payloadToDipPoint(payload);
+  const cursorPoint = getCursorDipPoint();
+  if (isFinitePoint(cursorPoint)) {
+    return {
+      x: cursorPoint.x,
+      y: cursorPoint.y,
+    };
+  }
+  if (isFinitePoint(payloadPoint)) {
+    return { x: payloadPoint.x, y: payloadPoint.y };
+  }
+  if (petWindow && !petWindow.isDestroyed()) {
+    const bounds = petWindow.getBounds();
+    return {
+      x: Number(bounds.x || 0) + Number(dragState?.anchorX || 0),
+      y: Number(bounds.y || 0) + Number(dragState?.anchorY || 0),
+    };
+  }
+  return {
+    x: Number(dragState?.startX || 0),
+    y: Number(dragState?.startY || 0),
+  };
+}
+
+function stopPetDragLoop() {
+  if (!petDragTimer) return;
+  clearInterval(petDragTimer);
+  petDragTimer = null;
+}
+
+function startPetDragLoop() {
+  stopPetDragLoop();
+  petDragTimer = setInterval(() => {
+    updatePetDragPosition(null);
+  }, 16);
+}
+
+function clampPetWindowPosition(nextX, nextY, pointer) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return { x: Math.round(nextX), y: Math.round(nextY) };
+  }
+  const basePoint = isFinitePoint(pointer) ? pointer : getCursorDipPoint();
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(Number(basePoint?.x || 0)),
+    y: Math.round(Number(basePoint?.y || 0)),
+  });
+  const area = display?.workArea || display?.bounds;
+  if (!area) {
+    return { x: Math.round(nextX), y: Math.round(nextY) };
+  }
+  const bounds = petWindow.getBounds();
+  const minX = Number(area.x || 0);
+  const minY = Number(area.y || 0);
+  const maxX = minX + Number(area.width || 0) - Number(bounds.width || PET_WINDOW_SIZE);
+  const maxY = minY + Number(area.height || 0) - Number(bounds.height || PET_WINDOW_SIZE);
+  return {
+    x: Math.max(minX, Math.min(maxX, Math.round(nextX))),
+    y: Math.max(minY, Math.min(maxY, Math.round(nextY))),
+  };
+}
+
+function updatePetDragPosition(payload) {
+  if (!petWindow || petWindow.isDestroyed() || !petDragState) return;
+  const pointer = resolveDragPointer(payload, petDragState);
+  const anchorX = Number(petDragState.anchorX || 0);
+  const anchorY = Number(petDragState.anchorY || 0);
+  const unclampedX = Number(pointer.x || 0) - anchorX;
+  const unclampedY = Number(pointer.y || 0) - anchorY;
+  const clamped = clampPetWindowPosition(unclampedX, unclampedY, pointer);
+  const nextX = clamped.x;
+  const nextY = clamped.y;
+  const current = petWindow.getBounds();
+  const diffX = nextX - current.x;
+  const diffY = nextY - current.y;
+  const changed = Math.abs(diffX) > 1 || Math.abs(diffY) > 1;
+  if (changed) {
+    petWindow.setPosition(nextX, nextY);
+  }
+  petDragState.moveCount = Number(petDragState.moveCount || 0) + 1;
 }
 
 function setupPetIpcHandlers() {
@@ -534,30 +1027,36 @@ function setupPetIpcHandlers() {
   ipcMain.on("pet:drag-start", (event, payload) => {
     if (!fromPet(event) || !petWindow || petWindow.isDestroyed()) return;
     setPetPointerActive(true);
-    const x = Number(payload?.screenX);
-    const y = Number(payload?.screenY);
-    const bounds = petWindow.getBounds();
+    const bounds = ensurePetWindowCompactBounds() || petWindow.getBounds();
+    const anchor = chooseDragAnchor(payload, bounds);
     petDragState = {
-      pointerX: Number.isFinite(x) ? x : bounds.x,
-      pointerY: Number.isFinite(y) ? y : bounds.y,
-      windowX: bounds.x,
-      windowY: bounds.y,
+      source: anchor.source,
+      multiplier: anchor.multiplier,
+      scaleFactor: anchor.scaleFactor,
+      anchorX: anchor.anchorX,
+      anchorY: anchor.anchorY,
+      startX: anchor.pointer.x,
+      startY: anchor.pointer.y,
+      moveCount: 0,
     };
+    updatePetDragPosition(payload);
+    startPetDragLoop();
   });
 
   ipcMain.on("pet:drag-move", (event, payload) => {
     if (!fromPet(event) || !petWindow || petWindow.isDestroyed() || !petDragState) return;
-    const x = Number(payload?.screenX);
-    const y = Number(payload?.screenY);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    const dx = x - petDragState.pointerX;
-    const dy = y - petDragState.pointerY;
-    petWindow.setPosition(Math.round(petDragState.windowX + dx), Math.round(petDragState.windowY + dy));
+    updatePetDragPosition(payload);
   });
 
   ipcMain.on("pet:drag-end", (event) => {
     if (!fromPet(event)) return;
     petDragState = null;
+    stopPetDragLoop();
+  });
+
+  ipcMain.handle("pet:get-config", (event) => {
+    if (!fromPet(event)) return {};
+    return buildPetConfigPayload();
   });
 }
 
@@ -570,7 +1069,7 @@ function createTray() {
     return;
   }
   tray.setToolTip("Aelin");
-  tray.setContextMenu(createPetMenu());
+  syncPetMenu();
   tray.on("click", () => {
     ensurePetVisible();
   });
@@ -582,7 +1081,10 @@ function createTray() {
 
 function createPetWindow() {
   setupPetIpcHandlers();
-  const petSize = 94;
+  if (!Object.keys(petStateAssets).length) {
+    petStateAssets = buildPetStateAssets();
+  }
+  const petSize = PET_WINDOW_SIZE;
   const display = screen.getPrimaryDisplay();
   const area = display?.workArea || { x: 0, y: 0, width: 1280, height: 720 };
   const x = area.x + area.width - petSize - 18;
@@ -591,16 +1093,21 @@ function createPetWindow() {
   petWindow = new BrowserWindow({
     width: petSize,
     height: petSize,
+    minWidth: petSize,
+    minHeight: petSize,
+    maxWidth: petSize,
+    maxHeight: petSize,
     x,
     y,
     frame: false,
     transparent: true,
     hasShadow: false,
     resizable: false,
-    movable: true,
+    movable: false,
     focusable: true,
     minimizable: false,
     maximizable: false,
+    fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
     autoHideMenuBar: true,
@@ -618,12 +1125,16 @@ function createPetWindow() {
   petWindow.setSkipTaskbar(true);
   petWindow.setMenuBarVisibility(false);
   petPointerActive = false;
-  petWindow.setIgnoreMouseEvents(true, { forward: true });
+  applyPetMouseMode();
 
   petWindow.loadFile(path.join(__dirname, "pet.html"), {
     query: {
       icon: `http://127.0.0.1:${frontendPort}/aelin-icon.ico`,
     },
+  });
+  petWindow.webContents.on("did-finish-load", () => {
+    pushPetConfig();
+    pushPetState(true);
   });
 
   let lastMenuTs = 0;
@@ -685,11 +1196,12 @@ function createPetWindow() {
 
   petWindow.on("minimize", (event) => {
     event.preventDefault();
+    if (!petVisible) return;
     ensurePetVisible();
   });
 
   petWindow.on("hide", () => {
-    if (closing) return;
+    if (closing || !petVisible) return;
     setTimeout(() => ensurePetVisible(), 30);
   });
 
@@ -701,14 +1213,22 @@ function createPetWindow() {
   petWindow.on("closed", () => {
     petWindow = null;
     petDragState = null;
+    stopPetDragLoop();
+    stopPetStateTicker();
   });
+  startPetStateTicker();
+  syncPetMenu();
 }
 
 async function boot() {
   startBackend();
   const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/healthz`, 60000);
   if (!backendReady) {
-    throw new Error(app.isPackaged ? "内置后端服务启动超时，请重装或反馈日志。" : "后端服务启动超时，请检查 Python 环境与依赖。");
+    throw new Error(
+      app.isPackaged
+        ? "Bundled backend startup timed out. Please reinstall or check logs."
+        : "Backend startup timed out. Check Python environment and dependencies."
+    );
   }
 
   if (isDev) {
@@ -719,12 +1239,15 @@ async function boot() {
 
   const frontendReady = await waitForUrl(`http://127.0.0.1:${frontendPort}`, 60000);
   if (!frontendReady) {
-    throw new Error("前端服务启动超时。");
+    throw new Error("Frontend startup timed out.");
   }
 }
 
 function cleanup() {
   closing = true;
+  petDragState = null;
+  stopPetDragLoop();
+  stopPetStateTicker();
   if (tray) {
     try {
       tray.destroy();
@@ -781,13 +1304,16 @@ app.on("before-quit", () => {
 app.whenReady().then(async () => {
   try {
     await boot();
+    petStateAssets = buildPetStateAssets();
+    bindPetPowerEvents();
     createMainWindow("/", false);
     createPetWindow();
     createTray();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    dialog.showErrorBox("Aelin Desktop 启动失败", message);
+    dialog.showErrorBox("Aelin Desktop startup failed", message);
     cleanup();
     app.quit();
   }
 });
+
