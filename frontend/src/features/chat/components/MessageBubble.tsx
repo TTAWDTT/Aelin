@@ -23,7 +23,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText }: Mes
   const isUser = message.role === 'user'
 
   return (
-    <article className={cn('aelin-fade-up flex max-w-[82%] items-end gap-2.5', isUser ? 'ml-auto flex-row-reverse' : '')}>
+    <article className={cn('aelin-fade-up flex max-w-[86%] items-end gap-2.5 md:max-w-[80%]', isUser ? 'ml-auto flex-row-reverse' : '')}>
       {/* Avatar */}
       {!isUser && (
         <div className="shrink-0">
@@ -77,7 +77,11 @@ export function MessageBubble({ message, isThinking = false, thinkingText }: Mes
         )}
 
         {/* Content */}
-        <div className={cn('prose prose-sm max-w-none prose-neutral')}
+        <div
+          className={cn(
+            'prose prose-sm max-w-none prose-neutral',
+            '[&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_li]:my-0.5 [&_pre]:my-2 [&_blockquote]:my-2'
+          )}
           style={{ fontFamily: 'var(--font-body)', lineHeight: 1.64, fontSize: '0.94rem' }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
         </div>

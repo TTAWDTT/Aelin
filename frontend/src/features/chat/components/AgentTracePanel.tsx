@@ -127,7 +127,7 @@ export function AgentTracePanel({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
-                      <span className="text-[10px] text-[var(--color-text-muted)]">{STATUS_TEXT[status] ?? status || '未知'}</span>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">{(STATUS_TEXT[status] ?? status) || '未知'}</span>
                     </div>
                     {step.detail && (
                       <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">

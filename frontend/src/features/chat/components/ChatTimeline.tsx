@@ -20,7 +20,7 @@ export function ChatTimeline({ scrollRef, messages, isStreaming, statusText, onQ
       {isEmpty ? (
         <EmptyChatState onQuickPrompt={onQuickPrompt} />
       ) : (
-        <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-3 pb-2">
+        <div className="mx-auto flex w-full max-w-[880px] flex-col gap-3.5 pb-2">
           {messages.map((message) => (
             <MessageBubble
               key={message.id}

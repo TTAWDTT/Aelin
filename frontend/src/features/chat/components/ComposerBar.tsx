@@ -48,7 +48,7 @@ export function ComposerBar({
 
   return (
     <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3">
-      <div className="mx-auto w-full max-w-[1040px]">
+      <div className="mx-auto w-full max-w-[880px]">
         <div className="aelin-card rounded-[16px] bg-[var(--color-panel)] p-2.5 transition-shadow duration-200 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_12%,transparent)]">
           {images.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
