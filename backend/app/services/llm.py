@@ -6,6 +6,7 @@ from urllib.parse import urlparse, urlunparse
 
 import openai
 from app.schemas import AgentConfigOut
+from app.settings import settings
 
 _log = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class LLMService:
         self.config = config
         self.api_key = api_key
         self.client: openai.Client | None = None
+        self.timeout_seconds = max(5.0, float(getattr(settings, "llm_request_timeout_seconds", 90.0)))
         self._setup_client()
 
     def _setup_client(self) -> None:
@@ -24,7 +26,7 @@ class LLMService:
                 self.client = openai.Client(
                     base_url=normalized_base_url,
                     api_key=self.api_key,
-                    timeout=30.0,
+                    timeout=self.timeout_seconds,
                     max_retries=1,
                 )
             except Exception as e:

@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -46,7 +47,11 @@ from app.schemas import (
     AelinDeviceProcessActionResponse,
     AelinDeviceProcessItem,
     AelinDeviceProcessResponse,
+    AelinDiaryTreeNode,
+    AelinDiaryTreeResponse,
     AelinLayoutCard,
+    AelinMediaIngestRequest,
+    AelinMediaIngestResponse,
     AelinMemoryLayerItem,
     AelinMemoryLayers,
     AelinNotificationItem,
@@ -75,6 +80,7 @@ from app.services.agent_memory import AgentMemoryService
 from app.services import content_tagging
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
+from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
 from app.services.openviking_bridge import tracking_file_memory_bridge
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
@@ -101,6 +107,7 @@ _summarizer = RuleBasedSummarizer()
 _web_search = WebSearchService()
 _tracking = tracking_autonomy_service
 _tracking_file_memory = tracking_file_memory_bridge
+_media_ingest = MediaIngestService()
 
 _TRACKABLE_SOURCES = {
     "auto",
@@ -201,6 +208,30 @@ _AELIN_EMOJI_BY_EXPRESSION: dict[str, str] = {
     "exp-11": "😮‍💨",
 }
 _EMOJI_CHAR_RE = re.compile(r"[\u2600-\u27BF\U0001F300-\U0001FAFF]")
+_MEDIA_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
+_MEDIA_SUMMARY_HINTS_ZH = (
+    "总结",
+    "摘要",
+    "读",
+    "读取",
+    "理解",
+    "解析",
+    "梳理",
+    "提炼",
+    "看懂",
+    "记住",
+    "存入日记",
+    "日记",
+)
+_MEDIA_SUMMARY_HINTS_EN = (
+    "summary",
+    "summarize",
+    "recap",
+    "digest",
+    "analyze",
+    "ingest",
+    "diary",
+)
 
 
 def _default_config() -> AgentConfigOut:
@@ -676,6 +707,137 @@ def _normalize_history(raw_turns: list[Any]) -> list[dict[str, str]]:
             continue
         out.append({"role": role, "content": content[:3000]})
     return out
+
+
+def _extract_first_supported_media_url(query: str) -> tuple[str, str] | None:
+    text = str(query or "")
+    if not text:
+        return None
+    for match in _MEDIA_URL_RE.finditer(text):
+        raw_url = str(match.group(0) or "").strip().rstrip(".,;:!?)")
+        if not raw_url:
+            continue
+        try:
+            platform = _media_ingest.detect_platform(raw_url)
+        except Exception:
+            platform = "unsupported"
+        if platform != "unsupported":
+            return raw_url, platform
+    return None
+
+
+def _is_media_summary_intent(query: str, media_url: str) -> bool:
+    text = str(query or "")
+    stripped = text.replace(media_url, " ")
+    stripped = _MEDIA_URL_RE.sub(" ", stripped)
+    stripped = re.sub(r"[\s`~!@#$%^&*()_\-+=\[\]{};:'\",.<>/?，。！？、（）【】《》\|]+", " ", stripped).strip()
+    if not stripped:
+        return True
+
+    lowered = stripped.lower()
+    if any(token in lowered for token in _MEDIA_SUMMARY_HINTS_EN):
+        return True
+    if any(token in stripped for token in _MEDIA_SUMMARY_HINTS_ZH):
+        return True
+    return len(stripped) <= 6
+
+
+def _build_media_ingest_answer(result: MediaIngestOutput, *, written: bool) -> str:
+    body = [
+        f"我已读取并理解这个 {result.platform} 链接的内容。",
+        "",
+        result.summary.strip(),
+    ]
+    if written:
+        body.extend(["", "已写入 Aelinの日记，可作为后续 RAG 上下文使用。"])
+    elif not result.quality_usable:
+        body.extend(
+            [
+                "",
+                (
+                    f"本次未写入 Aelinの日记：内容质量门禁未通过"
+                    f"（score={result.quality_score:.2f}，reason={result.quality_reason or 'quality_gate'}）。"
+                ),
+            ]
+        )
+    else:
+        body.extend(["", "摘要已生成，但写入 Aelinの日记 失败。"])
+    if result.limitations:
+        body.extend(["", "限制说明："])
+        body.extend([f"- {item}" for item in result.limitations[:3]])
+    return "\n".join(body).strip()
+
+
+def _save_media_ingest_diary(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: str,
+    result: MediaIngestOutput,
+) -> dict[str, Any]:
+    if not result.quality_usable:
+        return {
+            "written": False,
+            "diary_path": "",
+            "note_added": False,
+            "skip_reason": result.quality_reason or "quality_gate_rejected",
+            "quality_score": float(result.quality_score),
+        }
+
+    target = SimpleNamespace(
+        user_id=user_id,
+        workspace=workspace,
+        source_type=result.platform,
+        track_type="url",
+        source_key=result.canonical_url,
+        display_name=result.title or result.canonical_url,
+    )
+    topic_path = _infer_diary_topic_path(
+        result.title,
+        result.summary_overview,
+        result.information_note,
+        fallback_source=result.platform or "媒体",
+    )
+    source_indices = [
+        {
+            "type": "url",
+            "label": result.title[:220] or result.canonical_url[:220],
+            "url": result.canonical_url[:500],
+        }
+    ]
+    out_path = _tracking_file_memory.append_insight(
+        target=target,
+        title=result.insight_title,
+        markdown=result.insight_markdown,
+        reason=result.reason,
+        confidence=result.confidence,
+        source_query=result.canonical_url,
+        topic_path=topic_path,
+        source_indices=source_indices,
+        entry_kind="media_insight",
+    )
+    diary_path = str(out_path) if out_path is not None else ""
+    written = bool(diary_path)
+    note_added = False
+    if written:
+        try:
+            _memory.add_note(
+                db,
+                user_id,
+                f"[Aelinの日记] {result.insight_title}\npath: {diary_path}\nsource: {result.platform}",
+                kind="tracking_insight",
+                source=f"media:{result.platform}",
+            )
+            note_added = True
+        except Exception:
+            note_added = False
+    return {
+        "written": written,
+        "diary_path": diary_path,
+        "note_added": note_added,
+        "skip_reason": ("" if written else "file_write_failed"),
+        "quality_score": float(result.quality_score),
+    }
 
 
 def _parse_json_object(raw: str) -> dict[str, Any] | None:
@@ -1862,6 +2024,8 @@ def _build_planner_tracking_snapshot(db: Session, *, user_id: int, workspace: st
             "target": item.target,
             "source": item.source,
             "kind": item.kind,
+            "topic_path": item.topic_path,
+            "entry_kind": item.entry_kind,
         }
         for item in memory_hits[:12]
     ]
@@ -3352,6 +3516,146 @@ def _extract_first_json_object(raw: str) -> dict[str, Any]:
     return _json_from_text(match.group(0))
 
 
+_DIARY_TOPIC_RULES: list[tuple[re.Pattern[str], list[str]]] = [
+    (re.compile(r"\b(nba|curry|warriors|lakers|basketball|湖人|勇士|库里|篮球)\b", flags=re.I), ["体育", "NBA"]),
+    (re.compile(r"\b(epl|premier\s*league|英超|阿森纳|利物浦|曼城|曼联)\b", flags=re.I), ["体育", "英超"]),
+    (re.compile(r"\b(mlb|棒球)\b", flags=re.I), ["体育", "棒球"]),
+    (re.compile(r"\b(nfl|橄榄球)\b", flags=re.I), ["体育", "橄榄球"]),
+    (re.compile(r"\b(ai|llm|agent|模型|提示词|智能体)\b", flags=re.I), ["技术", "AI"]),
+    (re.compile(r"\b(bitcoin|btc|eth|crypto|加密|比特币)\b", flags=re.I), ["财经", "加密资产"]),
+]
+
+
+def _infer_diary_topic_path(*texts: str, fallback_source: str = "综合") -> list[str]:
+    merged = " ".join(str(item or "") for item in texts).strip()
+    if not merged:
+        return [str(fallback_source or "综合")[:32]]
+    for pattern, topic in _DIARY_TOPIC_RULES:
+        if pattern.search(merged):
+            return topic
+    fallback = str(fallback_source or "综合").strip()[:32] or "综合"
+    return [fallback]
+
+
+def _build_source_indices_from_citations(citations: list[AelinCitation]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for cite in citations[:20]:
+        msg_id = int(cite.message_id or 0)
+        key = f"message:{msg_id}"
+        if msg_id <= 0 or key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "type": "message",
+                "message_id": msg_id,
+                "label": f"[{cite.source_label}] {cite.title}".strip()[:220],
+            }
+        )
+    return out[:24]
+
+
+def _sanitize_diary_answer(answer: str) -> str:
+    rows: list[str] = []
+    for raw in str(answer or "").splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if "path=" in lowered:
+            continue
+        if "tracking snapshot" in lowered:
+            continue
+        if lowered.startswith("```") or lowered.startswith("{") or lowered.startswith("["):
+            continue
+        rows.append(line[:220])
+        if len(rows) >= 6:
+            break
+    merged = re.sub(r"\s+", " ", " ".join(rows)).strip()
+    if not merged:
+        merged = re.sub(r"\s+", " ", str(answer or "")).strip()
+    return merged[:420]
+
+
+def _build_chat_diary_entry(query: str, answer: str, citations: list[AelinCitation]) -> tuple[str, str]:
+    q = re.sub(r"\s+", " ", str(query or "").strip())[:220]
+    a = _sanitize_diary_answer(answer)
+    title = (f"聊天纪要：{q[:40]}" if q else "聊天纪要").strip()
+    evidence_lines: list[str] = []
+    for cite in citations[:4]:
+        evidence_lines.append(f"- [{cite.source_label}] {cite.title}（{cite.sender}）")
+    evidence_text = "\n".join(evidence_lines) if evidence_lines else "- （本轮未生成可引用证据）"
+    body = (
+        f"今天主人问了我：「{q or '（未记录问题）'}」。\n\n"
+        f"我给出的核心结论是：{a or '（未记录回答）'}\n\n"
+        "这轮我参考的关键线索：\n"
+        f"{evidence_text}\n\n"
+        "我会继续观察这个主题，如果后续有新的事实或变化，会补写新的日记条目。"
+    )
+    markdown = "\n".join(
+        [
+            "## 今日对话",
+            "",
+            body,
+            "",
+            "## 小结",
+            "",
+            "这是一条面向后续检索的聊天日记，保留可复用结论与证据锚点。",
+        ]
+    )
+    return title[:120], markdown.strip()
+
+
+def _save_chat_diary_entry(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: str,
+    query: str,
+    answer: str,
+    citations: list[AelinCitation],
+) -> dict[str, Any]:
+    if not query.strip() or not answer.strip():
+        return {"written": False, "reason": "empty_turn", "path": ""}
+    now = datetime.now(timezone.utc)
+    topic_path = ["与主人的聊天日记", now.strftime("%Y"), now.strftime("%m"), now.strftime("%d")]
+    title, markdown = _build_chat_diary_entry(query, answer, citations)
+    target = SimpleNamespace(
+        user_id=user_id,
+        workspace=workspace,
+        source_type="chat",
+        track_type="conversation",
+        source_key=f"chat:{now.strftime('%Y-%m-%d')}",
+        display_name="与主人的聊天日记",
+    )
+    source_indices = _build_source_indices_from_citations(citations)
+    out_path = _tracking_file_memory.append_insight(
+        target=target,
+        title=title,
+        markdown=markdown,
+        reason="chat_diary",
+        confidence=0.82,
+        source_query=query,
+        topic_path=topic_path,
+        source_indices=source_indices,
+        entry_kind="chat_diary",
+    )
+    if out_path is None:
+        return {"written": False, "reason": "file_write_failed", "path": ""}
+    try:
+        _memory.add_note(
+            db,
+            user_id,
+            f"[chat-diary] {title}\npath: {str(out_path)}",
+            kind="tracking_insight",
+            source="chat:diary",
+        )
+    except Exception:
+        pass
+    return {"written": True, "reason": "", "path": str(out_path)}
+
+
 def _pick_tracking_target_for_insight(
     db: Session,
     *,
@@ -3526,6 +3830,7 @@ def _maybe_write_tracking_insight(
     provider: str,
     tracking_snapshot: dict[str, Any] | None,
     file_memory_lines: list[str],
+    citations: list[AelinCitation],
 ) -> dict[str, Any]:
     decision = _decide_tracking_insight_write(
         service=service,
@@ -3548,6 +3853,13 @@ def _maybe_write_tracking_insight(
     if target is None:
         return {"written": False, "reason": "no_tracking_target"}
 
+    topic_path = _infer_diary_topic_path(
+        query,
+        answer,
+        str(getattr(target, "display_name", "") or ""),
+        fallback_source=str(getattr(target, "source_type", "") or "综合"),
+    )
+    source_indices = _build_source_indices_from_citations(citations)
     out_path = _tracking_file_memory.append_insight(
         target=target,
         title=str(decision.get("title") or "追踪洞察"),
@@ -3555,6 +3867,9 @@ def _maybe_write_tracking_insight(
         reason=str(decision.get("reason") or ""),
         confidence=float(decision.get("confidence") or 0.0),
         source_query=query,
+        topic_path=topic_path,
+        source_indices=source_indices,
+        entry_kind="tracking_insight",
     )
     if out_path is None:
         return {"written": False, "reason": "file_write_failed"}
@@ -3624,6 +3939,104 @@ def _aelin_chat_impl(
     service, provider = _resolve_llm_service(db, current_user)
     search_mode = _normalize_search_mode(getattr(payload, "search_mode", "auto"))
     llm_generation_failed = False
+    media_result: MediaIngestOutput | None = None
+    media_save_state: dict[str, Any] = {"written": False, "diary_path": "", "note_added": False}
+    media_summary_intent = False
+
+    media_hit = _extract_first_supported_media_url(payload.query)
+    if media_hit is not None:
+        media_url, media_platform = media_hit
+        media_summary_intent = _is_media_summary_intent(payload.query, media_url)
+        add_trace("media_ingest", status="running", detail=f"{media_platform}:{media_url[:90]}")
+        try:
+            media_result = _media_ingest.ingest(
+                user_id=current_user.id,
+                workspace=payload.workspace,
+                url=media_url,
+                service=service,
+                provider=provider,
+                languages=None,
+            )
+            media_save_state = _save_media_ingest_diary(
+                db,
+                user_id=current_user.id,
+                workspace=_normalize_workspace(payload.workspace),
+                result=media_result,
+            )
+            add_trace(
+                "media_ingest",
+                status="completed",
+                detail=(
+                    f"{media_result.platform}; source={media_result.source_type}; "
+                    f"written={1 if media_save_state.get('written') else 0}; conf={media_result.confidence:.2f}"
+                ),
+                count=1,
+            )
+        except MediaIngestError as exc:
+            add_trace("media_ingest", status="failed", detail=f"{exc.code}:{exc.message[:140]}", count=0)
+        except Exception as exc:
+            add_trace("media_ingest", status="failed", detail=str(exc)[:160], count=0)
+
+    if media_result is not None and media_summary_intent:
+        answer = _build_media_ingest_answer(
+            media_result,
+            written=bool(media_save_state.get("written")),
+        )
+        expression = _pick_expression(payload.query, answer)
+        actions: list[AelinAction] = []
+        if media_save_state.get("written"):
+            actions.append(
+                AelinAction(
+                    kind="open_tracking",
+                    title="打开 Aelinの日记",
+                    detail=str(media_save_state.get("diary_path") or "")[:220],
+                    payload={"workspace": _normalize_workspace(payload.workspace)},
+                )
+            )
+        actions.append(
+            AelinAction(
+                kind="open_desk",
+                title="在 Desk 查看日记上下文",
+                detail="打开 /desk 检索刚刚沉淀的摘要",
+                payload={"path": "/desk", "query": media_result.title[:120]},
+            )
+        )
+        chat_diary_media = _save_chat_diary_entry(
+            db,
+            user_id=current_user.id,
+            workspace=_normalize_workspace(payload.workspace),
+            query=payload.query,
+            answer=answer,
+            citations=[],
+        )
+        if bool(chat_diary_media.get("written")):
+            actions.append(
+                AelinAction(
+                    kind="open_tracking",
+                    title="打开聊天日记",
+                    detail=str(chat_diary_media.get("path") or "")[:220],
+                    payload={"workspace": _normalize_workspace(payload.workspace)},
+                )
+            )
+        try:
+            _memory.update_after_turn(
+                db,
+                current_user.id,
+                [{"role": "user", "content": payload.query}],
+                answer,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+        return AelinChatResponse(
+            answer=answer,
+            expression=expression,
+            citations=[],
+            actions=actions[:4],
+            tool_trace=tool_trace[:64],
+            memory_summary="已更新 Aelinの日记",
+            generated_at=datetime.now(timezone.utc),
+        )
 
     base_bundle = _build_context_bundle(
         db,
@@ -3796,19 +4209,54 @@ def _aelin_chat_impl(
     )
 
     local_citations: list[AelinCitation] = []
-    if need_local_search and route.get("reply_agent", True):
+    web_citations: list[AelinCitation] = []
+    web_results_for_answer: list[WebSearchResult] = []
+    web_evidence_lines: list[str] = []
+    used_web_queries: list[str] = []
+    web_provider_totals: Counter[str] = Counter()
+    web_fetch_mode_totals: Counter[str] = Counter()
+
+    local_enabled = bool(need_local_search and route.get("reply_agent", True))
+    web_enabled = bool(need_web_search and route.get("reply_agent", True))
+
+    local_jobs: list[tuple[int, dict[str, str], str, str]] = []
+    if local_enabled:
         add_trace(
             "local_search",
             status="running",
             detail=f"dispatching {len(local_boundaries)} local subagents",
         )
-        best_local_count = -1
-        local_jobs: list[tuple[int, dict[str, str], str, str]] = []
         for idx, boundary in enumerate(local_boundaries, start=1):
             sub_query = str(boundary.get("query") or payload.query).strip()[:180]
             sub_scope = str(boundary.get("scope") or sub_query).strip()[:120]
             add_trace(f"local_search_subagent_{idx}", status="running", detail=sub_scope or sub_query)
             local_jobs.append((idx, boundary, sub_query, sub_scope))
+    else:
+        add_trace("local_search", status="skipped", detail="local search skipped by route")
+
+    web_jobs: list[tuple[int, dict[str, str], str]] = []
+    if web_enabled:
+        add_trace(
+            "web_search",
+            status="running",
+            detail=f"dispatching {len(web_boundaries)} web subagents",
+        )
+        for idx, boundary in enumerate(web_boundaries, start=1):
+            q = str(boundary.get("query") or payload.query).strip()[:180]
+            used_web_queries.append(q)
+            add_trace(f"web_search_subagent_{idx}", status="running", detail=str(boundary.get("scope") or boundary.get("query") or ""))
+            web_jobs.append((idx, boundary, q))
+    else:
+        add_trace("web_search", status="skipped", detail="web search skipped by route")
+
+    def _run_local_worker(jobs: list[tuple[int, dict[str, str], str, str]]) -> dict[str, Any]:
+        if not jobs:
+            return {"sub_results": [], "citations": [], "active_bundle": None}
+
+        best_local_count = -1
+        active_local_bundle: dict[str, Any] | None = None
+        merged_citations: list[AelinCitation] = []
+        sub_results: list[dict[str, Any]] = []
 
         def _fetch_local_bundle(raw_query: str) -> tuple[dict[str, Any] | None, list[AelinCitation], str]:
             local_db = create_session()
@@ -3830,85 +4278,150 @@ def _aelin_chat_impl(
                     pass
 
         futures: dict[Any, tuple[int, dict[str, str], str, str]] = {}
-        max_workers = max(1, min(len(local_jobs), _MAX_LOCAL_SUBAGENTS))
+        max_workers = max(1, min(len(jobs), _MAX_LOCAL_SUBAGENTS))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for idx, boundary, sub_query, sub_scope in local_jobs:
+            for idx, boundary, sub_query, sub_scope in jobs:
                 futures[pool.submit(_fetch_local_bundle, sub_query)] = (idx, boundary, sub_query, sub_scope)
 
             for fut in as_completed(futures):
-                idx, boundary, sub_query, sub_scope = futures[fut]
-                sub_stage = f"local_search_subagent_{idx}"
+                idx, _, sub_query, sub_scope = futures[fut]
+                scope_text = sub_scope or sub_query
                 try:
                     bundle, cites, local_error = fut.result()
-                except Exception as e:
-                    add_trace(sub_stage, status="failed", detail=f"{sub_scope or sub_query}: {str(e)[:140]}")
+                except Exception as exc:
+                    sub_results.append(
+                        {"idx": idx, "status": "failed", "detail": f"{scope_text}: {str(exc)[:140]}", "count": 0}
+                    )
                     continue
                 if local_error or (not isinstance(bundle, dict)):
-                    add_trace(sub_stage, status="failed", detail=f"{sub_scope or sub_query}: {local_error or 'local error'}")
+                    sub_results.append(
+                        {"idx": idx, "status": "failed", "detail": f"{scope_text}: {local_error or 'local error'}", "count": 0}
+                    )
                     continue
-                local_citations.extend(cites)
+                merged_citations.extend(cites)
                 if len(cites) > best_local_count:
                     best_local_count = len(cites)
-                    active_bundle = bundle
-                add_trace(sub_stage, status="completed", detail=sub_scope or sub_query, count=len(cites))
+                    active_local_bundle = bundle
+                sub_results.append({"idx": idx, "status": "completed", "detail": scope_text, "count": len(cites)})
 
-        if local_citations:
-            local_citations = _hydrate_citation_avatars(db, current_user.id, local_citations)
-        add_trace(
-            "local_search",
-            status="completed",
-            detail="local search finished",
-            count=len(local_citations),
-        )
-    else:
-        add_trace("local_search", status="skipped", detail="local search skipped by route")
+        sub_results.sort(key=lambda item: int(item.get("idx") or 0))
+        return {
+            "sub_results": sub_results,
+            "citations": merged_citations,
+            "active_bundle": active_local_bundle,
+        }
 
-    web_citations: list[AelinCitation] = []
-    web_results_for_answer: list[WebSearchResult] = []
-    web_evidence_lines: list[str] = []
-    used_web_queries: list[str] = []
-    web_provider_totals: Counter[str] = Counter()
-    web_fetch_mode_totals: Counter[str] = Counter()
-
-    if need_web_search and route.get("reply_agent", True):
-        add_trace(
-            "web_search",
-            status="running",
-            detail=f"dispatching {len(web_boundaries)} web subagents",
-        )
-        total = len(web_boundaries)
-        completed = 0
-        evidence_count = 0
-        for idx, boundary in enumerate(web_boundaries, start=1):
-            add_trace(f"web_search_subagent_{idx}", status="running", detail=str(boundary.get("scope") or boundary.get("query") or ""))
+    def _run_web_worker(jobs: list[tuple[int, dict[str, str], str]]) -> dict[str, Any]:
+        if not jobs:
+            return {"sub_results": []}
 
         def _fetch_web_rows(raw_query: str) -> list[WebSearchResult]:
             return _web_search.search_and_fetch(raw_query, max_results=6, fetch_top_k=3)
 
+        sub_results: list[dict[str, Any]] = []
         futures: dict[Any, tuple[int, dict[str, str], str]] = {}
-        max_workers = max(1, min(len(web_boundaries), _MAX_WEB_SUBAGENTS))
+        max_workers = max(1, min(len(jobs), _MAX_WEB_SUBAGENTS))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for idx, boundary in enumerate(web_boundaries, start=1):
-                q = str(boundary.get("query") or payload.query).strip()[:180]
-                used_web_queries.append(q)
+            for idx, boundary, q in jobs:
                 futures[pool.submit(_fetch_web_rows, q)] = (idx, boundary, q)
 
             for fut in as_completed(futures):
                 idx, boundary, q = futures[fut]
-                sub_stage = f"web_search_subagent_{idx}"
-                completed += 1
+                scope_text = str(boundary.get("scope") or q)
                 try:
                     rows = fut.result() or []
-                except Exception as e:
-                    add_trace(sub_stage, status="failed", detail=f"{q}: {str(e)[:140]}")
+                except Exception as exc:
+                    sub_results.append(
+                        {"idx": idx, "query": q, "scope": scope_text, "status": "failed", "error": str(exc)[:140], "rows": []}
+                    )
                     continue
-                if not rows:
-                    add_trace(sub_stage, status="failed", detail=f"{q}: no result")
+                provider_counts = Counter(str(getattr(it, "provider", "") or "unknown") for it in rows[:8])
+                fetch_counts = Counter(str(getattr(it, "fetch_mode", "") or "none") for it in rows[:8])
+                sub_results.append(
+                    {
+                        "idx": idx,
+                        "query": q,
+                        "scope": scope_text,
+                        "status": ("completed" if rows else "failed"),
+                        "error": ("" if rows else "no result"),
+                        "rows": rows,
+                        "provider_counts": dict(provider_counts),
+                        "fetch_counts": dict(fetch_counts),
+                    }
+                )
+
+        sub_results.sort(key=lambda item: int(item.get("idx") or 0))
+        return {"sub_results": sub_results}
+
+    local_state: dict[str, Any] = {"sub_results": [], "citations": [], "active_bundle": None}
+    web_state: dict[str, Any] = {"sub_results": []}
+    if local_jobs or web_jobs:
+        futures: dict[Any, str] = {}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            if local_jobs:
+                futures[pool.submit(_run_local_worker, local_jobs)] = "local"
+            if web_jobs:
+                futures[pool.submit(_run_web_worker, web_jobs)] = "web"
+            for fut in as_completed(futures):
+                kind = futures[fut]
+                try:
+                    payload_out = fut.result() or {}
+                except Exception as exc:
+                    payload_out = {"worker_error": str(exc)[:160]}
+                if kind == "local":
+                    local_state = payload_out
+                else:
+                    web_state = payload_out
+
+    if local_jobs:
+        worker_error = str(local_state.get("worker_error") or "").strip()
+        if worker_error:
+            add_trace("local_search", status="failed", detail=f"worker_error: {worker_error}", count=0)
+        else:
+            for item in local_state.get("sub_results") or []:
+                idx = int(item.get("idx") or 0)
+                add_trace(
+                    f"local_search_subagent_{idx}",
+                    status=str(item.get("status") or "failed"),
+                    detail=str(item.get("detail") or "")[:200],
+                    count=max(0, int(item.get("count") or 0)),
+                )
+            local_citations = list(local_state.get("citations") or [])
+            bundle_candidate = local_state.get("active_bundle")
+            if isinstance(bundle_candidate, dict):
+                active_bundle = bundle_candidate
+            if local_citations:
+                local_citations = _hydrate_citation_avatars(db, current_user.id, local_citations)
+            add_trace(
+                "local_search",
+                status="completed",
+                detail="local search finished",
+                count=len(local_citations),
+            )
+
+    if web_jobs:
+        worker_error = str(web_state.get("worker_error") or "").strip()
+        if worker_error:
+            add_trace("web_search", status="failed", detail=f"worker_error: {worker_error}", count=0)
+        else:
+            total = len(web_jobs)
+            completed = 0
+            evidence_count = 0
+            for item in web_state.get("sub_results") or []:
+                idx = int(item.get("idx") or 0)
+                q = str(item.get("query") or "").strip()
+                sub_stage = f"web_search_subagent_{idx}"
+                completed += 1
+                rows = item.get("rows") if isinstance(item.get("rows"), list) else []
+                if (str(item.get("status") or "") != "completed") or (not rows):
+                    failure_detail = str(item.get("error") or "no result").strip()
+                    detail = f"{q}: {failure_detail}" if q else failure_detail
+                    add_trace(sub_stage, status="failed", detail=detail[:200])
                     continue
 
                 web_results_for_answer.extend(rows[:5])
-                provider_counts = Counter(str(getattr(it, "provider", "") or "unknown") for it in rows[:8])
-                fetch_counts = Counter(str(getattr(it, "fetch_mode", "") or "none") for it in rows[:8])
+                provider_counts = Counter({str(k): int(v) for k, v in (item.get("provider_counts") or {}).items()})
+                fetch_counts = Counter({str(k): int(v) for k, v in (item.get("fetch_counts") or {}).items()})
                 web_provider_totals.update(provider_counts)
                 web_fetch_mode_totals.update(fetch_counts)
                 provider_note = ",".join(f"{name}:{count}" for name, count in provider_counts.most_common(3))
@@ -3923,12 +4436,12 @@ def _aelin_chat_impl(
                 except Exception:
                     persisted = []
                 web_citations.extend(persisted)
-                for item in rows[:5]:
-                    host = _domain_from_url(item.url)
-                    snippet = ((getattr(item, "fetched_excerpt", "") or "").strip() or (item.snippet or "").strip())
-                    provider_name = str(getattr(item, "provider", "") or "unknown")
-                    fetch_mode = str(getattr(item, "fetch_mode", "") or "none")
-                    line = f"- [Web/{provider_name}/{fetch_mode}] {item.title} ({host})"
+                for row in rows[:5]:
+                    host = _domain_from_url(row.url)
+                    snippet = ((getattr(row, "fetched_excerpt", "") or "").strip() or (row.snippet or "").strip())
+                    provider_name = str(getattr(row, "provider", "") or "unknown")
+                    fetch_mode = str(getattr(row, "fetch_mode", "") or "none")
+                    line = f"- [Web/{provider_name}/{fetch_mode}] {row.title} ({host})"
                     if snippet:
                         line += f" | {snippet}"
                     web_evidence_lines.append(line)
@@ -3963,24 +4476,22 @@ def _aelin_chat_impl(
                 add_trace(
                     sub_stage,
                     status="completed",
-                    detail=f"{str(boundary.get('scope') or q)}; p={provider_note or 'unknown'}; f={fetch_note or 'none'}",
+                    detail=f"{str(item.get('scope') or q)}; p={provider_note or 'unknown'}; f={fetch_note or 'none'}",
                     count=len(persisted),
                 )
 
-        provider_total_note = ",".join(f"{name}:{count}" for name, count in web_provider_totals.most_common(4))
-        fetch_total_note = ",".join(f"{name}:{count}" for name, count in web_fetch_mode_totals.most_common(4))
-        add_trace(
-            "web_search",
-            status="completed" if web_citations else "failed",
-            detail=(
-                f"web search finished; p={provider_total_note or 'none'}; f={fetch_total_note or 'none'}"
-                if web_citations
-                else "web search empty"
-            ),
-            count=len(web_citations),
-        )
-    else:
-        add_trace("web_search", status="skipped", detail="web search skipped by route")
+            provider_total_note = ",".join(f"{name}:{count}" for name, count in web_provider_totals.most_common(4))
+            fetch_total_note = ",".join(f"{name}:{count}" for name, count in web_fetch_mode_totals.most_common(4))
+            add_trace(
+                "web_search",
+                status="completed" if web_citations else "failed",
+                detail=(
+                    f"web search finished; p={provider_total_note or 'none'}; f={fetch_total_note or 'none'}"
+                    if web_citations
+                    else "web search empty"
+                ),
+                count=len(web_citations),
+            )
 
     max_citations = max(1, min(20, int(payload.max_citations or 6)))
     citations = _dedupe_citations([*local_citations, *web_citations], limit=max_citations)
@@ -4004,6 +4515,8 @@ def _aelin_chat_impl(
                 "source": str(row.get("source") or "").strip()[:32],
                 "kind": str(row.get("kind") or "").strip()[:24],
                 "target": str(row.get("target") or "").strip()[:255],
+                "topic_path": str(row.get("topic_path") or "").strip()[:260],
+                "entry_kind": str(row.get("entry_kind") or "").strip()[:48],
             }
         )
 
@@ -4025,6 +4538,8 @@ def _aelin_chat_impl(
                     "source": str(item.source),
                     "kind": str(item.kind),
                     "target": str(item.target),
+                    "topic_path": str(item.topic_path),
+                    "entry_kind": str(item.entry_kind),
                 }
                 for item in fallback_hits[:8]
             ]
@@ -4037,8 +4552,11 @@ def _aelin_chat_impl(
         preview = re.sub(r"\s+", " ", str(item.get("preview") or "")).strip()[:160]
         source = str(item.get("source") or "tracking").strip() or "tracking"
         kind = str(item.get("kind") or "memory").strip() or "memory"
+        topic_path = str(item.get("topic_path") or "").strip()
         path = str(item.get("path") or "").strip()[:220]
         line = f"- [{source}/{kind}] {title}"
+        if topic_path:
+            line += f" | topic={topic_path}"
         if preview:
             line += f" | {preview}"
         if path:
@@ -4617,6 +5135,22 @@ def _aelin_chat_impl(
     else:
         add_trace("trace_agent", status="skipped", detail="trace route disabled")
 
+    if media_result is not None and not media_summary_intent:
+        save_note = "并写入 Aelinの日记。"
+        if not media_save_state.get("written"):
+            if not media_result.quality_usable:
+                save_note = (
+                    "但未写入 Aelinの日记（质量门禁未通过："
+                    f"{media_result.quality_reason or 'quality_gate'}）。"
+                )
+            else:
+                save_note = "但写入日记失败。"
+        media_hint = (
+            f"已完成链接内容摘要（{media_result.platform}/{media_result.source_type}），"
+            + save_note
+        )
+        answer = f"{answer.strip()}\n\n{media_hint}".strip()
+
     if payload.use_memory and answer:
         try:
             _memory.update_after_turn(
@@ -4640,6 +5174,7 @@ def _aelin_chat_impl(
             provider=provider,
             tracking_snapshot=tracking_snapshot,
             file_memory_lines=file_memory_lines,
+            citations=citations,
         )
         if bool(insight_write_result.get("written")):
             detail = (
@@ -4657,6 +5192,33 @@ def _aelin_chat_impl(
     except Exception as exc:
         add_trace("insight_write", status="failed", detail=f"{str(exc)[:160]}", count=0)
 
+    chat_diary_result: dict[str, Any] = {"written": False, "reason": "not_evaluated", "path": ""}
+    try:
+        chat_diary_result = _save_chat_diary_entry(
+            db,
+            user_id=current_user.id,
+            workspace=_normalize_workspace(payload.workspace),
+            query=payload.query,
+            answer=answer,
+            citations=citations,
+        )
+        if bool(chat_diary_result.get("written")):
+            add_trace(
+                "chat_diary_write",
+                status="completed",
+                detail=str(chat_diary_result.get("path") or "")[:220],
+                count=1,
+            )
+        else:
+            add_trace(
+                "chat_diary_write",
+                status="skipped",
+                detail=str(chat_diary_result.get("reason") or "skip")[:160],
+                count=0,
+            )
+    except Exception as exc:
+        add_trace("chat_diary_write", status="failed", detail=f"{str(exc)[:160]}", count=0)
+
     try:
         should_commit = False
         if payload.use_memory and answer:
@@ -4664,6 +5226,10 @@ def _aelin_chat_impl(
         elif web_citations or trace_web_citations:
             should_commit = True
         elif bool(insight_write_result.get("written")):
+            should_commit = True
+        elif bool(chat_diary_result.get("written")):
+            should_commit = True
+        elif bool(media_save_state.get("written")) or bool(media_save_state.get("note_added")):
             should_commit = True
         if should_commit:
             db.commit()
@@ -4677,6 +5243,20 @@ def _aelin_chat_impl(
         has_todos=bool(todo_titles),
         track_suggestion=track_suggestion if isinstance(track_suggestion, dict) else None,
     )
+    if media_result is not None:
+        actions.insert(
+            0,
+            AelinAction(
+                kind="open_tracking",
+                title="查看 Aelinの日记摘要",
+                detail=(
+                    str(media_save_state.get("diary_path") or "").strip()[:220]
+                    if media_save_state.get("written")
+                    else f"{media_result.platform} 摘要已生成（未落盘）"
+                ),
+                payload={"workspace": payload.workspace, "query": media_result.title[:120]},
+            ),
+        )
     if bool(insight_write_result.get("written")):
         target_id = int(insight_write_result.get("target_id") or 0)
         actions.insert(
@@ -5640,6 +6220,81 @@ def list_tracking_snapshots(
         for row in rows
     ]
     return AelinTrackingSnapshotListResponse(total=len(items), items=items, generated_at=datetime.now(timezone.utc))
+
+
+@router.post("/media/ingest", response_model=AelinMediaIngestResponse)
+def ingest_media_content(
+    payload: AelinMediaIngestRequest,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    workspace = _normalize_workspace(payload.workspace)
+    service, provider = _resolve_llm_service(db, current_user)
+    try:
+        result = _media_ingest.ingest(
+            user_id=current_user.id,
+            workspace=workspace,
+            url=payload.url,
+            service=service,
+            provider=provider,
+            languages=payload.languages,
+        )
+    except MediaIngestError as exc:
+        status_code = 400
+        if exc.code in {"tool_missing", "extract_failed", "extract_timeout", "no_extractable_content", "auth_required", "cookie_unavailable"}:
+            status_code = 422
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+    save_state = _save_media_ingest_diary(
+        db,
+        user_id=current_user.id,
+        workspace=workspace,
+        result=result,
+    )
+    written = bool(save_state.get("written"))
+    diary_path = str(save_state.get("diary_path") or "")
+    try:
+        if written or bool(save_state.get("note_added")):
+            db.commit()
+    except Exception:
+        db.rollback()
+        written = False
+        diary_path = ""
+
+    message = (
+        f"已完成 {result.platform} 内容摘要并写入 Aelinの日记。"
+        if written
+        else (
+            f"已完成 {result.platform} 内容摘要，但未写入日记（质量门禁未通过：{result.quality_reason or 'quality_gate'}）。"
+            if not result.quality_usable
+            else f"已完成 {result.platform} 内容摘要，但写入日记失败。"
+        )
+    )
+    return AelinMediaIngestResponse(
+        status=("saved" if written else "processed"),
+        message=message,
+        url=result.canonical_url,
+        platform=result.platform,
+        title=result.title,
+        source_type=result.source_type,
+        summary=result.summary,
+        summary_overview=result.summary_overview,
+        information_note=result.information_note,
+        confidence=result.confidence,
+        quality_score=result.quality_score,
+        quality_reason=result.quality_reason,
+        quality_usable=result.quality_usable,
+        needs_review=result.needs_review,
+        written=written,
+        diary_path=diary_path,
+        limitations=result.limitations,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
 @router.get("/tracking/file-memory/search", response_model=AelinTrackingFileMemorySearchResponse)
 def search_tracking_file_memory(
     workspace: str = Query(default="default", min_length=1, max_length=64),
@@ -5668,12 +6323,67 @@ def search_tracking_file_memory(
             target=item.target,
             source=item.source,
             kind=item.kind,
+            topic_path=item.topic_path,
+            entry_kind=item.entry_kind,
         )
         for item in items_raw
     ]
     return AelinTrackingFileMemorySearchResponse(
         workspace=_normalize_workspace(workspace),
         total=len(items),
+        items=items,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/tracking/file-memory/tree", response_model=AelinDiaryTreeResponse)
+def list_tracking_diary_tree(
+    workspace: str = Query(default="default", min_length=1, max_length=64),
+    max_files: int = Query(default=500, ge=20, le=2000),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    _tracking.ensure_legacy_migration(db, user_id=current_user.id, workspace=workspace)
+
+    def _to_node(row: Any) -> AelinDiaryTreeNode:
+        children_raw = getattr(row, "children", None)
+        children = [
+            _to_node(child)
+            for child in (children_raw or [])
+            if child is not None
+        ]
+        return AelinDiaryTreeNode(
+            name=str(getattr(row, "name", "") or ""),
+            path=str(getattr(row, "path", "") or ""),
+            kind=str(getattr(row, "kind", "") or "file"),
+            title=str(getattr(row, "title", "") or ""),
+            preview=str(getattr(row, "preview", "") or ""),
+            updated_at=str(getattr(row, "updated_at", "") or ""),
+            source=str(getattr(row, "source", "") or ""),
+            topic_path=str(getattr(row, "topic_path", "") or ""),
+            entry_kind=str(getattr(row, "entry_kind", "") or ""),
+            children=children,
+        )
+
+    items_raw = _tracking_file_memory.list_diary_tree(
+        user_id=current_user.id,
+        workspace=workspace,
+        max_files=max_files,
+    )
+    items = [_to_node(row) for row in items_raw]
+
+    def _count_files(nodes: list[AelinDiaryTreeNode]) -> int:
+        total = 0
+        for node in nodes:
+            if node.kind == "file":
+                total += 1
+            if node.children:
+                total += _count_files(node.children)
+        return total
+
+    return AelinDiaryTreeResponse(
+        workspace=_normalize_workspace(workspace),
+        total=_count_files(items),
         items=items,
         generated_at=datetime.now(timezone.utc),
     )
@@ -5883,4 +6593,3 @@ def confirm_track_subscription(
         ],
         generated_at=datetime.now(timezone.utc),
     )
-

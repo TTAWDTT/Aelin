@@ -450,6 +450,8 @@ class AelinTrackingFileMemoryItem(BaseModel):
     target: str = ""
     source: str = ""
     kind: str = ""
+    topic_path: str = ""
+    entry_kind: str = ""
 
 
 class AelinTrackingFileMemorySearchResponse(BaseModel):
@@ -457,6 +459,54 @@ class AelinTrackingFileMemorySearchResponse(BaseModel):
     total: int = 0
     items: list[AelinTrackingFileMemoryItem] = Field(default_factory=list)
     generated_at: datetime
+
+
+class AelinDiaryTreeNode(BaseModel):
+    name: str
+    path: str
+    kind: str
+    title: str = ""
+    preview: str = ""
+    updated_at: str = ""
+    source: str = ""
+    topic_path: str = ""
+    entry_kind: str = ""
+    children: list["AelinDiaryTreeNode"] = Field(default_factory=list)
+
+
+class AelinDiaryTreeResponse(BaseModel):
+    workspace: str = "default"
+    total: int = 0
+    items: list[AelinDiaryTreeNode] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinMediaIngestRequest(BaseModel):
+    url: str = Field(min_length=5, max_length=3000)
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    languages: list[str] = Field(default_factory=lambda: ["zh-Hans", "zh-CN", "zh", "en"], max_length=8)
+
+
+class AelinMediaIngestResponse(BaseModel):
+    status: str
+    message: str
+    url: str
+    platform: str
+    title: str = ""
+    source_type: str = ""
+    summary: str = ""
+    summary_overview: str = ""
+    information_note: str = ""
+    confidence: float = 0.0
+    quality_score: float = 0.0
+    quality_reason: str = ""
+    quality_usable: bool = False
+    needs_review: bool = True
+    written: bool = False
+    diary_path: str = ""
+    limitations: list[str] = Field(default_factory=list)
+    generated_at: datetime
+
 
 class AelinDeviceProcessItem(BaseModel):
     pid: int
@@ -741,5 +791,3 @@ class SyncJobStatusResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
-
-

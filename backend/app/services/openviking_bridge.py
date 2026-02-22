@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,6 +66,22 @@ class FileMemoryHit:
     target: str
     source: str
     kind: str
+    topic_path: str = ""
+    entry_kind: str = ""
+
+
+@dataclass(slots=True)
+class DiaryTreeNode:
+    name: str
+    path: str
+    kind: str
+    title: str = ""
+    preview: str = ""
+    updated_at: str = ""
+    source: str = ""
+    topic_path: str = ""
+    entry_kind: str = ""
+    children: list["DiaryTreeNode"] = field(default_factory=list)
 
 
 class TrackingFileMemoryBridge:
@@ -142,6 +158,59 @@ class TrackingFileMemoryBridge:
             / _slug(meta["source_type"], fallback="web")
             / meta["target_hash"]
         )
+
+    def _workspace_root(self, *, user_id: int, workspace: str) -> Path:
+        return (
+            self.root
+            / "users"
+            / str(max(0, int(user_id)))
+            / "workspaces"
+            / _slug(_normalize_workspace(workspace), fallback="default")
+        )
+
+    def _tracking_root(self, *, user_id: int, workspace: str) -> Path:
+        return self._workspace_root(user_id=user_id, workspace=workspace) / "tracking"
+
+    def _diary_root(self, *, user_id: int, workspace: str) -> Path:
+        return self._workspace_root(user_id=user_id, workspace=workspace) / "diary"
+
+    def _normalize_topic_path(self, topic_path: list[str] | None, *, fallback: str = "综合") -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        source = topic_path if isinstance(topic_path, list) else []
+        for item in source:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            text = text[:64]
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+            if len(out) >= 6:
+                break
+        if not out:
+            out.append(fallback[:32] or "综合")
+        return out
+
+    def _candidate_search_dirs(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        source: str | None,
+    ) -> list[Path]:
+        tracking_root = self._tracking_root(user_id=user_id, workspace=workspace)
+        diary_root = self._diary_root(user_id=user_id, workspace=workspace)
+        out: list[Path] = []
+        source_norm = str(source or "").strip().lower()
+        if source_norm:
+            out.append(tracking_root / _slug(source_norm, fallback="web"))
+        else:
+            out.append(tracking_root)
+        out.append(diary_root)
+        return out
 
     def _write_markdown(self, path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,6 +356,9 @@ class TrackingFileMemoryBridge:
         reason: str = "",
         confidence: float | None = None,
         source_query: str = "",
+        topic_path: list[str] | None = None,
+        source_indices: list[dict[str, Any]] | None = None,
+        entry_kind: str = "tracking_insight",
     ) -> Path | None:
         if not self.enabled:
             return None
@@ -306,6 +378,33 @@ class TrackingFileMemoryBridge:
                     score_text = f"{score:.2f}"
                 except Exception:
                     score_text = ""
+            source_items: list[dict[str, Any]] = []
+            if isinstance(source_indices, list):
+                for row in source_indices[:20]:
+                    if not isinstance(row, dict):
+                        continue
+                    source_items.append(
+                        {
+                            "type": str(row.get("type") or "unknown")[:32],
+                            "label": str(row.get("label") or "")[:220],
+                            "url": str(row.get("url") or "")[:500],
+                            "path": str(row.get("path") or "")[:500],
+                            "message_id": int(row.get("message_id") or 0),
+                        }
+                    )
+            if source_query.strip():
+                source_items.insert(
+                    0,
+                    {
+                        "type": "query",
+                        "label": source_query.strip()[:220],
+                        "url": "",
+                        "path": "",
+                        "message_id": 0,
+                    },
+                )
+            topic_parts = self._normalize_topic_path(topic_path, fallback=meta["source_type"] or "综合")
+            topic_text = " > ".join(topic_parts)
             body = [
                 "# Tracking Insight",
                 "",
@@ -313,6 +412,8 @@ class TrackingFileMemoryBridge:
                 f"- target: {meta['display_name']}",
                 f"- source: {meta['source_type']}",
                 "- kind: insight",
+                f"- entry_kind: {str(entry_kind or 'tracking_insight').strip()[:48]}",
+                f"- topic_path: {topic_text}",
                 f"- created_at: {ts}",
             ]
             if score_text:
@@ -321,10 +422,44 @@ class TrackingFileMemoryBridge:
                 body.append(f"- query: {source_query.strip()[:320]}")
             if reason.strip():
                 body.append(f"- reason: {reason.strip()[:500]}")
-            body.extend(["", "## Title", "", title_text, "", "## Insight", "", safe_markdown, ""] )
-            out_path = self._target_dir(target) / "insights" / f"{ts_id}_{_slug(title_text, fallback='insight', max_len=42)}.md"
-            self._write_markdown(out_path, "\n".join(body))
-            return out_path
+            if source_items:
+                body.extend(["- source_indices_json:"])
+                body.extend([f"  {line}" for line in _safe_json(source_items).splitlines()])
+            body.extend(["", "## Title", "", title_text, "", "## Insight", "", safe_markdown])
+            if source_items:
+                body.extend(["", "## 来源索引", ""])
+                for row in source_items[:12]:
+                    source_type = str(row.get("type") or "unknown")
+                    label = str(row.get("label") or "").strip()
+                    message_id = int(row.get("message_id") or 0)
+                    url = str(row.get("url") or "").strip()
+                    path = str(row.get("path") or "").strip()
+                    line = f"- [{source_type}]"
+                    if label:
+                        line += f" {label}"
+                    if message_id > 0:
+                        line += f" | message_id={message_id}"
+                    if url:
+                        line += f" | url={url}"
+                    if path:
+                        line += f" | path={path}"
+                    body.append(line)
+            body.append("")
+
+            content = "\n".join(body)
+            file_name = f"{ts_id}_{_slug(title_text, fallback='insight', max_len=42)}.md"
+            legacy_path = self._target_dir(target) / "insights" / file_name
+            self._write_markdown(legacy_path, content)
+
+            diary_dir = self._diary_root(
+                user_id=int(meta["user_id"] or 0),
+                workspace=meta["workspace"],
+            )
+            for part in topic_parts:
+                diary_dir = diary_dir / _slug(part, fallback="topic", max_len=48)
+            diary_path = diary_dir / file_name
+            self._write_markdown(diary_path, content)
+            return diary_path
         except Exception as exc:
             _LOG.warning("file-memory insight append failed: %s", exc)
             return None
@@ -376,54 +511,58 @@ class TrackingFileMemoryBridge:
         client = self._openviking
         if client is None:
             return []
-        base_dir = self.root / "users" / str(int(user_id)) / "workspaces" / _slug(_normalize_workspace(workspace), fallback="default") / "tracking"
-        if source:
-            base_dir = base_dir / _slug(source.strip().lower(), fallback="web")
-        if not base_dir.exists():
-            return []
-
-        raw: Any = None
-        if hasattr(client, "search"):
-            try:
-                raw = client.search(query=query, top_k=limit, base_dir=str(base_dir))
-            except TypeError:
-                raw = client.search(query, limit)
-        if not raw:
-            return []
-        rows = raw if isinstance(raw, list) else list(getattr(raw, "items", []) or [])
         out: list[FileMemoryHit] = []
-        for row in rows:
-            path = str(getattr(row, "path", "") or row.get("path") or "").strip() if isinstance(row, dict) else str(getattr(row, "path", "")).strip()
-            if not path:
+        seen_paths: set[str] = set()
+        for base_dir in self._candidate_search_dirs(user_id=user_id, workspace=workspace, source=source):
+            if not base_dir.exists():
                 continue
-            preview = ""
-            title = ""
-            score = 0.0
-            if isinstance(row, dict):
-                preview = str(row.get("preview") or row.get("snippet") or "")
-                title = str(row.get("title") or "")
-                score = float(row.get("score") or 0.0)
-            else:
-                preview = str(getattr(row, "preview", "") or getattr(row, "snippet", "") or "")
-                title = str(getattr(row, "title", "") or "")
-                score = float(getattr(row, "score", 0.0) or 0.0)
-            abs_path = Path(path) if Path(path).is_absolute() else (base_dir / path)
-            parsed = self._parse_markdown_meta(abs_path)
-            out.append(
-                FileMemoryHit(
-                    path=str(abs_path),
-                    title=title or parsed.get("title") or abs_path.name,
-                    preview=preview or parsed.get("preview") or "",
-                    score=max(0.0, score),
-                    updated_at=parsed.get("updated_at") or _iso(_utcnow()),
-                    canonical_id=parsed.get("canonical_id") or "",
-                    target=parsed.get("target") or "",
-                    source=parsed.get("source") or "",
-                    kind=parsed.get("kind") or "",
+            raw: Any = None
+            if hasattr(client, "search"):
+                try:
+                    raw = client.search(query=query, top_k=limit, base_dir=str(base_dir))
+                except TypeError:
+                    raw = client.search(query, limit)
+            if not raw:
+                continue
+            rows = raw if isinstance(raw, list) else list(getattr(raw, "items", []) or [])
+            for row in rows:
+                path = str(getattr(row, "path", "") or row.get("path") or "").strip() if isinstance(row, dict) else str(getattr(row, "path", "")).strip()
+                if not path:
+                    continue
+                preview = ""
+                title = ""
+                score = 0.0
+                if isinstance(row, dict):
+                    preview = str(row.get("preview") or row.get("snippet") or "")
+                    title = str(row.get("title") or "")
+                    score = float(row.get("score") or 0.0)
+                else:
+                    preview = str(getattr(row, "preview", "") or getattr(row, "snippet", "") or "")
+                    title = str(getattr(row, "title", "") or "")
+                    score = float(getattr(row, "score", 0.0) or 0.0)
+                abs_path = Path(path) if Path(path).is_absolute() else (base_dir / path)
+                key = str(abs_path).lower()
+                if key in seen_paths:
+                    continue
+                seen_paths.add(key)
+                parsed = self._parse_markdown_meta(abs_path)
+                out.append(
+                    FileMemoryHit(
+                        path=str(abs_path),
+                        title=title or parsed.get("title") or abs_path.name,
+                        preview=preview or parsed.get("preview") or "",
+                        score=max(0.0, score),
+                        updated_at=parsed.get("updated_at") or _iso(_utcnow()),
+                        canonical_id=parsed.get("canonical_id") or "",
+                        target=parsed.get("target") or "",
+                        source=parsed.get("source") or "",
+                        kind=parsed.get("kind") or "",
+                        topic_path=parsed.get("topic_path") or "",
+                        entry_kind=parsed.get("entry_kind") or "",
+                    )
                 )
-            )
-            if len(out) >= limit:
-                break
+                if len(out) >= limit:
+                    return out[:limit]
         return out
 
     def _search_local(
@@ -435,29 +574,31 @@ class TrackingFileMemoryBridge:
         limit: int,
         source: str | None,
     ) -> list[FileMemoryHit]:
-        base_dir = self.root / "users" / str(int(user_id)) / "workspaces" / _slug(_normalize_workspace(workspace), fallback="default") / "tracking"
-        if source:
-            base_dir = base_dir / _slug(source.strip().lower(), fallback="web")
-        if not base_dir.exists():
-            return []
-
         tokens = [it.lower() for it in _TOKEN_RE.findall(query.lower()) if len(it) >= 1][:16]
         rows: list[tuple[float, float, Path, str]] = []
-        for path in base_dir.rglob("*.md"):
-            try:
-                text = path.read_text(encoding="utf-8")
-            except Exception:
+        seen_paths: set[str] = set()
+        for base_dir in self._candidate_search_dirs(user_id=user_id, workspace=workspace, source=source):
+            if not base_dir.exists():
                 continue
-            if not text.strip():
-                continue
-            score = self._score_text(text, query=query, tokens=tokens)
-            if query and score <= 0.0:
-                continue
-            try:
-                ts = path.stat().st_mtime
-            except Exception:
-                ts = 0.0
-            rows.append((score, ts, path, text))
+            for path in base_dir.rglob("*.md"):
+                key = str(path).lower()
+                if key in seen_paths:
+                    continue
+                seen_paths.add(key)
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if not text.strip():
+                    continue
+                score = self._score_text(text, query=query, tokens=tokens)
+                if query and score <= 0.0:
+                    continue
+                try:
+                    ts = path.stat().st_mtime
+                except Exception:
+                    ts = 0.0
+                rows.append((score, ts, path, text))
         if not rows:
             return []
 
@@ -477,6 +618,8 @@ class TrackingFileMemoryBridge:
                     target=meta.get("target") or "",
                     source=meta.get("source") or "",
                     kind=meta.get("kind") or "",
+                    topic_path=meta.get("topic_path") or "",
+                    entry_kind=meta.get("entry_kind") or "",
                 )
             )
             if len(out) >= limit:
@@ -495,14 +638,50 @@ class TrackingFileMemoryBridge:
             if cnt > 0:
                 score += min(6.0, 1.0 + cnt * 0.6)
         if "- kind: snapshot" in lowered:
-            score += 0.4
+            score -= 0.8
         if "- kind: change" in lowered:
-            score += 0.3
+            score -= 0.2
+        if "- entry_kind: chat_diary" in lowered:
+            score += 1.8
+        if "- entry_kind: media_insight" in lowered:
+            score += 1.4
+        if "- entry_kind: tracking_insight" in lowered:
+            score += 1.0
+        if "## 提炼信息（日记）" in lowered:
+            score += 1.2
+        if "## 今日对话" in lowered:
+            score += 1.2
         return score
 
     def _extract_preview(self, text: str) -> str:
-        clean = re.sub(r"```[\s\S]*?```", " ", text)
-        clean = re.sub(r"#+\s*", "", clean)
+        content = str(text or "")
+        for marker in ("## 提炼信息（日记）", "## 今日对话", "## 总结", "## 概要", "## Summary", "## Insight"):
+            idx = content.find(marker)
+            if idx >= 0:
+                content = content[idx:]
+                break
+
+        lines: list[str] = []
+        for raw in content.splitlines():
+            row = raw.strip()
+            if not row:
+                continue
+            if row.startswith("#"):
+                continue
+            lowered = row.lower()
+            if lowered.startswith("- canonical_id:") or lowered.startswith("- target:") or lowered.startswith("- source:"):
+                continue
+            if lowered.startswith("- kind:") or lowered.startswith("- created_at:") or lowered.startswith("- confidence:"):
+                continue
+            if lowered.startswith("- query:") or lowered.startswith("- reason:"):
+                continue
+            if lowered.startswith("- source_indices_json:"):
+                continue
+            lines.append(row)
+            if len(" ".join(lines)) >= 420:
+                break
+
+        clean = re.sub(r"```[\s\S]*?```", " ", "\n".join(lines))
         clean = re.sub(r"\s+", " ", clean).strip()
         return clean[:280]
 
@@ -512,11 +691,14 @@ class TrackingFileMemoryBridge:
         except Exception:
             return {}
         title = ""
+        section_title = ""
         preview = ""
         canonical_id = ""
         target = ""
         source = ""
         kind = ""
+        topic_path = ""
+        entry_kind = ""
         updated_at = ""
         lines = text.splitlines()
         for idx, line in enumerate(lines[:60]):
@@ -531,10 +713,24 @@ class TrackingFileMemoryBridge:
                 source = row.split(":", 1)[-1].strip()[:48]
             elif row.lower().startswith("- kind:"):
                 kind = row.split(":", 1)[-1].strip()[:48]
+            elif row.lower().startswith("- topic_path:"):
+                topic_path = row.split(":", 1)[-1].strip()[:280]
+            elif row.lower().startswith("- entry_kind:"):
+                entry_kind = row.split(":", 1)[-1].strip()[:48]
             elif row.lower().startswith("- fetched_at:") or row.lower().startswith("- created_at:"):
                 updated_at = row.split(":", 1)[-1].strip()[:80]
             elif row.lower().startswith("- updated_at:"):
                 updated_at = row.split(":", 1)[-1].strip()[:80]
+            elif row == "## Title":
+                for next_row in lines[idx + 1 : idx + 6]:
+                    candidate = next_row.strip()
+                    if candidate and not candidate.startswith("#"):
+                        section_title = candidate[:180]
+                        break
+        if section_title:
+            title = section_title
+        elif title.lower() == "tracking insight" and target:
+            title = target[:120]
         preview = self._extract_preview(text)
         return {
             "title": title,
@@ -543,8 +739,81 @@ class TrackingFileMemoryBridge:
             "target": target,
             "source": source,
             "kind": kind,
+            "topic_path": topic_path,
+            "entry_kind": entry_kind,
             "updated_at": updated_at,
         }
+
+    def list_diary_tree(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        max_files: int = 500,
+    ) -> list[DiaryTreeNode]:
+        if not self.enabled:
+            return []
+        root = self._diary_root(user_id=user_id, workspace=workspace)
+        if not root.exists():
+            return []
+
+        limit = max(20, min(2000, int(max_files or 500)))
+        visited_files = 0
+
+        def _stat_iso(path: Path) -> str:
+            try:
+                return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+            except Exception:
+                return _iso(_utcnow())
+
+        def _walk(dir_path: Path) -> list[DiaryTreeNode]:
+            nonlocal visited_files
+            out_nodes: list[DiaryTreeNode] = []
+            children = []
+            try:
+                children = sorted(
+                    list(dir_path.iterdir()),
+                    key=lambda p: (0 if p.is_dir() else 1, p.name.lower()),
+                )
+            except Exception:
+                return []
+
+            for child in children:
+                rel_path = child.relative_to(root).as_posix()
+                if child.is_dir():
+                    nested = _walk(child)
+                    out_nodes.append(
+                        DiaryTreeNode(
+                            name=child.name,
+                            path=rel_path,
+                            kind="folder",
+                            updated_at=_stat_iso(child),
+                            children=nested,
+                        )
+                    )
+                    continue
+                if child.suffix.lower() != ".md":
+                    continue
+                if visited_files >= limit:
+                    continue
+                visited_files += 1
+                meta = self._parse_markdown_meta(child)
+                out_nodes.append(
+                    DiaryTreeNode(
+                        name=child.name,
+                        path=rel_path,
+                        kind="file",
+                        title=meta.get("title") or child.name,
+                        preview=meta.get("preview") or "",
+                        updated_at=meta.get("updated_at") or _stat_iso(child),
+                        source=meta.get("source") or "",
+                        topic_path=meta.get("topic_path") or "",
+                        entry_kind=meta.get("entry_kind") or "",
+                    )
+                )
+            return out_nodes
+
+        return _walk(root)
 
 
 tracking_file_memory_bridge = TrackingFileMemoryBridge()

@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     openviking_data_dir: str = "../data/aelin_memory"
     openviking_query_limit: int = 8
 
+    # LLM client runtime tuning.
+    llm_request_timeout_seconds: float = 90.0
+
+    # Media ingest (yt-dlp) network/auth tuning.
+    media_ingest_cookie_mode: str = "off"  # off | browser | file
+    media_ingest_cookie_browser: str = "chrome"  # chrome | edge | firefox | safari
+    media_ingest_cookie_browser_profile: str = ""  # e.g. "Default"
+    media_ingest_cookie_file: str = ""  # Netscape cookie file path
+    media_ingest_proxy_url: str = ""  # e.g. http://127.0.0.1:7890
+
     # Optional Fernet key used to encrypt stored secrets (OAuth tokens, IMAP passwords).
     # Generate one via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str | None = None

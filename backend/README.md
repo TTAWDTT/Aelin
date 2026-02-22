@@ -21,6 +21,12 @@ Optional env vars:
 - `MERCURYDESK_RSSHUB_BASE_URL` (RSSHub base URL, default `https://rsshub.app`)
 - `MERCURYDESK_MODELS_CATALOG_URL` (model catalog source, default `https://models.dev/api.json`)
 - `MERCURYDESK_MODELS_CATALOG_REFRESH_SECONDS` (catalog cache TTL, default `3600`)
+- `MERCURYDESK_LLM_REQUEST_TIMEOUT_SECONDS` (LLM request timeout, default `90`)
+- `MERCURYDESK_MEDIA_INGEST_COOKIE_MODE` (`off`/`browser`/`file`, default `off`)
+- `MERCURYDESK_MEDIA_INGEST_COOKIE_BROWSER` (when mode=`browser`, default `chrome`)
+- `MERCURYDESK_MEDIA_INGEST_COOKIE_BROWSER_PROFILE` (optional browser profile, e.g. `Default`)
+- `MERCURYDESK_MEDIA_INGEST_COOKIE_FILE` (when mode=`file`, Netscape cookie file path)
+- `MERCURYDESK_MEDIA_INGEST_PROXY_URL` (optional proxy for yt-dlp)
 - `MERCURYDESK_OAUTH_REDIRECT_BASE_URL` (OAuth callback base URL, default `http://127.0.0.1:8000`)
 - `MERCURYDESK_GMAIL_CLIENT_ID` / `MERCURYDESK_GMAIL_CLIENT_SECRET`
 - `MERCURYDESK_OUTLOOK_CLIENT_ID` / `MERCURYDESK_OUTLOOK_CLIENT_SECRET`
