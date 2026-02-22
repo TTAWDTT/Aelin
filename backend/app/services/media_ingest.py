@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -7,10 +8,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 from app.services.llm import LLMService
 from app.services.summarizer import RuleBasedSummarizer
@@ -31,6 +33,20 @@ _HASHTAG_RE = re.compile(r"(?:^|\s)#[A-Za-z0-9_\-\u4e00-\u9fff]+")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\u4e00-\u9fff]+")
 _PROMO_PHRASE_RE = re.compile(
     r"(?i)\b(subscribe|follow|like|share|click here|link in bio|learn more|download app|check out)\b"
+)
+_DOUYIN_NOISE_FRAGMENT_RE = re.compile(
+    r"(?i)(开启读屏标签|读屏标签已关闭|下载抖音|京ICP备|公网安备|版权所有|反馈|举报|隐私|用户协议|营业执照|广告投放|抖音精选|推荐|关注|朋友|直播|放映厅|小游戏)"
+)
+_DOUYIN_AUTH_COOKIE_NAMES = {
+    "sessionid",
+    "sessionid_ss",
+    "sid_tt",
+    "sid_guard",
+}
+_CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
 )
 
 _PLATFORM_RULES: list[tuple[str, tuple[str, ...]]] = [
@@ -93,6 +109,34 @@ class MediaIngestService:
         self._cookie_browser_profile = str(getattr(settings, "media_ingest_cookie_browser_profile", "") or "").strip()
         self._cookie_file = str(getattr(settings, "media_ingest_cookie_file", "") or "").strip()
         self._proxy_url = str(getattr(settings, "media_ingest_proxy_url", "") or "").strip()
+        self._douyin_auto_login_enabled = bool(
+            getattr(settings, "media_ingest_douyin_auto_login_enabled", True)
+        )
+        raw_douyin_profile = str(
+            getattr(settings, "media_ingest_douyin_browser_profile_dir", "./browser_data/douyin_media")
+            or "./browser_data/douyin_media"
+        ).strip()
+        self._douyin_browser_profile_arg = raw_douyin_profile.replace("\\", "/")
+        self._douyin_browser_profile_dir = self._resolve_runtime_path(raw_douyin_profile)
+        self._douyin_cookie_file = self._douyin_browser_profile_dir / "douyin.cookies.txt"
+        self._douyin_login_url = str(
+            getattr(settings, "media_ingest_douyin_login_url", "https://www.douyin.com/")
+            or "https://www.douyin.com/"
+        ).strip()
+        self._douyin_asr_enabled = bool(
+            getattr(settings, "media_ingest_douyin_asr_enabled", True)
+        )
+        self._douyin_asr_model = str(
+            getattr(settings, "media_ingest_douyin_asr_model", "whisper-1") or "whisper-1"
+        ).strip()
+        self._douyin_asr_max_audio_seconds = max(
+            30,
+            min(360, int(getattr(settings, "media_ingest_douyin_asr_max_audio_seconds", 120) or 120)),
+        )
+        self._douyin_asr_timeout_seconds = max(
+            20,
+            min(300, int(getattr(settings, "media_ingest_douyin_asr_timeout_seconds", 80) or 80)),
+        )
 
     def ingest(
         self,
@@ -116,15 +160,23 @@ class MediaIngestService:
             raise MediaIngestError("tool_missing", "未检测到 yt-dlp，请先安装后重试")
 
         language_preferences = self._normalize_languages(languages)
-        metadata = self._fetch_metadata(ytdlp_cmd=ytdlp_cmd, url=canonical_url)
+        metadata = self._fetch_metadata(ytdlp_cmd=ytdlp_cmd, url=canonical_url, platform=platform)
         title = str(metadata.get("title") or "").strip()[:220] or f"{platform} content"
         description = str(metadata.get("description") or "").strip()
+        prefer_platform_text = (
+            platform == "douyin" and str(metadata.get("_aelin_extractor") or "") == "playwright_fallback"
+        )
 
         extracted_text, source_type, source_language = self._extract_best_text(
             ytdlp_cmd=ytdlp_cmd,
             url=canonical_url,
             description=description,
             language_preferences=language_preferences,
+            platform=platform,
+            prefer_platform_text=prefer_platform_text,
+            video_url=str(metadata.get("_aelin_video_url") or ""),
+            service=service,
+            provider=provider,
         )
 
         if source_type.startswith("subtitle") and len(extracted_text) < self._subtitle_min_chars:
@@ -151,6 +203,10 @@ class MediaIngestService:
         limitations = ["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"]
         if source_type == "description":
             limitations.append("当前未提取到字幕，改用描述文本生成，置信度较低。")
+        if source_type == "douyin_api":
+            limitations.append("当前基于抖音页面/API抓取文本生成，非官方字幕逐字稿。")
+        if source_type == "subtitle_asr":
+            limitations.append("当前字幕由 ASR 转写生成，可能存在听写误差。")
         if source_type == "subtitle_auto":
             limitations.append("当前使用自动字幕，可能存在识别误差。")
 
@@ -263,6 +319,13 @@ class MediaIngestService:
                 return platform
         return "unsupported"
 
+    def _resolve_runtime_path(self, raw: str) -> Path:
+        path = Path(str(raw or "").strip() or ".").expanduser()
+        if path.is_absolute():
+            return path
+        backend_dir = Path(__file__).resolve().parents[2]
+        return (backend_dir / path).resolve()
+
     def _normalize_url(self, url: str) -> str:
         raw = str(url or "").strip()
         if not raw:
@@ -336,13 +399,26 @@ class MediaIngestService:
         return (
             "could not copy chrome cookie database" in text
             or "could not find edge cookies database" in text
+            or "could not find chromium cookies database" in text
             or "could not extract cookies from browser" in text
         )
 
-    def _build_network_args(self) -> list[str]:
+    def _build_network_args(self, *, platform: str = "") -> list[str]:
         out: list[str] = []
+        platform_norm = str(platform or "").strip().lower()
         mode = self._cookie_mode
-        if mode == "browser" and self._cookie_browser:
+        use_douyin_profile = (
+            platform_norm == "douyin"
+            and self._douyin_auto_login_enabled
+            and mode != "file"
+        )
+        if use_douyin_profile:
+            if self._douyin_cookie_file.exists():
+                out.extend(["--cookies", str(self._douyin_cookie_file)])
+            else:
+                self._douyin_browser_profile_dir.mkdir(parents=True, exist_ok=True)
+                out.extend(["--cookies-from-browser", f"chromium:{self._douyin_browser_profile_arg}"])
+        elif mode == "browser" and self._cookie_browser:
             browser_token = self._cookie_browser
             if self._cookie_browser_profile:
                 browser_token = f"{browser_token}:{self._cookie_browser_profile}"
@@ -361,7 +437,11 @@ class MediaIngestService:
                 "auth_required",
                 "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。",
             )
-        if "could not copy chrome cookie database" in lowered or "could not find edge cookies database" in lowered:
+        if (
+            "could not copy chrome cookie database" in lowered
+            or "could not find edge cookies database" in lowered
+            or "could not find chromium cookies database" in lowered
+        ):
             return (
                 "cookie_unavailable",
                 "当前配置为浏览器 cookies，但本机未能读取浏览器 cookie 库。请关闭浏览器后重试，或改用 cookie 文件模式。",
@@ -377,8 +457,153 @@ class MediaIngestService:
         snippet = joined[:220] if joined else "yt-dlp failed"
         return ("extract_failed", f"获取媒体信息失败: {snippet}")
 
-    def _fetch_metadata(self, *, ytdlp_cmd: list[str], url: str) -> dict[str, Any]:
-        network_args = self._build_network_args()
+    def build_douyin_auth_guidance(
+        self,
+        *,
+        wait_seconds: int = 180,
+        open_url: str = "",
+        force_relogin: bool = False,
+    ) -> dict[str, Any]:
+        safe_wait = max(30, min(900, int(wait_seconds or 180)))
+        login_url = open_url.strip() if open_url.strip() else self._douyin_login_url
+        return {
+            "platform": "douyin",
+            "supported": bool(self._douyin_auto_login_enabled),
+            "login_url": login_url,
+            "wait_seconds": safe_wait,
+            "force_relogin": bool(force_relogin),
+            "profile_dir": str(self._douyin_browser_profile_dir),
+            "cookie_file": str(self._douyin_cookie_file),
+            "next_step": "POST /api/v1/aelin/media/auth/douyin/guide 启动引导登录，再重试 /api/v1/aelin/media/ingest",
+        }
+
+    def run_douyin_login_guide(
+        self,
+        *,
+        wait_seconds: int = 180,
+        open_url: str = "",
+        force_relogin: bool = False,
+    ) -> dict[str, Any]:
+        if not self._douyin_auto_login_enabled:
+            raise MediaIngestError("auth_guide_disabled", "当前环境已关闭抖音自动登录引导。")
+
+        safe_wait = max(30, min(900, int(wait_seconds or 180)))
+        login_url = open_url.strip() if open_url.strip() else self._douyin_login_url
+        profile_dir = self._douyin_browser_profile_dir
+        if bool(force_relogin):
+            try:
+                if profile_dir.exists():
+                    shutil.rmtree(profile_dir, ignore_errors=True)
+            except Exception as exc:
+                _LOG.warning("failed to cleanup douyin profile dir: %s", exc)
+            try:
+                if self._douyin_cookie_file.exists():
+                    self._douyin_cookie_file.unlink(missing_ok=True)
+            except Exception as exc:
+                _LOG.warning("failed to cleanup douyin cookie file: %s", exc)
+        profile_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore
+        except Exception as exc:
+            raise MediaIngestError(
+                "auth_guide_unavailable",
+                "当前环境不可用 Playwright 浏览器，请先执行 `playwright install chromium`。",
+            ) from exc
+
+        cookie_count = 0
+        cookie_rows: list[dict[str, Any]] = []
+        success = False
+        message = "未检测到新的登录态，请确认是否已完成扫码/验证码登录。"
+
+        try:
+            with sync_playwright() as pw:
+                context = pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    headless=False,
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+                try:
+                    page = context.pages[0] if context.pages else context.new_page()
+                    page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
+                    deadline = time.time() + safe_wait
+                    while time.time() < deadline:
+                        cookies = context.cookies("https://www.douyin.com/")
+                        cookie_count = len(cookies)
+                        if cookies:
+                            cookie_rows = [dict(item) for item in cookies]
+                        if self._has_douyin_auth_cookie(cookie_rows):
+                            success = True
+                            message = "已检测到抖音登录态，接下来会自动重试抓取。"
+                            break
+                        time.sleep(2.0)
+                finally:
+                    context.close()
+        except MediaIngestError:
+            raise
+        except Exception as exc:
+            raise MediaIngestError("auth_guide_failed", f"抖音登录引导失败: {str(exc)[:140]}") from exc
+
+        cookie_file_written = False
+        if success and cookie_rows:
+            try:
+                self._write_netscape_cookie_file(path=self._douyin_cookie_file, cookies=cookie_rows)
+                cookie_file_written = self._douyin_cookie_file.exists()
+            except Exception as exc:
+                _LOG.warning("failed to write douyin cookie file: %s", exc)
+
+        return {
+            "ok": success,
+            "platform": "douyin",
+            "login_url": login_url,
+            "force_relogin": bool(force_relogin),
+            "profile_dir": str(profile_dir),
+            "cookie_file": str(self._douyin_cookie_file),
+            "cookie_file_written": bool(cookie_file_written),
+            "wait_seconds": safe_wait,
+            "cookie_count": cookie_count,
+            "message": message,
+        }
+
+    def _has_douyin_auth_cookie(self, cookies: list[dict[str, Any]]) -> bool:
+        if not cookies:
+            return False
+        names = {str(item.get("name") or "").strip().lower() for item in cookies}
+        return any(name in names for name in _DOUYIN_AUTH_COOKIE_NAMES)
+
+    def _write_netscape_cookie_file(self, *, path: Path, cookies: list[dict[str, Any]]) -> None:
+        lines = [
+            "# Netscape HTTP Cookie File",
+            "# Generated by Aelin Douyin login guide",
+        ]
+        for item in cookies:
+            domain = str(item.get("domain") or "").strip()
+            name = str(item.get("name") or "").strip()
+            value = str(item.get("value") or "")
+            if not domain or not name:
+                continue
+            include_subdomains = "TRUE" if domain.startswith(".") else "FALSE"
+            path_value = str(item.get("path") or "/").strip() or "/"
+            secure = "TRUE" if bool(item.get("secure")) else "FALSE"
+            expires_raw = item.get("expires")
+            try:
+                expires = int(float(expires_raw)) if expires_raw is not None else 0
+            except Exception:
+                expires = 0
+            lines.append(
+                f"{domain}\t{include_subdomains}\t{path_value}\t{secure}\t{expires}\t{name}\t{value}"
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _fetch_metadata(self, *, ytdlp_cmd: list[str], url: str, platform: str) -> dict[str, Any]:
+        if platform == "douyin":
+            fallback_metadata = self._fetch_douyin_metadata_with_playwright(url=url)
+            if fallback_metadata:
+                _LOG.info("douyin metadata fetched via playwright first")
+                return fallback_metadata
+
+        network_args = self._build_network_args(platform=platform)
         with tempfile.TemporaryDirectory(prefix="aelin-media-meta-") as tmpdir:
             proc = self._run_ytdlp(
                 ytdlp_cmd=ytdlp_cmd,
@@ -409,11 +634,21 @@ class MediaIngestService:
                 )
         if proc.returncode != 0:
             code, msg = self._classify_ytdlp_error(stderr=(proc.stderr or ""), stdout=(proc.stdout or ""))
+            if platform == "douyin":
+                fallback_metadata = self._fetch_douyin_metadata_with_playwright(url=url)
+                if fallback_metadata:
+                    _LOG.info("douyin metadata fallback applied: playwright")
+                    return fallback_metadata
             raise MediaIngestError(code, msg)
         payload = self._extract_first_json_object(proc.stdout or "")
         if not payload:
             payload = self._extract_first_json_object(proc.stderr or "")
         if not payload:
+            if platform == "douyin":
+                fallback_metadata = self._fetch_douyin_metadata_with_playwright(url=url)
+                if fallback_metadata:
+                    _LOG.info("douyin metadata fallback applied after empty yt-dlp payload")
+                    return fallback_metadata
             code, msg = self._classify_ytdlp_error(stderr=(proc.stderr or ""), stdout=(proc.stdout or ""))
             raise MediaIngestError(code, msg if msg else "未获取到可解析的媒体元数据")
         entries = payload.get("entries")
@@ -423,6 +658,361 @@ class MediaIngestService:
                 return first_entry
         return payload
 
+    def _fetch_douyin_metadata_with_playwright(self, *, url: str) -> dict[str, Any]:
+        try:
+            from playwright.sync_api import sync_playwright  # type: ignore
+        except Exception as exc:
+            _LOG.warning("playwright unavailable for douyin fallback: %s", exc)
+            return {}
+
+        profile_dir = self._douyin_browser_profile_dir
+        profile_dir.mkdir(parents=True, exist_ok=True)
+
+        aweme_detail: dict[str, Any] = {}
+        render_payload: dict[str, Any] = {}
+        page_title = ""
+        page_snapshot: dict[str, Any] = {}
+        comment_samples: list[str] = []
+        try:
+            with sync_playwright() as pw:
+                context = pw.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    headless=True,
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+                try:
+                    page = context.pages[0] if context.pages else context.new_page()
+
+                    def _on_response(response: Any) -> None:
+                        nonlocal aweme_detail, comment_samples
+                        response_url = str(getattr(response, "url", "") or "")
+                        try:
+                            payload = response.json()
+                        except Exception:
+                            return
+                        if not isinstance(payload, dict):
+                            return
+                        if "aweme/v1/web/aweme/detail" in response_url:
+                            detail = payload.get("aweme_detail")
+                            if isinstance(detail, dict):
+                                aweme_detail = detail
+                            return
+                        if "aweme/v1/web/comment/list" in response_url:
+                            rows = payload.get("comments")
+                            if not isinstance(rows, list):
+                                return
+                            seen = {item.lower() for item in comment_samples}
+                            for row in rows:
+                                if not isinstance(row, dict):
+                                    continue
+                                text = self._normalize_paragraph(str(row.get("text") or ""), max_len=140)
+                                if not text:
+                                    continue
+                                key = text.lower()
+                                if key in seen:
+                                    continue
+                                seen.add(key)
+                                comment_samples.append(text)
+                                if len(comment_samples) >= 20:
+                                    break
+
+                    page.on("response", _on_response)
+                    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                    page.wait_for_timeout(3500)
+                    page_title = str(page.title() or "").strip()
+                    try:
+                        snapshot = page.evaluate(
+                            """() => {
+                                const read = (selector, attr = 'content') => {
+                                    const node = document.querySelector(selector);
+                                    if (!node) return '';
+                                    const value = node.getAttribute(attr) || node.textContent || '';
+                                    return String(value || '').trim();
+                                };
+                                const bodyText = document.body ? (document.body.innerText || '') : '';
+                                return {
+                                    og_title: read("meta[property='og:title']"),
+                                    og_description: read("meta[property='og:description']"),
+                                    meta_description: read("meta[name='description']"),
+                                    body_preview: String(bodyText || '').slice(0, 2200),
+                                };
+                            }"""
+                        )
+                        if isinstance(snapshot, dict):
+                            page_snapshot = snapshot
+                    except Exception:
+                        page_snapshot = {}
+                    if not aweme_detail:
+                        render_payload = self._extract_douyin_render_payload(page=page)
+                    if not comment_samples:
+                        try:
+                            body_preview = self._normalize_paragraph(
+                                str(page.evaluate("() => (document.body && document.body.innerText) || ''") or ""),
+                                max_len=2200,
+                            )
+                        except Exception:
+                            body_preview = ""
+                        if body_preview:
+                            for line in body_preview.split(" "):
+                                snippet = self._normalize_paragraph(line, max_len=90)
+                                if snippet and snippet not in comment_samples:
+                                    comment_samples.append(snippet)
+                                if len(comment_samples) >= 12:
+                                    break
+                finally:
+                    context.close()
+        except Exception as exc:
+            _LOG.warning("douyin playwright fallback failed: %s", exc)
+            return {}
+
+        if not aweme_detail and render_payload:
+            aweme_detail = self._find_first_aweme_dict(render_payload) or {}
+
+        fallback = self._build_douyin_fallback_metadata(
+            url=url,
+            aweme_detail=aweme_detail,
+            page_title=page_title,
+            page_snapshot=page_snapshot,
+            comment_samples=comment_samples,
+        )
+        return fallback
+
+    def _extract_douyin_render_payload(self, *, page: Any) -> dict[str, Any]:
+        selectors = [
+            "script[id='RENDER_DATA']",
+            "script#__UNIVERSAL_DATA_FOR_REHYDRATION__",
+            "script#__NEXT_DATA__",
+        ]
+        for selector in selectors:
+            try:
+                node = page.query_selector(selector)
+            except Exception:
+                node = None
+            if node is None:
+                continue
+            try:
+                raw = str(node.inner_text() or "")
+            except Exception:
+                raw = ""
+            parsed = self._parse_maybe_encoded_json(raw)
+            if parsed:
+                return parsed
+        return {}
+
+    def _parse_maybe_encoded_json(self, raw: str) -> dict[str, Any]:
+        text = str(raw or "").strip()
+        if not text:
+            return {}
+        decoded = html.unescape(text)
+        candidates = [decoded]
+        if "%" in decoded:
+            try:
+                unquoted = unquote(decoded)
+            except Exception:
+                unquoted = decoded
+            if unquoted != decoded:
+                candidates.insert(0, unquoted)
+        for item in candidates:
+            snippet = str(item or "").strip()
+            if not snippet:
+                continue
+            try:
+                parsed = json.loads(snippet)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                parsed = self._extract_first_json_object(snippet)
+                if parsed:
+                    return parsed
+        return {}
+
+    def _find_first_aweme_dict(self, payload: Any) -> dict[str, Any] | None:
+        if isinstance(payload, dict):
+            if "aweme_id" in payload and any(
+                key in payload for key in ("desc", "author", "statistics", "video")
+            ):
+                return payload
+            for key in ("aweme_detail", "awemeInfo", "aweme_info", "aweme"):
+                node = payload.get(key)
+                if isinstance(node, (dict, list)):
+                    found = self._find_first_aweme_dict(node)
+                    if found:
+                        return found
+            for node in payload.values():
+                if isinstance(node, (dict, list)):
+                    found = self._find_first_aweme_dict(node)
+                    if found:
+                        return found
+            return None
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, (dict, list)):
+                    found = self._find_first_aweme_dict(item)
+                    if found:
+                        return found
+        return None
+
+    def _build_douyin_fallback_metadata(
+        self,
+        *,
+        url: str,
+        aweme_detail: dict[str, Any],
+        page_title: str,
+        page_snapshot: dict[str, Any],
+        comment_samples: list[str],
+    ) -> dict[str, Any]:
+        title = self._normalize_paragraph(str(aweme_detail.get("desc") or ""), max_len=220)
+        if not title and isinstance(page_snapshot, dict):
+            title = self._normalize_paragraph(str(page_snapshot.get("og_title") or ""), max_len=220)
+        if not title and page_title:
+            title = self._normalize_paragraph(page_title, max_len=220)
+        if not title:
+            title = "Douyin content"
+
+        description_parts: list[str] = []
+        if aweme_detail:
+            desc = self._normalize_paragraph(str(aweme_detail.get("desc") or ""), max_len=900)
+            if desc:
+                description_parts.append(f"内容描述：{desc}")
+
+            author = aweme_detail.get("author")
+            if isinstance(author, dict):
+                nickname = self._normalize_paragraph(str(author.get("nickname") or ""), max_len=60)
+                signature = self._normalize_paragraph(str(author.get("signature") or ""), max_len=160)
+                if nickname or signature:
+                    description_parts.append(f"作者信息：昵称={nickname or 'unknown'}；简介={signature or 'unknown'}")
+
+            stats = aweme_detail.get("statistics")
+            if isinstance(stats, dict):
+                stat_bits: list[str] = []
+                for key, label in (
+                    ("digg_count", "点赞"),
+                    ("comment_count", "评论"),
+                    ("share_count", "分享"),
+                    ("collect_count", "收藏"),
+                ):
+                    value = self._format_social_count(stats.get(key))
+                    if value:
+                        stat_bits.append(f"{label}{value}")
+                if stat_bits:
+                    description_parts.append("互动数据：" + "，".join(stat_bits))
+
+            text_extra = aweme_detail.get("text_extra")
+            if isinstance(text_extra, list):
+                tags: list[str] = []
+                for item in text_extra:
+                    if not isinstance(item, dict):
+                        continue
+                    tag = str(item.get("hashtag_name") or "").strip()
+                    if tag and tag not in tags:
+                        tags.append(tag)
+                    if len(tags) >= 8:
+                        break
+                if tags:
+                    description_parts.append("话题标签：" + "、".join(tags))
+
+        if isinstance(page_snapshot, dict):
+            for key, label, max_len in (
+                ("og_description", "页面摘要", 420),
+                ("meta_description", "页面描述", 420),
+                ("body_preview", "页面正文片段", 860),
+            ):
+                raw_value = str(page_snapshot.get(key) or "")
+                if key == "body_preview":
+                    raw_value = self._sanitize_douyin_body_preview(raw_value)
+                value = self._normalize_paragraph(raw_value, max_len=max_len)
+                if value:
+                    description_parts.append(f"{label}：{value}")
+
+        if page_title:
+            page_title_clean = self._normalize_paragraph(page_title, max_len=220)
+            if page_title_clean and page_title_clean not in description_parts:
+                description_parts.append(f"页面标题：{page_title_clean}")
+        if comment_samples:
+            comment_line = "；".join(comment_samples[:6])
+            comment_line = self._normalize_paragraph(comment_line, max_len=600)
+            if comment_line:
+                description_parts.append(f"评论/弹幕摘录：{comment_line}")
+
+        description_parts.append(f"来源链接：{url}")
+        description = self._sanitize_description_text("\n".join(description_parts))
+        if len(description) < self._description_min_chars:
+            return {}
+        video_url = self._extract_douyin_video_url(aweme_detail)
+        return {
+            "title": title,
+            "description": description,
+            "_aelin_extractor": "playwright_fallback",
+            "_aelin_video_url": video_url,
+        }
+
+    def _format_social_count(self, raw: Any) -> str:
+        try:
+            value = int(float(raw))
+        except Exception:
+            return ""
+        if value < 0:
+            return ""
+        if value >= 100000000:
+            return f"{value / 100000000:.1f}亿"
+        if value >= 10000:
+            return f"{value / 10000:.1f}万"
+        return str(value)
+
+    def _extract_douyin_video_url(self, aweme_detail: dict[str, Any]) -> str:
+        if not isinstance(aweme_detail, dict):
+            return ""
+        video = aweme_detail.get("video")
+        if not isinstance(video, dict):
+            return ""
+        for key in ("play_addr", "play_addr_h264", "download_addr"):
+            node = video.get(key)
+            if not isinstance(node, dict):
+                continue
+            url_list = node.get("url_list")
+            if isinstance(url_list, list):
+                for item in url_list:
+                    url = str(item or "").strip()
+                    if url.startswith("http"):
+                        return url
+        return ""
+
+    def _sanitize_douyin_body_preview(self, text: str) -> str:
+        raw = self._normalize_text(text).replace("\n", " ")
+        if not raw:
+            return ""
+        segments = re.split(r"[。！？!?；;\n]+|\s{2,}", raw)
+        kept: list[str] = []
+        seen: set[str] = set()
+        total_len = 0
+        for segment in segments:
+            denoised = _DOUYIN_NOISE_FRAGMENT_RE.sub(" ", str(segment or ""))
+            cleaned = self._normalize_paragraph(denoised, max_len=140)
+            if not cleaned:
+                continue
+            lowered = cleaned.lower()
+            if lowered in seen:
+                continue
+            if self._is_douyin_noise_fragment(cleaned):
+                continue
+            seen.add(lowered)
+            kept.append(cleaned)
+            total_len += len(cleaned)
+            if total_len >= 760 or len(kept) >= 8:
+                break
+        return "。".join(kept)
+
+    def _is_douyin_noise_fragment(self, text: str) -> bool:
+        snippet = self._normalize_paragraph(text, max_len=160)
+        if not snippet:
+            return True
+        if _DOUYIN_NOISE_FRAGMENT_RE.search(snippet):
+            return True
+        digits = sum(ch.isdigit() for ch in snippet)
+        if digits > 0 and (digits / max(1, len(snippet))) > 0.35:
+            return True
+        return False
+
     def _extract_best_text(
         self,
         *,
@@ -430,7 +1020,23 @@ class MediaIngestService:
         url: str,
         description: str,
         language_preferences: list[str],
+        platform: str,
+        prefer_platform_text: bool = False,
+        video_url: str = "",
+        service: LLMService | None = None,
+        provider: str = "rule_based",
     ) -> tuple[str, str, str]:
+        fallback_desc = self._sanitize_description_text(description)
+        if prefer_platform_text and len(fallback_desc) >= self._description_min_chars:
+            asr_text = self._transcribe_douyin_audio(
+                video_url=video_url,
+                service=service,
+                provider=provider,
+            )
+            if len(asr_text) >= self._subtitle_min_chars:
+                return asr_text, "subtitle_asr", "zh"
+            return fallback_desc, "douyin_api", "zh"
+
         subtitle_lang_expr = ",".join(language_preferences)
 
         manual_text, manual_lang = self._extract_subtitles(
@@ -439,6 +1045,7 @@ class MediaIngestService:
             subtitle_lang_expr=subtitle_lang_expr,
             auto_sub=False,
             language_preferences=language_preferences,
+            platform=platform,
         )
         if manual_text:
             return manual_text, "subtitle_manual", manual_lang
@@ -449,14 +1056,84 @@ class MediaIngestService:
             subtitle_lang_expr=subtitle_lang_expr,
             auto_sub=True,
             language_preferences=language_preferences,
+            platform=platform,
         )
         if auto_text:
             return auto_text, "subtitle_auto", auto_lang
 
-        fallback_desc = self._sanitize_description_text(description)
         if len(fallback_desc) >= self._description_min_chars:
             return fallback_desc, "description", "unknown"
         raise MediaIngestError("no_extractable_content", "未提取到可用字幕或足够描述文本")
+
+    def _transcribe_douyin_audio(
+        self,
+        *,
+        video_url: str,
+        service: LLMService | None,
+        provider: str,
+    ) -> str:
+        if not self._douyin_asr_enabled:
+            return ""
+        if provider == "rule_based" or service is None or not service.is_configured():
+            return ""
+        client = getattr(service, "client", None)
+        if client is None:
+            return ""
+        source_url = str(video_url or "").strip()
+        if not source_url.startswith("http"):
+            return ""
+        if shutil.which("ffmpeg") is None:
+            _LOG.warning("douyin asr skipped: ffmpeg not found")
+            return ""
+
+        with tempfile.TemporaryDirectory(prefix="aelin-douyin-asr-") as tmpdir:
+            audio_path = Path(tmpdir) / "douyin_audio.mp3"
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-headers",
+                f"User-Agent: {_CHROME_UA}\r\nReferer: https://www.douyin.com/\r\n",
+                "-i",
+                source_url,
+                "-t",
+                str(self._douyin_asr_max_audio_seconds),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-f",
+                "mp3",
+                str(audio_path),
+            ]
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self._douyin_asr_timeout_seconds,
+                    encoding="utf-8",
+                    errors="ignore",
+                )
+            except Exception as exc:
+                _LOG.warning("douyin asr ffmpeg failed: %s", exc)
+                return ""
+            if proc.returncode != 0 or not audio_path.exists() or audio_path.stat().st_size < 4096:
+                return ""
+            try:
+                with audio_path.open("rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        model=self._douyin_asr_model,
+                        file=audio_file,
+                        language="zh",
+                    )
+            except Exception as exc:
+                _LOG.warning("douyin asr transcription failed: %s", exc)
+                return ""
+        text = self._normalize_text(str(getattr(transcript, "text", "") or ""))
+        return text[: self._max_model_input_chars]
 
     def _extract_subtitles(
         self,
@@ -466,8 +1143,9 @@ class MediaIngestService:
         subtitle_lang_expr: str,
         auto_sub: bool,
         language_preferences: list[str],
+        platform: str,
     ) -> tuple[str, str]:
-        network_args = self._build_network_args()
+        network_args = self._build_network_args(platform=platform)
         with tempfile.TemporaryDirectory(prefix="aelin-media-sub-") as tmpdir:
             workdir = Path(tmpdir)
             args = [
@@ -482,7 +1160,13 @@ class MediaIngestService:
                 "vtt",
             ]
             args.append("--write-auto-subs" if auto_sub else "--write-subs")
-            proc = self._run_ytdlp(ytdlp_cmd=ytdlp_cmd, args=args, url=url, cwd=workdir)
+            proc = self._run_ytdlp(
+                ytdlp_cmd=ytdlp_cmd,
+                args=args,
+                url=url,
+                cwd=workdir,
+                network_args=network_args,
+            )
             if proc.returncode != 0 and network_args and self._is_cookie_bootstrap_error(proc.stderr or "", proc.stdout or ""):
                 proc = self._run_ytdlp(
                     ytdlp_cmd=ytdlp_cmd,
@@ -637,7 +1321,13 @@ class MediaIngestService:
         evidence = sentences[4:7] if len(sentences) > 4 else key_points[:2]
         actions = ["如需更高准确度，请补充人工字幕或原文稿。"]
         reason = f"fallback_{source_type}_{source_language}"
-        confidence = 0.74 if source_type == "subtitle_manual" else (0.65 if source_type == "subtitle_auto" else 0.46)
+        confidence = 0.46
+        if source_type == "subtitle_manual":
+            confidence = 0.74
+        elif source_type == "subtitle_auto":
+            confidence = 0.65
+        elif source_type == "douyin_api":
+            confidence = 0.68
         information_note = self._compose_information_note(
             title=title[:160],
             overview=overview,
@@ -662,6 +1352,8 @@ class MediaIngestService:
             "subtitle_manual": 0.82,
             "subtitle_auto": 0.72,
             "description": 0.5,
+            "douyin_api": 0.74,
+            "subtitle_asr": 0.7,
         }.get(source_type, 0.5)
         try:
             parsed = float(model_score)
@@ -672,6 +1364,10 @@ class MediaIngestService:
             value = min(value, source_base)
         if source_type == "description":
             value = min(value, 0.54)
+        if source_type == "douyin_api":
+            value = min(value, 0.78)
+        if source_type == "subtitle_asr":
+            value = min(value, 0.76)
         return round(max(0.0, min(1.0, value)), 3)
 
     def _render_summary_text(
@@ -906,6 +1602,8 @@ class MediaIngestService:
             "subtitle_manual": 0.42,
             "subtitle_auto": 0.34,
             "description": 0.18,
+            "douyin_api": 0.29,
+            "subtitle_asr": 0.32,
         }.get(source_type, 0.2)
         score = source_base
         score += min(0.18, text_len / 1800.0 * 0.18)
@@ -962,6 +1660,10 @@ class MediaIngestService:
             min_quality = self._subtitle_manual_min_quality
         elif source_type == "description":
             min_quality = self._description_min_quality
+        elif source_type == "douyin_api":
+            min_quality = 0.56
+        elif source_type == "subtitle_asr":
+            min_quality = 0.52
 
         critical_reasons: list[tuple[str, str]] = []
         if information_len < 40:
@@ -976,6 +1678,10 @@ class MediaIngestService:
             critical_reasons.append(("description_too_short", "描述文本过短，信息密度不足"))
         if source_type == "description" and len(evidence) < 1:
             critical_reasons.append(("description_missing_evidence", "缺少可引用证据片段"))
+        if source_type == "douyin_api" and text_len < 220:
+            critical_reasons.append(("douyin_api_text_short", "抖音页面文本过短，信息密度不足"))
+        if source_type == "douyin_api" and len(evidence) < 1:
+            critical_reasons.append(("douyin_api_evidence_sparse", "抖音抓取文本缺少可引用证据"))
         if url_ratio > 0.28:
             critical_reasons.append(("url_density_high", "文本以链接为主，缺乏可用语义"))
         if bounded_score < min_quality:

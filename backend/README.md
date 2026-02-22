@@ -27,6 +27,13 @@ Optional env vars:
 - `MERCURYDESK_MEDIA_INGEST_COOKIE_BROWSER_PROFILE` (optional browser profile, e.g. `Default`)
 - `MERCURYDESK_MEDIA_INGEST_COOKIE_FILE` (when mode=`file`, Netscape cookie file path)
 - `MERCURYDESK_MEDIA_INGEST_PROXY_URL` (optional proxy for yt-dlp)
+- `MERCURYDESK_MEDIA_INGEST_DOUYIN_AUTO_LOGIN_ENABLED` (enable Douyin auto login guidance, default `true`)
+- `MERCURYDESK_MEDIA_INGEST_DOUYIN_BROWSER_PROFILE_DIR` (persistent Chromium profile dir for Douyin, default `./browser_data/douyin_media`)
+- `MERCURYDESK_MEDIA_INGEST_DOUYIN_LOGIN_URL` (login page opened by guidance flow, default `https://www.douyin.com/`)
+- `MERCURYDESK_MEDIA_INGEST_DOUYIN_ASR_ENABLED` (enable Douyin audio ASR fallback, default `true`)
+- `MERCURYDESK_MEDIA_INGEST_DOUYIN_ASR_MODEL` (audio transcription model, default `whisper-1`)
+- `MERCURYDESK_MEDIA_INGEST_DOUYIN_ASR_MAX_AUDIO_SECONDS` (max audio segment length for ASR, default `120`)
+- `MERCURYDESK_MEDIA_INGEST_DOUYIN_ASR_TIMEOUT_SECONDS` (ffmpeg extraction timeout for ASR, default `80`)
 - `MERCURYDESK_OAUTH_REDIRECT_BASE_URL` (OAuth callback base URL, default `http://127.0.0.1:8000`)
 - `MERCURYDESK_GMAIL_CLIENT_ID` / `MERCURYDESK_GMAIL_CLIENT_SECRET`
 - `MERCURYDESK_OUTLOOK_CLIENT_ID` / `MERCURYDESK_OUTLOOK_CLIENT_SECRET`

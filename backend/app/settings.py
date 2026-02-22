@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     media_ingest_cookie_browser_profile: str = ""  # e.g. "Default"
     media_ingest_cookie_file: str = ""  # Netscape cookie file path
     media_ingest_proxy_url: str = ""  # e.g. http://127.0.0.1:7890
+    media_ingest_douyin_auto_login_enabled: bool = True
+    media_ingest_douyin_browser_profile_dir: str = "./browser_data/douyin_media"
+    media_ingest_douyin_login_url: str = "https://www.douyin.com/"
+    media_ingest_douyin_asr_enabled: bool = True
+    media_ingest_douyin_asr_model: str = "whisper-1"
+    media_ingest_douyin_asr_max_audio_seconds: int = 120
+    media_ingest_douyin_asr_timeout_seconds: int = 80
 
     # Optional Fernet key used to encrypt stored secrets (OAuth tokens, IMAP passwords).
     # Generate one via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

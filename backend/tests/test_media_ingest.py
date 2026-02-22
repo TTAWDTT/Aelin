@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -120,6 +121,131 @@ def test_media_ingest_endpoint_returns_error_contract(monkeypatch):
     assert resp.status_code == 400, resp.text
     detail = resp.json().get("detail") or {}
     assert detail.get("code") == "unsupported_platform"
+
+
+def test_media_ingest_douyin_auto_login_guide_retry_success(monkeypatch, tmp_path: Path):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    state = {"calls": 0}
+
+    def _ingest_mock(**kwargs):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise MediaIngestError("auth_required", "目标平台要求新鲜 cookies")
+        return MediaIngestOutput(
+            platform="douyin",
+            url="https://www.douyin.com/video/7110472242345069824",
+            canonical_url="https://www.douyin.com/video/7110472242345069824",
+            title="Douyin Demo",
+            source_type="subtitle_auto",
+            source_language="zh",
+            summary="自动引导后抓取成功。",
+            insight_title="Douyin Demo 摘要",
+            insight_markdown="## 概要\n\n自动引导后抓取成功。",
+            confidence=0.73,
+            reason="auto_guide_retry",
+            limitations=["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"],
+            summary_overview="自动引导后抓取成功。",
+            information_note="记录了可复用信息。",
+        )
+
+    monkeypatch.setattr(aelin_router._media_ingest, "ingest", _ingest_mock)
+    monkeypatch.setattr(
+        aelin_router._media_ingest,
+        "run_douyin_login_guide",
+        lambda **kwargs: {
+            "ok": True,
+            "platform": "douyin",
+            "login_url": "https://www.douyin.com/",
+            "profile_dir": str(tmp_path / "douyin_media"),
+            "wait_seconds": 60,
+            "cookie_count": 5,
+            "message": "已检测到抖音登录态",
+        },
+    )
+    monkeypatch.setattr(
+        aelin_router._tracking_file_memory,
+        "append_insight",
+        lambda **kwargs: tmp_path / "douyin-insight.md",
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/media/ingest",
+        json={
+            "url": "https://www.douyin.com/video/7110472242345069824",
+            "workspace": "default",
+            "auto_login_guide": True,
+            "login_wait_seconds": 60,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("platform") == "douyin"
+    assert "自动完成抖音登录引导并重试" in str(data.get("message") or "")
+    assert state["calls"] == 2
+
+
+def test_media_ingest_douyin_auth_error_contains_guide(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        aelin_router._media_ingest,
+        "ingest",
+        lambda **kwargs: (_ for _ in ()).throw(MediaIngestError("auth_required", "需要 cookies")),
+    )
+    monkeypatch.setattr(
+        aelin_router._media_ingest,
+        "build_douyin_auth_guidance",
+        lambda **kwargs: {"platform": "douyin", "next_step": "POST /api/v1/aelin/media/auth/douyin/guide"},
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/media/ingest",
+        json={
+            "url": "https://www.douyin.com/video/7110472242345069824",
+            "workspace": "default",
+            "auto_login_guide": False,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json().get("detail") or {}
+    assert detail.get("code") == "auth_required"
+    guide = detail.get("guide") or {}
+    assert guide.get("platform") == "douyin"
+
+
+def test_media_auth_douyin_guide_endpoint(monkeypatch, tmp_path: Path):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        aelin_router._media_ingest,
+        "run_douyin_login_guide",
+        lambda **kwargs: {
+            "ok": True,
+            "platform": "douyin",
+            "login_url": "https://www.douyin.com/",
+            "profile_dir": str(tmp_path / "douyin_media"),
+            "wait_seconds": 90,
+            "cookie_count": 4,
+            "message": "已检测到抖音登录态",
+        },
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/media/auth/douyin/guide",
+        json={"wait_seconds": 90},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("status") == "ready"
+    assert data.get("platform") == "douyin"
+    assert int(data.get("cookie_count") or 0) >= 1
 
 
 def test_media_ingest_endpoint_quality_gate_skips_diary_write(monkeypatch, tmp_path: Path):
@@ -298,6 +424,129 @@ def test_media_ingest_detects_cookie_bootstrap_error():
         "ERROR: Could not copy Chrome cookie database.",
         "",
     )
+
+
+def test_media_ingest_fetch_metadata_uses_douyin_playwright_fallback(monkeypatch):
+    svc = MediaIngestService()
+    monkeypatch.setattr(
+        svc,
+        "_run_ytdlp",
+        lambda **kwargs: SimpleNamespace(
+            returncode=1,
+            stderr="ERROR: [Douyin] 7110472242345069824: Fresh cookies (not necessarily logged in) are needed",
+            stdout="null\n",
+        ),
+    )
+    monkeypatch.setattr(
+        svc,
+        "_fetch_douyin_metadata_with_playwright",
+        lambda **kwargs: {"title": "Douyin fallback", "description": "x" * 160},
+    )
+
+    meta = svc._fetch_metadata(
+        ytdlp_cmd=["yt-dlp"],
+        url="https://www.douyin.com/video/7110472242345069824",
+        platform="douyin",
+    )
+    assert meta.get("title") == "Douyin fallback"
+
+
+def test_media_ingest_fetch_metadata_douyin_fallback_failure_keeps_auth_error(monkeypatch):
+    svc = MediaIngestService()
+    monkeypatch.setattr(
+        svc,
+        "_run_ytdlp",
+        lambda **kwargs: SimpleNamespace(
+            returncode=1,
+            stderr="ERROR: [Douyin] 7110472242345069824: Fresh cookies (not necessarily logged in) are needed",
+            stdout="null\n",
+        ),
+    )
+    monkeypatch.setattr(svc, "_fetch_douyin_metadata_with_playwright", lambda **kwargs: {})
+
+    with pytest.raises(MediaIngestError) as exc:
+        svc._fetch_metadata(
+            ytdlp_cmd=["yt-dlp"],
+            url="https://www.douyin.com/video/7110472242345069824",
+            platform="douyin",
+        )
+    assert exc.value.code == "auth_required"
+
+
+def test_media_ingest_extract_best_text_prefers_douyin_api(monkeypatch):
+    svc = MediaIngestService()
+    monkeypatch.setattr(
+        svc,
+        "_extract_subtitles",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not call subtitles")),
+    )
+    text, source_type, language = svc._extract_best_text(
+        ytdlp_cmd=["yt-dlp"],
+        url="https://www.douyin.com/video/7110472242345069824",
+        description=(
+            "内容描述：Aelin 正在测试抖音抓取链路，验证 Playwright 拦截返回的 aweme 信息。"
+            "页面摘要：这里包含可复用信息、作者信息、互动数据与评论摘录，可作为后续日记素材。"
+        ),
+        language_preferences=["zh"],
+        platform="douyin",
+        prefer_platform_text=True,
+    )
+    assert source_type == "douyin_api"
+    assert language == "zh"
+    assert "抖音抓取链路" in text
+
+
+def test_media_ingest_quality_gate_rejects_short_douyin_api_text():
+    svc = MediaIngestService()
+    quality = svc._assess_summary_quality(
+        source_type="douyin_api",
+        extracted_text="短文本",
+        overview="短",
+        information_note="短",
+        key_points=[],
+        evidence=[],
+        actions=[],
+        confidence=0.2,
+    )
+    assert quality["usable"] is False
+    assert quality["needs_review"] is True
+
+
+def test_media_ingest_extract_douyin_video_url():
+    svc = MediaIngestService()
+    url = svc._extract_douyin_video_url(
+        {
+            "video": {
+                "play_addr": {
+                    "url_list": ["https://v3-dy.example.com/video.mp4"],
+                }
+            }
+        }
+    )
+    assert url == "https://v3-dy.example.com/video.mp4"
+
+
+def test_media_ingest_sanitize_douyin_body_preview_removes_noise():
+    svc = MediaIngestService()
+    text = (
+        "开启读屏标签 读屏标签已关闭 推荐 关注 朋友 下载抖音 "
+        "这条视频讲了清蒸鲈鱼的做法，先处理鱼再蒸八分钟。 "
+        "京ICP备16016397号-3"
+    )
+    cleaned = svc._sanitize_douyin_body_preview(text)
+    assert "开启读屏标签" not in cleaned
+    assert "京ICP备" not in cleaned
+    assert "清蒸鲈鱼" in cleaned
+
+
+def test_media_ingest_transcribe_douyin_audio_skips_without_config():
+    svc = MediaIngestService()
+    text = svc._transcribe_douyin_audio(
+        video_url="https://v3-dy.example.com/video.mp4",
+        service=None,
+        provider="rule_based",
+    )
+    assert text == ""
 
 
 def test_media_ingest_quality_gate_rejects_description_link_spam():
