@@ -18,6 +18,11 @@ const PET_WINDOW_SIZE = 108;
 const MAIN_ZOOM_MIN = 0.5;
 const MAIN_ZOOM_MAX = 2.0;
 const MAIN_ZOOM_STEP = 0.1;
+const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
 
 let mainWindow = null;
 let petWindow = null;
@@ -709,6 +714,7 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
     autoHideMenuBar: true,
     backgroundColor: "#111111",
     title: "Aelin",
+    icon: resolveTrayIconPath(),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
