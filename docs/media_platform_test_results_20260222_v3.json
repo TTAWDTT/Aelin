@@ -1,0 +1,303 @@
+{
+  "generated_at": "2026-02-22T07:34:39.114666+00:00",
+  "workspace": "platform-matrix-20260222-v3",
+  "target_email": "luoz061114@gmail.com",
+  "llm_provider": "openai",
+  "llm_configured": true,
+  "cookie_mode": "browser",
+  "browser_candidates": [
+    "chrome",
+    "edge"
+  ],
+  "results": [
+    {
+      "platform": "douyin",
+      "status": "failed",
+      "attempts": [
+        {
+          "url": "https://www.douyin.com/video/7110472242345069824",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:39.114666+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.douyin.com/video/7110472242345069824",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:40.595396+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://www.douyin.com/video/7569634992524333989",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:41.517921+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.douyin.com/video/7569634992524333989",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:42.509670+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://www.douyin.com/video/7064134889660771591",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:43.365125+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.douyin.com/video/7064134889660771591",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:44.333278+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        }
+      ]
+    },
+    {
+      "platform": "instagram",
+      "status": "failed",
+      "attempts": [
+        {
+          "url": "https://www.instagram.com/reel/CG7PQkGhA8J/",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:45.137999+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.instagram.com/reel/CG7PQkGhA8J/",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:46.098655+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://www.instagram.com/reel/DBElt2UIuUG/",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:46.917775+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.instagram.com/reel/DBElt2UIuUG/",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:47.903132+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://www.instagram.com/reel/Cw6i7x8N9aK/",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:48.771508+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.instagram.com/reel/Cw6i7x8N9aK/",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:49.732990+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        }
+      ]
+    },
+    {
+      "platform": "facebook",
+      "status": "failed",
+      "attempts": [
+        {
+          "url": "https://www.facebook.com/watch/?v=748748325625528",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:50.537021+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.facebook.com/watch/?v=748748325625528",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:51.473593+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://www.facebook.com/ValeurSuisse/videos/guided-wim-hof-method-breathing/748748325625528/",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:52.268557+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.facebook.com/ValeurSuisse/videos/guided-wim-hof-method-breathing/748748325625528/",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:53.156996+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://www.facebook.com/watch/?v=10153231379946729",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:53.916449+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://www.facebook.com/watch/?v=10153231379946729",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:54.825682+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        }
+      ]
+    },
+    {
+      "platform": "youku",
+      "status": "failed",
+      "attempts": [
+        {
+          "url": "https://v.youku.com/v_show/id_XMzA2NTQ1NDQ0.html",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:55.569721+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://v.youku.com/v_show/id_XMzA2NTQ1NDQ0.html",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:56.695552+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://v.youku.com/v_show/id_XODI3OTI3ODUy.html",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:57.676794+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://v.youku.com/v_show/id_XODI3OTI3ODUy.html",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:34:58.778853+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        },
+        {
+          "url": "https://v.youku.com/v_show/id_XNDc0MTY0NjQ4OA==.html",
+          "browser": "chrome",
+          "timestamp": "2026-02-22T07:34:59.736855+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more info\nERROR: Could not copy Chrome cookie database. See  https://github.com/yt-dlp/yt-dlp/issues/7271  for more inf"
+        },
+        {
+          "url": "https://v.youku.com/v_show/id_XNDc0MTY0NjQ4OA==.html",
+          "browser": "edge",
+          "timestamp": "2026-02-22T07:35:00.866115+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "获取媒体信息失败: ERROR: could not find edge cookies database in \"C:\\Users\\86153\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\""
+        }
+      ]
+    }
+  ],
+  "finished_at": "2026-02-22T07:35:01.815957+00:00"
+}

@@ -1,0 +1,95 @@
+{
+  "generated_at": "2026-02-22T11:57:02.565675+00:00",
+  "user_id": 1,
+  "chain": {
+    "request_status": 200,
+    "query": "NBA最近如何？请给我近况和重点信息。",
+    "answer_excerpt": "我先从你的长期追踪记忆里查到了与“NBA最近如何？请给我近况和重点信息。”相关的线索：\n- [web/snapshot] Tracking Snapshot | - version: 1 - fetch_status: ok - fetched_at: 2026-02-22T11:52:28.034246+00:00 - item_count: 8 ```json { \"items\": [ { \"fetch_mode\": \"http\", \"key\": \"https://v.qq | path=D:\\Github\\Aelin\\data\\aelin_memory\\users\\1\\workspaces\\default\\tracking\\web\\987d4980b50b0083\\snapshots\\2026-02-22T115228-034246-0000_v1_ok.md\n- [web/snapshot] Tracking Snapshot | - version: 1 - fetch_status: ok - fetched_at: 2026-02-22T11:50:38.925100+00:00 - item_count: 8 ```json { \"items\": [ { \"fetch_mode\": \"reader\", \"key\": \"https://du | path=D:\\Git",
+    "citations_count": 6,
+    "trace_local_search": {
+      "stage": "local_search",
+      "status": "skipped",
+      "detail": "local search skipped by route",
+      "count": 0,
+      "ts": 1771761422649
+    },
+    "trace_web_search": {
+      "stage": "web_search",
+      "status": "completed",
+      "detail": "web search finished; p=duckduckgo_lite:12; f=none:6,http:5,reader:1",
+      "count": 12,
+      "ts": 1771761422649
+    },
+    "trace_file_memory_search": {
+      "stage": "file_memory_search",
+      "status": "completed",
+      "detail": "file memory hits merged",
+      "count": 8,
+      "ts": 1771761435461
+    },
+    "trace_insight_write": {
+      "stage": "insight_write",
+      "status": "skipped",
+      "detail": "llm_not_configured",
+      "count": 0,
+      "ts": 1771761435469
+    },
+    "trace_chat_diary_write": {
+      "stage": "chat_diary_write",
+      "status": "completed",
+      "detail": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\1\\workspaces\\default\\diary\\与主人的聊天日记\\2026\\02\\22\\2026-02-22T115715-469417-0000_聊天纪要-NBA最近如何-请给我近况和重点信息.md",
+      "count": 1,
+      "ts": 1771761435473
+    }
+  },
+  "diary": {
+    "search_status": 200,
+    "search_total": 8,
+    "search_first_item": {
+      "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\1\\workspaces\\default\\tracking\\web\\987d4980b50b0083\\snapshots\\2026-02-22T115228-034246-0000_v1_ok.md",
+      "title": "Tracking Snapshot",
+      "preview": "- version: 1 - fetch_status: ok - fetched_at: 2026-02-22T11:52:28.034246+00:00 - item_count: 8 ```json { \"items\": [ { \"fetch_mode\": \"http\", \"key\": \"https://v.qq.com/x/cover/mzc002000o1zbf2/j41012w137h.html\", \"provider\": \"duckduckgo_lite\", \"snippet\": \"(()=>{var i=Object.defineProp",
+      "score": 11.4,
+      "updated_at": "2026-02-22T11:52:28.034246+00:00",
+      "canonical_id": "60c5e6dec41401f471f949a0972f03b7ae2a316f",
+      "target": "NBA 比赛",
+      "source": "web",
+      "kind": "snapshot",
+      "topic_path": "",
+      "entry_kind": ""
+    },
+    "tree_status": 200,
+    "tree_total_files": 23,
+    "tree_top_nodes": [
+      "与主人的聊天日记"
+    ],
+    "followup_status": 200,
+    "followup_query": "你在日记里关于NBA提到的可复用信息里，谁状态回升？一句话回答。",
+    "followup_answer_excerpt": "基于你最近的信号证据，和“你在日记里关于NBA提到的可复用信息里，谁状态回升？一句话回答。”最相关的线索是：\n- [Web] Nba战报 - 最新篮球赛事报道、比分统计与球员数据（nbazhanbao.com.cn，2026-02-22 11:57）\n- [Web] NBA最新资讯与战报 - 球员动态与交易传闻 | NBA Official Live（zh-nbaofficiallive.com，2026-02-22 11:57）\n- [Web] 虎扑nba - 最全的nba赛况更新，覆盖每场（zhx-nba-hupu.com，2026-02-22 11:57）\n- [Web] NBA|NBA直播|NBA比分|NBA官方授权视频直播网站_新浪竞技风暴_新浪网（sports.sina.com.cn，2026-02-22 11:57）\n\n当前优先关注：Nba战报 - 最新篮球赛事报道、比分统计与球员数据\n\n我也参考了你的长期记忆摘要。\n\n今日简报：今天你有 13 条未读消息；高价值更新 3 条；待跟进事项 0 项。 🙂",
+    "followup_citations_count": 6,
+    "followup_trace_file_memory": {
+      "stage": "file_memory_search",
+      "status": "completed",
+      "detail": "file memory hits merged",
+      "count": 8,
+      "ts": 1771761453757
+    }
+  },
+  "douyin": {
+    "url": "https://www.douyin.com/video/7110472242345069824",
+    "off_mode": {
+      "status_code": 422,
+      "detail": {
+        "code": "auth_required",
+        "message": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+      }
+    },
+    "browser_mode": {
+      "status_code": 422,
+      "detail": {
+        "code": "auth_required",
+        "message": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+      }
+    }
+  }
+}

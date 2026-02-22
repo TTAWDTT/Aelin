@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-02-22T11:59:05.798301+00:00",
+  "results": [
+    {
+      "query": "结合本地记忆和网络最新信息，给我一版NBA近况总结。",
+      "status_code": 200,
+      "local_status": "skipped",
+      "local_count": 0,
+      "web_status": "completed",
+      "web_count": 12,
+      "answer_excerpt": "我先从你的长期追踪记忆里查到了与“结合本地记忆和网络最新信息，给我一版NBA近况总结。”相关的线索：\n- [web/snapshot] Tracking Snapshot | - version: 1 - fetch_status: ok - fetched_at: 2026-02-22T11:52:28.034246+00:00 - item_count: 8 ```json { \"items\": [ { \"fetch_mode\": \"http\", \"key\": \"https://v.qq | path=D:\\G"
+    },
+    {
+      "query": "请同时参考你本地消息库与联网结果，告诉我NBA最近如何。",
+      "status_code": 200,
+      "local_status": "completed",
+      "local_count": 6,
+      "web_status": "completed",
+      "web_count": 12,
+      "answer_excerpt": "基于你最近的信号证据，和“请同时参考你本地消息库与联网结果，告诉我NBA最近如何。”最相关的线索是：\n- [X] NBA 本地线索 2：Curry 与勇士状态（Woj，2026-02-22 11:58）\n- [X] NBA 本地线索 0：Curry 与勇士状态（Woj，2026-02-22 11:58）\n- [Web] Nba官方篮球数据csv文件：详尽数据集助力篮球分析-csdn博客（blog.csdn.net，2026-02-22 11:58）\n- [Web] NBA比分直播|NBA文字直播|NBA今日战报_虎"
+    },
+    {
+      "query": "NBA最近如何？请用本地+联网并发检索后回答。",
+      "status_code": 200,
+      "local_status": "completed",
+      "local_count": 6,
+      "web_status": "completed",
+      "web_count": 12,
+      "answer_excerpt": "基于你最近的信号证据，和“NBA最近如何？请用本地+联网并发检索后回答。”最相关的线索是：\n- [Web] Nba中国官方网站 | 比分（china.nba.cn，2026-02-22 11:58）\n- [Web] NBA_百度体育 - Baidu（tiyu.baidu.com，2026-02-22 11:58）\n- [Web] NBA|NBA直播|NBA比分|NBA官方授权视频直播网站_新浪竞技风暴_新浪网（sports.sina.com.cn，2026-02-22 11:58）\n- [Web] NBA_手机新浪"
+    },
+    {
+      "query": "先看你的日记，再结合本地与网络两边的信息回答：NBA最近如何？",
+      "status_code": 200,
+      "local_status": "completed",
+      "local_count": 6,
+      "web_status": "failed",
+      "web_count": 0,
+      "answer_excerpt": "基于你最近的信号证据，和“先看你的日记，再结合本地与网络两边的信息回答：NBA最近如何？”最相关的线索是：\n- [Web] 虎扑nba - 最新战报与球队新闻，虎扑体育全网覆盖（hupu-app-on.com，2026-02-22 11:59）\n- [Web] 赛程｜腾讯体育 - 看nba足球网球赛车nfl（sports.qq.com，2026-02-22 11:59）\n- [Web] Nba Basketball | Tickets 2026 - Single Game Tickets（duckduckgo.co"
+    }
+  ]
+}

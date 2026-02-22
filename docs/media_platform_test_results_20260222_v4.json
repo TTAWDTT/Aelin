@@ -1,0 +1,223 @@
+{
+  "generated_at": "2026-02-22T07:36:24.313429+00:00",
+  "workspace": "platform-matrix-20260222-v4",
+  "target_email": "luoz061114@gmail.com",
+  "llm_provider": "openai",
+  "llm_configured": true,
+  "ytdlp_cmd": [
+    "yt-dlp"
+  ],
+  "results": [
+    {
+      "platform": "douyin",
+      "status": "failed",
+      "attempts": [
+        {
+          "url": "https://www.douyin.com/video/7110472242345069824",
+          "timestamp": "2026-02-22T07:36:24.313429+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+        },
+        {
+          "url": "https://www.douyin.com/video/7569634992524333989",
+          "timestamp": "2026-02-22T07:36:26.454908+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+        }
+      ]
+    },
+    {
+      "platform": "instagram",
+      "status": "passed",
+      "attempts": [
+        {
+          "url": "https://www.instagram.com/reel/CG7PQkGhA8J/",
+          "timestamp": "2026-02-22T07:36:28.698644+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+        },
+        {
+          "url": "https://www.instagram.com/reel/DBElt2UIuUG/",
+          "timestamp": "2026-02-22T07:36:34.151560+00:00",
+          "fetch_success": true,
+          "capture_success": true,
+          "agent_summary_success": true,
+          "diary_write_success": true,
+          "openviking_answer_success": true,
+          "fetch_instance": {
+            "title": "Video by dr_sulman_feroz",
+            "uploader": "Dr Sulman Feroz | Chiropractor",
+            "duration": 53.5,
+            "webpage_url": "https://www.instagram.com/reel/DBElt2UIuUG/"
+          },
+          "capture_instance": {
+            "source_type": "description",
+            "source_language": "unknown",
+            "text_head": "Benefits of walking #Walk #Lifestyle #Fitness #ForYou #Tips #Exercise #Motivation"
+          },
+          "agent_summary_instance": {
+            "answer_head": "我已读取并理解这个 instagram 链接的内容。\n\n该内容围绕步行的益处展开，关联生活方式、健身等领域，通过话题标签形式呈现，旨在传递运动相关贴士与激励。\n\n关键信息：\n- 步行具有多种益处\n\n来源类型：description（confidence=0.20）\n\n已写入 Aelinの日记，可作为后续 RAG 上下文使用。\n\n限制说明：\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前未提取到字幕，改用描述文本生成，置信度较低。",
+            "trace_stages": [
+              "media_ingest"
+            ],
+            "actions": [
+              "open_tracking",
+              "open_desk"
+            ]
+          },
+          "diary_instance": {
+            "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v4\\tracking\\instagram\\73d31e23decdec23\\insights\\2026-02-22T073719-008480-0000_步行的益处.md",
+            "diary_head": "# Tracking Insight\n\n- canonical_id: `0c1e9db1daf00b4a02c02037b1683e9cb8927f97`\n- target: Video by dr_sulman_feroz\n- source: instagram\n- kind: insight\n- created_at: 2026-02-22T07:37:19.008480+00:00\n- confidence: 0.20\n- query: https://www.instagram.com/reel/DBElt2UIuUG/\n- reason: 原文仅提及步行有益的主题及相关话题标签，未提供具体的益处内容、支撑证据或明确行动指引，信息详实度不足，因此置信度较低。\n\n## Title\n\n步行的益处\n\n## Insight\n\n## 概要\n\n该内容围绕步行的益处展开，关联生活方式、健身等领域，通过话题标签形式呈现，旨在传递运动相关贴士与激励。\n\n## 关键要点\n\n- 步行具有多种益处\n\n## 证据片段\n\n- (empty)\n\n## 行动建议\n\n- (empty)\n\n## 来源元信息\n\n- title: 步行的益处\n- platform: instagram\n- url: https://www.instagram.com/reel/DBElt2UIuUG/\n- source_type: description\n- source_language: unknown\n- confidence: 0.20\n\n## 限制说明\n\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前未提取到字幕，改用描述文本生成，置信度较低。"
+          },
+          "openviking_instance": {
+            "query": "仅根据我在Aelinの日记里的记录回答：Video by dr_sulman_feroz 这条内容讲了什么？",
+            "hit_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v4\\tracking\\instagram\\73d31e23decdec23\\insights\\2026-02-22T073719-008480-0000_步行的益处.md",
+            "hit_preview": "Tracking Insight - canonical_id: `0c1e9db1daf00b4a02c02037b1683e9cb8927f97` - target: Video by dr_sulman_feroz - source: instagram - kind: insight - created_at: 2026-02-22T07:37:19.008480+00:00 - confidence: 0.20 - query: https://www.instagram.com/reel/DBElt2UIuUG/ - reason: 原文仅提",
+            "answer_head": "根据你Aelinの日记里的记录，这条Video by dr_sulman_feroz的内容是关于步行的益处，来源为Instagram的insight。 🙂",
+            "trace_stages": [
+              "intent_lens",
+              "plan_critic",
+              "query_decomposer",
+              "main_agent",
+              "reply_agent",
+              "reply_dispatch",
+              "local_search",
+              "local_search_subagent_1",
+              "web_search",
+              "web_search_subagent_1",
+              "web_search_subagent_2",
+              "web_search_subagent_3",
+              "web_search_subagent_4",
+              "message_hub",
+              "file_memory_search",
+              "generation",
+              "grounding_judge",
+              "coverage_verifier",
+              "reply_verifier",
+              "trace_agent",
+              "insight_write"
+            ]
+          },
+          "full_success": true
+        }
+      ]
+    },
+    {
+      "platform": "facebook",
+      "status": "passed",
+      "attempts": [
+        {
+          "url": "https://www.facebook.com/watch/?v=748748325625528",
+          "timestamp": "2026-02-22T07:39:21.236371+00:00",
+          "fetch_success": true,
+          "capture_success": true,
+          "agent_summary_success": true,
+          "diary_write_success": true,
+          "openviking_answer_success": true,
+          "fetch_instance": {
+            "title": "Guided Wim Hof Method Breathing",
+            "uploader": "Valeur Suisse Institut",
+            "duration": 660.051,
+            "webpage_url": "https://www.facebook.com/watch/?v=748748325625528"
+          },
+          "capture_instance": {
+            "source_type": "description",
+            "source_language": "unknown",
+            "text_head": "For more info on the Wim Hof Breathing and its benefits, check out the link below: https://www.wimhofmethod.com/breathin... This Breathing Bubble is an audiovisual guide that helps you maintain rhythm and pace during your breathing sessions. Simply watch the bubble as it expands and contracts, and follow with your breath. You'll hear Wim breathe alongside you, and entrancing background sounds help tune out your surroundings, allowing you to focus on nothing but your breath. If you prefer Wim Hof to explain in person - https://www.youtube.com/watch?v=nzCa"
+          },
+          "agent_summary_instance": {
+            "answer_head": "我已读取并理解这个 facebook 链接的内容。\n\nFor more info on the Wim Hof Breathing and its benefits, check out the link below: https://www.wimhofmethod.com/breathin... This Breathing Bubble is an audio...\n\n关键信息：\n- For more info on the Wim Hof Breathing and its benefits, check out the link below: https://www.wimhofmethod.com/breathin... This Breathing Bubble is an audiovisual guide that helps\n- v=nzCaZ... \"Safety Warning\" - https://www.youtube.com/watch\n- v=IFSL_... Check out our INTERACTIVE guided breathing in our FREE mobile app: https://www.wimhofmethod.com/wim-hof-...",
+            "trace_stages": [
+              "media_ingest"
+            ],
+            "actions": [
+              "open_tracking",
+              "open_desk"
+            ]
+          },
+          "diary_instance": {
+            "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v4\\tracking\\facebook\\7d8aa5001e895d6b\\insights\\2026-02-22T074041-289928-0000_Guided-Wim-Hof-Method-Breathing.md",
+            "diary_head": "# Tracking Insight\n\n- canonical_id: `c218fbcda78d33cd2b73eb5fb183d8ef103cb2ba`\n- target: Guided Wim Hof Method Breathing\n- source: facebook\n- kind: insight\n- created_at: 2026-02-22T07:40:41.289928+00:00\n- confidence: 0.46\n- query: https://www.facebook.com/watch/?v=748748325625528\n- reason: fallback_description_unknown\n\n## Title\n\nGuided Wim Hof Method Breathing\n\n## Insight\n\n## 概要\n\nFor more info on the Wim Hof Breathing and its benefits, check out the link below: https://www.wimhofmethod.com/breathin... This Breathing Bubble is an audio...\n\n## 关键要点\n\n- For more info on the Wim Hof Breathing and its benefits, check out the link below: https://www.wimhofmethod.com/breathin... This Breathing Bubble is an audiovisual guide that helps\n- v=nzCaZ... \"Safety Warning\" - https://www.youtube.com/watch\n- v=IFSL_... Check out our INTERACTIVE guided breathing in our FREE mobile app: https://www.wimhofmet"
+          },
+          "openviking_instance": {
+            "query": "仅根据我在Aelinの日记里的记录回答：Guided Wim Hof Method Breathing 这条内容讲了什么？",
+            "hit_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v4\\tracking\\facebook\\7d8aa5001e895d6b\\insights\\2026-02-22T074041-289928-0000_Guided-Wim-Hof-Method-Breathing.md",
+            "hit_preview": "Tracking Insight - canonical_id: `c218fbcda78d33cd2b73eb5fb183d8ef103cb2ba` - target: Guided Wim Hof Method Breathing - source: facebook - kind: insight - created_at: 2026-02-22T07:40:41.289928+00:00 - confidence: 0.46 - query: https://www.facebook.com/watch/?v=748748325625528 -",
+            "answer_head": "从你Aelinの日记的记录中，仅能看到这条是来自Facebook的关于Guided Wim Hof Method Breathing（引导式Wim Hof呼吸法）的洞察记录，暂未显示具体内容详情哦🤔",
+            "trace_stages": [
+              "intent_lens",
+              "plan_critic",
+              "query_decomposer",
+              "main_agent",
+              "reply_agent",
+              "reply_dispatch",
+              "local_search",
+              "local_search_subagent_1",
+              "web_search",
+              "message_hub",
+              "file_memory_search",
+              "generation",
+              "grounding_judge",
+              "coverage_verifier",
+              "reply_verifier",
+              "trace_agent",
+              "insight_write"
+            ]
+          },
+          "full_success": true
+        }
+      ]
+    },
+    {
+      "platform": "youku",
+      "status": "failed",
+      "attempts": [
+        {
+          "url": "https://v.youku.com/v_show/id_XMzA2NTQ1NDQ0.html",
+          "timestamp": "2026-02-22T07:42:17.051887+00:00",
+          "fetch_success": true,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "fetch_instance": {
+            "title": "Gucci - Womens Fall Collection 4-Statement",
+            "uploader": "GUCCI古驰",
+            "duration": 14.8,
+            "webpage_url": "https://v.youku.com/v_show/id_XMzA2NTQ1NDQ0.html"
+          },
+          "error": "未提取到可用字幕或足够描述文本"
+        },
+        {
+          "url": "https://v.youku.com/v_show/id_XODI3OTI3ODUy.html",
+          "timestamp": "2026-02-22T07:42:25.860902+00:00",
+          "fetch_success": true,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "fetch_instance": {
+            "title": "http://v.youku.com/v_show/id_XODI3ODc5MDE2.html",
+            "uploader": "蓝真韵",
+            "duration": 201.41,
+            "webpage_url": "https://v.youku.com/v_show/id_XODI3OTI3ODUy.html"
+          },
+          "error": "未提取到可用字幕或足够描述文本"
+        }
+      ]
+    }
+  ],
+  "finished_at": "2026-02-22T07:42:34.171847+00:00"
+}

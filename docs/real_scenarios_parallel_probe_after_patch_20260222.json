@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-02-22T12:06:46.327864+00:00",
+  "rows": [
+    {
+      "query": "请同时参考你本地消息库与联网结果，告诉我NBA最近如何。",
+      "status_code": 200,
+      "local_search": {
+        "stage": "local_search",
+        "status": "skipped",
+        "detail": "local search skipped by route",
+        "count": 0,
+        "ts": 1771761990454
+      },
+      "web_search": {
+        "stage": "web_search",
+        "status": "failed",
+        "detail": "web search empty",
+        "count": 0,
+        "ts": 1771761990454
+      },
+      "answer_excerpt": "我的直接看法是：关于“请同时参考你本地消息库与联网结果，告诉我NBA最近如何。”，要先抓住最近变化，再结合你长期关注点来判断。\n\n如果你需要，我也可以基于今日简报继续展开：今天你有 4 条未读消息；高价值更新 3 条；待跟进事项 0 项。\n\n如果问题涉及外部事实，我会先自动检索，再直接给你结论。 🙂"
+    },
+    {
+      "query": "NBA最近如何？请用本地+联网并发检索后回答。",
+      "status_code": 200,
+      "local_search": {
+        "stage": "local_search",
+        "status": "completed",
+        "detail": "local search finished",
+        "count": 4,
+        "ts": 1771761994580
+      },
+      "web_search": {
+        "stage": "web_search",
+        "status": "failed",
+        "detail": "web search empty",
+        "count": 0,
+        "ts": 1771761994580
+      },
+      "answer_excerpt": "基于你最近的信号证据，和“NBA最近如何？请用本地+联网并发检索后回答。”最相关的线索是：\n- [X] NBA 本地线索 2 Curry 状态（Woj，2026-02-22 12:06）\n- [X] NBA 本地线索 0 Curry 状态（Woj，2026-02-22 12:06）\n- [Web] NBA 本地线索 3 Curry 状态（Woj，2026-02-22 12:06）\n- [Web] NBA 本地线索 1 Curry 状态（Woj，2026-02-22 12:06）\n\n当前优先关注：NBA 本地线索 2 Curry 状态\n\n我也参考了你的长期记忆摘要。\n\n今日简报：今天你有 4 条未读消息；高价值更新 3 条；待跟进事项"
+    },
+    {
+      "query": "先看你的日记，再结合本地与网络两边的信息回答：NBA最近如何？",
+      "status_code": 200,
+      "local_search": {
+        "stage": "local_search",
+        "status": "completed",
+        "detail": "local search finished",
+        "count": 4,
+        "ts": 1771761998453
+      },
+      "web_search": {
+        "stage": "web_search",
+        "status": "failed",
+        "detail": "web search empty",
+        "count": 0,
+        "ts": 1771761998453
+      },
+      "answer_excerpt": "基于你最近的信号证据，和“先看你的日记，再结合本地与网络两边的信息回答：NBA最近如何？”最相关的线索是：\n- [X] NBA 本地线索 2 Curry 状态（Woj，2026-02-22 12:06）\n- [X] NBA 本地线索 0 Curry 状态（Woj，2026-02-22 12:06）\n- [Web] NBA 本地线索 3 Curry 状态（Woj，2026-02-22 12:06）\n- [Web] NBA 本地线索 1 Curry 状态（Woj，2026-02-22 12:06）\n\n当前优先关注：NBA 本地线索 2 Curry 状态\n\n我也参考了你的长期记忆摘要。\n\n今日简报：今天你有 4 条未读消息；高价值更新 3"
+    },
+    {
+      "query": "结合本地线索和网页最新结果，给我NBA近况。",
+      "status_code": 200,
+      "local_search": {
+        "stage": "local_search",
+        "status": "completed",
+        "detail": "local search finished",
+        "count": 4,
+        "ts": 1771762002457
+      },
+      "web_search": {
+        "stage": "web_search",
+        "status": "failed",
+        "detail": "web search empty",
+        "count": 0,
+        "ts": 1771762002457
+      },
+      "answer_excerpt": "基于你最近的信号证据，和“结合本地线索和网页最新结果，给我NBA近况。”最相关的线索是：\n- [X] NBA 本地线索 2 Curry 状态（Woj，2026-02-22 12:06）\n- [X] NBA 本地线索 0 Curry 状态（Woj，2026-02-22 12:06）\n- [Web] NBA 本地线索 3 Curry 状态（Woj，2026-02-22 12:06）\n- [Web] NBA 本地线索 1 Curry 状态（Woj，2026-02-22 12:06）\n\n当前优先关注：NBA 本地线索 2 Curry 状态\n\n我也参考了你的长期记忆摘要。\n\n今日简报：今天你有 4 条未读消息；高价值更新 3 条；待跟进事项 "
+    }
+  ]
+}

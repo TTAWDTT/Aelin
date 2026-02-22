@@ -1,0 +1,96 @@
+{
+  "generated_at": "2026-02-22T12:04:49.571686+00:00",
+  "workspace": "real_case_ws_20260222",
+  "user_id": 1,
+  "selected_query": "请同时参考你本地消息库与联网结果，告诉我NBA最近如何。",
+  "chain": {
+    "status_code": 200,
+    "answer_excerpt": "我先联网检索了“请同时参考你本地消息库与联网结果，告诉我NBA最近如何。”，当前抓到的比分线索如下：\n- 106:108\n\n这些来自公开网页抓取，若你愿意我可以继续自动跟踪并持续更新。 🙂",
+    "citations_count": 6,
+    "local_search": {
+      "stage": "local_search",
+      "status": "skipped",
+      "detail": "local search skipped by route",
+      "count": 0,
+      "ts": 1771761862682
+    },
+    "web_search": {
+      "stage": "web_search",
+      "status": "completed",
+      "detail": "web search finished; p=duckduckgo_lite:12; f=none:6,http:5,reader:1",
+      "count": 12,
+      "ts": 1771761862682
+    },
+    "file_memory_search": {
+      "stage": "file_memory_search",
+      "status": "skipped",
+      "detail": "no file memory hits",
+      "count": 0,
+      "ts": 1771761869803
+    },
+    "chat_diary_write": {
+      "stage": "chat_diary_write",
+      "status": "completed",
+      "detail": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\1\\workspaces\\real_case_ws_20260222\\diary\\与主人的聊天日记\\2026\\02\\22\\2026-02-22T120429-810189-0000_聊天纪要-请同时参考你本地消息库与联网结果-告诉我NBA最近如何.md",
+      "count": 1,
+      "ts": 1771761869817
+    }
+  },
+  "diary": {
+    "search_status": 200,
+    "search_total": 8,
+    "first_item": {
+      "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\1\\workspaces\\real_case_ws_20260222\\diary\\与主人的聊天日记\\2026\\02\\22\\2026-02-22T120441-523393-0000_聊天纪要-结合本地消息和网络最新信息-回答NBA近期变化.md",
+      "title": "与主人的聊天日记",
+      "preview": "今天主人问了我：「结合本地消息和网络最新信息，回答NBA近期变化。」。 我给出的核心结论是：基于你最近的信号证据，和“结合本地消息和网络最新信息，回答NBA近期变化。”最相关的线索是： - [X] NBA 本地线索：勇士替补提升（Woj，2026-02-22 12:04） - [X] NBA 本地线索：Curry状态回升（Woj，2026-02-22 12:04） - [Web] 虎扑nba - 最新战报与球队新闻，虎扑体育全网覆盖（hupu-app-on.com，2026-02-22 12:04） - [Web] NBA|NBA直播|NBA比分|NBA",
+      "score": 10.6,
+      "updated_at": "2026-02-22T12:04:41.523393+00:00",
+      "canonical_id": "52583b5a8827aa08b56c3103918c448931cf6776",
+      "target": "与主人的聊天日记",
+      "source": "chat",
+      "kind": "insight",
+      "topic_path": "与主人的聊天日记 > 2026 > 02 > 22",
+      "entry_kind": "chat_diary"
+    },
+    "first_item_content_excerpt": "# Tracking Insight\n\n- canonical_id: `52583b5a8827aa08b56c3103918c448931cf6776`\n- target: 与主人的聊天日记\n- source: chat\n- kind: insight\n- entry_kind: chat_diary\n- topic_path: 与主人的聊天日记 > 2026 > 02 > 22\n- created_at: 2026-02-22T12:04:41.523393+00:00\n- confidence: 0.82\n- query: 结合本地消息和网络最新信息，回答NBA近期变化。\n- reason: chat_diary\n- source_indices_json:\n  [\n    {\n      \"label\": \"结合本地消息和网络最新信息，回答NBA近期变化。\",\n      \"message_id\": 0,\n      \"path\": \"\",\n      \"type\": \"query\",\n      \"url\": \"\"\n    },\n    {\n      \"label\": \"[X] NBA 本地线索：勇士替补提升\",\n      \"message_id\": 3,\n      \"path\": \"\",\n      \"type\": \"message\",\n      \"url\": \"\"\n    },\n    {\n      \"label\": \"[X] NBA 本地线索：Curry状态回升\",\n      \"message_id\": 1,\n      \"path\": \"\",\n      \"type\": \"message\",\n      \"url\": \"\"\n    },\n    {\n      \"label\": \"[Web] 虎扑nba - 最新战报与球队新闻，虎扑体育全网覆盖\",\n      \"message_id\": 12,\n      \"path\": \"\",\n      \"type\": \"message\",\n      \"url\": \"\"\n    },\n    {\n      \"label\": \"[Web] NBA|NBA直播|NBA比分|NBA官方授权视频直播网站_新浪竞技风暴_新浪网\",\n      \"message_id\": 11,\n      \"path",
+    "tree_status": 200,
+    "tree_total": 4,
+    "tree_top_nodes": [
+      "与主人的聊天日记"
+    ],
+    "followup_status": 200,
+    "followup_answer_excerpt": "基于你最近的信号证据，和“根据你刚才的日记，NBA里谁状态回升？”最相关的线索是：\n- [X] NBA 本地线索：勇士替补提升（Woj，2026-02-22 12:04）\n- [X] NBA 本地线索：Curry状态回升（Woj，2026-02-22 12:04）\n- [Web] 虎扑nba - 最新战报与球队新闻，虎扑体育全网覆盖（hupu-app-on.com，2026-02-22 12:04）\n- [Web] NBA|NBA直播|NBA比分|NBA官方授权视频直播网站_新浪竞技风暴_新浪网（sports.sina.com.cn，2026-02-22 12:04）\n\n当前优先关注：NBA 本地线索：勇士替补提升\n\n我也参考了你的长期记忆摘要。\n\n今日简报：今天你有 12 条未读消息；高价值更新 3 条；待跟进事项 0 项。 🙂",
+    "followup_citations_count": 6,
+    "followup_file_memory_search": {
+      "stage": "file_memory_search",
+      "status": "completed",
+      "detail": "file memory hits merged",
+      "count": 8,
+      "ts": 1771761885544
+    }
+  },
+  "douyin": {
+    "url": "https://www.douyin.com/video/7110472242345069824",
+    "off_mode": {
+      "status_code": 422,
+      "detail": {
+        "code": "auth_required",
+        "message": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+      }
+    },
+    "browser_mode": {
+      "status_code": 422,
+      "detail": {
+        "code": "auth_required",
+        "message": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+      }
+    },
+    "file_mode": {
+      "status_code": 422,
+      "detail": {
+        "code": "auth_required",
+        "message": "目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+      }
+    }
+  }
+}

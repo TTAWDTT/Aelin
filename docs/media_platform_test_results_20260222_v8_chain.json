@@ -1,0 +1,365 @@
+{
+  "generated_at": "2026-02-22T10:46:43.661871+00:00",
+  "workspace": "platform-matrix-20260222-v8-chain",
+  "llm_provider": "openai",
+  "llm_configured": true,
+  "rows": [
+    {
+      "platform": "youtube",
+      "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+      "started_at": "2026-02-22T10:37:36.908421+00:00",
+      "status": "saved",
+      "aelin_pipeline_observed": [
+        {
+          "stage": "url_detect",
+          "status": "completed",
+          "duration_ms": 0,
+          "detail": "detected=youtube",
+          "at": "2026-02-22T10:37:36.908421+00:00"
+        },
+        {
+          "stage": "tool_resolve",
+          "status": "completed",
+          "duration_ms": 8,
+          "detail": "yt-dlp resolved",
+          "at": "2026-02-22T10:37:36.916421+00:00",
+          "ytdlp_cmd": [
+            "yt-dlp"
+          ]
+        },
+        {
+          "stage": "ingest",
+          "status": "completed",
+          "duration_ms": 39225,
+          "detail": "source=subtitle_manual; quality=0.95; usable=1",
+          "at": "2026-02-22T10:38:16.142938+00:00",
+          "source_type": "subtitle_manual",
+          "confidence": 0.82,
+          "quality_score": 0.947,
+          "quality_usable": true
+        },
+        {
+          "stage": "diary_write",
+          "status": "completed",
+          "duration_ms": 4,
+          "detail": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v8-chain\\tracking\\youtube\\08b898f49ddba728\\insights\\2026-02-22T103816-142938-0000_Me-at-the-zoo.md",
+          "at": "2026-02-22T10:38:16.147941+00:00",
+          "written": true,
+          "skip_reason": ""
+        },
+        {
+          "stage": "aelin_chat_media",
+          "status": "completed",
+          "duration_ms": 44999,
+          "detail": "chat media route executed",
+          "at": "2026-02-22T10:39:01.159686+00:00",
+          "trace_stages": [
+            "media_ingest"
+          ]
+        },
+        {
+          "stage": "aelin_chat_rag",
+          "status": "completed",
+          "duration_ms": 127469,
+          "detail": "rag route executed",
+          "at": "2026-02-22T10:41:08.628861+00:00",
+          "trace_stages": [
+            "intent_lens",
+            "plan_critic",
+            "query_decomposer",
+            "main_agent",
+            "reply_agent",
+            "reply_dispatch",
+            "local_search",
+            "local_search_subagent_1",
+            "web_search",
+            "message_hub",
+            "file_memory_search",
+            "generation",
+            "grounding_judge",
+            "coverage_verifier",
+            "reply_verifier",
+            "trace_agent",
+            "insight_write"
+          ]
+        }
+      ],
+      "result": {
+        "summary_head": "总结：\n该内容是YouTube视频《Me at the zoo》的手动字幕，拍摄者身处大象前方，简单提及大象的长鼻子很酷，中途出现羊叫声，最后表示没有更多相关内容可说。\n\n提炼信息：\n今天梳理了YouTube视频《Me at the zoo》的字幕，内容十分简短：拍摄者站在大象前，只提到大象的长鼻子是很酷的特点，过程中还出现了羊的叫声，最后表示没有更多内容可以分享。\n\n来源类型：subtitle_manual（confidence=0.82，quality=0.95，gate=pass）",
+        "summary_overview": "该内容是YouTube视频《Me at the zoo》的手动字幕，拍摄者身处大象前方，简单提及大象的长鼻子很酷，中途出现羊叫声，最后表示没有更多相关内容可说。",
+        "information_note_head": "今天梳理了YouTube视频《Me at the zoo》的字幕，内容十分简短：拍摄者站在大象前，只提到大象的长鼻子是很酷的特点，过程中还出现了羊的叫声，最后表示没有更多内容可以分享。",
+        "source_type": "subtitle_manual",
+        "confidence": 0.82,
+        "quality_score": 0.947,
+        "quality_reason": "quality_gate_passed",
+        "quality_usable": true,
+        "diary_written": true,
+        "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v8-chain\\tracking\\youtube\\08b898f49ddba728\\insights\\2026-02-22T103816-142938-0000_Me-at-the-zoo.md"
+      },
+      "chat_media_trace": {
+        "trace_stages": [
+          "media_ingest"
+        ],
+        "answer_head": "我已读取并理解这个 youtube 链接的内容。\n\n总结：\n这段字幕来自YouTube视频《我在动物园》，拍摄者站在大象前进行简短介绍，提及大象的长鼻子很酷，中途传来羊的叫声，最后表示没有更多相关内容可以讲述。\n\n提炼信息：\n今日整理：YouTube视频《我在动物园》的字幕内容显示，拍摄者身处动物园的大象前方，仅简单提及大象长鼻子很酷这一点，过程中还出现了羊的叫声，最后说明没有更多内容可介绍，整体内容非常简短。\n\n来源类型：subtitle_manual（confidence=0.82，quality=0.94，gate=pass）\n\n已写入 Aelinの日记，可作为后续 RAG 上下文使用。\n\n限制说明：\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"
+      },
+      "rag_trace": {
+        "query": "仅根据我在Aelinの日记里的记录回答：Me at the zoo 这条内容讲了什么？",
+        "trace_stages": [
+          "intent_lens",
+          "plan_critic",
+          "query_decomposer",
+          "main_agent",
+          "reply_agent",
+          "reply_dispatch",
+          "local_search",
+          "local_search_subagent_1",
+          "web_search",
+          "message_hub",
+          "file_memory_search",
+          "generation",
+          "grounding_judge",
+          "coverage_verifier",
+          "reply_verifier",
+          "trace_agent",
+          "insight_write"
+        ],
+        "answer_head": "根据你Aelinの日记里的记录，《Me at the zoo》这条内容是梳理了YouTube同名视频的字幕，内容十分简短：拍摄者站在大象前，提到大象的长鼻子是很酷的特点，过程中还出现了羊的叫声，最后表示没有更多内容可以分享。😉"
+      },
+      "finished_at": "2026-02-22T10:41:08.628861+00:00"
+    },
+    {
+      "platform": "facebook",
+      "url": "https://www.facebook.com/watch/?v=748748325625528",
+      "started_at": "2026-02-22T10:41:08.628861+00:00",
+      "status": "saved",
+      "aelin_pipeline_observed": [
+        {
+          "stage": "url_detect",
+          "status": "completed",
+          "duration_ms": 0,
+          "detail": "detected=facebook",
+          "at": "2026-02-22T10:41:08.628861+00:00"
+        },
+        {
+          "stage": "tool_resolve",
+          "status": "completed",
+          "duration_ms": 8,
+          "detail": "yt-dlp resolved",
+          "at": "2026-02-22T10:41:08.636862+00:00",
+          "ytdlp_cmd": [
+            "yt-dlp"
+          ]
+        },
+        {
+          "stage": "ingest",
+          "status": "completed",
+          "duration_ms": 79005,
+          "detail": "source=description; quality=0.83; usable=1",
+          "at": "2026-02-22T10:42:27.642259+00:00",
+          "source_type": "description",
+          "confidence": 0.3,
+          "quality_score": 0.835,
+          "quality_usable": true
+        },
+        {
+          "stage": "diary_write",
+          "status": "completed",
+          "duration_ms": 2,
+          "detail": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v8-chain\\tracking\\facebook\\7d8aa5001e895d6b\\insights\\2026-02-22T104227-642259-0000_维姆-霍夫呼吸法引导练习.md",
+          "at": "2026-02-22T10:42:27.645266+00:00",
+          "written": true,
+          "skip_reason": ""
+        },
+        {
+          "stage": "aelin_chat_media",
+          "status": "completed",
+          "duration_ms": 72206,
+          "detail": "chat media route executed",
+          "at": "2026-02-22T10:43:39.870671+00:00",
+          "trace_stages": [
+            "media_ingest"
+          ]
+        },
+        {
+          "stage": "aelin_chat_rag",
+          "status": "completed",
+          "duration_ms": 122395,
+          "detail": "rag route executed",
+          "at": "2026-02-22T10:45:42.266338+00:00",
+          "trace_stages": [
+            "intent_lens",
+            "plan_critic",
+            "query_decomposer",
+            "main_agent",
+            "reply_agent",
+            "reply_dispatch",
+            "local_search",
+            "local_search_subagent_1",
+            "web_search",
+            "message_hub",
+            "file_memory_search",
+            "generation",
+            "grounding_judge",
+            "coverage_verifier",
+            "reply_verifier",
+            "trace_agent",
+            "trace_dispatch",
+            "trace_local_subagent_1",
+            "insight_write"
+          ]
+        }
+      ],
+      "result": {
+        "summary_head": "总结：\n该内容介绍了一款维姆·霍夫呼吸法的视听引导工具，同时推广了相关的免费移动应用、在线视频课程、免费迷你课程、电子书等资源，发起了视频翻译招募，提及了视频背景音乐的创作者及获取渠道，还涉及与维姆·霍夫建立联系的途径、线下工作坊等信息，但部分内容仅提及框架未给出具体细节。\n\n提炼信息：\n今天了解到有一款维姆·霍夫呼吸法的视听引导工具，它通过呼吸气泡的胀缩节奏来辅助练习者调整呼吸节奏，还有维姆·霍夫的同步呼吸声和沉浸式背景音帮助排除外界干扰、专注呼吸。此外，还可以通过他们的免费移动应用进行交互式引导呼吸，也能报名在线视频课程更深入地学习维姆·霍夫方法。目前他们正在招募用户帮忙将这个视频翻译成当地语言，视频里的音乐由Enahm Hof和Niraj创作，可通过对应链接找到更多相关音乐。另外还有免费迷你课程、免费电子书可以获取，也能通过网站、Instagram和维姆·霍夫建立联系，同时有线下工作坊、研讨会等相关服务，但具体的安全警告内容、各类资源的链接地址等信息都没有详细给出。\n\n来源类型：description（confidence=0.30，quality=0.83，gate=pass）",
+        "summary_overview": "该内容介绍了一款维姆·霍夫呼吸法的视听引导工具，同时推广了相关的免费移动应用、在线视频课程、免费迷你课程、电子书等资源，发起了视频翻译招募，提及了视频背景音乐的创作者及获取渠道，还涉及与维姆·霍夫建立联系的途径、线下工作坊等信息，但部分内容仅提及框架未给出具体细节。",
+        "information_note_head": "今天了解到有一款维姆·霍夫呼吸法的视听引导工具，它通过呼吸气泡的胀缩节奏来辅助练习者调整呼吸节奏，还有维姆·霍夫的同步呼吸声和沉浸式背景音帮助排除外界干扰、专注呼吸。此外，还可以通过他们的免费移动应用进行交互式引导呼吸，也能报名在线视频课程更深入地学习维姆·霍夫方法。目前他们正在招募用户帮忙将这个视频翻译成当地语言，视频里的音乐由Enahm Hof和Niraj创作，可通过对应链接找到更多相关音乐。另外还有免费迷你课程、免费电子书可以获取，也能通过网站、Instagram和维姆·霍夫建立联系，同时有线下工作坊、研讨会等相关服务，但具体的安全警告内容、各类资源的链接地址等信息都没有详细给出。",
+        "source_type": "description",
+        "confidence": 0.3,
+        "quality_score": 0.835,
+        "quality_reason": "quality_gate_passed",
+        "quality_usable": true,
+        "diary_written": true,
+        "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v8-chain\\tracking\\facebook\\7d8aa5001e895d6b\\insights\\2026-02-22T104227-642259-0000_维姆-霍夫呼吸法引导练习.md"
+      },
+      "chat_media_trace": {
+        "trace_stages": [
+          "media_ingest"
+        ],
+        "answer_head": "我已读取并理解这个 facebook 链接的内容。\n\n总结：\nFor more info on the Wim Hof Breathing and its benefits, the link below: This Breathing Bubble is an audiovisual guide that helps you maintain rhythm and pac...\n\n提炼信息：\n这条内容围绕“Guided Wim Hof Method Breathing”展开，核心意思是：For more info on the Wim Hof Breathing and its benefits, the link below: This Breathing Bubble is an audiovisual guide that helps you"
+      },
+      "rag_trace": {
+        "query": "仅根据我在Aelinの日记里的记录回答：Guided Wim Hof Method Breathing 这条内容讲了什么？",
+        "trace_stages": [
+          "intent_lens",
+          "plan_critic",
+          "query_decomposer",
+          "main_agent",
+          "reply_agent",
+          "reply_dispatch",
+          "local_search",
+          "local_search_subagent_1",
+          "web_search",
+          "message_hub",
+          "file_memory_search",
+          "generation",
+          "grounding_judge",
+          "coverage_verifier",
+          "reply_verifier",
+          "trace_agent",
+          "trace_dispatch",
+          "trace_local_subagent_1",
+          "insight_write"
+        ],
+        "answer_head": "根据你Aelinの日记记录，Guided Wim Hof Method Breathing相关内容如下：它拥有一款名为“Breathing Bubble”的视听引导工具，通过气泡胀缩节奏辅助调整呼吸节奏，搭配维姆·霍夫的同步呼吸声和沉浸式背景音，帮助练习者排除外界干扰、专注呼吸；此外还可通过免费移动应用进行交互式引导呼吸，或报名在线视频课程深入学习该方法，目前正在招募用户帮忙将相关视频翻译成当地语言📚"
+      },
+      "finished_at": "2026-02-22T10:45:42.266338+00:00"
+    },
+    {
+      "platform": "x",
+      "url": "https://x.com/bgatesisapyscho/status/1951036436838244677",
+      "started_at": "2026-02-22T10:45:42.266338+00:00",
+      "status": "processed",
+      "aelin_pipeline_observed": [
+        {
+          "stage": "url_detect",
+          "status": "completed",
+          "duration_ms": 0,
+          "detail": "detected=x",
+          "at": "2026-02-22T10:45:42.266338+00:00"
+        },
+        {
+          "stage": "tool_resolve",
+          "status": "completed",
+          "duration_ms": 8,
+          "detail": "yt-dlp resolved",
+          "at": "2026-02-22T10:45:42.275336+00:00",
+          "ytdlp_cmd": [
+            "yt-dlp"
+          ]
+        },
+        {
+          "stage": "ingest",
+          "status": "completed",
+          "duration_ms": 32959,
+          "detail": "source=description; quality=0.00; usable=0",
+          "at": "2026-02-22T10:46:15.234539+00:00",
+          "source_type": "description",
+          "confidence": 0.3,
+          "quality_score": 0.0,
+          "quality_usable": false
+        },
+        {
+          "stage": "diary_write",
+          "status": "skipped",
+          "duration_ms": 0,
+          "detail": "描述文本句子过少，缺少可提炼信息",
+          "at": "2026-02-22T10:46:15.234539+00:00",
+          "written": false,
+          "skip_reason": "描述文本句子过少，缺少可提炼信息"
+        },
+        {
+          "stage": "aelin_chat_media",
+          "status": "completed",
+          "duration_ms": 27312,
+          "detail": "chat media route executed",
+          "at": "2026-02-22T10:46:42.546711+00:00",
+          "trace_stages": [
+            "media_ingest"
+          ]
+        }
+      ],
+      "result": {
+        "summary_head": "总结：\nX平台用户Concerned Citizen发布观点，称若有人仍相信某段视频是1972年NASA离开月球的真实片段，那么不值得和这类人辩论任何事情。\n\n提炼信息：\n某用户在X平台发布一则观点：若有人依旧认为某片段是1972年NASA离开月球的真实视频，此人便不值得与之辩论任何议题。\n\n来源类型：description（confidence=0.30，quality=0.00，gate=review_required）",
+        "summary_overview": "X平台用户Concerned Citizen发布观点，称若有人仍相信某段视频是1972年NASA离开月球的真实片段，那么不值得和这类人辩论任何事情。",
+        "information_note_head": "某用户在X平台发布一则观点：若有人依旧认为某片段是1972年NASA离开月球的真实视频，此人便不值得与之辩论任何议题。",
+        "source_type": "description",
+        "confidence": 0.3,
+        "quality_score": 0.0,
+        "quality_reason": "描述文本句子过少，缺少可提炼信息",
+        "quality_usable": false,
+        "diary_written": false,
+        "diary_path": ""
+      },
+      "chat_media_trace": {
+        "trace_stages": [
+          "media_ingest"
+        ],
+        "answer_head": "我已读取并理解这个 x 链接的内容。\n\n总结：\nX平台某用户发布观点称，如果有人相信某片段是1972年NASA离开月球的真实视频，那么不值得和这类人争论任何事情。\n\n提炼信息：\n今日在X平台看到一条内容，用户表示要是还有人觉得某段视频是1972年NASA撤离月球的真实片段，完全没必要和这种人争论任何话题。但内容里既没给出该片段的具体信息，也没说明判定其为虚假的依据。\n\n来源类型：description（confidence=0.30，quality=0.00，gate=review_required）\n\n本次未写入 Aelinの日记：内容质量门禁未通过（score=0.00，reason=描述文本句子过少，缺少可提炼信息）。\n\n限制说明：\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前未提取到字幕，改用描述文本生成，置信度较低。\n- 质"
+      },
+      "finished_at": "2026-02-22T10:46:42.546711+00:00"
+    },
+    {
+      "platform": "douyin",
+      "url": "https://www.douyin.com/video/7110472242345069824",
+      "started_at": "2026-02-22T10:46:42.546711+00:00",
+      "status": "failed",
+      "aelin_pipeline_observed": [
+        {
+          "stage": "url_detect",
+          "status": "completed",
+          "duration_ms": 0,
+          "detail": "detected=douyin",
+          "at": "2026-02-22T10:46:42.546711+00:00"
+        },
+        {
+          "stage": "tool_resolve",
+          "status": "completed",
+          "duration_ms": 8,
+          "detail": "yt-dlp resolved",
+          "at": "2026-02-22T10:46:42.555713+00:00",
+          "ytdlp_cmd": [
+            "yt-dlp"
+          ]
+        },
+        {
+          "stage": "ingest",
+          "status": "failed",
+          "duration_ms": 1106,
+          "detail": "auth_required: 目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。",
+          "at": "2026-02-22T10:46:43.661871+00:00"
+        }
+      ],
+      "error": "auth_required: 目标平台要求新鲜 cookies（当前常见于抖音/Instagram/Facebook/X）。请配置浏览器 cookies 后重试。"
+    }
+  ]
+}

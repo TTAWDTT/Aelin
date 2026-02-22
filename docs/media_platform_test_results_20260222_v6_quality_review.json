@@ -1,0 +1,86 @@
+{
+  "generated_at": "2026-02-22T08:28:40.506977+00:00",
+  "workspace": "platform-matrix-20260222-v6-quality",
+  "rows": [
+    {
+      "platform": "youtube",
+      "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+      "timestamp": "2026-02-22T08:21:48.008425+00:00",
+      "status": "saved",
+      "ingest": {
+        "source_type": "subtitle_manual",
+        "confidence": 0.82,
+        "quality_score": 0.942,
+        "quality_usable": true,
+        "quality_reason": "quality_gate_passed",
+        "summary_head": "这是一段简短的视频内容，拍摄者身处动物园的大象展区前，介绍大象拥有很长的鼻子这一酷点，过程中出现羊的叫声，最后拍摄者表示没有更多相关内容可说。\n\n关键信息：\n- 拍摄场景位于动物园的大象展区前\n- 拍摄者认为大象的长鼻子是其很酷的特点\n- 视频过程中出现羊的叫声\n- 拍摄者表示没有更多关于大象的内容可介绍\n\n建议：\n- 拍摄者在动物园大象前介绍大象的长鼻子\n- 拍摄者结束关于大象的相关讲述\n\n来源类型：subtitle_manual（confidence=0.82，quality=0.94，gate=pass）"
+      },
+      "diary": {
+        "written": true,
+        "skip_reason": "",
+        "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v6-quality\\tracking\\youtube\\08b898f49ddba728\\insights\\2026-02-22T082216-543357-0000_我在动物园.md"
+      },
+      "diary_review": {
+        "empty_markers": 0,
+        "head": "# Tracking Insight\n\n- canonical_id: `8edc71d71222b760945907c22ea18e4d06f72de8`\n- target: Me at the zoo\n- source: youtube\n- kind: insight\n- created_at: 2026-02-22T08:22:16.543357+00:00\n- confidence: 0.82\n- query: https://www.youtube.com/watch?v=jNQXAC9IVRw\n- reason: 所有信息均来自明确的手动字幕内容，事实清晰可验证，无模糊或不确定信息，因此置信度为1.0\n\n## Title\n\n我在动物园\n\n## Insight\n\n## 概要\n\n这是一段简短的视频内容，拍摄者身处动物园的大象展区前，介绍大象拥有很长的鼻子这一酷点，过程中出现羊的叫声，最后拍摄者表示没有更多相关内容可说。\n\n## 关键要点\n\n- 拍摄场景位于动物园的大象展区前\n- 拍摄者认为大象的长鼻子是其很酷的特点\n- 视频过程中出现羊的叫声\n- 拍摄者表示没有更多关于大象的内容可介绍\n\n## 证据片段\n\n- All right, so here we are, in front of the elephants\n- the cool thing about these guys is that they have really... really really long trunks and that's cool\n- (baaaaaaaaaaahhh!!)\n- and that's pretty much all there is to say\n\n## 行动建议\n\n- 拍摄者在动物园大象前介绍大象的长鼻子\n- 拍摄者结束关"
+      },
+      "rag": {
+        "query": "仅根据我在Aelinの日记里的记录回答：Me at the zoo 这条内容讲了什么？",
+        "answer_head": "根据你的Aelinの日记记录，“Me at the zoo”对应的是你跟踪自YouTube的洞察内容，相关日记条目标题为“我在动物园”，该内容是YouTube的第一条视频，由Jawed Karim上传，视频中拍摄者在动物园介绍了大象拥有很长的鼻子这一特点😉"
+      }
+    },
+    {
+      "platform": "facebook",
+      "url": "https://www.facebook.com/watch/?v=748748325625528",
+      "timestamp": "2026-02-22T08:24:40.433547+00:00",
+      "status": "saved",
+      "ingest": {
+        "source_type": "description",
+        "confidence": 0.54,
+        "quality_score": 0.763,
+        "quality_usable": true,
+        "quality_reason": "quality_gate_passed",
+        "summary_head": "本内容介绍了一款名为“Breathing Bubble”的引导式维姆·霍夫呼吸法视听工具，可帮助使用者维持呼吸节奏；同时提及多种维姆·霍夫法相关配套资源，包括免费移动应用、在线视频课程等，还征集用户参与视频翻译，并提供了视频中音乐的获取渠道。\n\n关键信息：\n- 推出名为“Breathing Bubble”的视听引导工具，辅助维姆·霍夫呼吸练习以维持呼吸节奏\n- 该工具通过气泡胀缩视觉提示、维姆同步呼吸声及背景音，帮助使用者专注呼吸、隔绝外界干扰\n- 提供维姆·霍夫法相关多元资源：免费交互式移动应用、在线视频课程、免费迷你课程、免费电子书、工作坊/研讨会/旅行项目\n- 公开征集用户参与该视频的本地化翻译工作\n- 视频中的音乐由Enahm Hof和the Niraj创作，可通过指定链接获取更多同类型音乐\n\n建议：\n- 使用“Breathing Bubble”视听工具进行引导式维姆·霍夫呼吸练习\n- 下载免费移动应用体验交互式引导呼吸\n- 报名在线视频课程深化维姆·霍夫法练习\n\n来源类型：description（confidence=0.54，qual"
+      },
+      "diary": {
+        "written": true,
+        "skip_reason": "",
+        "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v6-quality\\tracking\\facebook\\7d8aa5001e895d6b\\insights\\2026-02-22T082530-177865-0000_引导式维姆-霍夫呼吸法.md"
+      },
+      "diary_review": {
+        "empty_markers": 0,
+        "head": "# Tracking Insight\n\n- canonical_id: `1d551ecdf35d62c494f1ecf03a54742ff1ba7fc7`\n- target: Guided Wim Hof Method Breathing\n- source: facebook\n- kind: insight\n- created_at: 2026-02-22T08:25:30.177865+00:00\n- confidence: 0.54\n- query: https://www.facebook.com/watch/?v=748748325625528\n- reason: 文本清晰阐述了引导式维姆·霍夫呼吸工具的功能、相关配套资源及用户可参与的多项行动，核心信息明确且可验证，仅部分资源链接未提供具体内容，不影响整体信息的可信度。\n\n## Title\n\n引导式维姆·霍夫呼吸法\n\n## Insight\n\n## 概要\n\n本内容介绍了一款名为“Breathing Bubble”的引导式维姆·霍夫呼吸法视听工具，可帮助使用者维持呼吸节奏；同时提及多种维姆·霍夫法相关配套资源，包括免费移动应用、在线视频课程等，还征集用户参与视频翻译，并提供了视频中音乐的获取渠道。\n\n## 关键要点\n\n- 推出名为“Breathing Bubble”的视听引导工具，辅助维姆·霍夫呼吸练习以维持呼吸节奏\n- 该工具通过气泡胀缩视觉提示、维姆同步呼吸声及背景音，帮助使用者专注呼吸、隔绝外界干扰\n- 提供维姆·霍夫法相关多元资源：免费交互式移动应用、在线视频课程、免费迷你课程、免费电子书、工作坊/研讨会/旅行项目\n- 公开征集用户参与该视频的本地化翻译工作\n- 视频中的音乐由Enahm Hof和the Niraj创作，可通过指定链接获取更多同类型音乐\n\n## 证据片段"
+      },
+      "rag": {
+        "query": "仅根据我在Aelinの日记里的记录回答：Guided Wim Hof Method Breathing 这条内容讲了什么？",
+        "answer_head": "很抱歉，根据你Aelinの日记里的记录，仅能查到存在“Guided Wim Hof Method Breathing（引导式维姆·霍夫呼吸法）”这条内容，但没有显示具体讲解的信息，无法为你详细说明哦🙁"
+      }
+    },
+    {
+      "platform": "x",
+      "url": "https://x.com/bgatesisapyscho/status/1951036436838244677",
+      "timestamp": "2026-02-22T08:28:06.232326+00:00",
+      "status": "processed",
+      "ingest": {
+        "source_type": "description",
+        "confidence": 0.2,
+        "quality_score": 0.0,
+        "quality_usable": false,
+        "quality_reason": "描述文本句子过少，缺少可提炼信息",
+        "summary_head": "某社交平台用户发文称，若有人仍认为某段网传视频是NASA1972年离开月球的真实片段，那么此人不值得与之辩论任何问题。\n\n关键信息：\n- 作者认为网传的某段视频并非NASA1972年离开月球的真实片段\n\n建议：\n- 如需用于决策，请结合原视频或原帖再核对一次关键信息。\n\n来源类型：description（confidence=0.20，quality=0.00，gate=review_required）"
+      },
+      "diary": {
+        "written": false,
+        "skip_reason": "描述文本句子过少，缺少可提炼信息",
+        "path": ""
+      }
+    },
+    {
+      "platform": "instagram",
+      "url": "https://www.instagram.com/reel/DBElt2UIuUG/",
+      "timestamp": "2026-02-22T08:28:29.221500+00:00",
+      "status": "failed",
+      "error": "no_extractable_content: 未提取到可用字幕或足够描述文本"
+    }
+  ]
+}

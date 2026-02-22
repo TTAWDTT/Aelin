@@ -1,0 +1,353 @@
+{
+  "generated_at": "2026-02-22T07:14:50.938893+00:00",
+  "workspace": "platform-matrix-20260222-v2",
+  "target_email": "luoz061114@gmail.com",
+  "results": [
+    {
+      "platform": "youtube",
+      "status": "passed",
+      "attempts": [
+        {
+          "attempt_index": 1,
+          "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+          "timestamp": "2026-02-22T07:14:52.102140+00:00",
+          "fetch_success": true,
+          "capture_success": true,
+          "agent_summary_success": true,
+          "diary_write_success": true,
+          "openviking_answer_success": true,
+          "fetch_instance": {
+            "title": "Me at the zoo",
+            "uploader": "jawed",
+            "duration": 19,
+            "webpage_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+          },
+          "capture_instance": {
+            "source_type": "subtitle_manual",
+            "source_language": "en",
+            "text_head": "Kind: captions Language: en All right, so here we are, in front of the elephants the cool thing about these guys is that they have really... really really long trunks and that's cool (baaaaaaaaaaahhh!!) and that's pretty much all there is to say"
+          },
+          "agent_summary_instance": {
+            "answer_head": "我已读取并理解这个 youtube 链接的内容。\n\n视频拍摄者身处动物园的大象展区前，录制视频介绍大象拥有很长的鼻子这一特点，录制过程中还出现了羊的叫声。\n\n关键信息：\n- 拍摄场景位于动物园的大象展区前方\n- 大象的显著特征是拥有非常长的鼻子\n- 视频录制过程中出现了羊的叫声\n\n建议：\n- 在动物园大象展区录制视频\n- 向观众介绍大象长鼻子的特点\n\n来源类型：subtitle_manual（confidence=0.82）\n\n已写入 Aelinの日记，可作为后续 RAG 上下文使用。\n\n限制说明：\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。",
+            "trace_stages": [
+              "media_ingest"
+            ],
+            "actions": [
+              "open_tracking",
+              "open_desk"
+            ]
+          },
+          "diary_instance": {
+            "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\youtube\\08b898f49ddba728\\insights\\2026-02-22T071533-030619-0000_我在动物园.md",
+            "diary_head": "# Tracking Insight\n\n- canonical_id: `c82a91506bd6d1886ac0457d47e25fb47f811fe7`\n- target: Me at the zoo\n- source: youtube\n- kind: insight\n- created_at: 2026-02-22T07:15:33.030619+00:00\n- confidence: 0.82\n- query: https://www.youtube.com/watch?v=jNQXAC9IVRw\n- reason: 所有信息均来自明确的手动字幕，内容清晰具体，无模糊或歧义之处，信息可信度完全可靠。\n\n## Title\n\n我在动物园\n\n## Insight\n\n## 概要\n\n视频拍摄者身处动物园的大象展区前，录制视频介绍大象拥有很长的鼻子这一特点，录制过程中还出现了羊的叫声。\n\n## 关键要点\n\n- 拍摄场景位于动物园的大象展区前方\n- 大象的显著特征是拥有非常长的鼻子\n- 视频录制过程中出现了羊的叫声\n\n## 证据片段\n\n- 字幕内容提及“All right, so here we are, in front of the elephants”\n- 字幕指出“the cool thing about these guys is that they have really... really really long trunks”\n- 字幕中记录了“(baaaaaaaaaaahhh!!)”的羊叫声\n\n## 行动建议\n\n- 在动物园大象展区录制视频\n- 向观众介绍大象长鼻子的特点\n\n## 来源元信息\n\n- title: 我在动物园\n- platform: youtube\n- url: https://www.youtube.com/watch?v=jNQXAC9IVRw\n- source_type: subtitle_manual\n- source_language: en\n- confidence: 0.82\n\n## 限制说明\n\n- 摘要主要基于字幕/文本，不覆盖"
+          },
+          "openviking_instance": {
+            "query": "仅根据我在Aelinの日记里的记录回答：Me at the zoo 这条内容讲了什么？",
+            "hit_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\youtube\\08b898f49ddba728\\insights\\2026-02-22T071533-030619-0000_我在动物园.md",
+            "hit_preview": "Tracking Insight - canonical_id: `c82a91506bd6d1886ac0457d47e25fb47f811fe7` - target: Me at the zoo - source: youtube - kind: insight - created_at: 2026-02-22T07:15:33.030619+00:00 - confidence: 0.82 - query: https://www.youtube.com/watch?v=jNQXAC9IVRw - reason: 所有信息均来自明确的手动字幕，内容",
+            "answer_head": "目前仅能查到这条记录来自YouTube的追踪内容，标题为“我在动物园”，暂未获取到具体的内容详情哦😅",
+            "trace_stages": [
+              "intent_lens",
+              "plan_critic",
+              "query_decomposer",
+              "main_agent",
+              "reply_agent",
+              "reply_dispatch",
+              "local_search",
+              "local_search_subagent_1",
+              "web_search",
+              "message_hub",
+              "file_memory_search",
+              "generation",
+              "grounding_judge",
+              "coverage_verifier",
+              "reply_verifier",
+              "trace_agent",
+              "trace_dispatch",
+              "trace_local_subagent_1",
+              "insight_write"
+            ]
+          },
+          "full_success": true
+        }
+      ]
+    },
+    {
+      "platform": "bilibili",
+      "status": "passed",
+      "attempts": [
+        {
+          "attempt_index": 1,
+          "url": "https://www.bilibili.com/video/BV1gt411f7Xx/",
+          "timestamp": "2026-02-22T07:17:40.122990+00:00",
+          "fetch_success": true,
+          "capture_success": true,
+          "agent_summary_success": true,
+          "diary_write_success": true,
+          "openviking_answer_success": true,
+          "fetch_instance": {
+            "title": "Francisca - Voodoo (Official Video)",
+            "uploader": "Alexey192",
+            "duration": 206.703,
+            "webpage_url": "https://www.bilibili.com/video/BV1gt411f7Xx/"
+          },
+          "capture_instance": {
+            "source_type": "description",
+            "source_language": "unknown",
+            "text_head": "Francisca - Voodoo (Official Video) wb: Alieksei-小A bilibili.com : Alyosha192 网易云音乐: Alyosha924"
+          },
+          "agent_summary_instance": {
+            "answer_head": "我已读取并理解这个 bilibili 链接的内容。\n\n该文本介绍了Francisca的《Voodoo》官方MV，并提供了对应的微博、B站及网易云音乐关联账号信息。\n\n关键信息：\n- 该视频为Francisca的《Voodoo》官方MV\n- 文本附带了微博、B站、网易云音乐三个平台的关联账号信息\n\n建议：\n- 若想获取更多Francisca相关内容，可通过提供的各平台账号关注相关主体\n\n来源类型：description（confidence=0.50）\n\n已写入 Aelinの日记，可作为后续 RAG 上下文使用。\n\n限制说明：\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前未提取到字幕，改用描述文本生成，置信度较低。",
+            "trace_stages": [
+              "media_ingest"
+            ],
+            "actions": [
+              "open_tracking",
+              "open_desk"
+            ]
+          },
+          "diary_instance": {
+            "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\bilibili\\8af4f7e15803d453\\insights\\2026-02-22T071818-418678-0000_Francisca---Voodoo-官方MV.md",
+            "diary_head": "# Tracking Insight\n\n- canonical_id: `8562d7c7086b2887fd328966750dcb1810b7b517`\n- target: Francisca - Voodoo (Official Video)\n- source: bilibili\n- kind: insight\n- created_at: 2026-02-22T07:18:18.418678+00:00\n- confidence: 0.50\n- query: https://www.bilibili.com/video/BV1gt411f7Xx/\n- reason: 所有信息均直接来源于提供的文本内容，信息明确无歧义，置信度为最高值\n\n## Title\n\n《Francisca - Voodoo（官方MV）》\n\n## Insight\n\n## 概要\n\n该文本介绍了Francisca的《Voodoo》官方MV，并提供了对应的微博、B站及网易云音乐关联账号信息。\n\n## 关键要点\n\n- 该视频为Francisca的《Voodoo》官方MV\n- 文本附带了微博、B站、网易云音乐三个平台的关联账号信息\n\n## 证据片段\n\n- 视频名称为Francisca - Voodoo (Official Video)\n- 微博账号为Alieksei-小A\n- B站账号为Alyosha192\n- 网易云音乐账号为Alyosha924\n\n## 行动建议\n\n- 若想获取更多Francisca相关内容，可通过提供的各平台账号关注相关主体\n\n## 来源元信息\n\n- title: 《Francisca - Voodoo（官方MV）》\n- platform: bilibili\n- url: https://www.bilibili.com/video/BV1gt411f7Xx/\n- source_type: description\n- source_language: unknown\n- confidence: 0.50\n\n## 限制说明\n\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前"
+          },
+          "openviking_instance": {
+            "query": "仅根据我在Aelinの日记里的记录回答：Francisca - Voodoo (Official Video) 这条内容讲了什么？",
+            "hit_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\bilibili\\8af4f7e15803d453\\insights\\2026-02-22T071818-418678-0000_Francisca---Voodoo-官方MV.md",
+            "hit_preview": "Tracking Insight - canonical_id: `8562d7c7086b2887fd328966750dcb1810b7b517` - target: Francisca - Voodoo (Official Video) - source: bilibili - kind: insight - created_at: 2026-02-22T07:18:18.418678+00:00 - confidence: 0.50 - query: https://www.bilibili.com/video/BV1gt411f7Xx/ - r",
+            "answer_head": "在你的Aelinの日记中，仅记录了《Francisca - Voodoo（官方MV）》是来自bilibili的内容，没有更多相关的详细描述哦😅",
+            "trace_stages": [
+              "intent_lens",
+              "plan_critic",
+              "query_decomposer",
+              "main_agent",
+              "reply_agent",
+              "reply_dispatch",
+              "local_search",
+              "local_search_subagent_1",
+              "web_search",
+              "message_hub",
+              "file_memory_search",
+              "generation",
+              "grounding_judge",
+              "coverage_verifier",
+              "reply_verifier",
+              "trace_agent",
+              "insight_write"
+            ]
+          },
+          "full_success": true
+        }
+      ]
+    },
+    {
+      "platform": "douyin",
+      "status": "failed",
+      "attempts": [
+        {
+          "attempt_index": 1,
+          "url": "https://www.douyin.com/video/7110472242345069824",
+          "timestamp": "2026-02-22T07:19:47.723233+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "未获取到可解析的媒体元数据"
+        },
+        {
+          "attempt_index": 2,
+          "url": "https://www.douyin.com/video/7569634992524333989",
+          "timestamp": "2026-02-22T07:19:48.923671+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "未获取到可解析的媒体元数据"
+        },
+        {
+          "attempt_index": 3,
+          "url": "https://www.douyin.com/video/7064134889660771591",
+          "timestamp": "2026-02-22T07:19:50.176017+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "未获取到可解析的媒体元数据"
+        }
+      ]
+    },
+    {
+      "platform": "tiktok",
+      "status": "passed",
+      "attempts": [
+        {
+          "attempt_index": 1,
+          "url": "https://www.tiktok.com/@scout2015/video/6718335390845095173",
+          "timestamp": "2026-02-22T07:19:51.347155+00:00",
+          "fetch_success": true,
+          "capture_success": true,
+          "agent_summary_success": true,
+          "diary_write_success": true,
+          "openviking_answer_success": true,
+          "fetch_instance": {
+            "title": "Scramble up ur name & I’ll try to guess it😍❤️ #foryoupage #petsoftikt...",
+            "uploader": "scout2015",
+            "duration": 10,
+            "webpage_url": "https://www.tiktok.com/@scout2015/video/6718335390845095173"
+          },
+          "capture_instance": {
+            "source_type": "description",
+            "source_language": "unknown",
+            "text_head": "Scramble up ur name & I’ll try to guess it😍❤️ #foryoupage #petsoftiktok #aesthetic"
+          },
+          "agent_summary_instance": {
+            "answer_head": "我已读取并理解这个 tiktok 链接的内容。\n\n这是TikTok平台上一则发起互动的视频文案，博主邀请用户打乱自己的名字后分享，博主会尝试猜出原名字，同时附带了三个相关话题标签以提升内容曝光度。\n\n关键信息：\n- 博主在TikTok平台发起名字猜测类互动活动\n- 互动核心内容为用户打乱自身名字，博主尝试还原猜测原名字\n- 文案附带#foryoupage、#petsoftiktok、#aesthetic三个话题标签\n\n建议：\n- 用户可打乱自己的名字并参与该互动活动\n- 博主将针对用户提供的打乱后的名字尝试猜测对应的原名字\n\n来源类型：description（confidence=0.50）\n\n已写入 Aelinの日记，可作为后续 RAG 上下文使用。\n\n限制说明：\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前未提取到字幕，改用描述文本生成，置信度较低。",
+            "trace_stages": [
+              "media_ingest"
+            ],
+            "actions": [
+              "open_tracking",
+              "open_desk"
+            ]
+          },
+          "diary_instance": {
+            "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\tiktok\\c787de4feff7a95f\\insights\\2026-02-22T072042-564491-0000_打乱你的名字-我来尝试猜出它.md",
+            "diary_head": "# Tracking Insight\n\n- canonical_id: `6c2e27531666da5579978bdc6791d6d4e768ccfb`\n- target: Scramble up ur name & I’ll try to guess it😍❤️ #foryoupage #petsoftikt...\n- source: tiktok\n- kind: insight\n- created_at: 2026-02-22T07:20:42.564491+00:00\n- confidence: 0.50\n- query: https://www.tiktok.com/@scout2015/video/6718335390845095173\n- reason: 提供的TikTok视频文案内容清晰明确，所有信息均可直接从原文提取，无模糊或歧义内容，故置信度为1.0\n\n## Title\n\n打乱你的名字，我来尝试猜出它😍❤️\n\n## Insight\n\n## 概要\n\n这是TikTok平台上一则发起互动的视频文案，博主邀请用户打乱自己的名字后分享，博主会尝试猜出原名字，同时附带了三个相关话题标签以提升内容曝光度。\n\n## 关键要点\n\n- 博主在TikTok平台发起名字猜测类互动活动\n- 互动核心内容为用户打乱自身名字，博主尝试还原猜测原名字\n- 文案附带#foryoupage、#petsoftiktok、#aesthetic三个话题标签\n\n## 证据片段\n\n- Scramble up ur name & I’ll try to guess it😍❤️ #foryoupage #petsoftiktok #aesthetic\n\n## 行动建议\n\n- 用户可打乱自己的名字并参与该互动活动\n- 博主将针对用户提供的打乱后的名字尝试猜测对应的原名字\n\n## 来源元信息\n\n- title: 打乱你的名字，我来尝试猜出它😍❤️\n- platform: tiktok\n- url: https://www.tiktok.com/@scout2015/video/671833539084"
+          },
+          "openviking_instance": {
+            "query": "仅根据我在Aelinの日记里的记录回答：Scramble up ur name & I’ll try to guess it😍❤️ #foryoupage #petsoftikt... 这条内容讲了什么？",
+            "hit_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\tiktok\\c787de4feff7a95f\\insights\\2026-02-22T072042-564491-0000_打乱你的名字-我来尝试猜出它.md",
+            "hit_preview": "Tracking Insight - canonical_id: `6c2e27531666da5579978bdc6791d6d4e768ccfb` - target: Scramble up ur name & I’ll try to guess it😍❤️ foryoupage petsoftikt... - source: tiktok - kind: insight - created_at: 2026-02-22T07:20:42.564491+00:00 - confidence: 0.50 - query: https://www.tik",
+            "answer_head": "这条内容是TikTok上的互动邀请：发起者让大家把自己的名字打乱重组，他会尝试猜出原本的名字，附带的#foryoupage（TikTok推荐页）和#petsoftikt（TikTok宠物内容板块）标签，是为了获得平台推荐、提升内容互动量😉",
+            "trace_stages": [
+              "intent_lens",
+              "plan_critic",
+              "query_decomposer",
+              "main_agent",
+              "reply_agent",
+              "reply_dispatch",
+              "local_search",
+              "local_search_subagent_1",
+              "web_search",
+              "web_search_subagent_1",
+              "web_search_subagent_2",
+              "web_search_subagent_3",
+              "web_search_subagent_4",
+              "message_hub",
+              "file_memory_search",
+              "generation",
+              "grounding_judge",
+              "coverage_verifier",
+              "reply_verifier",
+              "trace_agent",
+              "insight_write"
+            ]
+          },
+          "full_success": true
+        }
+      ]
+    },
+    {
+      "platform": "x",
+      "status": "passed",
+      "attempts": [
+        {
+          "attempt_index": 1,
+          "url": "https://x.com/XDevelopers/status/1228393702244134912",
+          "timestamp": "2026-02-22T07:23:01.705609+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "未获取到可解析的媒体元数据"
+        },
+        {
+          "attempt_index": 2,
+          "url": "https://x.com/bgatesisapyscho/status/1951036436838244677",
+          "timestamp": "2026-02-22T07:23:03.749001+00:00",
+          "fetch_success": true,
+          "capture_success": true,
+          "agent_summary_success": true,
+          "diary_write_success": true,
+          "openviking_answer_success": true,
+          "fetch_instance": {
+            "title": "Concerned Citizen - If someone still believes this is a legit clip of NASA leaving the Mo...",
+            "uploader": "Concerned Citizen",
+            "duration": 17.105,
+            "webpage_url": "https://x.com/bgatesisapyscho/status/1951036436838244677"
+          },
+          "capture_instance": {
+            "source_type": "description",
+            "source_language": "unknown",
+            "text_head": "If someone still believes this is a legit clip of NASA leaving the Moon in 1972, then that person simply isn’t worth the time to debate anything with. https://t.co/dKwJ8lAyQA"
+          },
+          "agent_summary_instance": {
+            "answer_head": "我已读取并理解这个 x 链接的内容。\n\n某用户在平台X上发布言论称，若有人仍认为某网传视频是NASA1972年离开月球的真实片段，那么不值得与这类人进行任何辩论，并附带了该视频的相关链接。\n\n关键信息：\n- 发布者明确质疑某网传视频并非NASA1972年离开月球的真实片段\n- 发布者认为仍坚信该视频真实的人不值得与其开展任何辩论\n\n建议：\n- 在平台X上发布针对网传视频真实性的质疑言论\n- 附带相关视频的链接以指向讨论对象\n\n来源类型：description（confidence=0.50）\n\n已写入 Aelinの日记，可作为后续 RAG 上下文使用。\n\n限制说明：\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前未提取到字幕，改用描述文本生成，置信度较低。",
+            "trace_stages": [
+              "media_ingest"
+            ],
+            "actions": [
+              "open_tracking",
+              "open_desk"
+            ]
+          },
+          "diary_instance": {
+            "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\x\\ec1a542f3b58e342\\insights\\2026-02-22T072351-825184-0000_质疑网传NASA1972年离开月球的视频真实性-相信该视频者不值得辩论.md",
+            "diary_head": "# Tracking Insight\n\n- canonical_id: `198cbee24aa6904f2b5dd8fed9d55c0d092b8057`\n- target: Concerned Citizen - If someone still believes this is a legit clip of NASA leaving the Mo...\n- source: x\n- kind: insight\n- created_at: 2026-02-22T07:23:51.825184+00:00\n- confidence: 0.50\n- query: https://x.com/bgatesisapyscho/status/1951036436838244677\n- reason: 摘要严格依据提供的原文内容生成，完整且准确地还原了发布者的核心观点、行为动作，未添加任何未提及的信息，因此置信度为1.0。\n\n## Title\n\n质疑网传NASA1972年离开月球的视频真实性：相信该视频者不值得辩论\n\n## Insight\n\n## 概要\n\n某用户在平台X上发布言论称，若有人仍认为某网传视频是NASA1972年离开月球的真实片段，那么不值得与这类人进行任何辩论，并附带了该视频的相关链接。\n\n## 关键要点\n\n- 发布者明确质疑某网传视频并非NASA1972年离开月球的真实片段\n- 发布者认为仍坚信该视频真实的人不值得与其开展任何辩论\n\n## 证据片段\n\n- 未提供支撑视频为伪造的具体事实依据，仅为发布者的主观观点表达\n\n## 行动建议\n\n- 在平台X上发布针对网传视频真实性的质疑言论\n- 附带相关视频的链接以指向讨论对象\n\n## 来源元信息\n\n- title: 质疑网传NASA1972年离开月球的视频真实性：相信该视频者不值得辩论\n- platform: x\n- url: https://x.com/bgatesisapyscho/status/1951036436838244677\n- source_type: description\n- source_lang"
+          },
+          "openviking_instance": {
+            "query": "仅根据我在Aelinの日记里的记录回答：Concerned Citizen - If someone still believes this is a legit clip of NASA leaving the Mo... 这条内容讲了什么？",
+            "hit_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\2\\workspaces\\platform-matrix-20260222-v2\\tracking\\x\\ec1a542f3b58e342\\insights\\2026-02-22T072351-825184-0000_质疑网传NASA1972年离开月球的视频真实性-相信该视频者不值得辩论.md",
+            "hit_preview": "Tracking Insight - canonical_id: `198cbee24aa6904f2b5dd8fed9d55c0d092b8057` - target: Concerned Citizen - If someone still believes this is a legit clip of NASA leaving the Mo... - source: x - kind: insight - created_at: 2026-02-22T07:23:51.825184+00:00 - confidence: 0.50 - query",
+            "answer_head": "这条内容质疑了网传的NASA1972年离开月球的视频的真实性，并且认为相信该视频的人不值得辩论 📝",
+            "trace_stages": [
+              "intent_lens",
+              "plan_critic",
+              "query_decomposer",
+              "main_agent",
+              "reply_agent",
+              "reply_dispatch",
+              "local_search",
+              "local_search_subagent_1",
+              "web_search",
+              "message_hub",
+              "file_memory_search",
+              "generation",
+              "grounding_judge",
+              "coverage_verifier",
+              "reply_verifier",
+              "trace_agent",
+              "insight_write"
+            ]
+          },
+          "full_success": true
+        }
+      ]
+    },
+    {
+      "platform": "instagram",
+      "status": "failed",
+      "attempts": [
+        {
+          "attempt_index": 1,
+          "url": "https://www.instagram.com/reel/CG7PQkGhA8J/",
+          "timestamp": "2026-02-22T07:25:19.864538+00:00",
+          "fetch_success": false,
+          "capture_success": false,
+          "agent_summary_success": false,
+          "diary_write_success": false,
+          "openviking_answer_success": false,
+          "error": "未获取到可解析的媒体元数据"
+        }
+      ]
+    }
+  ],
+  "llm_provider": "openai",
+  "llm_configured": true,
+  "ytdlp_cmd": [
+    "yt-dlp"
+  ]
+}
