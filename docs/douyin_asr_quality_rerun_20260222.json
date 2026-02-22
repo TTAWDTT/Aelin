@@ -1,0 +1,215 @@
+{
+  "started_at": "2026-02-22T17:59:50.420306+00:00",
+  "workspace": "douyin-asr-quality-20260222-175950",
+  "url": "https://www.douyin.com/video/7569634992524333989",
+  "asr_backend": "faster_whisper",
+  "asr_local_model": "tiny",
+  "asr_probe": {
+    "extractor": "playwright_fallback",
+    "video_url_len": 556,
+    "audio_extract_ok": true,
+    "audio_size": 270651,
+    "asr_text_len": 219,
+    "asr_noise_score": 0.14,
+    "asr_repeat_hits": 0,
+    "asr_text_head": "抖音10月6號的熱度最高的時調視頻 看看你都刷到了沒 他們中波風量最低的都有1760萬 他們到底派了什麼人心到這麼多觀眾 我們一起來學習一下 第10名點贊量138.1萬 媳婦唱的才是點睛之餘 大家好我是 我戀 我戀我戀 如果曾經沒預出聲音 只要更直我會 農村廚房場景加上普通掌槍 降低了你的預期 然後大破了你的預期 更須你超出意料的景形 第9名點贊量155.6萬 老雙語協 叫這麼多人 我倒 一個齊型生活內博主的底粉爆發 大多的生活內博主"
+  },
+  "auth": {
+    "register_status": 200,
+    "login_status": 200
+  },
+  "agent_config_patch": 200,
+  "ingest": {
+    "status_code": 200,
+    "data": {
+      "status": "saved",
+      "message": "已完成 douyin 内容摘要并写入 Aelinの日记。",
+      "url": "https://www.douyin.com/video/7569634992524333989",
+      "platform": "douyin",
+      "title": "抖音热度最高的视频，每日top10，2025年11月6日。#抖音热榜 #内容创作 #拆片 #热点",
+      "source_type": "subtitle_asr",
+      "summary": "总结：\n该内容旨在拆解2025年11月6日抖音热度最高的Top10视频，分析其高流量创作逻辑供创作者学习，因ASR识别存在较多噪声，仅部分介绍了榜单中第10名和第9名视频的点赞量及创作特点，内容存在残缺。\n\n提炼信息：\n今天看了一条拆解抖音每日热榜Top10的内容，针对2025年11月6日的榜单，提到榜单里的视频最低播放量都有1760万。其中第10名视频点赞138.1万，用农村厨房场景加普通开场降低观众预期，再用超出意料的内容打破预期；第9名视频点赞155.6万，是生活类博主的涨粉爆发内容，但后续内容没说完，ASR识别还存在不少错误，部分信息模糊。\n\n来源类型：subtitle_asr（confidence=0.30，quality=0.87，gate=pass）",
+      "summary_overview": "该内容旨在拆解2025年11月6日抖音热度最高的Top10视频，分析其高流量创作逻辑供创作者学习，因ASR识别存在较多噪声，仅部分介绍了榜单中第10名和第9名视频的点赞量及创作特点，内容存在残缺。",
+      "information_note": "今天看了一条拆解抖音每日热榜Top10的内容，针对2025年11月6日的榜单，提到榜单里的视频最低播放量都有1760万。其中第10名视频点赞138.1万，用农村厨房场景加普通开场降低观众预期，再用超出意料的内容打破预期；第9名视频点赞155.6万，是生活类博主的涨粉爆发内容，但后续内容没说完，ASR识别还存在不少错误，部分信息模糊。",
+      "confidence": 0.3,
+      "quality_score": 0.87,
+      "quality_reason": "quality_gate_passed",
+      "quality_usable": true,
+      "needs_review": false,
+      "written": true,
+      "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\24\\workspaces\\douyin-asr-quality-20260222-175950\\diary\\douyin\\2026-02-22T180053-940992-0000_抖音热度最高视频每日Top10-2025年11月6日.md",
+      "limitations": [
+        "摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。",
+        "当前字幕由 ASR 转写生成，可能存在听写误差。"
+      ],
+      "generated_at": "2026-02-22T18:00:53.964500Z"
+    }
+  },
+  "diary": {
+    "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\24\\workspaces\\douyin-asr-quality-20260222-175950\\diary\\douyin\\2026-02-22T180053-940992-0000_抖音热度最高视频每日Top10-2025年11月6日.md",
+    "exists": true,
+    "head": "# Tracking Insight\n\n- canonical_id: `2270afa6472aec1564dc8f852e72b6b51679472f`\n- target: 抖音热度最高的视频，每日top10，2025年11月6日。#抖音热榜 #内容创作 #拆片 #热点\n- source: douyin\n- kind: insight\n- entry_kind: media_insight\n- topic_path: douyin\n- created_at: 2026-02-22T18:00:53.940992+00:00\n- confidence: 0.30\n- query: https://www.douyin.com/video/7569634992524333989\n- reason: ASR识别存在大量口语重复、噪声及语义不通的内容（如“我戀我戀我戀”“時調視頻”“掌槍”等识别错误），仅部分介绍了Top10中的第10名和第9名视频，信息不完整，关键表述存在模糊，因此置信度较低。\n- source_indices_json:\n  [\n    {\n      \"label\": \"https://www.douyin.com/video/7569634992524333989\",\n      \"message_id\": 0,\n      \"path\": \"\",\n      \"type\": \"query\",\n      \"url\": \"\"\n    },\n    {\n      \"label\": \"抖音热度最高的视频，每日top10，2025年11月6日。#抖音热榜 #内容创作 #拆片 #热点\",\n      \"message_id\": 0,\n      \"path\": \"\",\n      \"type\": \"url\",\n      \"url\": \"https://www.douyin.com/video/7569634992524333989\"\n    }\n  ]\n\n## Title\n\n抖音热度最高视频每日Top10（2025年11月6日）\n\n## Insight\n\n## 总结\n\n该内容旨在拆解2025年11月6日抖音热度最高的Top10视频，分析其高流量创作逻辑供创作者学习，因ASR识别存在较多噪声，仅部分介绍了榜单中第10名和第9名视频的点赞量及创作特点，内容存在残缺。\n\n## 提炼信息（日记）\n\n今天看了一条拆解抖音每日热榜Top10的内容，针对2025年11月6日的榜单，提到榜单里的视频最低播放量都有1760万。其中第10名视频点赞138.1万，用农村厨房场景加普通开场降低观众预期，再用超出意料的内容打破预期；第9名视频点赞155.6万，是生活类博主的涨粉爆发内容，但后续内容没说完，ASR识别还存在不少错误，部分信息模糊。\n\n## 证据锚点\n\n依据文本可见：他们中播放量最低的都有1760万；第10名点赞量138.1万 农村厨房场景加上普通开场 降低了你的预期 然后打破了你的预期；第9名点赞量155.6万 一个生活类博主的涨粉爆发。\n\n## 可执行提醒\n\n后续可考虑：分析抖音高热度视频的创作逻辑；学习高流量视频的内容创作方法。\n\n## 信息标签\n\n2025年11月6日抖音热度Top10视频最低播放量达1760万；第10名视频点赞量138.1万，采用“降低预期再打破预期”的创作逻辑；第9名视频点赞量155.6万，为生活类博主的涨粉爆发内容。\n\n## 来源元信息\n\n- title: 抖音热度最高视频每日Top10（2025年11月6日）\n- platform: douyin\n- url: https://www.douyin.com/video/7569634992524333989\n- source_type: subtitle_asr\n- source_language: zh\n- confidence: 0.30\n\n## 质量评估\n\n- usable: true\n- needs_review: false\n- quality_score: 0.87\n- quality_reason: quality_gate_passed\n\n## 限制说明\n\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前字幕由 ASR 转写生成，可能存在听写误差。\n\n## 来源索引\n\n- [query] https://www.douyin.com/video/7569634992524333989\n- [url] 抖音热度最高的视频，每日top10，2025年11月6日。#抖音热榜 #内容创作 #拆片 #热点 | url=https://www.douyin.com/video/7569634992524333989\n"
+  },
+  "chat": {
+    "status_code": 200,
+    "data": {
+      "answer": "刚刚写入的是2025年11月6日抖音热度最高视频每日Top10的拆解内容：该榜单视频最低播放量达1760万；第10名视频获赞138.1万，以农村厨房场景+普通开场降低观众预期，再用超出意料的内容打破预期；第9名视频获赞155.6万，是生活类博主的涨粉爆发内容，但后续内容未说完，ASR识别还存在不少错误。 📝",
+      "expression": "exp-04",
+      "citations": [],
+      "actions": [
+        {
+          "kind": "open_desk",
+          "title": "在 Desk 查看可视化证据",
+          "detail": "打开 /desk，在卡片与时间线里核验上下文",
+          "payload": {
+            "path": "/desk",
+            "query": "仅根据我在Aelinの日记里的记录回答：刚刚写入的抖音内容讲了什么？"
+          }
+        },
+        {
+          "kind": "track_topic",
+          "title": "持续追踪该主题",
+          "detail": "将当前问题加入长期追踪边界",
+          "payload": {
+            "query": "仅根据我在Aelinの日记里的记录回答：刚刚写入的抖音内容讲了什么？"
+          }
+        }
+      ],
+      "tool_trace": [
+        {
+          "stage": "intent_lens",
+          "status": "completed",
+          "detail": "type=retrieval; scope=recent; freshness_h=1; conf=1.00; src=llm; diary_only=1",
+          "count": 0,
+          "ts": 1771783274057
+        },
+        {
+          "stage": "plan_critic",
+          "status": "completed",
+          "detail": "system:diary_only_enforced",
+          "count": 0,
+          "ts": 1771783295866
+        },
+        {
+          "stage": "query_decomposer",
+          "status": "skipped",
+          "detail": "no web boundary",
+          "count": 0,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "main_agent",
+          "status": "completed",
+          "detail": "llm:用户明确要求仅从其Aelin日记中检索刚刚写入的抖音内容信息，需执行本地搜索查询过去1小时内的日记新增记录，无需网络搜索及跟踪操作。;critic_patch;diary_only_enforced; planner=llm+critic_patch; critic=原tool_plan核心逻辑符合intent contract要求：开启本地搜索、限定1小时内的Aelin日记范围、关闭web搜索及trace_agent等均匹配intent_contract的diary",
+          "count": 0,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "reply_agent",
+          "status": "completed",
+          "detail": "route reply=1, trace=0, retry=0",
+          "count": 0,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "reply_dispatch",
+          "status": "completed",
+          "detail": "context_boundaries=0; trace_boundaries=0",
+          "count": 0,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "local_search",
+          "status": "skipped",
+          "detail": "local search skipped by route",
+          "count": 0,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "web_search",
+          "status": "skipped",
+          "detail": "web search skipped by route",
+          "count": 0,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "message_hub",
+          "status": "completed",
+          "detail": "merged local=0 web=0 file=2",
+          "count": 0,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "file_memory_search",
+          "status": "completed",
+          "detail": "file memory hits merged",
+          "count": 2,
+          "ts": 1771783295867
+        },
+        {
+          "stage": "generation",
+          "status": "completed",
+          "detail": "llm generation succeeded",
+          "count": 0,
+          "ts": 1771783295870
+        },
+        {
+          "stage": "grounding_judge",
+          "status": "completed",
+          "detail": "diary_only_mode",
+          "count": 0,
+          "ts": 1771783304555
+        },
+        {
+          "stage": "coverage_verifier",
+          "status": "completed",
+          "detail": "diary_only_mode",
+          "count": 0,
+          "ts": 1771783304555
+        },
+        {
+          "stage": "reply_verifier",
+          "status": "completed",
+          "detail": "diary_only_pass",
+          "count": 0,
+          "ts": 1771783304555
+        },
+        {
+          "stage": "trace_agent",
+          "status": "skipped",
+          "detail": "trace route disabled",
+          "count": 0,
+          "ts": 1771783304556
+        },
+        {
+          "stage": "insight_write",
+          "status": "skipped",
+          "detail": "no_tracking_target",
+          "count": 0,
+          "ts": 1771783311209
+        },
+        {
+          "stage": "chat_diary_write",
+          "status": "completed",
+          "detail": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\24\\workspaces\\douyin-asr-quality-20260222-175950\\diary\\与主人的聊天日记\\2026\\02\\22\\2026-02-22T180151-209825-0000_聊天纪要-仅根据我在Aelin-日记里的记录回答-刚刚写入的抖音内容讲了什么.md",
+          "count": 1,
+          "ts": 1771783311213
+        }
+      ],
+      "memory_summary": "",
+      "generated_at": "2026-02-22T18:01:51.231563Z"
+    }
+  },
+  "comparison": {
+    "previous_source_type": "subtitle_asr",
+    "current_source_type": "subtitle_asr",
+    "previous_summary_len": 866,
+    "current_summary_len": 336,
+    "previous_repeat_hits": 0,
+    "current_repeat_hits": 0,
+    "previous_quality_score": 0.87,
+    "current_quality_score": 0.87
+  },
+  "ended_at": "2026-02-22T18:01:51.234565+00:00",
+  "duration_seconds": 120.81
+}

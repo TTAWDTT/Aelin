@@ -1,0 +1,249 @@
+{
+  "started_at": "2026-02-22T17:40:50.455876+00:00",
+  "workspace": "douyin-e2e-20260222-174050",
+  "asr_backend": "faster_whisper",
+  "asr_local_model": "tiny",
+  "ffmpeg_path": "C:\\Users\\86153\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe",
+  "asr_probe": {
+    "extractor": "playwright_fallback",
+    "video_url_len": 502,
+    "audio_extract_ok": true,
+    "audio_size": 20199,
+    "asr_text_len": 0,
+    "asr_text_head": ""
+  },
+  "auth": {
+    "register_status": 200,
+    "login_status": 200
+  },
+  "agent_config": {
+    "patch_status": 200,
+    "status_code": 200,
+    "data": {
+      "provider": "openai",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "model": "ep-20260113141316-sfsps",
+      "temperature": 0.2,
+      "has_api_key": true
+    }
+  },
+  "ingest": {
+    "status_code": 200,
+    "data": {
+      "status": "saved",
+      "message": "已完成 douyin 内容摘要并写入 Aelinの日记。",
+      "url": "https://www.douyin.com/video/7110472242345069824",
+      "platform": "douyin",
+      "title": "复制此链接，打开Dou音搜索，直接观看视频！",
+      "source_type": "douyin_api",
+      "summary": "总结：\n这是一条抖音平台的视频跳转分享信息，发布者为“百货妃子服装店，精品服装”，账号累计获49.0万个喜欢；该视频发布于2022年6月18日15:03，时长7秒，当前互动数据为点赞89、评论3、分享2、收藏0；内容仅提示复制链接跳转观看，未展示视频具体内容，评论区仅有表情类互动内容。\n\n提炼信息：\n记录一条抖音视频的分享信息：发布账号是“百货妃子服装店，精品服装”，账号累计获得49万喜欢；2022年6月18日15:03发布了一条7秒的视频，这条分享只给出跳转链接，没有展示视频具体内容；视频目前有89个赞、3条评论、2次分享，评论都是赞、玫瑰、爱心这类表情互动。\n\n来源类型：douyin_api（confidence=0.30，quality=0.85，gate=pass）",
+      "summary_overview": "这是一条抖音平台的视频跳转分享信息，发布者为“百货妃子服装店，精品服装”，账号累计获49.0万个喜欢；该视频发布于2022年6月18日15:03，时长7秒，当前互动数据为点赞89、评论3、分享2、收藏0；内容仅提示复制链接跳转观看，未展示视频具体内容，评论区仅有表情类互动内容。",
+      "information_note": "记录一条抖音视频的分享信息：发布账号是“百货妃子服装店，精品服装”，账号累计获得49万喜欢；2022年6月18日15:03发布了一条7秒的视频，这条分享只给出跳转链接，没有展示视频具体内容；视频目前有89个赞、3条评论、2次分享，评论都是赞、玫瑰、爱心这类表情互动。",
+      "confidence": 0.3,
+      "quality_score": 0.847,
+      "quality_reason": "quality_gate_passed",
+      "quality_usable": true,
+      "needs_review": false,
+      "written": true,
+      "diary_path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\22\\workspaces\\douyin-e2e-20260222-174050\\diary\\douyin\\2026-02-22T174144-733449-0000_复制此链接-打开Dou音搜索-直接观看视频.md",
+      "limitations": [
+        "摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。",
+        "当前基于抖音页面/API抓取文本生成，非官方字幕逐字稿。"
+      ],
+      "generated_at": "2026-02-22T17:41:44.757592Z"
+    }
+  },
+  "diary": {
+    "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\22\\workspaces\\douyin-e2e-20260222-174050\\diary\\douyin\\2026-02-22T174144-733449-0000_复制此链接-打开Dou音搜索-直接观看视频.md",
+    "exists": true,
+    "head": "# Tracking Insight\n\n- canonical_id: `f19994d77a5de6b52d7fa3375656a490b828553b`\n- target: 复制此链接，打开Dou音搜索，直接观看视频！\n- source: douyin\n- kind: insight\n- entry_kind: media_insight\n- topic_path: douyin\n- created_at: 2026-02-22T17:41:44.733449+00:00\n- confidence: 0.30\n- query: https://www.douyin.com/video/7110472242345069824\n- reason: 该内容仅提供抖音视频的跳转链接、账号基础信息及互动数据，未披露视频的具体内容，核心信息存在缺失，因此置信度较低。\n- source_indices_json:\n  [\n    {\n      \"label\": \"https://www.douyin.com/video/7110472242345069824\",\n      \"message_id\": 0,\n      \"path\": \"\",\n      \"type\": \"query\",\n      \"url\": \"\"\n    },\n    {\n      \"label\": \"复制此链接，打开Dou音搜索，直接观看视频！\",\n      \"message_id\": 0,\n      \"path\": \"\",\n      \"type\": \"url\",\n      \"url\": \"https://www.douyin.com/video/7110472242345069824\"\n    }\n  ]\n\n## Title\n\n复制此链接，打开Dou音搜索，直接观看视频！\n\n## Insight\n\n## 总结\n\n这是一条抖音平台的视频跳转分享信息，发布者为“百货妃子服装店，精品服装”，账号累计获49.0万个喜欢；该视频发布于2022年6月18日15:03，时长7秒，当前互动数据为点赞89、评论3、分享2、收藏0；内容仅提示复制链接跳转观看，未展示视频具体内容，评论区仅有表情类互动内容。\n\n## 提炼信息（日记）\n\n记录一条抖音视频的分享信息：发布账号是“百货妃子服装店，精品服装”，账号累计获得49万喜欢；2022年6月18日15:03发布了一条7秒的视频，这条分享只给出跳转链接，没有展示视频具体内容；视频目前有89个赞、3条评论、2次分享，评论都是赞、玫瑰、爱心这类表情互动。\n\n## 证据锚点\n\n依据文本可见：页面描述提及“百货妃子服装店，精品服装于20220618发布在抖音，已经收获了49.0万个喜欢”；页面正文片段显示视频时长为00:07，发布时间为2022-06-18 15:03，互动数据为点赞89、评论3、分享2、收藏0；评论/弹幕摘录为表情类内容：@[赞][赞][赞][玫瑰][玫瑰][玫瑰]；[爱心][爱心][爱心][爱心][爱心][爱心][爱心][爱心]；所有相关页面内容仅提示复制链接跳转观看，未涉及视频具体内容描述。\n\n## 可执行提醒\n\n后续可考虑：复制链接打开抖音平台观看该视频的具体内容；访问“百货妃子服装店，精品服装”抖音账号查看其更多发布内容；在该视频评论区发布文字评论进行互动。\n\n## 信息标签\n\n该内容为抖音视频的跳转分享信息，未展示具体视频内容；发布账号为“百货妃子服装店，精品服装”，累计获49.0万个喜欢；视频发布于2022年6月18日15:03，时长7秒；视频互动数据：点赞89、评论3、分享2、收藏0；评论区仅存在表情类互动内容。\n\n## 来源元信息\n\n- title: 复制此链接，打开Dou音搜索，直接观看视频！\n- platform: douyin\n- url: https://www.douyin.com/video/7110472242345069824\n- source_type: douyin_api\n- source_language: zh\n- confidence: 0.30\n\n## 质量评估\n\n- usable: true\n- needs_review: false\n- quality_score: 0.85\n- quality_reason: quality_gate_passed\n\n## 限制说明\n\n- 摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。\n- 当前基于抖音页面/API抓取文本生成，非官方字幕逐字稿。\n\n## 来源索引\n\n- [query] https://www.douyin.com/video/7110472242345069824\n- [url] 复制此链接，打开Dou音搜索，直接观看视频！ | url=https://www.douyin.com/video/7110472242345069824\n"
+  },
+  "file_memory_search": {
+    "status_code": 200,
+    "data": {
+      "workspace": "douyin-e2e-20260222-174050",
+      "total": 2,
+      "items": [
+        {
+          "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\22\\workspaces\\douyin-e2e-20260222-174050\\diary\\douyin\\2026-02-22T174144-733449-0000_复制此链接-打开Dou音搜索-直接观看视频.md",
+          "title": "复制此链接，打开Dou音搜索，直接观看视频！",
+          "preview": "记录一条抖音视频的分享信息：发布账号是“百货妃子服装店，精品服装”，账号累计获得49万喜欢；2022年6月18日15:03发布了一条7秒的视频，这条分享只给出跳转链接，没有展示视频具体内容；视频目前有89个赞、3条评论、2次分享，评论都是赞、玫瑰、爱心这类表情互动。 依据文本可见：页面描述提及“百货妃子服装店，精品服装于20220618发布在抖音，已经收获了49.0万个喜欢”；页面正文片段显示视频时长为00:07，发布时间为2022-06-18 15:03，互动数据为点赞89、评论3、分享2、收藏0；评论/弹幕摘录为表情类内容：@[赞][赞][赞][玫瑰",
+          "score": 13.4,
+          "updated_at": "2026-02-22T17:41:44.733449+00:00",
+          "canonical_id": "f19994d77a5de6b52d7fa3375656a490b828553b",
+          "target": "复制此链接，打开Dou音搜索，直接观看视频！",
+          "source": "douyin",
+          "kind": "insight",
+          "topic_path": "douyin",
+          "entry_kind": "media_insight"
+        },
+        {
+          "path": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\22\\workspaces\\douyin-e2e-20260222-174050\\tracking\\douyin\\368075010f851e9a\\insights\\2026-02-22T174144-733449-0000_复制此链接-打开Dou音搜索-直接观看视频.md",
+          "title": "复制此链接，打开Dou音搜索，直接观看视频！",
+          "preview": "记录一条抖音视频的分享信息：发布账号是“百货妃子服装店，精品服装”，账号累计获得49万喜欢；2022年6月18日15:03发布了一条7秒的视频，这条分享只给出跳转链接，没有展示视频具体内容；视频目前有89个赞、3条评论、2次分享，评论都是赞、玫瑰、爱心这类表情互动。 依据文本可见：页面描述提及“百货妃子服装店，精品服装于20220618发布在抖音，已经收获了49.0万个喜欢”；页面正文片段显示视频时长为00:07，发布时间为2022-06-18 15:03，互动数据为点赞89、评论3、分享2、收藏0；评论/弹幕摘录为表情类内容：@[赞][赞][赞][玫瑰",
+          "score": 13.4,
+          "updated_at": "2026-02-22T17:41:44.733449+00:00",
+          "canonical_id": "f19994d77a5de6b52d7fa3375656a490b828553b",
+          "target": "复制此链接，打开Dou音搜索，直接观看视频！",
+          "source": "douyin",
+          "kind": "insight",
+          "topic_path": "douyin",
+          "entry_kind": "media_insight"
+        }
+      ],
+      "generated_at": "2026-02-22T17:41:44.765592Z"
+    }
+  },
+  "chat": {
+    "status_code": 200,
+    "data": {
+      "answer": "这条抖音内容仅提供了跳转链接，未记录视频具体内容，相关信息包括：发布账号为“百货妃子服装店，精品服装”，账号累计获得49万喜欢；2022年6月18日15:03发布了一条7秒的视频，视频目前有89个赞、3条评论、2次分享，评论均为赞、玫瑰、爱心这类表情互动 📝",
+      "expression": "exp-04",
+      "citations": [],
+      "actions": [
+        {
+          "kind": "open_desk",
+          "title": "在 Desk 查看可视化证据",
+          "detail": "打开 /desk，在卡片与时间线里核验上下文",
+          "payload": {
+            "path": "/desk",
+            "query": "仅根据我在Aelinの日记里的记录回答：刚刚写入的那条抖音内容讲了什么？若信息不足请直说。"
+          }
+        },
+        {
+          "kind": "track_topic",
+          "title": "持续追踪该主题",
+          "detail": "将当前问题加入长期追踪边界",
+          "payload": {
+            "query": "仅根据我在Aelinの日记里的记录回答：刚刚写入的那条抖音内容讲了什么？若信息不足请直说。"
+          }
+        }
+      ],
+      "tool_trace": [
+        {
+          "stage": "intent_lens",
+          "status": "completed",
+          "detail": "type=retrieval; scope=recent; freshness_h=1; conf=0.95; src=llm; diary_only=1",
+          "count": 0,
+          "ts": 1771782121092
+        },
+        {
+          "stage": "plan_critic",
+          "status": "completed",
+          "detail": "system:diary_only_enforced",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "query_decomposer",
+          "status": "skipped",
+          "detail": "no web boundary",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "main_agent",
+          "status": "completed",
+          "detail": "llm:用户明确要求仅基于其Aelin日记记录查询刚刚写入的抖音内容，当前无可用日记记录摘要，需检索本地Aelin日记中最近1小时内的相关记录，若检索后仍无对应信息则如实告知信息不足。;critic_patch;diary_only_enforced; planner=llm+critic_patch; critic=intent_contract明确要求仅基于Aelin日记进行查询（diary_only=true），无需web搜索，原tool_plan中web_querie",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "reply_agent",
+          "status": "completed",
+          "detail": "route reply=1, trace=0, retry=0",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "reply_dispatch",
+          "status": "completed",
+          "detail": "context_boundaries=0; trace_boundaries=0",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "local_search",
+          "status": "skipped",
+          "detail": "local search skipped by route",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "web_search",
+          "status": "skipped",
+          "detail": "web search skipped by route",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "message_hub",
+          "status": "completed",
+          "detail": "merged local=0 web=0 file=2",
+          "count": 0,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "file_memory_search",
+          "status": "completed",
+          "detail": "file memory hits merged",
+          "count": 2,
+          "ts": 1771782167254
+        },
+        {
+          "stage": "generation",
+          "status": "completed",
+          "detail": "llm generation succeeded",
+          "count": 0,
+          "ts": 1771782167258
+        },
+        {
+          "stage": "grounding_judge",
+          "status": "completed",
+          "detail": "diary_only_mode",
+          "count": 0,
+          "ts": 1771782181117
+        },
+        {
+          "stage": "coverage_verifier",
+          "status": "completed",
+          "detail": "diary_only_mode",
+          "count": 0,
+          "ts": 1771782181117
+        },
+        {
+          "stage": "reply_verifier",
+          "status": "completed",
+          "detail": "diary_only_pass",
+          "count": 0,
+          "ts": 1771782181117
+        },
+        {
+          "stage": "trace_agent",
+          "status": "skipped",
+          "detail": "trace route disabled",
+          "count": 0,
+          "ts": 1771782181117
+        },
+        {
+          "stage": "insight_write",
+          "status": "skipped",
+          "detail": "no_tracking_target",
+          "count": 0,
+          "ts": 1771782190427
+        },
+        {
+          "stage": "chat_diary_write",
+          "status": "completed",
+          "detail": "D:\\Github\\Aelin\\data\\aelin_memory\\users\\22\\workspaces\\douyin-e2e-20260222-174050\\diary\\与主人的聊天日记\\2026\\02\\22\\2026-02-22T174310-427164-0000_聊天纪要-仅根据我在Aelin-日记里的记录回答-刚刚写入的那条抖音内容讲了什么-若.md",
+          "count": 1,
+          "ts": 1771782190431
+        }
+      ],
+      "memory_summary": "",
+      "generated_at": "2026-02-22T17:43:10.451055Z"
+    }
+  },
+  "ended_at": "2026-02-22T17:43:10.453055+00:00",
+  "duration_seconds": 140.0
+}
