@@ -15,6 +15,9 @@ const backendPort = Number(process.env.MERCURYDESK_BACKEND_PORT || (isDev ? 8000
 const frontendPort = Number(process.env.MERCURYDESK_DESKTOP_PORT || (isDev ? 5173 : 1420));
 const desktopZoom = Number(process.env.MERCURYDESK_DESKTOP_ZOOM || "1.0");
 const PET_WINDOW_SIZE = 108;
+const MAIN_ZOOM_MIN = 0.5;
+const MAIN_ZOOM_MAX = 2.0;
+const MAIN_ZOOM_STEP = 0.1;
 
 let mainWindow = null;
 let petWindow = null;
@@ -35,6 +38,7 @@ let petStateLastKey = "";
 let petLastState = "active";
 let petCpuSnapshot = null;
 let petPowerEventsBound = false;
+let mainWindowPinned = false;
 
 function projectRoot() {
   return path.resolve(__dirname, "..", "..");
@@ -82,6 +86,99 @@ function clampWindowSize(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function getDefaultMainZoom() {
+  if (!Number.isFinite(desktopZoom)) return 1.0;
+  return Math.max(0.72, Math.min(1.15, desktopZoom));
+}
+
+function getMainZoomFactor() {
+  if (!mainWindow || mainWindow.isDestroyed()) return getDefaultMainZoom();
+  return Number(mainWindow.webContents.getZoomFactor() || getDefaultMainZoom());
+}
+
+function setMainZoomFactor(factor) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const clamped = Math.max(MAIN_ZOOM_MIN, Math.min(MAIN_ZOOM_MAX, Number(factor || 1)));
+  mainWindow.webContents.setZoomFactor(clamped);
+}
+
+function adjustMainZoom(delta) {
+  const current = getMainZoomFactor();
+  setMainZoomFactor(current + delta);
+}
+
+function isMainWindowAtMinimumSize() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const [width, height] = mainWindow.getSize();
+  const [minWidth, minHeight] = mainWindow.getMinimumSize();
+  return width <= minWidth + 1 && height <= minHeight + 1;
+}
+
+function setMainWindowPinned(pinned) {
+  mainWindowPinned = Boolean(pinned);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setAlwaysOnTop(mainWindowPinned, mainWindowPinned ? "floating" : "normal");
+}
+
+function toggleMainWindowPinned() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    openModule("/");
+    return;
+  }
+  if (!mainWindowPinned && !isMainWindowAtMinimumSize()) {
+    dialog.showMessageBox({
+      type: "info",
+      title: "窗口置顶",
+      message: "请先将主窗口缩小到最小尺寸，再开启置顶。",
+      buttons: ["知道了"],
+    }).catch(() => {});
+    return;
+  }
+  setMainWindowPinned(!mainWindowPinned);
+  syncPetMenu();
+}
+
+function isZoomInKey(input) {
+  const key = String(input?.key || "").toLowerCase();
+  const code = String(input?.code || "");
+  return key === "+" || key === "=" || key === "plus" || code === "NumpadAdd" || key === "add";
+}
+
+function isZoomOutKey(input) {
+  const key = String(input?.key || "").toLowerCase();
+  const code = String(input?.code || "");
+  return key === "-" || key === "_" || key === "subtract" || code === "NumpadSubtract";
+}
+
+function isZoomResetKey(input) {
+  const key = String(input?.key || "").toLowerCase();
+  const code = String(input?.code || "");
+  return key === "0" || code === "Digit0" || code === "Numpad0";
+}
+
+function bindMainZoomShortcuts() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (!input || input.type !== "keyDown") return;
+    const hasAccel = process.platform === "darwin" ? Boolean(input.meta) : Boolean(input.control);
+    if (!hasAccel) return;
+    if (isZoomInKey(input)) {
+      event.preventDefault();
+      adjustMainZoom(MAIN_ZOOM_STEP);
+      return;
+    }
+    if (isZoomOutKey(input)) {
+      event.preventDefault();
+      adjustMainZoom(-MAIN_ZOOM_STEP);
+      return;
+    }
+    if (isZoomResetKey(input)) {
+      event.preventDefault();
+      setMainZoomFactor(getDefaultMainZoom());
+    }
+  });
+}
+
 function applyMainWindowPreset(route = "/") {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const preset = resolveWindowPreset(route);
@@ -96,6 +193,9 @@ function applyMainWindowPreset(route = "/") {
   mainWindow.setResizable(true);
   mainWindow.setMaximizable(true);
   mainWindow.setFullScreenable(false);
+  if (mainWindowPinned && !isMainWindowAtMinimumSize()) {
+    setMainWindowPinned(false);
+  }
 }
 
 function resolveTrayIconPath() {
@@ -616,16 +716,20 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
     },
   });
 
-  const zoom = Number.isFinite(desktopZoom)
-    ? Math.max(0.72, Math.min(1.15, desktopZoom))
-    : 1.0;
-  mainWindow.webContents.setZoomFactor(zoom);
+  setMainZoomFactor(getDefaultMainZoom());
+  bindMainZoomShortcuts();
 
   mainWindow.loadURL(buildAppUrl(initialRoute));
   mainWindow.once("ready-to-show", () => {
     if (showWhenReady) {
       mainWindow.show();
     }
+  });
+  mainWindow.on("resize", () => {
+    if (mainWindowPinned && !isMainWindowAtMinimumSize()) {
+      setMainWindowPinned(false);
+    }
+    syncPetMenu();
   });
   mainWindow.on("minimize", () => {
     if (closing) return;
@@ -636,6 +740,7 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
     setTimeout(() => ensurePetVisible(), 30);
   });
   mainWindow.on("closed", () => {
+    mainWindowPinned = false;
     mainWindow = null;
     if (!closing) {
       setTimeout(() => ensurePetVisible(), 30);
@@ -663,12 +768,16 @@ function openModule(route = "/") {
 }
 
 function createPetMenu() {
+  const pinEntry = (isMainWindowAtMinimumSize() || mainWindowPinned)
+    ? [{ label: mainWindowPinned ? "取消主窗口置顶" : "主窗口置顶", click: () => toggleMainWindowPinned() }]
+    : [];
   return Menu.buildFromTemplate([
     { label: "Chat", click: () => openModule("/") },
     { label: "Settings", click: () => openModule("/settings") },
     { label: "Processes", click: () => openModule("/processes") },
     { label: "Tracking", click: () => openModule("/tracking") },
     { label: "Diary", click: () => openModule("/diary") },
+    ...pinEntry,
     { type: "separator" },
     { label: petVisible ? "收起桌宠" : "显示桌宠", click: () => setPetVisible(!petVisible) },
     { label: petClickThroughEnabled ? "关闭点击穿透" : "开启点击穿透", click: () => setPetClickThroughEnabled(!petClickThroughEnabled) },
