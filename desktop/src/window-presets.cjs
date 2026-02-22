@@ -1,4 +1,6 @@
 const WINDOW_MARGIN = 64;
+const IPHONE_MIN_WIDTH = 390;
+const IPHONE_MIN_HEIGHT = 844;
 
 const ROUTE_PROFILES = {
   default: {
@@ -46,10 +48,10 @@ function getWindowPreset(route, area) {
   const safeArea = area || { width: 1440, height: 900 };
   const profile = getRouteProfile(route);
   const maxHeight = Math.max(500, safeArea.height - WINDOW_MARGIN);
-  const minHeight = Math.min(profile.minHeight, maxHeight);
+  const minHeight = Math.min(IPHONE_MIN_HEIGHT, maxHeight);
   const targetHeight = clamp(Math.round(safeArea.height * profile.heightRatio), minHeight, maxHeight);
   const maxWidth = Math.max(420, safeArea.width - WINDOW_MARGIN);
-  const minWidth = Math.min(profile.minWidth, maxWidth);
+  const minWidth = Math.min(IPHONE_MIN_WIDTH, maxWidth);
 
   const mainWidth = clamp(Math.round(targetHeight * profile.aspectRatio), minWidth, maxWidth);
   return {
