@@ -44,3 +44,4 @@ reproduce_issue.py
 nul
 
 .alma-snapshots
+.tmp_youwee_*/
