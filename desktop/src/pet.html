@@ -27,7 +27,7 @@
       #petShell {
         position: absolute;
         left: 50%;
-        top: 64%;
+        top: 67%;
         transform: translate(-50%, -50%);
       }
       #pet {
@@ -109,17 +109,40 @@
         display: none;
       }
       #musicPanel {
-        top: -34px;
+        top: -56px;
         padding: 8px 10px;
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;
         background-blend-mode: overlay;
+        overflow: hidden;
+        isolation: isolate;
+      }
+      #musicPanel::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.5);
+        z-index: 2;
+        pointer-events: none;
+      }
+      #musicPanel::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.2));
+        z-index: 0;
+        pointer-events: none;
       }
       #musicPanel.with-cover {
         background-color: rgba(7, 12, 20, 0.74);
       }
       #musicTitle {
+        position: relative;
+        z-index: 1;
         font-size: 12px;
         font-weight: 700;
         white-space: nowrap;
@@ -127,6 +150,8 @@
         text-overflow: ellipsis;
       }
       #musicMeta {
+        position: relative;
+        z-index: 1;
         margin-top: 2px;
         font-size: 10px;
         color: rgba(226, 232, 240, 0.88);
@@ -135,9 +160,11 @@
         text-overflow: ellipsis;
       }
       #musicControls {
+        position: relative;
+        z-index: 1;
         margin-top: 8px;
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         align-items: center;
         gap: 6px;
       }
@@ -146,16 +173,43 @@
         background: rgba(15, 23, 42, 0.62);
         color: #f8fafc;
         border-radius: 9px;
-        height: 26px;
-        font-size: 11px;
+        height: 28px;
+        width: 100%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
         cursor: pointer;
+        transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+      }
+      .music-btn:hover:not(:disabled) {
+        background: rgba(30, 41, 59, 0.82);
+        border-color: rgba(255, 255, 255, 0.36);
+        transform: translateY(-1px);
       }
       .music-btn:disabled {
         opacity: 0.45;
         cursor: not-allowed;
       }
+      .music-btn svg {
+        width: 13px;
+        height: 13px;
+        stroke: currentColor;
+        stroke-width: 1.9;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+      #btnPlay {
+        background: rgba(13, 148, 136, 0.28);
+        border-color: rgba(45, 212, 191, 0.36);
+      }
+      #btnPlay:hover:not(:disabled) {
+        background: rgba(13, 148, 136, 0.4);
+        border-color: rgba(94, 234, 212, 0.56);
+      }
       #volumeWrap {
-        grid-column: span 2;
+        grid-column: span 3;
         display: flex;
         align-items: center;
         gap: 4px;
@@ -163,6 +217,9 @@
       #volumeSlider {
         width: 100%;
         accent-color: #f8fafc;
+      }
+      .icon-only {
+        display: inline-flex;
       }
       #workPanel {
         bottom: 4px;
@@ -189,13 +246,13 @@
         <div id="musicTitle">未播放音乐</div>
         <div id="musicMeta">将自动显示曲名和歌手</div>
         <div id="musicControls">
-          <button class="music-btn" id="btnPrev" type="button">◁</button>
-          <button class="music-btn" id="btnPlay" type="button">▶</button>
-          <button class="music-btn" id="btnNext" type="button">▷</button>
+          <button class="music-btn" id="btnPrev" type="button" aria-label="上一首"></button>
+          <button class="music-btn" id="btnPlay" type="button" aria-label="播放或暂停"></button>
+          <button class="music-btn" id="btnNext" type="button" aria-label="下一首"></button>
           <div id="volumeWrap">
-            <button class="music-btn" id="btnVolDown" type="button">－</button>
+            <button class="music-btn" id="btnVolDown" type="button" aria-label="降低音量"></button>
             <input id="volumeSlider" type="range" min="0" max="100" value="50" step="2" />
-            <button class="music-btn" id="btnVolUp" type="button">＋</button>
+            <button class="music-btn" id="btnVolUp" type="button" aria-label="提高音量"></button>
           </div>
         </div>
       </div>
@@ -253,6 +310,52 @@
       let hoverSyncRaf = 0;
       let pendingHoverPoint = null;
       const DEACTIVATE_DELAY_MS = 90;
+      const iconMarkup = {
+        prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6l-8.5 6L18 18V6Z"></path><path d="M7 6v12"></path></svg>',
+        next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l8.5 6L6 18V6Z"></path><path d="M17 6v12"></path></svg>',
+        play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6l10 6-10 6V6Z"></path></svg>',
+        pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12"></path><path d="M15 6v12"></path></svg>',
+        volDown: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 7.8 9H5v6h2.8L11 18V6Z"></path><path d="M15 12h4"></path></svg>',
+        volUp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 7.8 9H5v6h2.8L11 18V6Z"></path><path d="M15 12h4"></path><path d="M17 10v4"></path></svg>',
+      };
+
+      function setButtonIcon(button, name) {
+        if (!button) return;
+        button.innerHTML = iconMarkup[name] || "";
+      }
+
+      setButtonIcon(btnPrev, "prev");
+      setButtonIcon(btnPlay, "play");
+      setButtonIcon(btnNext, "next");
+      setButtonIcon(btnVolDown, "volDown");
+      setButtonIcon(btnVolUp, "volUp");
+
+      function hashHue(input) {
+        const text = String(input || "");
+        let hash = 0;
+        for (let i = 0; i < text.length; i += 1) {
+          hash = (hash * 31 + text.charCodeAt(i)) % 360;
+        }
+        return Math.abs(hash % 360);
+      }
+
+      function buildFallbackCover(title, artist, app) {
+        const key = `${title}|${artist}|${app}`;
+        const hue = hashHue(key);
+        const hueB = (hue + 55) % 360;
+        const hueC = (hue + 140) % 360;
+        const svg = [
+          "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 100'>",
+          `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop stop-color='hsl(${hue} 85% 56%)'/><stop offset='1' stop-color='hsl(${hueB} 88% 58%)'/></linearGradient></defs>`,
+          "<rect width='220' height='100' fill='url(#g)'/>",
+          `<circle cx='174' cy='18' r='32' fill='hsl(${hueC} 85% 60% / 0.28)'/>`,
+          "<path d='M0 68 C 36 48, 72 88, 108 68 S 180 46, 220 66 L220 100 L0 100 Z' fill='rgba(255,255,255,0.18)'/>",
+          "<path d='M0 78 C 36 58, 72 98, 108 78 S 180 56, 220 76 L220 100 L0 100 Z' fill='rgba(0,0,0,0.14)'/>",
+          "</svg>",
+        ].join("");
+        const encoded = encodeURIComponent(svg).replace(/%20/g, " ");
+        return `linear-gradient(rgba(8,12,20,0.42), rgba(8,12,20,0.82)), url(\"data:image/svg+xml,${encoded}\")`;
+      }
 
       function normalizeState(raw) {
         const value = String(raw || "").trim().toLowerCase();
@@ -308,15 +411,15 @@
           musicPanel.classList.add("with-cover");
           musicPanel.style.backgroundImage = `linear-gradient(rgba(8,12,20,0.45), rgba(8,12,20,0.8)), url('${coverDataUrl}')`;
         } else {
-          musicPanel.classList.remove("with-cover");
-          musicPanel.style.backgroundImage = "";
+          musicPanel.classList.add("with-cover");
+          musicPanel.style.backgroundImage = buildFallbackCover(title, artist || fallbackPlayer, app || fallbackPlayer);
         }
 
         const mediaControllable = Boolean(media && media.available && (media.canPlay || media.canPause || media.canNext || media.canPrev));
         btnPrev.disabled = !hasMusic || (mediaControllable && !media?.canPrev);
         btnNext.disabled = !hasMusic || (mediaControllable && !media?.canNext);
         btnPlay.disabled = !hasMusic || (mediaControllable && !(media?.canPlay || media?.canPause));
-        btnPlay.textContent = media?.isPlaying ? "⏸" : "▶";
+        setButtonIcon(btnPlay, media?.isPlaying ? "pause" : "play");
 
         const volume = Number(media?.volume);
         if (Number.isFinite(volume)) {
