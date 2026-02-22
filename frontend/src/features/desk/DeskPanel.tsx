@@ -26,6 +26,12 @@ type TrackingChangeRow = AelinTrackingChangeItem & {
   target_source: string
 }
 
+type ChangePreview = {
+  title: string
+  url: string
+  imageUrl: string
+}
+
 const SOURCE_OPTIONS: Array<{ key: string; label: string }> = [
   { key: '', label: '全部来源' },
   { key: 'x', label: 'X' },
@@ -46,6 +52,67 @@ function normalizeSource(raw: string | null | undefined): string {
   if (value === 'xhs') return 'xiaohongshu'
   if (value === 'news' || value === 'website') return 'web'
   return ''
+}
+
+function normalizeUrl(raw: string | null | undefined): string {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  try {
+    return new URL(text).toString()
+  } catch {
+    return ''
+  }
+}
+
+function firstHttpUrl(text: string | null | undefined): string {
+  const value = String(text || '').trim()
+  if (!value) return ''
+  const match = value.match(/https?:\/\/[^\s<>"')\]]+/i)
+  return normalizeUrl(match?.[0] || '')
+}
+
+function extractChangePreview(change: TrackingChangeRow, feedItems: DeskFeedItem[]): ChangePreview {
+  const diff = (change.diff_json || {}) as Record<string, any>
+  const added = (diff.added || {}) as Record<string, any>
+  const updated = (diff.updated || {}) as Record<string, any>
+
+  const byDiff = [
+    normalizeUrl(added.url),
+    normalizeUrl(updated.url),
+    normalizeUrl(diff.url),
+    normalizeUrl(diff.link),
+    firstHttpUrl(change.summary),
+    firstHttpUrl(change.title),
+  ].find(Boolean) || ''
+
+  const diffTitle =
+    String(added.title || '').trim()
+    || String(updated.title || '').trim()
+    || String(change.summary || '').trim()
+    || String(change.title || '').trim()
+    || '内容更新'
+
+  let imageUrl = ''
+  if (byDiff) {
+    const exact = feedItems.find((item) => normalizeUrl(item.external_url) === byDiff)
+    if (exact?.image_url) imageUrl = exact.image_url
+  }
+  if (!imageUrl) {
+    const hint = diffTitle.toLowerCase().slice(0, 18)
+    if (hint) {
+      const fuzzy = feedItems.find((item) => {
+        const title = String(item.title || '').toLowerCase()
+        return title.includes(hint)
+      })
+      if (fuzzy?.image_url) imageUrl = fuzzy.image_url
+    }
+  }
+
+  return {
+    title: diffTitle,
+    url: byDiff,
+    imageUrl: imageUrl || '',
+  }
 }
 
 export function DeskPanel({ onClose, context, onClearContext, onSelectContext }: Props) {
@@ -294,6 +361,10 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
     return recentTrackingChanges ?? []
   }, [contextTargetId, contextSource, contextTitle, linkedChanges, recentTrackingChanges, trackingItems])
   const changeStreamLoading = contextTargetId > 0 ? linkedChangesFetching : recentTrackingChangesFetching
+  const changePreviewRows = useMemo(
+    () => changeStreamRows.map((row) => ({ row, preview: extractChangePreview(row, items) })),
+    [changeStreamRows, items]
+  )
 
   const emptyHint = contextTargetId > 0
     ? '该追踪目标暂无可展示内容，可先查看上方「追踪变更流」或点击「运行」后刷新。'
@@ -310,6 +381,12 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
   const activeSourceLabel = sourceFilter
     ? (SOURCE_OPTIONS.find((item) => item.key === sourceFilter)?.label || sourceFilter)
     : '全部来源'
+
+  const openExternal = (rawUrl: string | null | undefined) => {
+    const url = normalizeUrl(rawUrl)
+    if (!url) return
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[var(--color-panel)]">
@@ -538,26 +615,80 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
             </div>
           </div>
           <div className="max-h-[250px] space-y-2 overflow-y-auto pr-1">
-            {changeStreamRows.map((change) => (
-              <article key={`tracking-change-${change.id}`} className="aelin-card p-2">
+            {changePreviewRows.map(({ row: change, preview }) => (
+              <article
+                key={`tracking-change-${change.id}`}
+                className={cn(
+                  'aelin-card p-2',
+                  preview.url ? 'cursor-pointer hover:border-[var(--color-border-strong)]' : ''
+                )}
+                onClick={() => {
+                  if (preview.url) openExternal(preview.url)
+                }}
+                onKeyDown={(event) => {
+                  if (!preview.url) return
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    openExternal(preview.url)
+                  }
+                }}
+                role={preview.url ? 'button' : undefined}
+                tabIndex={preview.url ? 0 : -1}
+              >
                 <div className="mb-1 flex items-start justify-between gap-2">
                   <p className="line-clamp-1 text-[12px] font-medium">{change.title || '变更'}</p>
                   <span className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[var(--color-text-muted)]">
                     {change.severity || 'info'}
                   </span>
                 </div>
+
+                {preview.imageUrl ? (
+                  <div className="mb-1.5 flex gap-2">
+                    <div className="h-16 w-24 shrink-0 overflow-hidden rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                      <img src={preview.imageUrl} alt={preview.title} className="h-full w-full object-cover" loading="lazy" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="line-clamp-2 text-[11px] font-medium text-[var(--color-text)]">
+                        {preview.title}
+                      </p>
+                      <p className="mt-0.5 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">
+                        {change.summary || '本次变更暂无摘要。'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mb-1.5">
+                    <p className="line-clamp-2 text-[11px] font-medium text-[var(--color-text)]">
+                      {preview.title}
+                    </p>
+                    <p className="mt-0.5 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">
+                      {change.summary || '本次变更暂无摘要。'}
+                    </p>
+                  </div>
+                )}
+
                 <p className="line-clamp-1 text-[11px] text-[var(--color-text-muted)]">
                   {change.target_name}
                   {change.target_source ? ` · ${change.target_source}` : ''}
                   {change.created_at ? ` · ${relativeTime(change.created_at) || change.created_at}` : ''}
                 </p>
-                <p className="mt-1 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">
-                  {change.summary || '本次变更暂无摘要。'}
-                </p>
-                {contextTargetId <= 0 && change.target_id ? (
-                  <div className="mt-1.5">
+
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {preview.url ? (
                     <button
-                      onClick={() => {
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openExternal(preview.url)
+                      }}
+                      className="aelin-btn h-7 px-2 text-[11px]"
+                    >
+                      {'查看来源'}
+                    </button>
+                  ) : null}
+                  {contextTargetId <= 0 && change.target_id ? (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation()
                         const target = trackingItems.find((item) => Number(item.target_id || 0) === Number(change.target_id || 0))
                         if (target) applyTrackingContext(target)
                       }}
@@ -565,8 +696,8 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
                     >
                       {'联动到该目标'}
                     </button>
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
               </article>
             ))}
             {changeStreamRows.length === 0 ? (

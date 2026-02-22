@@ -11,6 +11,62 @@ interface StreamCallbacks {
   onError?: (error: { message: string; code?: string }) => void
 }
 
+type ParsedSseEvent = {
+  event: string
+  data: string
+}
+
+function parseSseChunks(chunkText: string, pending = ''): { events: ParsedSseEvent[]; rest: string } {
+  const input = `${pending}${chunkText}`
+  const lines = input.split(/\r?\n/)
+  const events: ParsedSseEvent[] = []
+  let eventName = 'message'
+  let dataLines: string[] = []
+
+  const flush = () => {
+    if (!dataLines.length) return
+    events.push({
+      event: eventName || 'message',
+      data: dataLines.join('\n'),
+    })
+    eventName = 'message'
+    dataLines = []
+  }
+
+  // If the stream chunk does not end with newline, keep the trailing partial line.
+  let rest = ''
+  if (!input.endsWith('\n') && !input.endsWith('\r')) {
+    rest = lines.pop() ?? ''
+  }
+
+  for (const line of lines) {
+    if (!line) {
+      flush()
+      continue
+    }
+    if (line.startsWith(':')) continue
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim() || 'message'
+      continue
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart())
+    }
+  }
+
+  return { events, rest }
+}
+
+function toEventPayload(raw: string): any {
+  const text = String(raw || '').trim()
+  if (!text || text === '[DONE]') return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { message: text }
+  }
+}
+
 export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, signal?: AbortSignal): () => void {
   const controller = new AbortController()
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
@@ -27,32 +83,92 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let finalized = false
+
+    const emitDone = (payload?: any) => {
+      if (finalized) return
+      finalized = true
+      callbacks.onDone?.({
+        expression: String(payload?.expression || 'exp-04'),
+        memory_summary: String(payload?.memory_summary || ''),
+      })
+    }
+
+    const emitError = (payload: any) => {
+      const message =
+        typeof payload?.message === 'string'
+          ? payload.message
+          : typeof payload === 'string'
+            ? payload
+            : 'stream error'
+      callbacks.onError?.({ message })
+    }
+
+    const dispatch = (sseEvent: string, payload: any) => {
+      if (!payload) return
+      const envelopeType = String(payload?.type || payload?.event || '').trim()
+      const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
+
+      switch (eventType) {
+        case 'intent':
+          callbacks.onIntent?.(payload.data ?? payload)
+          return
+        case 'plan':
+          callbacks.onPlan?.(payload.data ?? payload)
+          return
+        case 'trace':
+        case 'tool_step':
+          callbacks.onToolStep?.((payload.data?.step ?? payload.step ?? payload.data ?? payload) as AelinToolStep)
+          return
+        case 'citations':
+          callbacks.onCitations?.((payload.data ?? payload) as AelinCitation[])
+          return
+        case 'actions':
+          callbacks.onActions?.((payload.data ?? payload) as AelinAction[])
+          return
+        case 'reply': {
+          const chunk = payload.data?.chunk ?? payload.chunk ?? payload.data ?? ''
+          callbacks.onReplyChunk?.(String(chunk))
+          return
+        }
+        case 'final': {
+          const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
+          if (Array.isArray(result.tool_trace)) {
+            for (const step of result.tool_trace) {
+              callbacks.onToolStep?.(step as AelinToolStep)
+            }
+          }
+          if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
+          if (Array.isArray(result.actions)) callbacks.onActions?.(result.actions as AelinAction[])
+          if (typeof result.answer === 'string' && result.answer) {
+            callbacks.onReplyChunk?.(result.answer)
+          }
+          emitDone(result)
+          return
+        }
+        case 'error':
+          emitError(payload.data ?? payload)
+          return
+        case 'done':
+          emitDone(payload.data ?? payload)
+          return
+        default:
+          return
+      }
+    }
+
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        const raw = line.slice(6).trim()
-        if (!raw || raw === '[DONE]') continue
-        try {
-          const evt = JSON.parse(raw)
-          const type = evt.type || evt.event
-          switch (type) {
-            case 'intent': callbacks.onIntent?.(evt.data ?? evt); break
-            case 'plan': callbacks.onPlan?.(evt.data ?? evt); break
-            case 'tool_step': callbacks.onToolStep?.(evt.data ?? evt); break
-            case 'citations': callbacks.onCitations?.(evt.data ?? evt); break
-            case 'actions': callbacks.onActions?.(evt.data ?? evt); break
-            case 'reply': callbacks.onReplyChunk?.(evt.data?.chunk ?? evt.chunk ?? ''); break
-            case 'done': callbacks.onDone?.(evt.data ?? evt); break
-            case 'error': callbacks.onError?.(evt.data ?? evt); break
-          }
-        } catch { /* skip malformed */ }
+      const text = decoder.decode(value, { stream: true })
+      const parsed = parseSseChunks(text, buffer)
+      buffer = parsed.rest
+      for (const evt of parsed.events) {
+        const payload = toEventPayload(evt.data)
+        dispatch(evt.event, payload)
       }
     }
+    emitDone()
   }).catch((err) => {
     if (!combined.aborted) callbacks.onError?.({ message: err.message })
   })
