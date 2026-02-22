@@ -81,7 +81,7 @@ export function TrackingView() {
           title="Tracking"
           subtitle="查看被追踪的 Web / 帖子变化"
           headerActions={
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
               {deskContext ? (
                 <button onClick={() => setDeskContext(null)} className="aelin-btn h-8 px-2.5 text-[11px]">
                   {'清除联动'}
@@ -242,4 +242,3 @@ export function TrackingView() {
     </div>
   )
 }
-

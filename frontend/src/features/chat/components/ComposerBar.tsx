@@ -6,6 +6,7 @@ interface Props {
   onSend: (text: string, images?: { dataUrl: string; name: string }[]) => void
   onStop: () => void
   isStreaming: boolean
+  compact?: boolean
   placeholder?: string
 }
 
@@ -13,6 +14,7 @@ export function ComposerBar({
   onSend,
   onStop,
   isStreaming,
+  compact = false,
   placeholder = '输入消息…',
 }: Props) {
   const [text, setText] = useState('')
@@ -47,9 +49,9 @@ export function ComposerBar({
   const canSend = !!text.trim() || images.length > 0
 
   return (
-    <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3">
+    <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
       <div className="mx-auto w-full max-w-[880px]">
-        <div className="aelin-card rounded-[16px] bg-[var(--color-panel)] p-2.5 transition-shadow duration-200 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_12%,transparent)]">
+        <div className={`aelin-card rounded-[16px] bg-[var(--color-panel)] transition-shadow duration-200 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_12%,transparent)] ${compact ? 'p-2' : 'p-2.5'}`}>
           {images.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
               {images.map((img, i) => (
@@ -72,10 +74,10 @@ export function ComposerBar({
             <button
               onClick={() => fileRef.current?.click()}
               title="添加图片"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96]"
+              className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
               aria-label="添加图片"
             >
-              <ImagePlus size={17} />
+              <ImagePlus size={compact ? 16 : 17} />
             </button>
 
             <input
@@ -84,7 +86,7 @@ export function ComposerBar({
               onChange={(e) => setText(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
-              className="h-9 flex-1 border-none bg-transparent px-1 text-[14px] outline-none placeholder:text-[var(--color-text-muted)]"
+              className={`flex-1 border-none bg-transparent px-1 outline-none placeholder:text-[var(--color-text-muted)] ${compact ? 'h-8 text-[13px]' : 'h-9 text-[14px]'}`}
               style={{ fontFamily: 'var(--font-body)' }}
             />
 
@@ -92,7 +94,7 @@ export function ComposerBar({
               onClick={handleSubmit}
               disabled={!isStreaming && !canSend}
               className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] transition-all active:scale-[0.96]',
+                `flex shrink-0 items-center justify-center rounded-[10px] transition-all active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`,
                 isStreaming
                   ? 'bg-[var(--color-accent)] text-[var(--color-bg)]'
                   : canSend
@@ -101,7 +103,7 @@ export function ComposerBar({
               )}
               aria-label={isStreaming ? '停止生成' : '发送消息'}
             >
-              {isStreaming ? <Square size={15} /> : <Send size={15} />}
+              {isStreaming ? <Square size={compact ? 14 : 15} /> : <Send size={compact ? 14 : 15} />}
             </button>
           </div>
         </div>

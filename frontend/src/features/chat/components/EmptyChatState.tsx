@@ -7,23 +7,23 @@ interface EmptyChatStateProps {
 
 export function EmptyChatState({ onQuickPrompt }: EmptyChatStateProps) {
   return (
-    <div className="flex min-h-full items-center justify-center py-8">
+    <div className="flex min-h-full items-center justify-center py-4 sm:py-8">
       <div className="aelin-fade-up w-full max-w-[1040px]">
-        <div className="mx-auto max-w-[760px] rounded-[18px] border border-[var(--color-border)] bg-[var(--color-panel)] p-6">
-          <div className="mb-3 flex items-center gap-3 text-[var(--color-text-muted)]">
+        <div className="mx-auto max-w-[760px] rounded-[18px] border border-[var(--color-border)] bg-[var(--color-panel)] p-4 sm:p-6">
+          <div className="mb-3 flex items-center gap-2.5 text-[var(--color-text-muted)] sm:gap-3">
             <AelinAvatar size="md" className="!rounded-[10px]" />
             <span className="text-xs">{CHAT_EMPTY_GREETING}</span>
           </div>
-          <h1 className="mb-2 text-2xl font-semibold tracking-tight text-[var(--color-text)]" style={{ fontFamily: 'var(--font-heading)' }}>
+          <h1 className="mb-2 text-xl font-semibold tracking-tight text-[var(--color-text)] sm:text-2xl" style={{ fontFamily: 'var(--font-heading)' }}>
             {CHAT_EMPTY_TITLE}
           </h1>
-          <p className="mb-5 text-sm text-[var(--color-text-muted)]">输入消息后，Aelin 会继续在底部输入框中保持会话。</p>
+          <p className="mb-4 text-[13px] text-[var(--color-text-muted)] sm:mb-5 sm:text-sm">输入消息后，Aelin 会继续在底部输入框中保持会话。</p>
           <div className="flex flex-wrap gap-2">
             {CHAT_QUICK_PROMPTS.map((prompt) => (
               <button
                 key={prompt}
                 onClick={() => onQuickPrompt(prompt)}
-                className="rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-3 py-1.5 text-xs text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
+                className="rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-1.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] sm:px-3 sm:text-xs"
               >
                 {prompt}
               </button>

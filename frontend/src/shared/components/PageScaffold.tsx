@@ -25,7 +25,7 @@ export function PageScaffold({
           <h1 className="aelin-page-title truncate">{title}</h1>
           {subtitle && <p className="aelin-page-subtitle truncate">{subtitle}</p>}
         </div>
-        {headerActions && <div className="shrink-0">{headerActions}</div>}
+        {headerActions && <div className="w-full sm:w-auto sm:shrink-0">{headerActions}</div>}
       </header>
       <div className={cn('aelin-page-content', contentClassName)}>{children}</div>
     </section>

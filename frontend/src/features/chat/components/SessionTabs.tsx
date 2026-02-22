@@ -12,13 +12,13 @@ export function SessionTabs({ className }: { className?: string }) {
             key={s.id}
             onClick={() => switchSession(s.id)}
             className={cn(
-              'group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs transition-colors',
+              'group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
               s.id === activeSessionId
                 ? 'bg-[var(--color-panel-alt)] text-[var(--color-text)]'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
             )}
           >
-            <span className="max-w-[140px] truncate">{s.title}</span>
+            <span className="max-w-[108px] truncate sm:max-w-[140px]">{s.title}</span>
             {sessions.length > 1 && (
               <span
                 onClick={(e) => {

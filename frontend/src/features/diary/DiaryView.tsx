@@ -50,7 +50,7 @@ export function DiaryView() {
   return (
     <PageScaffold title="Aelinの日记" subtitle="OpenViking 记忆文件流">
       <div className="flex h-full min-h-0 flex-col gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
             <input
@@ -60,7 +60,7 @@ export function DiaryView() {
               placeholder="搜索日记关键词"
             />
           </div>
-          <select className="aelin-select w-[116px]" value={source} onChange={(event) => setSource(event.target.value)}>
+          <select className="aelin-select w-full sm:w-[116px]" value={source} onChange={(event) => setSource(event.target.value)}>
             {SOURCE_OPTIONS.map((option) => (
               <option key={option.label} value={option.value}>
                 {option.label}

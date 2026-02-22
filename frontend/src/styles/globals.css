@@ -313,6 +313,43 @@ code, pre, .font-mono {
   border-color: inherit;
 }
 
+@media (max-width: 640px) {
+  .aelin-page-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .aelin-page-title {
+    font-size: 0.92rem;
+  }
+
+  .aelin-page-subtitle {
+    font-size: 0.7rem;
+  }
+
+  .aelin-page-content {
+    padding: 10px 12px;
+  }
+
+  .aelin-btn {
+    height: 33px;
+    padding: 0 10px;
+    font-size: 0.72rem;
+  }
+
+  .aelin-input,
+  .aelin-select {
+    height: 34px;
+    padding: 0 10px;
+  }
+
+  .aelin-textarea {
+    padding: 8px 10px;
+  }
+}
+
 .chat-thinking-bubble {
   position: relative;
   overflow: hidden;

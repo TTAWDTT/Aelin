@@ -8,8 +8,8 @@ export function RootLayout() {
   const isMobile = !isTablet
 
   return (
-    <div className="aelin-app">
-      <div className="flex h-full overflow-hidden">
+    <div className="aelin-app flex min-h-0 flex-col">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {isTablet && <NavigationRail />}
         <main className="flex min-w-0 flex-1 overflow-hidden">
           <Outlet />

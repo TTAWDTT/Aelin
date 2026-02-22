@@ -17,13 +17,18 @@ interface MessageBubbleProps {
   message: ChatMessage
   isThinking?: boolean
   thinkingText?: string
+  compact?: boolean
 }
 
-export function MessageBubble({ message, isThinking = false, thinkingText }: MessageBubbleProps) {
+export function MessageBubble({ message, isThinking = false, thinkingText, compact = false }: MessageBubbleProps) {
   const isUser = message.role === 'user'
 
   return (
-    <article className={cn('aelin-fade-up flex max-w-[86%] items-end gap-2.5 md:max-w-[80%]', isUser ? 'ml-auto flex-row-reverse' : '')}>
+    <article className={cn(
+      'aelin-fade-up flex items-end',
+      compact ? 'max-w-[98%] gap-1.5' : 'max-w-[94%] gap-2 sm:max-w-[86%] sm:gap-2.5 md:max-w-[80%]',
+      isUser ? 'ml-auto flex-row-reverse' : ''
+    )}>
       {/* Avatar */}
       {!isUser && (
         <div className="shrink-0">
@@ -36,13 +41,14 @@ export function MessageBubble({ message, isThinking = false, thinkingText }: Mes
         </div>
       )}
       {isUser && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] text-[11px] font-semibold text-[var(--color-text-muted)]">
+        <div className={`flex shrink-0 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] font-semibold text-[var(--color-text-muted)] ${compact ? 'h-6 w-6 text-[10px]' : 'h-7 w-7 text-[10px] sm:h-8 sm:w-8 sm:text-[11px]'}`}>
           你
         </div>
       )}
 
       <div className={cn(
-        'chat-elevate max-w-full rounded-[16px] px-4 py-3.5',
+        'chat-elevate max-w-full rounded-[16px]',
+        compact ? 'px-2.5 py-2' : 'px-3 py-2.5 sm:px-4 sm:py-3.5',
         isThinking && !isUser && 'chat-thinking-bubble',
         isUser
           ? 'rounded-tr-[6px] border border-[var(--color-border)] bg-[var(--color-panel-alt)]'
@@ -82,7 +88,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText }: Mes
             'prose prose-sm max-w-none prose-neutral',
             '[&_p]:my-1.5 [&_ul]:my-1.5 [&_ol]:my-1.5 [&_li]:my-0.5 [&_pre]:my-2 [&_blockquote]:my-2'
           )}
-          style={{ fontFamily: 'var(--font-body)', lineHeight: 1.64, fontSize: '0.94rem' }}>
+          style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
         </div>
 
@@ -91,11 +97,11 @@ export function MessageBubble({ message, isThinking = false, thinkingText }: Mes
           <div className="mt-3.5 space-y-1.5">
             <div className="text-[11px] text-[var(--color-text-muted)] font-semibold uppercase tracking-wide">引用来源</div>
             {message.citations.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-1.5 text-xs">
+              <div key={i} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1.5 text-[11px] sm:flex-nowrap sm:gap-2 sm:px-2.5 sm:text-xs">
                 <span>{sourceIcon(c.source)}</span>
                 <span className="font-medium truncate flex-1">[{i + 1}] {c.title}</span>
                 <span className="text-[var(--color-text-muted)]">{c.source_label}</span>
-                <span className="text-[var(--color-text-muted)]">{relativeTime(c.received_at)}</span>
+                <span className="text-[var(--color-text-muted)] sm:inline">{relativeTime(c.received_at)}</span>
               </div>
             ))}
           </div>

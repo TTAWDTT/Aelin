@@ -65,7 +65,7 @@ export function TrackingDetailView() {
       title={item?.target ?? `#${id}`}
       subtitle={`${item?.source ?? 'web'} · ${item?.status ?? 'unknown'}`}
       headerActions={
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
           <button onClick={() => navigate('/tracking')} className="aelin-btn">
             <ArrowLeft size={14} />
             返回
