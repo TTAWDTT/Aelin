@@ -78,17 +78,23 @@ function resolveWindowPreset(route = "/") {
   return getWindowPreset(route, getReferenceDisplayArea());
 }
 
+function clampWindowSize(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function applyMainWindowPreset(route = "/") {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const preset = resolveWindowPreset(route);
   mainWindow.setMinimumSize(preset.minWidth, preset.minHeight);
   mainWindow.setMaximumSize(preset.maxWidth, preset.maxHeight);
   const [currentW, currentH] = mainWindow.getSize();
-  if (currentW !== preset.width || currentH !== preset.height) {
-    mainWindow.setSize(preset.width, preset.height);
+  const nextW = clampWindowSize(currentW, preset.minWidth, preset.maxWidth);
+  const nextH = clampWindowSize(currentH, preset.minHeight, preset.maxHeight);
+  if (currentW !== nextW || currentH !== nextH) {
+    mainWindow.setSize(nextW, nextH);
   }
-  mainWindow.setResizable(false);
-  mainWindow.setMaximizable(false);
+  mainWindow.setResizable(true);
+  mainWindow.setMaximizable(true);
   mainWindow.setFullScreenable(false);
 }
 
@@ -596,8 +602,8 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
     minHeight: preset.minHeight,
     maxWidth: preset.maxWidth,
     maxHeight: preset.maxHeight,
-    resizable: false,
-    maximizable: false,
+    resizable: true,
+    maximizable: true,
     fullscreenable: false,
     show: false,
     autoHideMenuBar: true,
@@ -1316,4 +1322,3 @@ app.whenReady().then(async () => {
     app.quit();
   }
 });
-

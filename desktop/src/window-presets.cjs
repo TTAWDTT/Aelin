@@ -55,10 +55,10 @@ function getWindowPreset(route, area) {
   return {
     width: mainWidth,
     height: targetHeight,
-    minWidth: mainWidth,
-    minHeight: targetHeight,
-    maxWidth: mainWidth,
-    maxHeight: targetHeight,
+    minWidth,
+    minHeight,
+    maxWidth,
+    maxHeight,
   };
 }
 
