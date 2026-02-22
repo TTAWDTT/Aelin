@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Brain,
   CheckCircle2,
@@ -65,13 +65,28 @@ export function AgentTracePanel({
   live?: boolean
 }) {
   const [open, setOpen] = useState(live)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const wasRunningRef = useRef(false)
   const items = useMemo(() => compactTrace(trace), [trace])
   const preview = items.slice(-4)
   const runningCount = items.filter((it) => String(it.status || '').toLowerCase() === 'running').length
+  const isRunning = live || runningCount > 0
 
   useEffect(() => {
     if (live) setOpen(true)
   }, [live])
+
+  useEffect(() => {
+    if (!open || !bodyRef.current) return
+    bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+  }, [open, items, live])
+
+  useEffect(() => {
+    if (wasRunningRef.current && !isRunning) {
+      setOpen(false)
+    }
+    wasRunningRef.current = isRunning
+  }, [isRunning])
 
   if (!items.length) return null
 
@@ -114,37 +129,39 @@ export function AgentTracePanel({
       )}
 
       {open && (
-        <ol className="mt-2 space-y-1.5">
-          {items.map((step, idx) => {
-            const status = String(step.status || '').toLowerCase()
-            const Icon = STEP_ICON[step.stage] ?? CircleDashed
-            return (
-              <li key={`${step.stage}-${idx}`} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-                <div className="flex items-start gap-2">
-                  <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                    <Icon size={12} className="text-[var(--color-text)]" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
-                      <span className="text-[10px] text-[var(--color-text-muted)]">{(STATUS_TEXT[status] ?? status) || '未知'}</span>
-                    </div>
-                    {step.detail && (
-                      <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
-                        {step.detail}
+        <div ref={bodyRef} className="mt-2 h-32 overflow-y-auto pr-1">
+          <ol className="space-y-1.5">
+            {items.map((step, idx) => {
+              const status = String(step.status || '').toLowerCase()
+              const Icon = STEP_ICON[step.stage] ?? CircleDashed
+              return (
+                <li key={`${step.stage}-${idx}`} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                      <Icon size={12} className="text-[var(--color-text)]" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">{(STATUS_TEXT[status] ?? status) || '未知'}</span>
                       </div>
-                    )}
+                      {step.detail && (
+                        <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                          {step.detail}
+                        </div>
+                      )}
+                    </div>
+                    <span className="pt-0.5">
+                      {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
+                      {status === 'running' && <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />}
+                      {status === 'failed' && <XCircle size={13} className="text-[var(--color-text)]" />}
+                    </span>
                   </div>
-                  <span className="pt-0.5">
-                    {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
-                    {status === 'running' && <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />}
-                    {status === 'failed' && <XCircle size={13} className="text-[var(--color-text)]" />}
-                  </span>
-                </div>
-              </li>
-            )
-          })}
-        </ol>
+                </li>
+              )
+            })}
+          </ol>
+        </div>
       )}
     </section>
   )
