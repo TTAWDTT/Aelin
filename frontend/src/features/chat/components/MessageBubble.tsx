@@ -3,9 +3,9 @@ import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { sourceIcon, relativeTime } from '@/shared/utils/format'
-import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react'
-import { useState } from 'react'
+import { ExternalLink } from 'lucide-react'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
+import { AgentTracePanel } from './AgentTracePanel'
 
 const EXPRESSION_LABELS: Record<string, string> = {
   'exp-01': '捂嘴惊喜', 'exp-02': '热情出击', 'exp-03': '温柔赞同', 'exp-04': '托腮思考',
@@ -21,7 +21,6 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message, isThinking = false, thinkingText }: MessageBubbleProps) {
   const isUser = message.role === 'user'
-  const [traceOpen, setTraceOpen] = useState(false)
 
   return (
     <article className={cn('aelin-fade-up flex max-w-[82%] items-end gap-2.5', isUser ? 'ml-auto flex-row-reverse' : '')}>
@@ -100,26 +99,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText }: Mes
 
         {/* Tool trace */}
         {message.toolTrace && message.toolTrace.length > 0 && (
-          <div className="mt-2.5">
-            <button onClick={() => setTraceOpen(!traceOpen)}
-              className="flex items-center gap-1 rounded-full px-1 text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]">
-              {traceOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-              工具调用 ({message.toolTrace.length})
-            </button>
-            {traceOpen && (
-              <div className="mt-1 space-y-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] p-2 text-[11px] text-[var(--color-text-muted)]">
-                {message.toolTrace.map((t, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    <span className={t.status === 'completed' ? 'text-[var(--color-green)]' : 'text-[var(--color-warning)]'}>
-                      {t.status === 'completed' ? '✓' : '⏳'}
-                    </span>
-                    <span>{t.stage}</span>
-                    {t.detail && <span className="opacity-60">— {t.detail}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <AgentTracePanel trace={message.toolTrace} live={isThinking} />
         )}
 
         {/* Actions */}

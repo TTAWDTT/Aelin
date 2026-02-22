@@ -1,7 +1,23 @@
 import { useRef, useCallback } from 'react'
 import { useChatStore, type ChatMessage } from '../stores/chatStore'
 import { streamChat } from '@/shared/api/sse'
-import type { AelinChatRequest } from '@/shared/api/types'
+import type { AelinChatRequest, AelinToolStep } from '@/shared/api/types'
+
+function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep): AelinToolStep[] {
+  const existing = [...(prev ?? [])]
+  const stage = String(step.stage || '').trim()
+  if (!stage) return existing
+
+  const index = existing.findIndex((item) => String(item.stage || '').trim() === stage)
+  if (index === -1) return [...existing, step]
+
+  existing[index] = {
+    ...existing[index],
+    ...step,
+    stage,
+  }
+  return existing
+}
 
 export function useChatStream() {
   const store = useChatStore()
@@ -47,8 +63,9 @@ export function useChatStream() {
       onPlan: (d) => store.setStatusText(`计划: ${d.steps?.length || 0} 步`),
       onToolStep: (step) => {
         store.setStatusText(`${step.stage}…`)
+        const currentTrace = store.getActiveSession()?.messages.findLast((m: ChatMessage) => m.role === 'assistant')?.toolTrace
         store.updateLastAssistant(sessionId!, {
-          toolTrace: [...(store.getActiveSession()?.messages.findLast((m: ChatMessage) => m.role === 'assistant')?.toolTrace ?? []), step],
+          toolTrace: mergeToolTrace(currentTrace, step),
         })
       },
       onCitations: (citations) => store.updateLastAssistant(sessionId!, { citations }),

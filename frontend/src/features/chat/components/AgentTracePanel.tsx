@@ -1,0 +1,151 @@
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Brain,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleDashed,
+  Compass,
+  Database,
+  Globe2,
+  Search,
+  Sparkles,
+  XCircle,
+} from 'lucide-react'
+import type { AelinToolStep } from '@/shared/api/types'
+import { cn } from '@/shared/utils/cn'
+
+const STEP_ICON: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  intent_lens: Brain,
+  plan_critic: Compass,
+  query_decomposer: Search,
+  local_search: Database,
+  file_memory_search: Database,
+  web_search: Globe2,
+  message_hub: CircleDashed,
+  generation: Sparkles,
+  reply_verifier: CheckCircle2,
+}
+
+const STATUS_TEXT: Record<string, string> = {
+  running: '进行中',
+  completed: '完成',
+  skipped: '跳过',
+  failed: '失败',
+}
+
+function compactTrace(trace: AelinToolStep[]): AelinToolStep[] {
+  const out: AelinToolStep[] = []
+  const indexByStage = new Map<string, number>()
+  for (const step of trace) {
+    const stage = String(step.stage || '').trim()
+    if (!stage) continue
+    const idx = indexByStage.get(stage)
+    if (idx == null) {
+      indexByStage.set(stage, out.length)
+      out.push(step)
+      continue
+    }
+    out[idx] = step
+  }
+  return out
+}
+
+function stageLabel(stage: string): string {
+  return stage
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase())
+}
+
+export function AgentTracePanel({
+  trace,
+  live = false,
+}: {
+  trace: AelinToolStep[]
+  live?: boolean
+}) {
+  const [open, setOpen] = useState(live)
+  const items = useMemo(() => compactTrace(trace), [trace])
+  const preview = items.slice(-4)
+  const runningCount = items.filter((it) => String(it.status || '').toLowerCase() === 'running').length
+
+  useEffect(() => {
+    if (live) setOpen(true)
+  }, [live])
+
+  if (!items.length) return null
+
+  return (
+    <section className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between rounded-lg px-1 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <span className={cn('inline-flex h-2 w-2 rounded-full', live || runningCount ? 'animate-pulse bg-[var(--color-accent)]' : 'bg-[var(--color-text-muted)]')} />
+          <span className="text-[11px] font-semibold tracking-wide text-[var(--color-text)]">Agent 链路</span>
+          <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+            {items.length} 步
+          </span>
+        </div>
+        {open ? <ChevronUp size={14} className="text-[var(--color-text-muted)]" /> : <ChevronDown size={14} className="text-[var(--color-text-muted)]" />}
+      </button>
+
+      {!open && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {preview.map((step, idx) => {
+            const status = String(step.status || '').toLowerCase()
+            return (
+              <span
+                key={`${step.stage}-${idx}`}
+                className={cn(
+                  'rounded-full border px-2 py-1 text-[10px]',
+                  status === 'completed' && 'border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text)]',
+                  status === 'running' && 'border-[var(--color-border-strong)] bg-[var(--color-panel)] text-[var(--color-text)] animate-pulse',
+                  status === 'failed' && 'border-[var(--color-border-strong)] bg-[var(--color-panel)] text-[var(--color-text)]',
+                  status === 'skipped' && 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]'
+                )}
+              >
+                {stageLabel(step.stage)}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      {open && (
+        <ol className="mt-2 space-y-1.5">
+          {items.map((step, idx) => {
+            const status = String(step.status || '').toLowerCase()
+            const Icon = STEP_ICON[step.stage] ?? CircleDashed
+            return (
+              <li key={`${step.stage}-${idx}`} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    <Icon size={12} className="text-[var(--color-text)]" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">{STATUS_TEXT[status] ?? status || '未知'}</span>
+                    </div>
+                    {step.detail && (
+                      <div className="mt-0.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                        {step.detail}
+                      </div>
+                    )}
+                  </div>
+                  <span className="pt-0.5">
+                    {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
+                    {status === 'running' && <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />}
+                    {status === 'failed' && <XCircle size={13} className="text-[var(--color-text)]" />}
+                  </span>
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      )}
+    </section>
+  )
+}
