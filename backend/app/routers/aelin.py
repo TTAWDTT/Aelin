@@ -51,6 +51,8 @@ from app.schemas import (
     AelinDiaryTreeResponse,
     AelinLayoutCard,
     AelinMediaIngestRequest,
+    AelinMediaAuthGuideRequest,
+    AelinMediaAuthGuideResponse,
     AelinMediaIngestResponse,
     AelinMemoryLayerItem,
     AelinMemoryLayers,
@@ -2784,6 +2786,31 @@ def _is_tracking_intent_query(query: str) -> bool:
     return any(sig in text for sig in signals)
 
 
+def _is_diary_only_query(query: str) -> bool:
+    text = re.sub(r"\s+", " ", (query or "").strip()).lower()
+    if not text:
+        return False
+    diary_tokens = [
+        "aelinの日记",
+        "日记",
+        "长期追踪记忆",
+        "追踪记忆",
+        "file memory",
+        "memory",
+        "diary",
+    ]
+    strict_prefix = ["仅根据", "只根据", "仅基于", "只基于", "仅按", "只按", "only based on", "only use"]
+    no_web_tokens = ["不要联网", "无需联网", "不联网", "不要网络搜索", "只看日记", "仅看日记", "仅用日记", "只用日记"]
+    has_diary = any(token in text for token in diary_tokens)
+    if has_diary and any(token in text for token in strict_prefix):
+        return True
+    if has_diary and any(token in text for token in no_web_tokens):
+        return True
+    if re.search(r"\bonly\b.*\b(diary|memory)\b", text):
+        return True
+    return False
+
+
 def _is_sports_result_query(query: str) -> bool:
     text = (query or "").strip().lower()
     if not text:
@@ -2923,10 +2950,15 @@ def _verify_reply_answer(
     answer: str,
     need_web_search: bool,
     citations: list[AelinCitation],
+    diary_only_mode: bool = False,
 ) -> tuple[bool, str]:
     text = (answer or "").strip()
     if not text:
         return False, "empty_answer"
+    if diary_only_mode:
+        if _looks_like_link_dump_answer(text):
+            return False, "diary_only_link_dump"
+        return True, "diary_only_pass"
     needs_evidence = bool(need_web_search or (_is_time_sensitive_query(query) and not _is_smalltalk_query(query)))
     if needs_evidence and not citations:
         return False, "evidence_missing"
@@ -2944,7 +2976,10 @@ def _check_evidence_coverage(
     answer: str,
     citations: list[AelinCitation],
     web_results: list[WebSearchResult],
+    diary_only_mode: bool = False,
 ) -> tuple[bool, str]:
+    if diary_only_mode:
+        return True, "diary_only_mode"
     contract = intent_contract if isinstance(intent_contract, dict) else {}
     requires_citations = bool(contract.get("requires_citations"))
     if not requires_citations:
@@ -2992,6 +3027,10 @@ def _judge_answer_grounding(
     if not text:
         return False, "empty_answer"
     contract = intent_contract if isinstance(intent_contract, dict) else {}
+    if bool(contract.get("diary_only")):
+        if _looks_like_link_dump_answer(text):
+            return False, "diary_only_link_dump"
+        return True, "diary_only_mode"
     requires_factuality = bool(contract.get("requires_factuality"))
     requires_citations = bool(contract.get("requires_citations"))
     if not requires_factuality:
@@ -3333,6 +3372,7 @@ def _enforce_answer_first(
     brief_summary: str,
     todo_titles: list[str] | None = None,
     image_count: int = 0,
+    allow_web_fallback: bool = True,
 ) -> str:
     text = (answer or "").strip()
     if text and not _looks_like_non_answer(text):
@@ -3346,7 +3386,7 @@ def _enforce_answer_first(
             todo_titles=todo_titles or [],
             image_count=image_count,
         )
-    if web_results:
+    if allow_web_fallback and web_results:
         guarded = _compose_web_first_answer(query, web_results)
         if guarded:
             return guarded
@@ -4059,6 +4099,12 @@ def _aelin_chat_impl(
         memory_summary=memory_summary,
         tracking_snapshot=tracking_snapshot,
     )
+    diary_only_mode = _is_diary_only_query(payload.query)
+    if diary_only_mode:
+        intent_contract = dict(intent_contract)
+        intent_contract["diary_only"] = True
+        intent_contract["requires_citations"] = False
+        intent_contract["requires_factuality"] = False
     intent_source = str(intent_contract.get("intent_source") or "fallback")
     intent_type = str(intent_contract.get("intent_type") or "retrieval")
     time_scope = str(intent_contract.get("time_scope") or "any")
@@ -4067,7 +4113,10 @@ def _aelin_chat_impl(
     add_trace(
         "intent_lens",
         status="completed",
-        detail=f"type={intent_type}; scope={time_scope}; freshness_h={freshness_hours}; conf={intent_conf:.2f}; src={intent_source}",
+        detail=(
+            f"type={intent_type}; scope={time_scope}; freshness_h={freshness_hours}; conf={intent_conf:.2f}; "
+            f"src={intent_source}; diary_only={1 if diary_only_mode else 0}"
+        ),
     )
 
     tool_plan = _plan_tool_usage(
@@ -4099,6 +4148,19 @@ def _aelin_chat_impl(
                 patch=patch,
             )
             add_trace("plan_critic", status="completed", detail=f"{critic_source}:patched")
+    if diary_only_mode:
+        tool_plan = dict(tool_plan)
+        tool_plan["need_local_search"] = False
+        tool_plan["need_web_search"] = False
+        tool_plan["web_queries"] = []
+        tool_plan["context_boundaries"] = []
+        tool_plan["trace_context_boundaries"] = []
+        tool_plan["track_suggestion"] = None
+        route_patch = dict(tool_plan.get("route") or {})
+        route_patch.update({"reply_agent": True, "trace_agent": False, "allow_web_retry": False})
+        tool_plan["route"] = route_patch
+        tool_plan["reason"] = f"{str(tool_plan.get('reason') or 'planner')};diary_only_enforced"
+        add_trace("plan_critic", status="completed", detail="system:diary_only_enforced")
 
     planner_source = str(tool_plan.get("planner_source") or "fallback").strip().lower()
     planning_reason = str(tool_plan.get("reason") or "planner:none")
@@ -4495,6 +4557,10 @@ def _aelin_chat_impl(
 
     max_citations = max(1, min(20, int(payload.max_citations or 6)))
     citations = _dedupe_citations([*local_citations, *web_citations], limit=max_citations)
+    if diary_only_mode:
+        citations = []
+        web_results_for_answer = []
+        web_evidence_lines = []
 
     file_memory_items_raw = (
         tracking_snapshot.get("matched_file_items")
@@ -4520,7 +4586,7 @@ def _aelin_chat_impl(
             }
         )
 
-    if (not file_memory_items) and need_local_search and payload.query.strip():
+    if (not file_memory_items) and (need_local_search or diary_only_mode) and payload.query.strip():
         try:
             fallback_hits = _tracking_file_memory.search(
                 user_id=current_user.id,
@@ -4601,11 +4667,18 @@ def _aelin_chat_impl(
             )
             generation_detail = "rule_based with local evidence"
         elif file_memory_lines:
-            answer = (
-                f"我先从你的长期追踪记忆里查到了与“{payload.query.strip()}”相关的线索：\n"
-                + "\n".join(file_memory_lines[:4])
-                + "\n\n如果你需要，我可以继续结合联网结果补全并持续跟踪。"
-            )
+            if diary_only_mode:
+                answer = (
+                    "我仅根据 Aelin の日记命中了以下记录：\n"
+                    + "\n".join(file_memory_lines[:4])
+                    + "\n\n若你希望，我可以继续只在日记里追加检索，不触发联网。"
+                )
+            else:
+                answer = (
+                    f"我先从你的长期追踪记忆里查到了与“{payload.query.strip()}”相关的线索：\n"
+                    + "\n".join(file_memory_lines[:4])
+                    + "\n\n如果你需要，我可以继续结合联网结果补全并持续跟踪。"
+                )
             generation_detail = "rule_based with file memory"
         elif web_evidence_lines:
             answer = _compose_web_first_answer(payload.query, web_results_for_answer)
@@ -4634,13 +4707,14 @@ def _aelin_chat_impl(
             "Answer the user's question directly first.\n"
             "If retrieval evidence is provided, use it directly and do not ask user to search manually.\n"
             "If evidence is weak, state uncertainty and avoid fabrication.\n"
-            "Keep response concise and practical.\n"
-            "You may use 0-2 natural emoji in the answer body when it helps tone.\n"
-            "Aelin has 11 expressions. Choose one according to semantics below:\n"
+            + ("STRICT MODE: user requested diary-only context, never inject web facts.\n" if diary_only_mode else "")
+            + "Keep response concise and practical.\n"
+            + "You may use 0-2 natural emoji in the answer body when it helps tone.\n"
+            + "Aelin has 11 expressions. Choose one according to semantics below:\n"
             + _expression_mapping_prompt()
             + "\n"
-            "You MUST append exactly one tag at the end: [expression:exp-XX].\n"
-            "Optional emoji control tag is allowed only before the final expression tag: [emoji:🙂]."
+            + "You MUST append exactly one tag at the end: [expression:exp-XX].\n"
+            + "Optional emoji control tag is allowed only before the final expression tag: [emoji:🙂]."
         )
         retrieval_note = (
             f"planner={planning_reason}; "
@@ -4651,6 +4725,7 @@ def _aelin_chat_impl(
         user_msg = (
             f"用户问题: {payload.query.strip()}\n\n"
             f"工具规划: {retrieval_note}\n\n"
+            + ("约束: 仅可使用 Aelin 日记/文件记忆命中，不可联网补充。\n\n" if diary_only_mode else "")
             + (
                 "最近对话:\n"
                 + "\n".join(
@@ -4757,6 +4832,7 @@ def _aelin_chat_impl(
         brief_summary=brief_summary,
         todo_titles=todo_titles,
         image_count=len(images),
+        allow_web_fallback=not diary_only_mode,
     )
 
     answer, tagged_expression = _extract_expression_tag(answer)
@@ -4788,6 +4864,7 @@ def _aelin_chat_impl(
         answer=answer,
         citations=citations,
         web_results=web_results_for_answer,
+        diary_only_mode=diary_only_mode,
     )
     add_trace(
         "coverage_verifier",
@@ -4802,12 +4879,15 @@ def _aelin_chat_impl(
         answer=answer,
         need_web_search=need_web_search,
         citations=citations,
+        diary_only_mode=diary_only_mode,
     )
     retried_web = 0
     has_web_evidence = any(str(it.source or "").strip().lower() == "web" for it in citations)
     requires_citations = bool(intent_contract.get("requires_citations")) if isinstance(intent_contract, dict) else False
     quality_failed = (not verified) or (not grounded) or (not coverage_ok)
-    allow_quality_retry = bool(route.get("allow_web_retry")) or (requires_citations and (not has_web_evidence))
+    allow_quality_retry = (not diary_only_mode) and (
+        bool(route.get("allow_web_retry")) or (requires_citations and (not has_web_evidence))
+    )
     if quality_failed and allow_quality_retry:
         retry_queries = _build_retry_web_queries(
             payload.query,
@@ -4917,6 +4997,7 @@ def _aelin_chat_impl(
                 answer=answer,
                 need_web_search=bool(need_web_search or retried_web),
                 citations=citations,
+                diary_only_mode=diary_only_mode,
             )
             grounded, grounding_reason = _judge_answer_grounding(
                 query=payload.query,
@@ -4938,6 +5019,7 @@ def _aelin_chat_impl(
                 answer=answer,
                 citations=citations,
                 web_results=web_results_for_answer,
+                diary_only_mode=diary_only_mode,
             )
             add_trace(
                 "coverage_verifier",
@@ -4968,6 +5050,7 @@ def _aelin_chat_impl(
         brief_summary=brief_summary,
         todo_titles=todo_titles,
         image_count=len(images),
+        allow_web_fallback=not diary_only_mode,
     )
     answer, maybe_expression = _extract_expression_tag(answer)
     if maybe_expression:
@@ -6230,6 +6313,21 @@ def ingest_media_content(
 ):
     workspace = _normalize_workspace(payload.workspace)
     service, provider = _resolve_llm_service(db, current_user)
+    platform = _media_ingest.detect_platform(payload.url)
+    auth_related_codes = {
+        "auth_required",
+        "cookie_unavailable",
+        "auth_guide_failed",
+        "auth_guide_unavailable",
+        "auth_guide_disabled",
+    }
+
+    def _status_code_for_media_error(code: str) -> int:
+        if code in {"tool_missing", "extract_failed", "extract_timeout", "no_extractable_content", *auth_related_codes}:
+            return 422
+        return 400
+
+    guide_payload: dict[str, Any] | None = None
     try:
         result = _media_ingest.ingest(
             user_id=current_user.id,
@@ -6240,13 +6338,72 @@ def ingest_media_content(
             languages=payload.languages,
         )
     except MediaIngestError as exc:
-        status_code = 400
-        if exc.code in {"tool_missing", "extract_failed", "extract_timeout", "no_extractable_content", "auth_required", "cookie_unavailable"}:
-            status_code = 422
-        raise HTTPException(
-            status_code=status_code,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
+        if (
+            platform == "douyin"
+            and payload.auto_login_guide
+            and exc.code in {"auth_required", "cookie_unavailable"}
+        ):
+            try:
+                guide_payload = _media_ingest.run_douyin_login_guide(
+                    wait_seconds=payload.login_wait_seconds,
+                    open_url=payload.url,
+                    force_relogin=payload.force_relogin,
+                )
+            except MediaIngestError as guide_exc:
+                raise HTTPException(
+                    status_code=_status_code_for_media_error(guide_exc.code),
+                    detail={
+                        "code": guide_exc.code,
+                        "message": guide_exc.message,
+                        "guide": _media_ingest.build_douyin_auth_guidance(
+                            wait_seconds=payload.login_wait_seconds,
+                            open_url=payload.url,
+                            force_relogin=payload.force_relogin,
+                        ),
+                    },
+                ) from guide_exc
+            if bool(guide_payload.get("ok")):
+                try:
+                    result = _media_ingest.ingest(
+                        user_id=current_user.id,
+                        workspace=workspace,
+                        url=payload.url,
+                        service=service,
+                        provider=provider,
+                        languages=payload.languages,
+                    )
+                except MediaIngestError as retry_exc:
+                    raise HTTPException(
+                        status_code=_status_code_for_media_error(retry_exc.code),
+                        detail={
+                            "code": retry_exc.code,
+                            "message": retry_exc.message,
+                            "guide": guide_payload,
+                            "guide_applied": True,
+                        },
+                    ) from retry_exc
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "auth_required",
+                        "message": str(guide_payload.get("message") or exc.message),
+                        "guide": guide_payload,
+                        "guide_applied": True,
+                    },
+                ) from exc
+        else:
+            detail = {"code": exc.code, "message": exc.message}
+            if platform == "douyin" and exc.code in auth_related_codes:
+                detail["guide"] = _media_ingest.build_douyin_auth_guidance(
+                    wait_seconds=payload.login_wait_seconds,
+                    open_url=payload.url,
+                    force_relogin=payload.force_relogin,
+                )
+            raise HTTPException(
+                status_code=_status_code_for_media_error(exc.code),
+                detail=detail,
+            ) from exc
 
     save_state = _save_media_ingest_diary(
         db,
@@ -6273,6 +6430,8 @@ def ingest_media_content(
             else f"已完成 {result.platform} 内容摘要，但写入日记失败。"
         )
     )
+    if guide_payload is not None and bool(guide_payload.get("ok")):
+        message = f"{message}（已自动完成抖音登录引导并重试）"
     return AelinMediaIngestResponse(
         status=("saved" if written else "processed"),
         message=message,
@@ -6291,6 +6450,44 @@ def ingest_media_content(
         written=written,
         diary_path=diary_path,
         limitations=result.limitations,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/media/auth/douyin/guide", response_model=AelinMediaAuthGuideResponse)
+def launch_douyin_media_login_guide(
+    payload: AelinMediaAuthGuideRequest,
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user
+    try:
+        result = _media_ingest.run_douyin_login_guide(
+            wait_seconds=payload.wait_seconds,
+            open_url=payload.open_url,
+            force_relogin=payload.force_relogin,
+        )
+    except MediaIngestError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": exc.code,
+                "message": exc.message,
+                "guide": _media_ingest.build_douyin_auth_guidance(
+                    wait_seconds=payload.wait_seconds,
+                    open_url=payload.open_url,
+                    force_relogin=payload.force_relogin,
+                ),
+            },
+        ) from exc
+    status = "ready" if bool(result.get("ok")) else "pending"
+    return AelinMediaAuthGuideResponse(
+        status=status,
+        platform="douyin",
+        message=str(result.get("message") or ""),
+        login_url=str(result.get("login_url") or ""),
+        profile_dir=str(result.get("profile_dir") or ""),
+        wait_seconds=int(result.get("wait_seconds") or 0),
+        cookie_count=int(result.get("cookie_count") or 0),
         generated_at=datetime.now(timezone.utc),
     )
 

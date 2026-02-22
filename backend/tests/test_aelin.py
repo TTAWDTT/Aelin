@@ -625,6 +625,92 @@ def test_time_sensitive_detection_covers_recent_sports_query():
     assert aelin_router._is_sports_result_query("NBA最近打了什么比赛")
 
 
+def test_diary_only_detection_covers_cn_and_en():
+    assert aelin_router._is_diary_only_query("仅根据我在Aelinの日记里的记录回答：刚刚写入的内容讲了什么？")
+    assert aelin_router._is_diary_only_query("Please only use my diary memory to answer this question.")
+    assert not aelin_router._is_diary_only_query("NBA最近如何，顺便联网查一下")
+
+
+def test_aelin_chat_diary_only_query_forces_no_web(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+    call_state = {"web_calls": 0}
+
+    monkeypatch.setattr(
+        aelin_router,
+        "_plan_tool_usage",
+        lambda **kwargs: {
+            "need_local_search": True,
+            "need_web_search": True,
+            "web_queries": ["抖音 内容 讲了什么"],
+            "context_boundaries": [
+                {"kind": "local", "query": "抖音 内容", "scope": "local"},
+                {"kind": "web", "query": "抖音 内容 讲了什么", "scope": "web"},
+            ],
+            "track_suggestion": None,
+            "route": {"reply_agent": True, "trace_agent": False, "allow_web_retry": True},
+            "reason": "test_force_web_before_override",
+        },
+    )
+    monkeypatch.setattr(
+        aelin_router,
+        "_build_planner_tracking_snapshot",
+        lambda *args, **kwargs: {
+            "active_items": [],
+            "matched_items": [],
+            "active_count": 0,
+            "matched_count": 1,
+            "matched_file_items": [
+                {
+                    "path": "D:/tmp/diary.md",
+                    "title": "抖音内容摘要",
+                    "preview": "这条记录显示该视频只提供了发布信息，未给出具体视频主题。",
+                    "score": 12.5,
+                    "updated_at": "2026-02-22T16:00:00+00:00",
+                    "source": "douyin",
+                    "kind": "insight",
+                    "target": "抖音内容摘要",
+                    "topic_path": "douyin",
+                    "entry_kind": "media_insight",
+                }
+            ],
+            "matched_file_count": 1,
+        },
+    )
+
+    def _fake_web_search(query: str, max_results: int = 6, fetch_top_k: int = 3):
+        call_state["web_calls"] += 1
+        return [
+            WebSearchResult(
+                title="unexpected web result",
+                url="https://example.com/web",
+                snippet="unexpected",
+                fetched_excerpt="unexpected",
+            )
+        ]
+
+    monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", _fake_web_search)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "仅根据我在Aelinの日记里的记录回答：刚刚写入的那条抖音内容讲了什么？若信息不足请直说。",
+            "use_memory": True,
+            "workspace": "default",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert call_state["web_calls"] == 0
+    assert isinstance(data.get("answer"), str) and data.get("answer")
+    assert "日记" in str(data.get("answer") or "")
+    assert not any((it.get("source") == "web") for it in (data.get("citations") or []))
+    web_step = next((it for it in (data.get("tool_trace") or []) if (it.get("stage") == "web_search")), None)
+    assert isinstance(web_step, dict)
+    assert web_step.get("status") == "skipped"
+
+
 def test_plan_tool_usage_invalid_json_fallback_still_dispatches_web():
     class _FakePlannerService:
         def is_configured(self) -> bool:

@@ -485,6 +485,9 @@ class AelinMediaIngestRequest(BaseModel):
     url: str = Field(min_length=5, max_length=3000)
     workspace: str = Field(default="default", min_length=1, max_length=64)
     languages: list[str] = Field(default_factory=lambda: ["zh-Hans", "zh-CN", "zh", "en"], max_length=8)
+    auto_login_guide: bool = True
+    login_wait_seconds: int = Field(default=180, ge=30, le=900)
+    force_relogin: bool = False
 
 
 class AelinMediaIngestResponse(BaseModel):
@@ -505,6 +508,23 @@ class AelinMediaIngestResponse(BaseModel):
     written: bool = False
     diary_path: str = ""
     limitations: list[str] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinMediaAuthGuideRequest(BaseModel):
+    wait_seconds: int = Field(default=180, ge=30, le=900)
+    open_url: str = Field(default="", max_length=3000)
+    force_relogin: bool = False
+
+
+class AelinMediaAuthGuideResponse(BaseModel):
+    status: str
+    platform: str
+    message: str
+    login_url: str = ""
+    profile_dir: str = ""
+    wait_seconds: int = 0
+    cookie_count: int = 0
     generated_at: datetime
 
 
