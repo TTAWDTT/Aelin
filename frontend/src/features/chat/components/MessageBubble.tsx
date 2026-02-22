@@ -13,7 +13,13 @@ const EXPRESSION_LABELS: Record<string, string> = {
   'exp-09': '指着大笑', 'exp-10': '发财得意', 'exp-11': '趴桌躺平',
 }
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+interface MessageBubbleProps {
+  message: ChatMessage
+  isThinking?: boolean
+  thinkingText?: string
+}
+
+export function MessageBubble({ message, isThinking = false, thinkingText }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const [traceOpen, setTraceOpen] = useState(false)
 
@@ -37,11 +43,31 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
       )}
 
       <div className={cn(
-        'chat-elevate max-w-full rounded-[14px] px-4 py-3',
+        'chat-elevate max-w-full rounded-[16px] px-4 py-3.5',
+        isThinking && !isUser && 'chat-thinking-bubble',
         isUser
-          ? 'rounded-tr-[4px] border border-[var(--color-border)] bg-[var(--color-panel-alt)]'
-          : 'rounded-tl-[4px] border border-[var(--color-border)] bg-[var(--color-panel)]'
+          ? 'rounded-tr-[6px] border border-[var(--color-border)] bg-[var(--color-panel-alt)]'
+          : 'rounded-tl-[6px] border border-[var(--color-border)] bg-[var(--color-panel)]'
       )}>
+        {!isUser && isThinking && (
+          <div className="mb-2 flex items-center gap-2">
+            <img
+              src="/gif/action_05.gif"
+              alt="Aelin is thinking"
+              className="h-7 w-7 rounded-[8px] border border-[var(--color-border)] object-cover"
+              draggable={false}
+            />
+            <div className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
+              <span>{thinkingText || 'Aelin 正在思考'}</span>
+              <span className="chat-thinking-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Images */}
         {message.images && message.images.length > 0 && (
           <div className="mb-2.5 flex gap-2">
@@ -54,7 +80,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         {/* Content */}
         <div className={cn('prose prose-sm max-w-none prose-neutral')}
           style={{ fontFamily: 'var(--font-body)', lineHeight: 1.64, fontSize: '0.94rem' }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : '…')}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
         </div>
 
         {/* Citations */}

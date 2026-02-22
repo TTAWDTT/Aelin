@@ -313,6 +313,42 @@ code, pre, .font-mono {
   border-color: inherit;
 }
 
+.chat-thinking-bubble {
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-thinking-bubble::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 0%, rgba(255, 255, 255, 0.06) 42%, transparent 70%);
+  animation: aelin-thinking-sheen 1.8s linear infinite;
+  pointer-events: none;
+}
+
+.chat-thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.chat-thinking-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  animation: aelin-thinking-dot 1s ease-in-out infinite;
+}
+
+.chat-thinking-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.chat-thinking-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
 @keyframes aelin-avatar-pulse {
   0%, 100% { transform: scale(1); }
   45% { transform: scale(1.03); }
@@ -337,5 +373,25 @@ code, pre, .font-mono {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes aelin-thinking-dot {
+  0%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes aelin-thinking-sheen {
+  from {
+    transform: translateX(-135%);
+  }
+  to {
+    transform: translateX(135%);
   }
 }

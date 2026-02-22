@@ -42,6 +42,7 @@ export function ChatView() {
         scrollRef={scrollRef}
         messages={messages}
         isStreaming={isStreaming}
+        statusText={statusText}
         onQuickPrompt={handleSend}
       />
       <ComposerBar
