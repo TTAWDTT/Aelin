@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld("petBridge", {
   dragEnd() {
     ipcRenderer.send("pet:drag-end");
   },
+  mediaControl(action, payload) {
+    return ipcRenderer.invoke("pet:media-control", {
+      action: String(action || ""),
+      ...(payload || {}),
+    });
+  },
   getConfig() {
     return ipcRenderer.invoke("pet:get-config");
   },

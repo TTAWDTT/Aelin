@@ -14,11 +14,14 @@ const isDev = process.env.MERCURYDESK_DESKTOP_DEV === "1" || !app.isPackaged;
 const backendPort = Number(process.env.MERCURYDESK_BACKEND_PORT || (isDev ? 8000 : 18080));
 const frontendPort = Number(process.env.MERCURYDESK_DESKTOP_PORT || (isDev ? 5173 : 1420));
 const desktopZoom = Number(process.env.MERCURYDESK_DESKTOP_ZOOM || "1.0");
-const PET_WINDOW_SIZE = 108;
+const PET_WINDOW_SIZE = 248;
 const MAIN_ZOOM_MIN = 0.5;
 const MAIN_ZOOM_MAX = 2.0;
 const MAIN_ZOOM_STEP = 0.1;
 const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
+const PET_PROCESS_CACHE_MS = 4500;
+const PET_MEDIA_CACHE_MS = 3500;
+const PET_PROBE_COMMAND_TIMEOUT_MS = 5000;
 
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -40,10 +43,225 @@ let petClickThroughEnabled = true;
 let petStateAssets = {};
 let petStateTimer = null;
 let petStateLastKey = "";
-let petLastState = "active";
+let petLastState = "happy";
 let petCpuSnapshot = null;
 let petPowerEventsBound = false;
 let mainWindowPinned = false;
+let petWorkingPhase = false;
+let petCompletionUntil = 0;
+let petWorkStartedAt = 0;
+let petCoachLine = "";
+let petCoachReason = "";
+let petCoachLineUntil = 0;
+let petCoachCooldownUntil = 0;
+let petCoachPending = false;
+let petLateNightHintDate = "";
+let petProcessProbeCache = {
+  ts: 0,
+  names: new Set(),
+  error: "",
+  inFlight: false,
+};
+let petMediaCache = {
+  ts: 0,
+  snapshot: null,
+  error: "",
+  inFlight: false,
+};
+let petVolumeEstimate = 50;
+
+const DEFAULT_WORK_PROCESS_TOKENS = [
+  "codex",
+  "codex-cli",
+  "claude",
+  "claude-code",
+  "aider",
+  "gemini",
+  "gemini-cli",
+  "qwen-code",
+  "roo",
+  "roo-code",
+  "cline",
+  "code",
+  "code-insiders",
+  "cursor",
+  "windsurf",
+  "trae",
+  "idea64",
+  "webstorm64",
+  "pycharm64",
+  "clion64",
+  "devenv",
+  "winword",
+  "excel",
+  "powerpnt",
+  "onenote",
+  "outlook",
+  "wps",
+  "wpp",
+  "et",
+];
+
+const DEFAULT_MUSIC_PROCESS_TOKENS = [
+  "spotify",
+  "qqmusic",
+  "cloudmusic",
+  "kugou",
+  "kwmusic",
+  "itunes",
+  "foobar2000",
+  "vlc",
+  "potplayer",
+  "aimp",
+  "music",
+];
+
+const PROCESS_DISPLAY_NAMES = {
+  code: "VS Code",
+  "code-insiders": "VS Code Insiders",
+  cursor: "Cursor",
+  windsurf: "Windsurf",
+  trae: "Trae",
+  codex: "Codex",
+  "codex-cli": "Codex CLI",
+  claude: "Claude",
+  "claude-code": "Claude Code",
+  aider: "Aider",
+  gemini: "Gemini",
+  "gemini-cli": "Gemini CLI",
+  "qwen-code": "Qwen Code",
+  roo: "Roo",
+  "roo-code": "Roo Code",
+  cline: "Cline",
+  idea64: "IntelliJ IDEA",
+  webstorm64: "WebStorm",
+  pycharm64: "PyCharm",
+  clion64: "CLion",
+  devenv: "Visual Studio",
+  winword: "Word",
+  excel: "Excel",
+  powerpnt: "PowerPoint",
+  onenote: "OneNote",
+  outlook: "Outlook",
+  wps: "WPS",
+  wpp: "WPS 演示",
+  et: "WPS 表格",
+  spotify: "Spotify",
+  qqmusic: "QQ 音乐",
+  cloudmusic: "网易云音乐",
+  kugou: "酷狗音乐",
+  kwmusic: "酷我音乐",
+  itunes: "iTunes",
+  foobar2000: "Foobar2000",
+  vlc: "VLC",
+  potplayer: "PotPlayer",
+  aimp: "AIMP",
+  music: "音乐播放器",
+};
+
+function normalizeProcessToken(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.exe$/i, "");
+}
+
+function parseProcessTokenList(raw, fallback) {
+  const text = String(raw || "").trim();
+  if (!text) return fallback;
+  const values = text
+    .split(/[,\n;|]/)
+    .map((item) => normalizeProcessToken(item))
+    .filter(Boolean);
+  return values.length ? values : fallback;
+}
+
+const WORK_PROCESS_TOKENS = parseProcessTokenList(process.env.MERCURYDESK_WORK_PROCESSES, DEFAULT_WORK_PROCESS_TOKENS);
+const MUSIC_PROCESS_TOKENS = parseProcessTokenList(process.env.MERCURYDESK_MUSIC_PROCESSES, DEFAULT_MUSIC_PROCESS_TOKENS);
+
+function displayProcessName(rawName) {
+  const normalized = normalizeProcessToken(rawName);
+  return PROCESS_DISPLAY_NAMES[normalized] || String(rawName || "").trim() || "unknown";
+}
+
+function uniqueDisplayNames(names, maxItems = 3) {
+  const seen = new Set();
+  const out = [];
+  for (const name of names || []) {
+    const display = displayProcessName(name);
+    const key = display.toLowerCase();
+    if (!display || seen.has(key)) continue;
+    seen.add(key);
+    out.push(display);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+function classifyWorkMode(processNames) {
+  const values = Array.isArray(processNames) ? processNames.map((item) => normalizeProcessToken(item)) : [];
+  const hasCoding = values.some((name) => [
+    "code",
+    "code-insiders",
+    "cursor",
+    "windsurf",
+    "trae",
+    "codex",
+    "codex-cli",
+    "claude",
+    "claude-code",
+    "aider",
+    "gemini",
+    "gemini-cli",
+    "qwen-code",
+    "roo",
+    "roo-code",
+    "cline",
+    "idea64",
+    "webstorm64",
+    "pycharm64",
+    "clion64",
+    "devenv",
+  ].includes(name));
+  if (hasCoding) return "coding";
+  const hasOffice = values.some((name) => [
+    "winword",
+    "excel",
+    "powerpnt",
+    "onenote",
+    "outlook",
+    "wps",
+    "wpp",
+    "et",
+  ].includes(name));
+  if (hasOffice) return "office";
+  return "generic";
+}
+
+function buildWorkNarration(workMatches, workDisplayNames, workDurationMin) {
+  const names = Array.isArray(workDisplayNames) ? workDisplayNames.filter(Boolean) : [];
+  if (!names.length) {
+    return "当前没有检测到工作进程哦主人~";
+  }
+  const focusedFor = Number(workDurationMin || 0) > 0 ? `，已专注 ${Math.floor(workDurationMin)} 分钟` : "";
+  const target = names.join("、");
+  const mode = classifyWorkMode(workMatches);
+  if (mode === "coding") {
+    return `正在使用${target}写代码呢主人${focusedFor}！`;
+  }
+  if (mode === "office") {
+    return `正在使用${target}处理文档呢主人${focusedFor}！`;
+  }
+  return `正在使用${target}专注工作呢主人${focusedFor}！`;
+}
+
+function nowLocalDateStamp(ts) {
+  const date = new Date(ts);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 function projectRoot() {
   return path.resolve(__dirname, "..", "..");
@@ -302,11 +520,10 @@ function pickGifByHints(files, hints, fallbackIndex) {
 function buildPetStateAssets() {
   const files = listPetGifFiles();
   const resolved = {
-    active: pickGifByHints(files, ["active", "normal", "default", "action_02"], 0),
-    idle: pickGifByHints(files, ["idle", "rest", "wait", "action_03"], 1),
-    busy: pickGifByHints(files, ["busy", "alert", "hot", "action_04"], 2),
-    sleep: pickGifByHints(files, ["sleep", "night", "zzz", "action_05"], 3),
-    focus: pickGifByHints(files, ["focus", "monitor", "action_06"], 4),
+    happy: pickGifByHints(files, ["happy", "action_02"], 0),
+    completed: pickGifByHints(files, ["completed", "done", "finish", "action_03"], 1),
+    resting: pickGifByHints(files, ["resting", "rest", "sleep", "action_04"], 2),
+    working: pickGifByHints(files, ["working", "busy", "focus", "action_05"], 3),
   };
   return Object.fromEntries(
     Object.entries(resolved)
@@ -368,6 +585,725 @@ function sampleSystemCpuUsage() {
   return Math.max(0, Math.min(1, usage));
 }
 
+function normalizeProcessName(rawName) {
+  const cleaned = String(rawName || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^"+|"+$/g, "")
+    .replace(/\\/g, "/");
+  if (!cleaned) return "";
+  const base = cleaned.split("/").pop() || cleaned;
+  return base.replace(/\.exe$/i, "");
+}
+
+function parseProcessNamesFromText(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/g)
+    .map((line) => normalizeProcessName(line))
+    .filter(Boolean);
+  return new Set(lines);
+}
+
+function runCommandAsync(command, args, timeoutMs = PET_PROBE_COMMAND_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (error, output) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(String(output || "").trim());
+      }
+    };
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk || "");
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk || "");
+    });
+
+    child.on("error", (error) => {
+      finish(error instanceof Error ? error : new Error(String(error || "command error")));
+    });
+
+    child.on("close", (code) => {
+      if (Number(code || 0) === 0) {
+        finish(null, stdout);
+        return;
+      }
+      const detail = String(stderr || stdout || "").trim() || `${command} exit ${code}`;
+      finish(new Error(detail));
+    });
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore timeout kill failures
+      }
+      finish(new Error(`timeout:${command}`));
+    }, Math.max(1000, Number(timeoutMs || PET_PROBE_COMMAND_TIMEOUT_MS)));
+  });
+}
+
+function runPowerShellScriptAsync(script, timeoutMs = PET_PROBE_COMMAND_TIMEOUT_MS) {
+  const wrapped = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[Console]::OutputEncoding; ${String(script || "")}`;
+  return runCommandAsync(
+    "powershell",
+    ["-NoProfile", "-Command", wrapped],
+    timeoutMs
+  );
+}
+
+async function collectWindowsProcessNamesAsync() {
+  const cmd = "$ErrorActionPreference='Stop'; Get-Process | Select-Object -ExpandProperty ProcessName | ConvertTo-Json -Compress";
+  const raw = await runPowerShellScriptAsync(cmd, PET_PROBE_COMMAND_TIMEOUT_MS);
+  if (!raw) return new Set();
+  let parsed = [];
+  try {
+    const json = JSON.parse(raw);
+    parsed = Array.isArray(json) ? json : [json];
+  } catch {
+    return parseProcessNamesFromText(raw);
+  }
+  const names = parsed.map((item) => normalizeProcessName(item)).filter(Boolean);
+  return new Set(names);
+}
+
+async function collectPosixProcessNamesAsync() {
+  const raw = await runCommandAsync("ps", ["-A", "-o", "comm="], PET_PROBE_COMMAND_TIMEOUT_MS);
+  return parseProcessNamesFromText(raw || "");
+}
+
+async function collectSystemProcessNamesAsync() {
+  if (process.platform === "win32") return collectWindowsProcessNamesAsync();
+  return collectPosixProcessNamesAsync();
+}
+
+function matchProcessTokens(processNames, tokens) {
+  const matches = [];
+  for (const procName of processNames) {
+    for (const token of tokens) {
+      if (!token) continue;
+      if (procName === token || procName.includes(token)) {
+        matches.push(procName);
+        break;
+      }
+    }
+  }
+  return Array.from(new Set(matches));
+}
+
+function schedulePetProcessProbe(force = false) {
+  const nowTs = Date.now();
+  if (petProcessProbeCache.inFlight) return;
+  if (!force && nowTs - Number(petProcessProbeCache.ts || 0) < PET_PROCESS_CACHE_MS) return;
+
+  petProcessProbeCache.inFlight = true;
+  collectSystemProcessNamesAsync()
+    .then((names) => {
+      petProcessProbeCache.ts = Date.now();
+      petProcessProbeCache.names = names;
+      petProcessProbeCache.error = "";
+    })
+    .catch((error) => {
+      petProcessProbeCache.ts = Date.now();
+      petProcessProbeCache.error = error instanceof Error ? error.message : String(error || "process probe error");
+    })
+    .finally(() => {
+      petProcessProbeCache.inFlight = false;
+      pushPetState(false);
+    });
+}
+
+function collectPetProcessRuntime() {
+  schedulePetProcessProbe(false);
+  const names = petProcessProbeCache.names instanceof Set ? petProcessProbeCache.names : new Set();
+  return {
+    ok: !petProcessProbeCache.error || names.size > 0,
+    names,
+    workMatches: matchProcessTokens(names, WORK_PROCESS_TOKENS),
+    musicMatches: matchProcessTokens(names, MUSIC_PROCESS_TOKENS),
+    error: petProcessProbeCache.error,
+  };
+}
+
+function runPowerShellScript(script) {
+  const wrapped = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[Console]::OutputEncoding; ${String(script || "")}`;
+  const probe = spawnSync("powershell", ["-NoProfile", "-Command", wrapped], {
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+  });
+  if (probe.error) {
+    throw new Error(probe.error.message || String(probe.error));
+  }
+  if (probe.status !== 0) {
+    throw new Error(String(probe.stderr || probe.stdout || "").trim() || `powershell exit ${probe.status}`);
+  }
+  return String(probe.stdout || "").trim();
+}
+
+function parseJsonSafely(raw, fallback = {}) {
+  const text = String(raw || "").trim();
+  if (!text) return fallback;
+  try {
+    return JSON.parse(text);
+  } catch {
+    const objectStart = text.indexOf("{");
+    const objectEnd = text.lastIndexOf("}");
+    if (objectStart >= 0 && objectEnd > objectStart) {
+      try {
+        return JSON.parse(text.slice(objectStart, objectEnd + 1));
+      } catch {
+        // ignore
+      }
+    }
+    const arrayStart = text.indexOf("[");
+    const arrayEnd = text.lastIndexOf("]");
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      try {
+        return JSON.parse(text.slice(arrayStart, arrayEnd + 1));
+      } catch {
+        // ignore
+      }
+    }
+    return fallback;
+  }
+}
+
+function resolveDesktopScriptPath(scriptName) {
+  const fileName = String(scriptName || "").trim();
+  if (!fileName) return "";
+  const scriptPath = path.join(__dirname, "scripts", fileName);
+  try {
+    if (fs.existsSync(scriptPath)) return scriptPath;
+  } catch {
+    // ignore script path check failures
+  }
+  return "";
+}
+
+function runPowerShellFileAsync(scriptPath, args = [], timeoutMs = PET_PROBE_COMMAND_TIMEOUT_MS) {
+  if (!scriptPath) {
+    return Promise.reject(new Error("missing_script_path"));
+  }
+  const psArgs = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    scriptPath,
+    ...(Array.isArray(args) ? args.map((item) => String(item || "")) : []),
+  ];
+  return runCommandAsync("powershell", psArgs, timeoutMs);
+}
+
+async function collectWindowsMediaSessionsAsync() {
+  const scriptPath = resolveDesktopScriptPath("media_sessions.ps1");
+  const preferred = MUSIC_PROCESS_TOKENS.join(",");
+  const raw = await runPowerShellFileAsync(
+    scriptPath,
+    ["-Preferred", preferred],
+    PET_PROBE_COMMAND_TIMEOUT_MS
+  );
+  const parsed = parseJsonSafely(raw, { ok: false, reason: "invalid_json", sessions: [] });
+  const sessionsRaw = Array.isArray(parsed.sessions)
+    ? parsed.sessions
+    : parsed.sessions && typeof parsed.sessions === "object"
+      ? [parsed.sessions]
+      : [];
+  const sessions = sessionsRaw.map((item) => ({
+    ok: true,
+    reason: "",
+    title: String(item?.title || "").trim(),
+    artist: String(item?.artist || "").trim(),
+    album: String(item?.album || "").trim(),
+    status: String(item?.status || "").trim(),
+    app: String(item?.app || "").trim(),
+    canPlay: Boolean(item?.canPlay),
+    canPause: Boolean(item?.canPause),
+    canNext: Boolean(item?.canNext),
+    canPrev: Boolean(item?.canPrev),
+    isPreferred: Boolean(item?.isPreferred),
+    coverBase64: String(item?.coverBase64 || "").trim(),
+  }));
+  return {
+    ok: Boolean(parsed.ok),
+    reason: String(parsed.reason || ""),
+    sessions,
+  };
+}
+
+function parseTrackInfoFromWindowTitle(rawTitle) {
+  const title = String(rawTitle || "").trim();
+  if (!title) return { title: "", artist: "" };
+  const normalized = title
+    .replace(/\s+/g, " ")
+    .replace(/\s*[|｜]\s*(qq音乐|qqmusic|spotify|网易云音乐|cloudmusic|酷狗音乐|kugou|酷我音乐|kwmusic)\s*$/i, "")
+    .replace(/\s*-\s*(qq音乐|qqmusic|spotify|网易云音乐|cloudmusic|酷狗音乐|kugou|酷我音乐|kwmusic)\s*$/i, "")
+    .trim();
+  if (!normalized) return { title: "", artist: "" };
+  const chunks = normalized.split(/\s*[-–—]\s*/).filter(Boolean);
+  if (chunks.length >= 2) {
+    return {
+      title: chunks[0].trim(),
+      artist: chunks.slice(1).join(" - ").trim(),
+    };
+  }
+  return { title: normalized, artist: "" };
+}
+
+async function collectWindowsMusicWindowTitlesAsync(processTokens) {
+  const tokens = Array.isArray(processTokens)
+    ? processTokens.map((item) => normalizeProcessToken(item)).filter(Boolean)
+    : [];
+  if (!tokens.length) return [];
+  const escaped = tokens.map((token) => `'${token.replace(/'/g, "''")}'`).join(",");
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    `$targets=@(${escaped})`,
+    "$items=Get-Process | Where-Object { $_.MainWindowTitle -and $targets -contains ($_.ProcessName.ToLower()) } | Select-Object ProcessName,MainWindowTitle | ConvertTo-Json -Compress",
+    "if([string]::IsNullOrWhiteSpace($items)){ '[]'; exit 0 }",
+    "$items",
+  ].join("; ");
+  const raw = await runPowerShellScriptAsync(script, PET_PROBE_COMMAND_TIMEOUT_MS);
+  const parsed = parseJsonSafely(raw, []);
+  const rows = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" ? [parsed] : [];
+  return rows
+    .map((item) => ({
+      processName: normalizeProcessToken(item?.ProcessName || item?.processName),
+      windowTitle: String(item?.MainWindowTitle || item?.windowTitle || "").trim(),
+    }))
+    .filter((item) => item.processName && item.windowTitle);
+}
+
+async function enrichMediaByWindowTitleAsync(runtime, preferredProcesses) {
+  const base = runtime && typeof runtime === "object" ? runtime : buildEmptyMediaRuntime("no_media");
+  if ((base.title && base.artist) || !Array.isArray(preferredProcesses) || !preferredProcesses.length) {
+    return base;
+  }
+  try {
+    const rows = await collectWindowsMusicWindowTitlesAsync(preferredProcesses);
+    if (!rows.length) return base;
+    const chosen = rows.find((row) => preferredProcesses.includes(row.processName)) || rows[0];
+    const parsed = parseTrackInfoFromWindowTitle(chosen.windowTitle);
+    return {
+      ...base,
+      title: base.title || parsed.title || `${displayProcessName(chosen.processName)} 正在运行`,
+      artist: base.artist || parsed.artist || "",
+      app: base.app || displayProcessName(chosen.processName),
+      available: true,
+      error: "",
+    };
+  } catch {
+    return base;
+  }
+}
+
+function scoreMediaSession(session, preferredHints = []) {
+  const status = String(session?.status || "").toLowerCase();
+  const app = String(session?.app || "").toLowerCase();
+  let score = 0;
+  if (status.includes("playing")) score += 120;
+  if (session?.title || session?.artist) score += 80;
+  if (session?.canPlay || session?.canPause || session?.canNext || session?.canPrev) score += 40;
+  if (session?.isPreferred) score += 90;
+  if (app) {
+    if (preferredHints.some((hint) => app.includes(hint))) score += 70;
+    if (MUSIC_PROCESS_TOKENS.some((hint) => app.includes(hint))) score += 30;
+  }
+  if (session?.title && String(session.title).trim().length >= 2) score += 20;
+  return score;
+}
+
+function selectBestMediaSession(sessions, preferredProcesses = []) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  if (!list.length) return null;
+  const preferredHints = preferredProcesses
+    .map((item) => normalizeProcessToken(item))
+    .filter(Boolean);
+  let best = null;
+  let bestScore = -Infinity;
+  for (const session of list) {
+    const score = scoreMediaSession(session, preferredHints);
+    if (score > bestScore) {
+      bestScore = score;
+      best = session;
+    }
+  }
+  return best;
+}
+
+function mapMediaSnapshotToRuntime(snapshot, selectedSession) {
+  const target = selectedSession || null;
+  if (!target) {
+    return buildEmptyMediaRuntime(snapshot?.reason || "no_session");
+  }
+  const status = String(target.status || "").toLowerCase();
+  const coverBase64 = String(target.coverBase64 || "").trim();
+  return {
+    available: Boolean(target.ok !== false),
+    title: target.title,
+    artist: target.artist,
+    status: target.status || "unknown",
+    app: target.app,
+    isPlaying: status.includes("playing"),
+    canPlay: target.canPlay,
+    canPause: target.canPause,
+    canNext: target.canNext,
+    canPrev: target.canPrev,
+    volume: petVolumeEstimate,
+    coverDataUrl: coverBase64 ? `data:image/jpeg;base64,${coverBase64}` : "",
+    error: "",
+  };
+}
+
+function buildEmptyMediaRuntime(errorText = "") {
+  return {
+    available: false,
+    title: "",
+    artist: "",
+    status: "unknown",
+    app: "",
+    isPlaying: false,
+    canPlay: false,
+    canPause: false,
+    canNext: false,
+    canPrev: false,
+    volume: petVolumeEstimate,
+    coverDataUrl: "",
+    error: String(errorText || ""),
+  };
+}
+
+function schedulePetMediaProbe(force = false, preferredProcesses = []) {
+  const nowTs = Date.now();
+  if (petMediaCache.inFlight) return;
+  if (!force && nowTs - Number(petMediaCache.ts || 0) < PET_MEDIA_CACHE_MS) return;
+  const preferred = Array.isArray(preferredProcesses)
+    ? preferredProcesses.map((item) => normalizeProcessToken(item)).filter(Boolean)
+    : [];
+  const previous = petMediaCache.snapshot && typeof petMediaCache.snapshot === "object" ? petMediaCache.snapshot : null;
+  const shouldKeepProbing = preferred.length > 0
+    || Boolean(previous?.isPlaying)
+    || Boolean(String(previous?.title || "").trim())
+    || Boolean(String(previous?.artist || "").trim());
+  if (!force && !shouldKeepProbing) return;
+
+  if (process.platform !== "win32") {
+    petMediaCache.ts = nowTs;
+    petMediaCache.snapshot = buildEmptyMediaRuntime("unsupported_platform");
+    petMediaCache.error = "unsupported_platform";
+    return;
+  }
+
+  petMediaCache.inFlight = true;
+  collectWindowsMediaSessionsAsync()
+    .then(async (snapshot) => {
+      const selected = selectBestMediaSession(snapshot.sessions || [], preferred);
+      let data = mapMediaSnapshotToRuntime(snapshot, selected);
+      data = await enrichMediaByWindowTitleAsync(data, preferred);
+      petMediaCache.ts = Date.now();
+      petMediaCache.snapshot = data;
+      petMediaCache.error = data.error || "";
+    })
+    .catch((error) => {
+      const err = error instanceof Error ? error.message : String(error || "media probe error");
+      petMediaCache.ts = Date.now();
+      petMediaCache.snapshot = previous
+        ? {
+            ...previous,
+            error: err,
+          }
+        : buildEmptyMediaRuntime(err);
+      petMediaCache.error = err;
+    })
+    .finally(() => {
+      petMediaCache.inFlight = false;
+      pushPetState(false);
+    });
+}
+
+function collectPetMediaRuntime(force = false, preferredProcesses = []) {
+  const preferred = Array.isArray(preferredProcesses)
+    ? preferredProcesses.map((item) => normalizeProcessToken(item)).filter(Boolean)
+    : [];
+  const cached = petMediaCache.snapshot && typeof petMediaCache.snapshot === "object" ? petMediaCache.snapshot : null;
+  const needsPreferredRefresh = preferred.length > 0
+    && (!cached || (!String(cached.title || "").trim() && !String(cached.artist || "").trim()));
+  schedulePetMediaProbe(force || needsPreferredRefresh, preferred);
+  if (petMediaCache.snapshot) return petMediaCache.snapshot;
+  if (process.platform !== "win32") return buildEmptyMediaRuntime("unsupported_platform");
+  return buildEmptyMediaRuntime("");
+}
+
+function invokeWindowsMediaControl(action) {
+  if (process.platform !== "win32") {
+    return { ok: false, detail: "unsupported_platform" };
+  }
+  const actionNorm = String(action || "").trim().toLowerCase();
+  if (!["play", "pause", "play_pause", "next", "previous"].includes(actionNorm)) {
+    return { ok: false, detail: "invalid_action" };
+  }
+  const scriptPath = resolveDesktopScriptPath("media_control.ps1");
+  if (!scriptPath) return { ok: false, detail: "missing_script" };
+  try {
+    const raw = runPowerShellScript(`& '${scriptPath.replace(/'/g, "''")}' -Action '${actionNorm}'`);
+    const parsed = parseJsonSafely(raw, { ok: false });
+    return { ok: Boolean(parsed.ok), detail: String(parsed.reason || "") };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error || "media_control_error");
+    return { ok: false, detail };
+  }
+}
+
+function sendWindowsMediaTransportKey(action) {
+  if (process.platform !== "win32") return false;
+  const actionNorm = String(action || "").trim().toLowerCase();
+  const keyMap = {
+    play: "MEDIA_PLAY_PAUSE",
+    pause: "MEDIA_PLAY_PAUSE",
+    play_pause: "MEDIA_PLAY_PAUSE",
+    next: "MEDIA_NEXT_TRACK",
+    previous: "MEDIA_PREV_TRACK",
+  };
+  const keyName = keyMap[actionNorm];
+  if (!keyName) return false;
+  const script = `$ws=New-Object -ComObject WScript.Shell; $ws.SendKeys('{${keyName}}')`;
+  try {
+    runPowerShellScript(script);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sendWindowsVolumeKeys(kind, steps = 1) {
+  if (process.platform !== "win32") return false;
+  const keyName = String(kind || "").toUpperCase() === "DOWN" ? "VOLUME_DOWN" : "VOLUME_UP";
+  const count = Math.max(1, Math.min(50, Number(steps || 1)));
+  const script = `$ws=New-Object -ComObject WScript.Shell; 1..${count} | ForEach-Object { $ws.SendKeys('{${keyName}}') }`;
+  try {
+    runPowerShellScript(script);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function controlSystemVolume(action, value) {
+  const syncCacheVolume = () => {
+    if (petMediaCache.snapshot && typeof petMediaCache.snapshot === "object") {
+      petMediaCache.snapshot.volume = petVolumeEstimate;
+    }
+  };
+  const actionNorm = String(action || "").trim().toLowerCase();
+  if (actionNorm === "volume_up") {
+    const ok = sendWindowsVolumeKeys("UP", 3);
+    if (ok) {
+      petVolumeEstimate = Math.min(100, petVolumeEstimate + 6);
+      syncCacheVolume();
+    }
+    return { ok };
+  }
+  if (actionNorm === "volume_down") {
+    const ok = sendWindowsVolumeKeys("DOWN", 3);
+    if (ok) {
+      petVolumeEstimate = Math.max(0, petVolumeEstimate - 6);
+      syncCacheVolume();
+    }
+    return { ok };
+  }
+  if (actionNorm === "set_volume") {
+    const target = Math.max(0, Math.min(100, Number(value || 0)));
+    const diff = target - petVolumeEstimate;
+    if (Math.abs(diff) < 2) return { ok: true };
+    const steps = Math.max(1, Math.round(Math.abs(diff) / 2));
+    const ok = sendWindowsVolumeKeys(diff > 0 ? "UP" : "DOWN", steps);
+    if (ok) {
+      petVolumeEstimate = target;
+      syncCacheVolume();
+    }
+    return { ok };
+  }
+  return { ok: false };
+}
+
+function sanitizeCoachLine(rawText) {
+  return String(rawText || "")
+    .replace(/\[(?:expression|表情)\s*:[^\]]+\]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 48);
+}
+
+function fallbackCoachLine(reason) {
+  if (reason === "late_night") {
+    return "夜深了呢主人，记得早点休息，我会一直陪着你。";
+  }
+  return "又专注了很久呢主人，先活动一下肩颈再继续吧。";
+}
+
+async function readMainWindowAuthToken() {
+  if (!mainWindow || mainWindow.isDestroyed()) return "";
+  try {
+    const token = await mainWindow.webContents.executeJavaScript("localStorage.getItem('token') || ''", true);
+    return String(token || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function postJsonWithTimeout(url, payload, headers = {}, timeoutMs = 25000) {
+  return new Promise((resolve, reject) => {
+    let urlObj;
+    try {
+      urlObj = new URL(url);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const body = JSON.stringify(payload || {});
+    const req = http.request({
+      protocol: urlObj.protocol,
+      hostname: urlObj.hostname,
+      port: urlObj.port,
+      path: `${urlObj.pathname}${urlObj.search}`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+        ...headers,
+      },
+    }, (res) => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        const code = Number(res.statusCode || 0);
+        const parsed = parseJsonSafely(data, {});
+        if (code >= 200 && code < 300) {
+          resolve(parsed);
+          return;
+        }
+        reject(new Error(String(parsed.detail || res.statusMessage || `http_${code}`)));
+      });
+    });
+    req.on("error", (error) => reject(error));
+    req.setTimeout(Math.max(1000, timeoutMs), () => {
+      req.destroy(new Error("timeout"));
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+async function requestCoachLineFromAgent(reason, context) {
+  const token = await readMainWindowAuthToken();
+  if (!token) throw new Error("missing_token");
+  const reasonText = reason === "late_night" ? "夜深提示" : "长时专注提醒";
+  const workNames = (context.workDisplayNames || []).join("、") || "无";
+  const query = [
+    "你是桌宠 Aelin。",
+    `场景：${reasonText}。`,
+    `当前工作进程：${workNames}。`,
+    `专注时长：${Math.max(0, Number(context.workDurationMin || 0))} 分钟。`,
+    "请只输出一句中文提醒，称呼“主人”，12-28字，温柔自然，不要分点，不要解释，不要附加标签。",
+  ].join("");
+  const response = await postJsonWithTimeout(
+    `http://127.0.0.1:${backendPort}/api/v1/aelin/chat`,
+    {
+      query,
+      use_memory: false,
+      max_citations: 0,
+      workspace: "desktop_pet",
+      history: [],
+    },
+    {
+      Authorization: `Bearer ${token}`,
+    },
+    30000
+  );
+  const line = sanitizeCoachLine(response?.answer || "");
+  if (!line) throw new Error("empty_line");
+  return line;
+}
+
+function maybeTriggerCoachLine(context) {
+  const nowTs = Number(context.nowTs || Date.now());
+  if (petCoachPending) return;
+  if (nowTs < petCoachCooldownUntil) return;
+
+  let reason = "";
+  if (context.isWorking && Number(context.workDurationMin || 0) >= 45) {
+    reason = "long_focus";
+  } else if (context.isLateNight) {
+    const stamp = nowLocalDateStamp(nowTs);
+    if (petLateNightHintDate !== stamp) {
+      reason = "late_night";
+      petLateNightHintDate = stamp;
+    }
+  }
+  if (!reason) return;
+
+  petCoachPending = true;
+  petCoachCooldownUntil = nowTs + 20 * 60 * 1000;
+
+  (async () => {
+    try {
+      const line = await requestCoachLineFromAgent(reason, context);
+      petCoachLine = line;
+      petCoachReason = reason;
+    } catch {
+      petCoachLine = fallbackCoachLine(reason);
+      petCoachReason = `${reason}:fallback`;
+    } finally {
+      petCoachLineUntil = Date.now() + 25 * 60 * 1000;
+      petCoachPending = false;
+      pushPetState(true);
+    }
+  })();
+}
+
+function handlePetMediaControl(action, payload) {
+  const act = String(action || "").trim().toLowerCase();
+  if (!act) return { ok: false, detail: "missing_action" };
+
+  if (act === "volume_up" || act === "volume_down" || act === "set_volume") {
+    const result = controlSystemVolume(act, payload?.value);
+    petMediaCache.ts = 0;
+    schedulePetMediaProbe(true);
+    return result;
+  }
+
+  if (act === "play" || act === "pause" || act === "play_pause" || act === "next" || act === "previous") {
+    let result = invokeWindowsMediaControl(act);
+    if (!result.ok) {
+      const fallbackOk = sendWindowsMediaTransportKey(act);
+      if (fallbackOk) {
+        result = { ok: true, detail: "fallback_media_key" };
+      }
+    }
+    petMediaCache.ts = 0;
+    schedulePetMediaProbe(true);
+    return result;
+  }
+
+  return { ok: false, detail: "unsupported_action" };
+}
+
 function getMainRoute() {
   if (!mainWindow || mainWindow.isDestroyed()) return "/";
   const raw = String(mainWindow.webContents.getURL() || "");
@@ -391,16 +1327,55 @@ function computePetRuntimeState() {
   }
   const cpuUsage = sampleSystemCpuUsage();
   const route = getMainRoute();
-  let state = "active";
-  if (idleState === "locked" || idleSec >= 300) {
-    state = "sleep";
-  } else if (idleState === "idle" || idleSec >= 90) {
-    state = "idle";
-  } else if (route.startsWith("/processes")) {
-    state = "focus";
-  } else if (cpuUsage >= 0.78) {
-    state = "busy";
+  const nowTs = Date.now();
+  const processRuntime = collectPetProcessRuntime();
+  const workMatches = processRuntime.workMatches || [];
+  const musicMatches = processRuntime.musicMatches || [];
+  const mediaRuntime = collectPetMediaRuntime(false, musicMatches);
+  const isWorking = workMatches.length > 0;
+  const hasMusic = Boolean(mediaRuntime.isPlaying) || musicMatches.length > 0;
+  const workDisplayNames = uniqueDisplayNames(workMatches, 3);
+  const musicDisplayNames = uniqueDisplayNames(musicMatches, 2);
+  let state = "happy";
+  if (isWorking) {
+    if (!petWorkingPhase || !petWorkStartedAt) {
+      petWorkStartedAt = nowTs;
+    }
+    petWorkingPhase = true;
+    petCompletionUntil = 0;
+    state = "working";
+  } else {
+    if (petWorkingPhase) {
+      petWorkingPhase = false;
+      petCompletionUntil = nowTs + 45_000;
+    }
+    if (nowTs < petCompletionUntil) {
+      state = "completed";
+    } else {
+      petWorkStartedAt = 0;
+      state = hasMusic ? "happy" : "resting";
+    }
   }
+
+  const workDurationMin = petWorkStartedAt ? Math.max(0, Math.floor((nowTs - petWorkStartedAt) / 60000)) : 0;
+  const hour = new Date(nowTs).getHours();
+  const isLateNight = hour >= 23 || hour <= 5;
+
+  maybeTriggerCoachLine({
+    nowTs,
+    isWorking,
+    isLateNight,
+    workDurationMin,
+    workDisplayNames,
+  });
+
+  if (petCoachLine && nowTs > petCoachLineUntil) {
+    petCoachLine = "";
+    petCoachReason = "";
+  }
+
+  const workNarration = buildWorkNarration(workMatches, workDisplayNames, workDurationMin);
+
   petLastState = state;
   return {
     state,
@@ -408,14 +1383,32 @@ function computePetRuntimeState() {
     idleState,
     cpuUsage: Number(cpuUsage.toFixed(3)),
     route,
-    ts: Date.now(),
+    processProbeOk: Boolean(processRuntime.ok),
+    processProbeError: processRuntime.error || "",
+    workMatches,
+    workDisplayNames,
+    workDurationMin,
+    musicMatches,
+    musicDisplayNames,
+    hasMusic,
+    media: mediaRuntime,
+    workNarration,
+    coachLine: petCoachLine || "",
+    coachReason: petCoachReason || "",
+    isLateNight,
+    ts: nowTs,
   };
 }
 
 function pushPetState(force = false) {
   if (!petWindow || petWindow.isDestroyed()) return;
   const payload = computePetRuntimeState();
-  const key = `${payload.state}|${payload.idleState}|${Math.round(payload.cpuUsage * 100)}|${payload.route}`;
+  const mediaKey = `${String(payload.media?.title || "")}|${String(payload.media?.artist || "")}|${payload.media?.isPlaying ? "1" : "0"}|${Number(payload.media?.volume || 0)}`;
+  const workKey = Array.isArray(payload.workMatches) ? payload.workMatches.join(",") : "";
+  const coachKey = String(payload.coachLine || "");
+  const idleBucket = payload.state === "resting" ? Math.floor(Number(payload.idleSec || 0) / 15) : 0;
+  const workDurationBucket = Math.floor(Math.max(0, Number(payload.workDurationMin || 0)));
+  const key = `${payload.state}|${idleBucket}|${payload.route}|${workKey}|${workDurationBucket}|${mediaKey}|${coachKey}`;
   if (!force && key === petStateLastKey) return;
   petStateLastKey = key;
   petWindow.webContents.send("pet:state", payload);
@@ -432,9 +1425,11 @@ function startPetStateTicker() {
   stopPetStateTicker();
   petCpuSnapshot = null;
   sampleSystemCpuUsage();
+  schedulePetProcessProbe(true);
+  schedulePetMediaProbe(true);
   petStateTimer = setInterval(() => {
     pushPetState(false);
-  }, 8000);
+  }, 2500);
   pushPetState(true);
 }
 
@@ -1210,6 +2205,21 @@ function setupPetIpcHandlers() {
   ipcMain.handle("pet:get-config", (event) => {
     if (!fromPet(event)) return {};
     return buildPetConfigPayload();
+  });
+
+  ipcMain.handle("pet:media-control", (event, payload) => {
+    if (!fromPet(event)) return { ok: false, detail: "forbidden" };
+    const action = String(payload?.action || "");
+    const result = handlePetMediaControl(action, payload || {});
+    const state = computePetRuntimeState();
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.webContents.send("pet:state", state);
+    }
+    return {
+      ok: Boolean(result.ok),
+      detail: String(result.detail || ""),
+      state,
+    };
   });
 }
 

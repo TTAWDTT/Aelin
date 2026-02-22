@@ -16,12 +16,19 @@
         display: grid;
         place-items: center;
         user-select: none;
+        font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
       }
       #petWrap {
         position: relative;
-        width: 96px;
-        height: 96px;
-        pointer-events: none;
+        width: 236px;
+        height: 236px;
+        pointer-events: auto;
+      }
+      #petShell {
+        position: absolute;
+        left: 50%;
+        top: 64%;
+        transform: translate(-50%, -50%);
       }
       #pet {
         width: 96px;
@@ -50,22 +57,22 @@
       #pet.pressing {
         transform: none;
       }
-      #pet[data-state="idle"] {
+      #pet[data-state="resting"] {
         filter: saturate(0.92) brightness(0.94);
       }
-      #pet[data-state="busy"] {
+      #pet[data-state="working"] {
         filter: saturate(1.18) brightness(1.02);
       }
-      #pet[data-state="sleep"] {
-        filter: grayscale(0.24) brightness(0.86);
+      #pet[data-state="completed"] {
+        filter: saturate(1.08) brightness(1.05);
       }
-      #pet[data-state="focus"] {
-        filter: saturate(1.1) contrast(1.08);
+      #pet[data-state="happy"] {
+        filter: none;
       }
       #stateBadge {
         position: absolute;
         left: 50%;
-        bottom: -10px;
+        bottom: -12px;
         transform: translateX(-50%);
         padding: 2px 8px;
         border-radius: 999px;
@@ -78,29 +85,162 @@
         white-space: nowrap;
         pointer-events: none;
       }
+      .pet-panel {
+        position: absolute;
+        left: 50%;
+        width: 212px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        background: rgba(16, 23, 36, 0.82);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(8px);
+        color: #f9fafb;
+        pointer-events: none;
+        opacity: 0;
+        transform: translate(-50%, 4px);
+        transition: opacity 140ms ease, transform 140ms ease;
+      }
+      .pet-hover .pet-panel {
+        opacity: 1;
+        transform: translate(-50%, 0);
+        pointer-events: auto;
+      }
+      .pet-panel.hidden {
+        display: none;
+      }
+      #musicPanel {
+        top: -34px;
+        padding: 8px 10px;
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-blend-mode: overlay;
+      }
+      #musicPanel.with-cover {
+        background-color: rgba(7, 12, 20, 0.74);
+      }
+      #musicTitle {
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #musicMeta {
+        margin-top: 2px;
+        font-size: 10px;
+        color: rgba(226, 232, 240, 0.88);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #musicControls {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        align-items: center;
+        gap: 6px;
+      }
+      .music-btn {
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(15, 23, 42, 0.62);
+        color: #f8fafc;
+        border-radius: 9px;
+        height: 26px;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .music-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      #volumeWrap {
+        grid-column: span 2;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      #volumeSlider {
+        width: 100%;
+        accent-color: #f8fafc;
+      }
+      #workPanel {
+        bottom: 4px;
+        padding: 8px 10px;
+      }
+      #workText {
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      #coachText {
+        margin-top: 6px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: rgba(191, 219, 254, 0.95);
+      }
+      #coachText.hidden {
+        display: none;
+      }
     </style>
   </head>
   <body>
     <div id="petWrap">
-      <img id="pet" alt="Aelin" draggable="false" />
-      <div id="stateBadge">活跃</div>
+      <div id="musicPanel" class="pet-panel hidden">
+        <div id="musicTitle">未播放音乐</div>
+        <div id="musicMeta">将自动显示曲名和歌手</div>
+        <div id="musicControls">
+          <button class="music-btn" id="btnPrev" type="button">◁</button>
+          <button class="music-btn" id="btnPlay" type="button">▶</button>
+          <button class="music-btn" id="btnNext" type="button">▷</button>
+          <div id="volumeWrap">
+            <button class="music-btn" id="btnVolDown" type="button">－</button>
+            <input id="volumeSlider" type="range" min="0" max="100" value="50" step="2" />
+            <button class="music-btn" id="btnVolUp" type="button">＋</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="petShell">
+        <img id="pet" alt="Aelin" draggable="false" />
+        <div id="stateBadge">开心</div>
+      </div>
+
+      <div id="workPanel" class="pet-panel">
+        <div id="workText">当前没有检测到工作进程哦主人~</div>
+        <div id="coachText" class="hidden"></div>
+      </div>
     </div>
+
     <script>
       const params = new URLSearchParams(location.search);
       let fallbackIcon = params.get("icon") || "";
+
+      const wrap = document.getElementById("petWrap");
       const pet = document.getElementById("pet");
       const badge = document.getElementById("stateBadge");
+      const musicPanel = document.getElementById("musicPanel");
+      const musicTitle = document.getElementById("musicTitle");
+      const musicMeta = document.getElementById("musicMeta");
+      const btnPrev = document.getElementById("btnPrev");
+      const btnPlay = document.getElementById("btnPlay");
+      const btnNext = document.getElementById("btnNext");
+      const btnVolDown = document.getElementById("btnVolDown");
+      const btnVolUp = document.getElementById("btnVolUp");
+      const volumeSlider = document.getElementById("volumeSlider");
+      const workPanel = document.getElementById("workPanel");
+      const workText = document.getElementById("workText");
+      const coachText = document.getElementById("coachText");
+
       const stateLabels = {
-        active: "活跃",
-        idle: "休息",
-        busy: "忙碌",
-        sleep: "睡眠",
-        focus: "监控",
+        happy: "开心",
+        completed: "完成",
+        resting: "休息",
+        working: "工作",
       };
 
       let stateAssets = {};
       let clickThroughEnabled = true;
-      let currentState = "active";
+      let currentState = "happy";
       let dragging = false;
       let moved = false;
       let startX = 0;
@@ -108,49 +248,112 @@
       let activePointerId = null;
       let pointerActive = false;
       let deactivateTimer = null;
+      let volumeDebounceTimer = null;
+      let latestMedia = null;
+      let hoverSyncRaf = 0;
+      let pendingHoverPoint = null;
       const DEACTIVATE_DELAY_MS = 90;
 
       function normalizeState(raw) {
         const value = String(raw || "").trim().toLowerCase();
-        if (value === "idle" || value === "busy" || value === "sleep" || value === "focus") return value;
-        return "active";
+        if (value === "happy" || value === "completed" || value === "resting" || value === "working") return value;
+        if (value === "active") return "happy";
+        if (value === "idle" || value === "sleep") return "resting";
+        if (value === "busy" || value === "focus") return "working";
+        return "happy";
       }
 
       function stateLabel(state, payload) {
-        const base = stateLabels[state] || stateLabels.active;
+        const base = stateLabels[state] || stateLabels.happy;
         const idleSec = Number(payload?.idleSec || 0);
-        if (state === "idle" && idleSec > 0) {
+        if (state === "resting" && idleSec > 0) {
           return `${base} ${Math.floor(idleSec)}s`;
         }
-        if (state === "busy") {
-          const cpuUsage = Number(payload?.cpuUsage || 0);
-          if (cpuUsage > 0) return `${base} ${(cpuUsage * 100).toFixed(0)}%`;
+        if (state === "working") {
+          const mins = Number(payload?.workDurationMin || 0);
+          if (mins > 0) return `${base} ${mins}m`;
         }
         return base;
       }
 
       function sourceForState(state) {
-        return (
-          stateAssets[state] ||
-          stateAssets.active ||
-          fallbackIcon ||
-          ""
-        );
+        return stateAssets[state] || stateAssets.happy || fallbackIcon || "";
+      }
+
+      function setHoverActive(active) {
+        wrap.classList.toggle("pet-hover", Boolean(active));
+      }
+
+      function setMusicPanel(payload) {
+        const media = payload?.media && typeof payload.media === "object" ? payload.media : null;
+        latestMedia = media;
+        const musicNames = Array.isArray(payload?.musicDisplayNames)
+          ? payload.musicDisplayNames.filter((item) => typeof item === "string" && item.trim())
+          : [];
+        const hasMediaDetail = !!(media && (media.title || media.artist || media.app));
+        const hasMusic = Boolean(payload?.hasMusic) || musicNames.length > 0 || hasMediaDetail;
+        musicPanel.classList.toggle("hidden", !hasMusic);
+        if (!hasMusic) return;
+
+        const fallbackPlayer = musicNames[0] || String(media?.app || "").trim() || "音乐播放器";
+        const title = String(media?.title || "").trim() || `${fallbackPlayer} 正在运行`;
+        const artist = String(media?.artist || "").trim();
+        const status = media?.isPlaying ? "播放中" : "待机中";
+        const app = String(media?.app || "").trim();
+        const coverDataUrl = String(media?.coverDataUrl || "").trim();
+
+        musicTitle.textContent = title;
+        musicMeta.textContent = [artist || fallbackPlayer, status, app].filter(Boolean).join(" · ");
+        if (coverDataUrl) {
+          musicPanel.classList.add("with-cover");
+          musicPanel.style.backgroundImage = `linear-gradient(rgba(8,12,20,0.45), rgba(8,12,20,0.8)), url('${coverDataUrl}')`;
+        } else {
+          musicPanel.classList.remove("with-cover");
+          musicPanel.style.backgroundImage = "";
+        }
+
+        const mediaControllable = Boolean(media && media.available && (media.canPlay || media.canPause || media.canNext || media.canPrev));
+        btnPrev.disabled = !hasMusic || (mediaControllable && !media?.canPrev);
+        btnNext.disabled = !hasMusic || (mediaControllable && !media?.canNext);
+        btnPlay.disabled = !hasMusic || (mediaControllable && !(media?.canPlay || media?.canPause));
+        btnPlay.textContent = media?.isPlaying ? "⏸" : "▶";
+
+        const volume = Number(media?.volume);
+        if (Number.isFinite(volume)) {
+          volumeSlider.value = String(Math.max(0, Math.min(100, Math.round(volume))));
+        }
+      }
+
+      function setWorkPanel(payload) {
+        const narration = String(payload?.workNarration || "").trim() || "当前没有检测到工作进程哦主人~";
+        workText.textContent = narration;
+
+        const line = String(payload?.coachLine || "").trim();
+        if (line) {
+          coachText.textContent = line;
+          coachText.classList.remove("hidden");
+        } else {
+          coachText.textContent = "";
+          coachText.classList.add("hidden");
+        }
       }
 
       function applyState(payload, force = false) {
         const nextState = normalizeState(payload?.state || currentState);
-        if (!force && nextState === currentState) {
-          badge.textContent = stateLabel(nextState, payload);
-          return;
+        const sameState = nextState === currentState;
+
+        if (!sameState || force) {
+          currentState = nextState;
+          pet.dataset.state = nextState;
+          const src = sourceForState(nextState);
+          if (src && pet.src !== src) {
+            pet.src = src;
+          }
         }
-        currentState = nextState;
-        pet.dataset.state = nextState;
-        const src = sourceForState(nextState);
-        if (src && pet.src !== src) {
-          pet.src = src;
-        }
+
         badge.textContent = stateLabel(nextState, payload);
+        setMusicPanel(payload || {});
+        setWorkPanel(payload || {});
       }
 
       function applyConfig(config, force = false) {
@@ -182,8 +385,26 @@
         const dx = clientX - cx;
         const dy = clientY - cy;
         const radius = rect.width / 2;
-        // Slightly shrink active hit area to avoid blocking clicks around transparent corners.
         return dx * dx + dy * dy <= radius * radius * 0.94;
+      }
+
+      function isInsideRect(el, clientX, clientY, pad = 2) {
+        if (!wrap.classList.contains("pet-hover")) return false;
+        if (!el || el.classList.contains("hidden")) return false;
+        const rect = el.getBoundingClientRect();
+        return (
+          clientX >= rect.left - pad &&
+          clientX <= rect.right + pad &&
+          clientY >= rect.top - pad &&
+          clientY <= rect.bottom + pad
+        );
+      }
+
+      function isInsideInteractive(clientX, clientY) {
+        if (isInsidePet(clientX, clientY)) return true;
+        if (isInsideRect(musicPanel, clientX, clientY, 3)) return true;
+        if (isInsideRect(workPanel, clientX, clientY, 3)) return true;
+        return false;
       }
 
       function clearDeactivateTimer() {
@@ -206,7 +427,7 @@
           setPointerActive(true);
           return;
         }
-        if (isInsidePet(clientX, clientY)) {
+        if (isInsideInteractive(clientX, clientY)) {
           clearDeactivateTimer();
           setPointerActive(true);
           return;
@@ -221,12 +442,79 @@
             pointerActive = true;
             window.petBridge?.setPointerActive(true);
           }
+          setHoverActive(true);
           return;
         }
-        if (pointerActive === active) return;
+        if (pointerActive === active) {
+          const nextHover = active || dragging;
+          if (wrap.classList.contains("pet-hover") !== nextHover) {
+            setHoverActive(nextHover);
+          }
+          return;
+        }
         pointerActive = active;
+        setHoverActive(active || dragging);
         window.petBridge?.setPointerActive(active);
       }
+
+      function scheduleHoverSync(clientX, clientY) {
+        pendingHoverPoint = { x: clientX, y: clientY };
+        if (hoverSyncRaf) return;
+        hoverSyncRaf = window.requestAnimationFrame(() => {
+          hoverSyncRaf = 0;
+          const point = pendingHoverPoint;
+          pendingHoverPoint = null;
+          if (!point || dragging) return;
+          syncPointerByPoint(point.x, point.y);
+        });
+      }
+
+      async function runMediaAction(action, payload = {}) {
+        try {
+          const result = await window.petBridge?.mediaControl?.(action, payload);
+          if (result?.state) {
+            applyState(result.state, true);
+          }
+        } catch {
+          // ignore control errors in UI
+        }
+      }
+
+      btnPrev.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runMediaAction("previous");
+      });
+      btnPlay.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const action = latestMedia?.isPlaying ? "pause" : "play";
+        const canDirect = latestMedia?.isPlaying ? latestMedia?.canPause : latestMedia?.canPlay;
+        runMediaAction(canDirect ? action : "play_pause");
+      });
+      btnNext.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runMediaAction("next");
+      });
+      btnVolDown.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runMediaAction("volume_down");
+      });
+      btnVolUp.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runMediaAction("volume_up");
+      });
+      volumeSlider.addEventListener("input", (event) => {
+        event.stopPropagation();
+        const value = Number(event.target?.value || 0);
+        if (volumeDebounceTimer) clearTimeout(volumeDebounceTimer);
+        volumeDebounceTimer = setTimeout(() => {
+          runMediaAction("set_volume", { value });
+        }, 150);
+      });
 
       pet.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -325,7 +613,7 @@
 
       window.addEventListener("mousemove", (event) => {
         if (!dragging) {
-          syncPointerByPoint(event.clientX, event.clientY);
+          scheduleHoverSync(event.clientX, event.clientY);
         }
       });
 
@@ -334,13 +622,11 @@
         window.petBridge?.openChat();
       });
 
-      pet.addEventListener("mouseenter", (event) => {
-        if (dragging) return;
-        syncPointerByPoint(event.clientX, event.clientY);
-      });
-
-      pet.addEventListener("mouseleave", () => {
-        if (!dragging) schedulePointerInactive();
+      [pet, musicPanel, workPanel].forEach((el) => {
+        el?.addEventListener("mouseenter", (event) => {
+          if (dragging) return;
+          syncPointerByPoint(event.clientX, event.clientY);
+        });
       });
 
       window.addEventListener("mouseleave", () => {
@@ -366,6 +652,8 @@
 
       window.addEventListener("beforeunload", () => {
         clearDeactivateTimer();
+        if (volumeDebounceTimer) clearTimeout(volumeDebounceTimer);
+        if (hoverSyncRaf) window.cancelAnimationFrame(hoverSyncRaf);
         if (typeof offState === "function") offState();
         if (typeof offConfig === "function") offConfig();
       });
