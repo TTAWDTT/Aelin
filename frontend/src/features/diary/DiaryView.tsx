@@ -20,15 +20,17 @@ export function DiaryView() {
   const [source, setSource] = useState('')
   const [selectedPath, setSelectedPath] = useState<string>('')
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['diary-files', query, source],
-    queryFn: () =>
-      aelinApi.fileMemorySearch({
+    queryFn: () => {
+      const params: Record<string, string> = {
         workspace: 'default',
         query,
-        source,
-        limit: '80',
-      }),
+        limit: '40',
+      }
+      if (source) params.source = source
+      return aelinApi.fileMemorySearch(params)
+    },
   })
 
   const items = data?.items ?? []
@@ -102,6 +104,11 @@ export function DiaryView() {
             </div>
             {!isLoading && items.length === 0 && (
               <div className="px-3 py-10 text-center text-xs text-[var(--color-text-muted)]">暂无日记记录</div>
+            )}
+            {isError && (
+              <div className="px-3 py-4 text-center text-xs text-[var(--color-danger)]">
+                日记读取失败：{(error as Error)?.message || 'unknown error'}
+              </div>
             )}
           </div>
 
