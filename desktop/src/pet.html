@@ -332,6 +332,7 @@
       let lastInsideInteractiveAt = 0;
       let pointerActivatedAt = 0;
       let suppressExpandUntil = 0;
+      let mediaControlIntentSeq = 0;
       const petLayoutConfig = {
         compactSize: 128,
         expandedWidth: 236,
@@ -925,9 +926,22 @@
           if (result?.state) {
             applyState(result.state, true);
           }
+          return result || { ok: false, detail: "empty_result" };
         } catch {
           // ignore control errors in UI
+          return { ok: false, detail: "ui_bridge_error" };
         }
+      }
+
+      function setOptimisticPlayVisual(isPlaying) {
+        if (!latestMedia || typeof latestMedia !== "object") {
+          latestMedia = {};
+        }
+        latestMedia = {
+          ...latestMedia,
+          isPlaying: Boolean(isPlaying),
+        };
+        setButtonIcon(btnPlay, latestMedia.isPlaying ? "pause" : "play");
       }
 
       btnPrev.addEventListener("click", (event) => {
@@ -938,9 +952,30 @@
       btnPlay.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const action = latestMedia?.isPlaying ? "pause" : "play";
-        const canDirect = latestMedia?.isPlaying ? latestMedia?.canPause : latestMedia?.canPlay;
-        runMediaAction(canDirect ? action : "play_pause");
+        const wasPlaying = Boolean(latestMedia?.isPlaying);
+        const nextPlaying = !wasPlaying;
+        const previousMedia = latestMedia && typeof latestMedia === "object" ? { ...latestMedia } : null;
+        const intentId = ++mediaControlIntentSeq;
+        const action = wasPlaying ? "pause" : "play";
+        const canDirect = wasPlaying ? latestMedia?.canPause : latestMedia?.canPlay;
+        setOptimisticPlayVisual(nextPlaying);
+        petDebug("renderer:media-play-optimistic", {
+          intentId,
+          action: canDirect ? action : "play_pause",
+          wasPlaying,
+          nextPlaying,
+        });
+        void (async () => {
+          const result = await runMediaAction(canDirect ? action : "play_pause");
+          if (intentId !== mediaControlIntentSeq) return;
+          if (result?.ok) return;
+          latestMedia = previousMedia;
+          setButtonIcon(btnPlay, previousMedia?.isPlaying ? "pause" : "play");
+          petDebug("renderer:media-play-rollback", {
+            intentId,
+            detail: String(result?.detail || ""),
+          });
+        })();
       });
       btnNext.addEventListener("click", (event) => {
         event.preventDefault();
