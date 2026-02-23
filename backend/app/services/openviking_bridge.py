@@ -147,16 +147,17 @@ class TrackingFileMemoryBridge:
         user_id: int,
         workspace: str,
         source: str | None,
+        include_diary: bool,
     ) -> list[Path]:
         tracking_root = self._tracking_root(user_id=user_id, workspace=workspace)
-        diary_root = self._diary_root(user_id=user_id, workspace=workspace)
         out: list[Path] = []
         source_norm = str(source or "").strip().lower()
         if source_norm:
             out.append(tracking_root / _slug(source_norm, fallback="web"))
         else:
             out.append(tracking_root)
-        out.append(diary_root)
+        if include_diary:
+            out.append(self._diary_root(user_id=user_id, workspace=workspace))
         return out
 
     def _write_markdown(self, path: Path, content: str) -> None:
@@ -420,6 +421,7 @@ class TrackingFileMemoryBridge:
         query: str,
         limit: int | None = None,
         source: str | None = None,
+        include_diary: bool = False,
     ) -> list[FileMemoryHit]:
         if not self.enabled:
             return []
@@ -433,6 +435,7 @@ class TrackingFileMemoryBridge:
                     query=query_text,
                     limit=safe_limit,
                     source=source,
+                    include_diary=bool(include_diary),
                 )
                 if hits:
                     return hits[:safe_limit]
@@ -444,6 +447,7 @@ class TrackingFileMemoryBridge:
             query=query_text,
             limit=safe_limit,
             source=source,
+            include_diary=bool(include_diary),
         )
 
     def _local_cache_key(self, path: Path) -> str:
@@ -505,13 +509,19 @@ class TrackingFileMemoryBridge:
         query: str,
         limit: int,
         source: str | None,
+        include_diary: bool,
     ) -> list[FileMemoryHit]:
         client = self._openviking
         if client is None:
             return []
         out: list[FileMemoryHit] = []
         seen_paths: set[str] = set()
-        for base_dir in self._candidate_search_dirs(user_id=user_id, workspace=workspace, source=source):
+        for base_dir in self._candidate_search_dirs(
+            user_id=user_id,
+            workspace=workspace,
+            source=source,
+            include_diary=include_diary,
+        ):
             if not base_dir.exists():
                 continue
             raw: Any = None
@@ -549,6 +559,9 @@ class TrackingFileMemoryBridge:
                     if isinstance(cached, tuple) and len(cached) >= 3 and isinstance(cached[2], dict)
                     else self._parse_markdown_meta(abs_path)
                 )
+                entry_kind = str(parsed.get("entry_kind") or "").strip().lower()
+                if (not include_diary) and self._is_diary_entry_kind(entry_kind):
+                    continue
                 out.append(
                     FileMemoryHit(
                         path=str(abs_path),
@@ -576,11 +589,17 @@ class TrackingFileMemoryBridge:
         query: str,
         limit: int,
         source: str | None,
+        include_diary: bool,
     ) -> list[FileMemoryHit]:
         tokens = [it.lower() for it in _TOKEN_RE.findall(query.lower()) if len(it) >= 1][:16]
         rows: list[tuple[float, float, Path, dict[str, str], str]] = []
         seen_paths: set[str] = set()
-        for base_dir in self._candidate_search_dirs(user_id=user_id, workspace=workspace, source=source):
+        for base_dir in self._candidate_search_dirs(
+            user_id=user_id,
+            workspace=workspace,
+            source=source,
+            include_diary=include_diary,
+        ):
             if not base_dir.exists():
                 continue
             for path in base_dir.rglob("*.md"):
@@ -592,7 +611,10 @@ class TrackingFileMemoryBridge:
                 if loaded is None:
                     continue
                 ts, text, meta = loaded
-                score = self._score_text(text, query=query, tokens=tokens)
+                entry_kind = str(meta.get("entry_kind") or "").strip().lower()
+                if (not include_diary) and self._is_diary_entry_kind(entry_kind):
+                    continue
+                score = self._score_text(text, query=query, tokens=tokens, include_diary=include_diary)
                 if query and score <= 0.0:
                     continue
                 preview = meta.get("preview") or self._extract_preview(text)
@@ -622,34 +644,43 @@ class TrackingFileMemoryBridge:
                 break
         return out
 
-    def _score_text(self, text: str, *, query: str, tokens: list[str]) -> float:
+    def _score_text(self, text: str, *, query: str, tokens: list[str], include_diary: bool) -> float:
         lowered = text.lower()
         score = 0.0
+        lexical_hit = False
         if query:
             q = query.lower().strip()
             if q and q in lowered:
                 score += 5.0
+                lexical_hit = True
         for tok in tokens:
             cnt = lowered.count(tok)
             if cnt > 0:
                 score += min(6.0, 1.0 + cnt * 0.6)
+                lexical_hit = True
+        if query and (not lexical_hit):
+            return 0.0
         if "- kind: snapshot" in lowered:
             score -= 0.8
         if "- kind: change" in lowered:
             score -= 0.2
         if "- entry_kind: chat_diary" in lowered:
-            score += 1.8
+            score += 1.8 if include_diary else -4.0
         if "- entry_kind: chat_parallel_draft" in lowered:
-            score += 1.6
+            score += 1.6 if include_diary else -3.5
         if "- entry_kind: media_insight" in lowered:
             score += 1.4
         if "- entry_kind: tracking_insight" in lowered:
             score += 1.0
         if "## 提炼信息（日记）" in lowered:
-            score += 1.2
+            score += 1.2 if include_diary else -0.5
         if "## 今日对话" in lowered:
-            score += 1.2
+            score += 1.2 if include_diary else -0.8
         return score
+
+    def _is_diary_entry_kind(self, entry_kind: str) -> bool:
+        kind = str(entry_kind or "").strip().lower()
+        return kind in {"chat_diary", "chat_parallel_draft"}
 
     def _extract_preview(self, text: str) -> str:
         content = str(text or "")

@@ -525,6 +525,7 @@ def _build_cached_tracking_snapshot(
     workspace: str,
     query: str,
     include_file_memory: bool,
+    include_diary_memory: bool = False,
 ) -> dict[str, Any]:
     query_text = (query or "").strip()
     if not query_text:
@@ -533,6 +534,7 @@ def _build_cached_tracking_snapshot(
     workspace_norm = _normalize_workspace(workspace)
     query_key = _normalize_match_text(query_text)[:220]
     include_file_flag = 1 if include_file_memory else 0
+    include_diary_flag = 1 if include_diary_memory else 0
     if _AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS <= 0 or _AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES <= 0:
         return _build_planner_tracking_snapshot(
             db,
@@ -540,9 +542,10 @@ def _build_cached_tracking_snapshot(
             workspace=workspace_norm,
             query=query_text,
             include_file_memory=include_file_memory,
+            include_diary_memory=include_diary_memory,
         )
 
-    cache_key = (int(user_id), workspace_norm, query_key, include_file_flag)
+    cache_key = (int(user_id), workspace_norm, query_key, include_file_flag, include_diary_flag)
     now = time.monotonic()
     with _tracking_snapshot_cache_lock:
         hit = _tracking_snapshot_cache.get(cache_key)
@@ -558,6 +561,7 @@ def _build_cached_tracking_snapshot(
         workspace=workspace_norm,
         query=query_text,
         include_file_memory=include_file_memory,
+        include_diary_memory=include_diary_memory,
     )
     with _tracking_snapshot_cache_lock:
         _tracking_snapshot_cache[cache_key] = (now, snapshot)
@@ -2015,6 +2019,7 @@ def _build_planner_tracking_snapshot(
     workspace: str,
     query: str,
     include_file_memory: bool = True,
+    include_diary_memory: bool = False,
 ) -> dict[str, Any]:
     workspace_norm = _normalize_workspace(workspace)
     active_items: list[dict[str, Any]] = []
@@ -2117,6 +2122,7 @@ def _build_planner_tracking_snapshot(
             workspace=workspace_norm,
             query=query,
             limit=12,
+            include_diary=include_diary_memory,
         )
     file_items = [
         {
@@ -4046,13 +4052,14 @@ def _aelin_chat_impl(
     images = _normalize_images(payload.images)
     history_turns = _normalize_history(payload.history)
     diary_only_mode = _is_diary_only_query(payload.query)
-    include_file_memory_for_plan = bool(not _is_smalltalk_query(payload.query))
+    include_file_memory_for_plan = bool((not _is_smalltalk_query(payload.query)) or diary_only_mode)
     tracking_snapshot = _build_cached_tracking_snapshot(
         db,
         user_id=current_user.id,
         workspace=payload.workspace,
         query=payload.query,
         include_file_memory=include_file_memory_for_plan,
+        include_diary_memory=diary_only_mode,
     )
     intent_contract = _build_intent_contract(
         query=payload.query,
@@ -4533,6 +4540,7 @@ def _aelin_chat_impl(
                 workspace=payload.workspace,
                 query=payload.query,
                 limit=8,
+                include_diary=diary_only_mode,
             )
             file_memory_items = [
                 {
@@ -6590,6 +6598,7 @@ def search_tracking_file_memory(
     query: str = Query(default="", max_length=500),
     limit: int = Query(default=12, ge=1, le=40),
     source: str = Query(default="", max_length=32),
+    include_diary: bool = Query(default=True),
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -6600,6 +6609,7 @@ def search_tracking_file_memory(
         query=query,
         limit=limit,
         source=(source or "").strip().lower() or None,
+        include_diary=bool(include_diary),
     )
     items = [
         AelinTrackingFileMemoryItem(

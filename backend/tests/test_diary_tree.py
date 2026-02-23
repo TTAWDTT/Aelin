@@ -13,6 +13,8 @@ def test_diary_tree_and_search_include_topic_metadata(monkeypatch):
         monkeypatch.setattr(settings, "openviking_enabled", True)
         monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
         bridge = TrackingFileMemoryBridge()
+        # Force deterministic local lexical path for unit assertions.
+        bridge._openviking = None
 
         target = SimpleNamespace(
             user_id=1,
@@ -46,3 +48,83 @@ def test_diary_tree_and_search_include_topic_metadata(monkeypatch):
         assert tree
         top_names = [node.name for node in tree]
         assert "体育" in top_names
+
+
+def test_search_excludes_chat_diary_unless_explicitly_enabled(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr(settings, "openviking_enabled", True)
+        monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
+        bridge = TrackingFileMemoryBridge()
+
+        chat_target = SimpleNamespace(
+            user_id=1,
+            workspace="default",
+            source_type="chat",
+            track_type="conversation",
+            source_key="chat:test",
+            display_name="与主人的聊天日记",
+        )
+        tracking_target = SimpleNamespace(
+            user_id=1,
+            workspace="default",
+            source_type="web",
+            track_type="term",
+            source_key="deepseek",
+            display_name="DeepSeek",
+        )
+
+        diary_token = "zz_diary_only_token_123"
+        rag_token = "zz_rag_token_456"
+        chat_path = bridge.append_insight(
+            target=chat_target,
+            title="聊天纪要",
+            markdown=f"## 今日对话\n\n{diary_token}",
+            reason="unit-test",
+            confidence=0.8,
+            source_query="chat query",
+            topic_path=["与主人的聊天日记"],
+            source_indices=[],
+            entry_kind="chat_diary",
+        )
+        rag_path = bridge.append_insight(
+            target=tracking_target,
+            title="追踪洞察",
+            markdown=f"## Insight\n\n{rag_token}",
+            reason="unit-test",
+            confidence=0.9,
+            source_query="tracking query",
+            topic_path=["技术", "模型"],
+            source_indices=[],
+            entry_kind="tracking_insight",
+        )
+        assert chat_path is not None
+        assert rag_path is not None
+
+        hits_without_diary = bridge.search(
+            user_id=1,
+            workspace="default",
+            query=diary_token,
+            limit=10,
+            include_diary=False,
+        )
+        assert hits_without_diary == []
+
+        hits_with_diary = bridge.search(
+            user_id=1,
+            workspace="default",
+            query=diary_token,
+            limit=10,
+            include_diary=True,
+        )
+        assert hits_with_diary
+        assert any((hit.entry_kind or "") == "chat_diary" for hit in hits_with_diary)
+
+        rag_hits = bridge.search(
+            user_id=1,
+            workspace="default",
+            query=rag_token,
+            limit=10,
+            include_diary=False,
+        )
+        assert rag_hits
+        assert any((hit.entry_kind or "") == "tracking_insight" for hit in rag_hits)
