@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import re
 import threading
@@ -166,6 +167,91 @@ class TrackingFileMemoryBridge:
         with self._io_lock:
             tmp_path.write_text(content, encoding="utf-8")
             tmp_path.replace(path)
+
+    def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
+        content = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with self._io_lock:
+            tmp_path.write_text(content, encoding="utf-8")
+            tmp_path.replace(path)
+
+    def _humanize_diary_markdown(self, markdown: str) -> str:
+        text = str(markdown or "").replace("\r\n", "\n")
+        lines = text.split("\n")
+        cleaned: list[str] = []
+        in_code_block = False
+        generic_headings = {
+            "title",
+            "insight",
+            "summary",
+            "提炼信息（日记）",
+            "来源索引",
+            "最终回答归档",
+        }
+        meta_line_re = re.compile(
+            r"^-\s*(canonical_id|target|source|kind|entry_kind|topic_path|created_at|fetched_at|updated_at|confidence|query|reason|source_indices_json)\s*:",
+            flags=re.I,
+        )
+        for raw in lines:
+            line = raw.rstrip()
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if in_code_block:
+                continue
+            if not stripped:
+                cleaned.append("")
+                continue
+            if stripped.startswith("#"):
+                heading = stripped.lstrip("#").strip().lower()
+                if heading in generic_headings:
+                    continue
+            if meta_line_re.match(stripped):
+                continue
+            if stripped.startswith("- [") and ("path=" in stripped.lower() or "url=" in stripped.lower()):
+                continue
+            cleaned.append(stripped)
+
+        merged: list[str] = []
+        blank_pending = False
+        for line in cleaned:
+            if not line:
+                blank_pending = True
+                continue
+            if blank_pending and merged:
+                merged.append("")
+            blank_pending = False
+            merged.append(line)
+
+        text_out = "\n".join(merged).strip()
+        text_out = re.sub(r"\n{3,}", "\n\n", text_out)
+        return text_out[:5000]
+
+    def _build_human_diary_content(
+        self,
+        *,
+        title: str,
+        markdown: str,
+        created_at_iso: str,
+        topic_parts: list[str],
+    ) -> str:
+        human_body = self._humanize_diary_markdown(markdown)
+        topic_text = " / ".join(topic_parts[:3]).strip()
+        header_lines = [f"# {title}", ""]
+        if created_at_iso:
+            header_lines.append(created_at_iso)
+            header_lines.append("")
+        if topic_text:
+            header_lines.append(f"今天我继续关注了「{topic_text}」。")
+            header_lines.append("")
+        if human_body:
+            header_lines.append(human_body)
+        else:
+            header_lines.append("今天有记录，但暂时没有沉淀出完整文字。")
+        header_lines.extend(["", "后续如果有新的变化，我会继续补写。", ""])
+        return "\n".join(header_lines)
 
     def sync_target_profile(self, target: Any) -> None:
         if not self.enabled:
@@ -406,7 +492,28 @@ class TrackingFileMemoryBridge:
             for part in topic_parts:
                 diary_dir = diary_dir / _slug(part, fallback="topic", max_len=48)
             diary_path = diary_dir / file_name
-            self._write_markdown(diary_path, content)
+            diary_content = self._build_human_diary_content(
+                title=title_text,
+                markdown=safe_markdown,
+                created_at_iso=ts,
+                topic_parts=topic_parts,
+            )
+            self._write_markdown(diary_path, diary_content)
+            diary_meta = {
+                "canonical_id": meta["canonical_id"],
+                "target": meta["display_name"],
+                "source": meta["source_type"],
+                "entry_kind": str(entry_kind or "tracking_insight").strip()[:48],
+                "topic_path": topic_parts,
+                "created_at": ts,
+                "title": title_text,
+                "query": source_query.strip()[:320],
+                "reason": reason.strip()[:500],
+                "confidence": score_text,
+                "source_indices": source_items,
+                "tracking_path": str(legacy_path),
+            }
+            self._write_json(diary_path.with_suffix(".meta.json"), diary_meta)
             return diary_path
         except Exception as exc:
             _LOG.warning("file-memory insight append failed: %s", exc)

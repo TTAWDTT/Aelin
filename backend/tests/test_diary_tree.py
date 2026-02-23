@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -128,3 +129,44 @@ def test_search_excludes_chat_diary_unless_explicitly_enabled(monkeypatch):
         )
         assert rag_hits
         assert any((hit.entry_kind or "") == "tracking_insight" for hit in rag_hits)
+
+
+def test_append_insight_writes_human_diary_content_and_sidecar(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr(settings, "openviking_enabled", True)
+        monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
+        bridge = TrackingFileMemoryBridge()
+        bridge._openviking = None
+
+        target = SimpleNamespace(
+            user_id=1,
+            workspace="default",
+            source_type="chat",
+            track_type="conversation",
+            source_key="chat:daily",
+            display_name="与主人的聊天日记",
+        )
+        out_path = bridge.append_insight(
+            target=target,
+            title="聊天纪要：今天聊模型",
+            markdown="## 今日对话\n\n今天我们聊了模型迭代节奏，也确认了后续跟踪点。",
+            reason="unit-test",
+            confidence=0.88,
+            source_query="今天聊了什么",
+            topic_path=["与主人的聊天日记", "模型讨论"],
+            source_indices=[{"type": "message", "message_id": 7, "label": "聊天消息"}],
+            entry_kind="chat_diary",
+        )
+        assert out_path is not None
+        diary_path = Path(out_path)
+        diary_text = diary_path.read_text(encoding="utf-8")
+        assert "今天我们聊了模型迭代节奏" in diary_text
+        assert "- canonical_id:" not in diary_text
+        assert "- source_indices_json:" not in diary_text
+
+        sidecar_path = diary_path.with_suffix(".meta.json")
+        assert sidecar_path.exists()
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        assert sidecar.get("entry_kind") == "chat_diary"
+        assert sidecar.get("title") == "聊天纪要：今天聊模型"
+        assert isinstance(sidecar.get("source_indices"), list) and sidecar.get("source_indices")
