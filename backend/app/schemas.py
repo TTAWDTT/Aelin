@@ -402,6 +402,10 @@ class AelinTrackingRunResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinTrackingAckBatchRequest(BaseModel):
+    change_ids: list[int] = Field(default_factory=list, max_length=200)
+
+
 class AelinTrackingChangeItem(BaseModel):
     id: int
     target_id: int
@@ -458,6 +462,19 @@ class AelinTrackingFileMemorySearchResponse(BaseModel):
     workspace: str = "default"
     total: int = 0
     items: list[AelinTrackingFileMemoryItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinTrackingFileMemoryContentResponse(BaseModel):
+    workspace: str = "default"
+    path: str
+    title: str = ""
+    source: str = ""
+    kind: str = ""
+    topic_path: str = ""
+    entry_kind: str = ""
+    updated_at: str = ""
+    content: str = ""
     generated_at: datetime
 
 

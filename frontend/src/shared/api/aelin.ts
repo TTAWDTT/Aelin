@@ -6,7 +6,7 @@ import type {
   AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
   AelinTrackingItem, AelinTrackingRunResponse,
   AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
-  AelinTrackingFileMemorySearchResponse,
+  AelinTrackingFileMemorySearchResponse, AelinTrackingFileMemoryContentResponse,
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse,
@@ -41,7 +41,7 @@ export const aelinApi = {
     fetchJson<AelinTrackingChangeListResponse>(`/api/v1/aelin/tracking/targets/${targetId}/changes${params ? '?' + new URLSearchParams(params) : ''}`),
 
   trackingAck: (targetId: number, changeIds: number[]) =>
-    fetchJson<void>(`/api/v1/aelin/tracking/targets/${targetId}/changes/ack`, {
+    fetchJson<AelinTrackingRunResponse>(`/api/v1/aelin/tracking/targets/${targetId}/changes/ack`, {
       method: 'POST', body: JSON.stringify({ change_ids: changeIds }),
     }),
 
@@ -50,6 +50,9 @@ export const aelinApi = {
 
   fileMemorySearch: (params: Record<string, string>) =>
     fetchJson<AelinTrackingFileMemorySearchResponse>(`/api/v1/aelin/tracking/file-memory/search?${new URLSearchParams(params)}`),
+
+  fileMemoryContent: (params: Record<string, string>) =>
+    fetchJson<AelinTrackingFileMemoryContentResponse>(`/api/v1/aelin/tracking/file-memory/content?${new URLSearchParams(params)}`),
 
   // Device
   deviceCapabilities: () =>

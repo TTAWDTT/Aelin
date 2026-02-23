@@ -65,8 +65,10 @@ from app.schemas import (
     AelinTrackConfirmRequest,
     AelinTrackConfirmResponse,
     AelinToolStep,
+    AelinTrackingAckBatchRequest,
     AelinTrackingChangeItem,
     AelinTrackingChangeListResponse,
+    AelinTrackingFileMemoryContentResponse,
     AelinTrackingRunResponse,
     AelinTrackingSnapshotItem,
     AelinTrackingSnapshotListResponse,
@@ -6315,6 +6317,49 @@ def list_tracking_changes(
     return AelinTrackingChangeListResponse(total=len(items), items=items, generated_at=datetime.now(timezone.utc))
 
 
+@router.post("/tracking/targets/{target_id}/changes/ack", response_model=AelinTrackingRunResponse)
+def ack_tracking_changes_batch(
+    target_id: int,
+    payload: AelinTrackingAckBatchRequest,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    target = db.get(TrackingTarget, int(target_id))
+    if target is None or target.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="tracking target not found")
+
+    change_ids = [int(cid) for cid in (payload.change_ids or []) if int(cid) > 0]
+    if change_ids:
+        id_set = set(change_ids)
+        rows = db.scalars(
+            select(TrackingChange.id).where(
+                TrackingChange.target_id == int(target_id),
+                TrackingChange.id.in_(id_set),
+            )
+        ).all()
+        valid_ids = [int(cid) for cid in rows]
+    else:
+        rows = db.scalars(
+            select(TrackingChange.id).where(
+                TrackingChange.target_id == int(target_id),
+                TrackingChange.acked.is_(False),
+            )
+        ).all()
+        valid_ids = [int(cid) for cid in rows]
+
+    acked_count = 0
+    for change_id in valid_ids:
+        row = _tracking.ack_change(db, user_id=current_user.id, change_id=change_id)
+        if row is not None:
+            acked_count += 1
+    db.commit()
+    return AelinTrackingRunResponse(
+        ok=True,
+        message=f"acked {acked_count}",
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
 @router.post("/tracking/changes/{change_id}/ack", response_model=AelinTrackingRunResponse)
 def ack_tracking_change(
     change_id: int,
@@ -6576,6 +6621,35 @@ def search_tracking_file_memory(
         workspace=_normalize_workspace(workspace),
         total=len(items),
         items=items,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/tracking/file-memory/content", response_model=AelinTrackingFileMemoryContentResponse)
+def get_tracking_file_memory_content(
+    workspace: str = Query(default="default", min_length=1, max_length=64),
+    path: str = Query(..., min_length=1, max_length=3000),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    _tracking.ensure_legacy_migration(db, user_id=current_user.id, workspace=workspace)
+    row = _tracking_file_memory.read_memory_markdown(
+        user_id=current_user.id,
+        workspace=workspace,
+        path=path,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="memory file not found")
+    return AelinTrackingFileMemoryContentResponse(
+        workspace=_normalize_workspace(workspace),
+        path=str(row.get("path") or ""),
+        title=str(row.get("title") or ""),
+        source=str(row.get("source") or ""),
+        kind=str(row.get("kind") or ""),
+        topic_path=str(row.get("topic_path") or ""),
+        entry_kind=str(row.get("entry_kind") or ""),
+        updated_at=str(row.get("updated_at") or ""),
+        content=str(row.get("content") or ""),
         generated_at=datetime.now(timezone.utc),
     )
 

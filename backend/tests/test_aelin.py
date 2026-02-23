@@ -257,6 +257,134 @@ def test_aelin_track_confirm_endpoint(monkeypatch):
     assert any((row.get("target") == "NBA 比赛") for row in (tracking_data.get("items") or []))
 
 
+def test_aelin_tracking_batch_ack_and_single_ack_compat(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    def _set_web_rows(url: str, title: str, snippet: str):
+        row = WebSearchResult(
+            title=title,
+            url=url,
+            snippet=snippet,
+            fetched_excerpt=snippet,
+        )
+        monkeypatch.setattr(aelin_router._web_search, "search", lambda query, max_results=6: [row])
+        monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", lambda query, max_results=6, fetch_top_k=3: [row])
+
+    _set_web_rows(
+        "https://example.com/acme/release-1",
+        "Acme 发布 1.0",
+        "Acme 发布了 1.0，包含追踪功能。",
+    )
+    confirm = client.post(
+        "/api/v1/aelin/track/confirm",
+        json={"target": "Acme 发布", "source": "web", "query": "Acme 发布 最新"},
+        headers=headers,
+    )
+    assert confirm.status_code == 200, confirm.text
+
+    tracking_list = client.get("/api/v1/aelin/tracking?limit=20", headers=headers)
+    assert tracking_list.status_code == 200, tracking_list.text
+    items = tracking_list.json().get("items") or []
+    assert items
+    target_id = int(items[0]["target_id"])
+
+    first_run = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
+    assert first_run.status_code == 200, first_run.text
+    assert bool(first_run.json().get("ok"))
+
+    _set_web_rows(
+        "https://example.com/acme/release-2",
+        "Acme 发布 1.1",
+        "Acme 发布了 1.1，新增了差分能力。",
+    )
+    second_run = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
+    assert second_run.status_code == 200, second_run.text
+    assert bool(second_run.json().get("ok"))
+
+    changes_resp = client.get(f"/api/v1/aelin/tracking/targets/{target_id}/changes?limit=50", headers=headers)
+    assert changes_resp.status_code == 200, changes_resp.text
+    changes = changes_resp.json().get("items") or []
+    assert changes
+    unread_ids = [int(row["id"]) for row in changes if not bool(row.get("acked"))]
+    assert unread_ids
+
+    batch_ack = client.post(
+        f"/api/v1/aelin/tracking/targets/{target_id}/changes/ack",
+        json={"change_ids": unread_ids},
+        headers=headers,
+    )
+    assert batch_ack.status_code == 200, batch_ack.text
+    assert bool(batch_ack.json().get("ok"))
+    assert str(batch_ack.json().get("message") or "").startswith("acked ")
+
+    after_batch = client.get(f"/api/v1/aelin/tracking/targets/{target_id}/changes?limit=50", headers=headers)
+    assert after_batch.status_code == 200, after_batch.text
+    after_items = after_batch.json().get("items") or []
+    acked_by_id = {int(row["id"]): bool(row.get("acked")) for row in after_items}
+    for change_id in unread_ids:
+        assert acked_by_id.get(change_id) is True
+
+    single_id = int(unread_ids[0])
+    single_ack = client.post(f"/api/v1/aelin/tracking/changes/{single_id}/ack", headers=headers)
+    assert single_ack.status_code == 200, single_ack.text
+    assert bool(single_ack.json().get("ok"))
+
+    final_check = client.get(f"/api/v1/aelin/tracking/targets/{target_id}/changes?limit=10", headers=headers)
+    assert final_check.status_code == 200, final_check.text
+    final_by_id = {int(row["id"]): bool(row.get("acked")) for row in (final_check.json().get("items") or [])}
+    assert final_by_id.get(single_id) is True
+
+
+def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    row = WebSearchResult(
+        title="Notebook 发布周报",
+        url="https://example.com/notebook/weekly",
+        snippet="本周发布了新功能并修复了三个 bug。",
+        fetched_excerpt="本周发布了新功能并修复了三个 bug。",
+    )
+    monkeypatch.setattr(aelin_router._web_search, "search", lambda query, max_results=6: [row])
+    monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", lambda query, max_results=6, fetch_top_k=3: [row])
+
+    confirm = client.post(
+        "/api/v1/aelin/track/confirm",
+        json={"target": "Notebook 周报", "source": "web", "query": "Notebook 周报"},
+        headers=headers,
+    )
+    assert confirm.status_code == 200, confirm.text
+
+    tracking_list = client.get("/api/v1/aelin/tracking?limit=20", headers=headers)
+    assert tracking_list.status_code == 200, tracking_list.text
+    target_id = int((tracking_list.json().get("items") or [])[0]["target_id"])
+    run_resp = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
+    assert run_resp.status_code == 200, run_resp.text
+
+    search_resp = client.get(
+        "/api/v1/aelin/tracking/file-memory/search",
+        params={"workspace": "default", "query": "Notebook", "limit": 10},
+        headers=headers,
+    )
+    assert search_resp.status_code == 200, search_resp.text
+    items = search_resp.json().get("items") or []
+    assert items
+    path = str(items[0].get("path") or "")
+    assert path
+
+    content_resp = client.get(
+        "/api/v1/aelin/tracking/file-memory/content",
+        params={"workspace": "default", "path": path},
+        headers=headers,
+    )
+    assert content_resp.status_code == 200, content_resp.text
+    data = content_resp.json()
+    assert data.get("path") == path
+    assert isinstance(data.get("content"), str) and data.get("content")
+    assert data.get("content").lstrip().startswith("#")
+
+
 def test_aelin_chat_can_use_web_search_plan(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)

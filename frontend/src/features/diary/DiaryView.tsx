@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { BookOpenText, Search } from 'lucide-react'
 import { aelinApi } from '@/shared/api/aelin'
 import { relativeTime } from '@/shared/utils/format'
+import { cn } from '@/shared/utils/cn'
 import { PageScaffold } from '@/shared/components/PageScaffold'
 
 const SOURCE_OPTIONS = [
@@ -31,6 +32,16 @@ export function DiaryView() {
   })
 
   const items = data?.items ?? []
+
+  const { data: fileContent, isLoading: contentLoading } = useQuery({
+    queryKey: ['diary-file-content', selectedPath],
+    queryFn: () =>
+      aelinApi.fileMemoryContent({
+        workspace: 'default',
+        path: selectedPath,
+      }),
+    enabled: Boolean(selectedPath),
+  })
 
   useEffect(() => {
     if (!items.length) {
@@ -76,7 +87,10 @@ export function DiaryView() {
                 <button
                   key={item.path}
                   onClick={() => setSelectedPath(item.path)}
-                  className="w-full px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-accent-soft)]"
+                  className={cn(
+                    'w-full px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-accent-soft)]',
+                    selectedPath === item.path && 'bg-[var(--color-accent-soft)]'
+                  )}
                 >
                   <p className="truncate text-xs font-medium">{item.title || item.target || '未命名条目'}</p>
                   <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
@@ -101,14 +115,21 @@ export function DiaryView() {
             {selectedItem && (
               <div className="space-y-3">
                 <div>
-                  <h2 className="text-sm font-semibold">{selectedItem.title || selectedItem.target || '日记条目'}</h2>
+                  <h2 className="text-sm font-semibold">{fileContent?.title || selectedItem.title || selectedItem.target || '日记条目'}</h2>
                   <p className="text-[11px] text-[var(--color-text-muted)]">
-                    {selectedItem.kind || 'memory'} · {selectedItem.source || 'tracking'} · {selectedItem.path}
+                    {(fileContent?.entry_kind || selectedItem.entry_kind || selectedItem.kind || 'memory')}
+                    {' · '}
+                    {(fileContent?.source || selectedItem.source || 'tracking')}
+                    {' · '}
+                    {(fileContent?.topic_path || selectedItem.topic_path || '未分类')}
+                    {' · '}
+                    {selectedItem.path}
                   </p>
                 </div>
                 <article className="prose prose-sm max-w-none text-[var(--color-text)] [&_*]:text-[var(--color-text)]">
+                  {contentLoading && <p>正在加载全文…</p>}
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {selectedItem.preview || '暂无预览内容'}
+                    {fileContent?.content || selectedItem.preview || '暂无预览内容'}
                   </ReactMarkdown>
                 </article>
               </div>

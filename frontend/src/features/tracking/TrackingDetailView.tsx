@@ -7,10 +7,44 @@ import { cn } from '@/shared/utils/cn'
 import { ArrowLeft, Play } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-import type { AelinTrackingTargetUpdateRequest } from '@/shared/api/types'
+import type {
+  AelinTrackingChangeItem,
+  AelinTrackingSnapshotItem,
+  AelinTrackingTargetUpdateRequest,
+} from '@/shared/api/types'
 import { PageScaffold } from '@/shared/components/PageScaffold'
 
 type Tab = 'changes' | 'snapshots' | 'settings'
+
+function formatDiff(diff?: Record<string, unknown>): string {
+  if (!diff || typeof diff !== 'object' || Array.isArray(diff) || Object.keys(diff).length === 0) {
+    return ''
+  }
+  try {
+    return JSON.stringify(diff, null, 2)
+  } catch {
+    return ''
+  }
+}
+
+function snapshotSummary(item: AelinTrackingSnapshotItem): string {
+  const payload = item.normalized_payload_json
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const records = Array.isArray(payload.items) ? payload.items : []
+    const first = records.length > 0 && records[0] && typeof records[0] === 'object'
+      ? (records[0] as Record<string, unknown>)
+      : null
+    const firstTitle = first ? String(first.title || first.url || first.key || '').trim() : ''
+    if (firstTitle) {
+      return firstTitle
+    }
+    if (records.length > 0) {
+      return `共 ${records.length} 条标准化结果`
+    }
+  }
+  if (item.fetch_error) return `抓取错误: ${item.fetch_error}`
+  return `版本 v${item.version_no} · ${item.fetch_status}`
+}
 
 export function TrackingDetailView() {
   const { targetId } = useParams<{ targetId: string }>()
@@ -41,7 +75,11 @@ export function TrackingDetailView() {
   /* ---------- mutations ---------- */
   const ack = useMutation({
     mutationFn: (changeIds: number[]) => aelinApi.trackingAck(id, changeIds),
-    onSuccess: () => { toast.success('已标记已读'); qc.invalidateQueries({ queryKey: ['tracking-changes', id] }) },
+    onSuccess: (res) => {
+      toast.success(res.message || '已标记已读')
+      qc.invalidateQueries({ queryKey: ['tracking-changes', id] })
+      qc.invalidateQueries({ queryKey: ['tracking'] })
+    },
   })
 
   const run = useMutation({
@@ -96,11 +134,19 @@ export function TrackingDetailView() {
 
 /* ---------- sub-components ---------- */
 
-function ChangesTab({ changes, loading, onAck }: { changes: any[]; loading: boolean; onAck: (ids: number[]) => void }) {
+function ChangesTab({
+  changes,
+  loading,
+  onAck,
+}: {
+  changes: AelinTrackingChangeItem[]
+  loading: boolean
+  onAck: (ids: number[]) => void
+}) {
   if (loading) return <div className="text-sm text-[var(--color-text-muted)] text-center py-8">加载中…</div>
   if (!changes.length) return <div className="text-sm text-[var(--color-text-muted)] text-center py-8">暂无变化记录</div>
 
-  const unreadIds = changes.filter(c => !c.acknowledged).map(c => c.id).filter(Boolean)
+  const unreadIds = changes.filter(c => !c.acked).map(c => c.id).filter(Boolean)
 
   return (
     <div className="space-y-3">
@@ -108,34 +154,38 @@ function ChangesTab({ changes, loading, onAck }: { changes: any[]; loading: bool
         <button onClick={() => onAck(unreadIds)}
           className="text-[11px] text-[var(--color-accent)] hover:underline">全部标记已读 ({unreadIds.length})</button>
       )}
-      {changes.map((c: any, i: number) => (
+      {changes.map((c, i: number) => (
         <div key={c.id ?? i} className={cn('aelin-card p-3 text-sm',
-          c.acknowledged ? 'bg-transparent' : 'border-[var(--color-border-strong)]')}>
+          c.acked ? 'bg-transparent' : 'border-[var(--color-border-strong)]')}>
           <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)] mb-1">
             <span className={c.severity ? severityColor(c.severity) : ''}>{c.change_type ?? '变化'}</span>
-            {c.detected_at && <span>{relativeTime(c.detected_at)}</span>}
+            {c.created_at && <span>{relativeTime(c.created_at)}</span>}
           </div>
-          <div className="text-[13px]">{c.summary ?? c.description ?? JSON.stringify(c)}</div>
-          {c.diff_text && <pre className="mt-2 text-[11px] bg-[var(--color-bg-elevated)] rounded p-2 overflow-x-auto whitespace-pre-wrap">{c.diff_text}</pre>}
+          <div className="text-[13px]">{c.summary ?? c.title ?? JSON.stringify(c)}</div>
+          {formatDiff(c.diff_json) && (
+            <pre className="mt-2 text-[11px] bg-[var(--color-bg-elevated)] rounded p-2 overflow-x-auto whitespace-pre-wrap">
+              {formatDiff(c.diff_json)}
+            </pre>
+          )}
         </div>
       ))}
     </div>
   )
 }
 
-function SnapshotsTab({ snapshots, loading }: { snapshots: any[]; loading: boolean }) {
+function SnapshotsTab({ snapshots, loading }: { snapshots: AelinTrackingSnapshotItem[]; loading: boolean }) {
   if (loading) return <div className="text-sm text-[var(--color-text-muted)] text-center py-8">加载中…</div>
   if (!snapshots.length) return <div className="text-sm text-[var(--color-text-muted)] text-center py-8">暂无快照</div>
 
   return (
     <div className="space-y-3">
-      {snapshots.map((s: any, i: number) => (
+      {snapshots.map((s, i: number) => (
         <div key={s.id ?? i} className="aelin-card p-3">
           <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)] mb-1">
-            <span>{s.snapshot_type ?? '快照'}</span>
-            {s.created_at && <span>{relativeTime(s.created_at)}</span>}
+            <span>{`v${s.version_no} · ${s.fetch_status ?? 'ok'}`}</span>
+            {s.fetched_at && <span>{relativeTime(s.fetched_at)}</span>}
           </div>
-          <div className="text-[13px]">{s.content_preview ?? s.summary ?? '—'}</div>
+          <div className="text-[13px]">{snapshotSummary(s)}</div>
         </div>
       ))}
     </div>

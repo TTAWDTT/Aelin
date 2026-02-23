@@ -813,5 +813,50 @@ class TrackingFileMemoryBridge:
 
         return _walk(root)
 
+    def read_memory_markdown(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        path: str,
+    ) -> dict[str, str] | None:
+        if not self.enabled:
+            return None
+        raw_path = str(path or "").strip()
+        if not raw_path:
+            return None
+
+        workspace_root = self._workspace_root(user_id=user_id, workspace=workspace).resolve()
+        try:
+            candidate = Path(raw_path)
+            if candidate.is_absolute():
+                resolved = candidate.resolve()
+            else:
+                resolved = (workspace_root / candidate).resolve()
+        except Exception:
+            return None
+
+        try:
+            resolved.relative_to(workspace_root)
+        except Exception:
+            return None
+        if not resolved.exists() or not resolved.is_file() or resolved.suffix.lower() != ".md":
+            return None
+
+        loaded = self._load_local_doc_entry(resolved)
+        if loaded is None:
+            return None
+        _ts, text, meta = loaded
+        return {
+            "path": str(resolved),
+            "title": meta.get("title") or resolved.name,
+            "source": meta.get("source") or "",
+            "kind": meta.get("kind") or "",
+            "topic_path": meta.get("topic_path") or "",
+            "entry_kind": meta.get("entry_kind") or "",
+            "updated_at": meta.get("updated_at") or _iso(_utcnow()),
+            "content": text,
+        }
+
 
 tracking_file_memory_bridge = TrackingFileMemoryBridge()

@@ -147,10 +147,15 @@ export interface AelinTrackingSnapshotListResponse { total: number; items: Aelin
 export interface AelinTrackingFileMemoryItem {
   path: string; title: string; preview: string; score: number
   updated_at: string; canonical_id: string; target: string
-  source: string; kind: string
+  source: string; kind: string; topic_path: string; entry_kind: string
 }
 export interface AelinTrackingFileMemorySearchResponse {
   workspace: string; total: number; items: AelinTrackingFileMemoryItem[]; generated_at: string
+}
+export interface AelinTrackingFileMemoryContentResponse {
+  workspace: string; path: string; title: string
+  source: string; kind: string; topic_path: string; entry_kind: string
+  updated_at: string; content: string; generated_at: string
 }
 
 /* ─── Device Center ─── */
