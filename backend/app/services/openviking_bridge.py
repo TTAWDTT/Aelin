@@ -6,7 +6,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +122,23 @@ class TrackingFileMemoryBridge:
     def _diary_root(self, *, user_id: int, workspace: str) -> Path:
         return self._workspace_root(user_id=user_id, workspace=workspace) / "diary"
 
+    def _diary_raw_day_dir(self, *, user_id: int, workspace: str, day: date) -> Path:
+        return (
+            self._diary_root(user_id=user_id, workspace=workspace)
+            / "raw"
+            / f"{day.year:04d}"
+            / f"{day.month:02d}"
+            / f"{day.day:02d}"
+        )
+
+    def _diary_daily_month_dir(self, *, user_id: int, workspace: str, day: date) -> Path:
+        return (
+            self._diary_root(user_id=user_id, workspace=workspace)
+            / "daily"
+            / f"{day.year:04d}"
+            / f"{day.month:02d}"
+        )
+
     def _normalize_topic_path(self, topic_path: list[str] | None, *, fallback: str = "综合") -> list[str]:
         out: list[str] = []
         seen: set[str] = set()
@@ -175,6 +192,27 @@ class TrackingFileMemoryBridge:
         with self._io_lock:
             tmp_path.write_text(content, encoding="utf-8")
             tmp_path.replace(path)
+
+    def _read_json_file(self, path: Path) -> dict[str, Any]:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _read_sidecar_meta(self, md_path: Path) -> dict[str, Any]:
+        return self._read_json_file(md_path.with_suffix(".meta.json"))
+
+    def _safe_unlink(self, path: Path) -> None:
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            return
 
     def _humanize_diary_markdown(self, markdown: str) -> str:
         text = str(markdown or "").replace("\r\n", "\n")
@@ -249,6 +287,105 @@ class TrackingFileMemoryBridge:
         if fallback:
             return fallback[:5000] + "\n"
         return "今天有记录。\n"
+
+    def _iter_raw_day_dirs(self, *, user_id: int, workspace: str) -> list[tuple[date, Path]]:
+        root = self._diary_root(user_id=user_id, workspace=workspace) / "raw"
+        if not root.exists():
+            return []
+        out: list[tuple[date, Path]] = []
+        for path in root.rglob("*"):
+            if not path.is_dir():
+                continue
+            rel = path.relative_to(root).parts
+            if len(rel) != 3:
+                continue
+            try:
+                yy = int(rel[0])
+                mm = int(rel[1])
+                dd = int(rel[2])
+                day = date(yy, mm, dd)
+            except Exception:
+                continue
+            out.append((day, path))
+        out.sort(key=lambda item: item[0])
+        return out
+
+    def _rollup_closed_chat_diary_days(self, *, user_id: int, workspace: str, current_day: date) -> int:
+        rolled = 0
+        for day, dir_path in self._iter_raw_day_dirs(user_id=user_id, workspace=workspace):
+            if day >= current_day:
+                continue
+            md_files = sorted(dir_path.glob("*.md"))
+            if not md_files:
+                continue
+            entries: list[tuple[str, str, str]] = []
+            rolled_paths: list[str] = []
+            for md_path in md_files:
+                try:
+                    raw_text = md_path.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                text = self._humanize_diary_markdown(raw_text)
+                if not text.strip():
+                    continue
+                meta = self._read_sidecar_meta(md_path)
+                created_at = str(meta.get("created_at") or "").strip()
+                local_time = ""
+                dt = None
+                if created_at:
+                    try:
+                        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    except Exception:
+                        dt = None
+                if dt is not None:
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    local_time = dt.astimezone(timezone.utc).strftime("%H:%M")
+                entries.append((created_at, local_time, text.strip()))
+                rolled_paths.append(md_path.name)
+            if not entries:
+                continue
+
+            entries.sort(key=lambda item: item[0])
+            merged_lines: list[str] = []
+            for _created, hhmm, content in entries:
+                block = content
+                if hhmm:
+                    block = f"[{hhmm}] {block}"
+                merged_lines.append(block)
+            summary = "\n\n".join(merged_lines).strip() + "\n"
+
+            month_dir = self._diary_daily_month_dir(user_id=user_id, workspace=workspace, day=day)
+            daily_path = month_dir / f"{day.isoformat()}.md"
+            self._write_markdown(daily_path, summary)
+            self._write_json(
+                daily_path.with_suffix(".meta.json"),
+                {
+                    "entry_kind": "chat_diary_daily",
+                    "date": day.isoformat(),
+                    "entry_count": len(entries),
+                    "rolled_up_from": rolled_paths,
+                    "updated_at": _iso(_utcnow()),
+                },
+            )
+
+            for md_path in md_files:
+                self._safe_unlink(md_path)
+                self._safe_unlink(md_path.with_suffix(".meta.json"))
+
+            try:
+                current = dir_path
+                raw_root = self._diary_root(user_id=user_id, workspace=workspace) / "raw"
+                while current != raw_root:
+                    if any(current.iterdir()):
+                        break
+                    parent = current.parent
+                    current.rmdir()
+                    current = parent
+            except Exception:
+                pass
+            rolled += 1
+        return rolled
 
     def sync_target_profile(self, target: Any) -> None:
         if not self.enabled:
@@ -482,13 +619,17 @@ class TrackingFileMemoryBridge:
             legacy_path = self._target_dir(target) / "insights" / file_name
             self._write_markdown(legacy_path, content)
 
-            diary_dir = self._diary_root(
-                user_id=int(meta["user_id"] or 0),
-                workspace=meta["workspace"],
-            )
-            for part in topic_parts:
-                diary_dir = diary_dir / _slug(part, fallback="topic", max_len=48)
-            diary_path = diary_dir / file_name
+            entry_kind_norm = str(entry_kind or "tracking_insight").strip().lower()
+            user_id = int(meta["user_id"] or 0)
+            workspace_norm = meta["workspace"]
+            if entry_kind_norm == "chat_diary":
+                diary_dir = self._diary_raw_day_dir(user_id=user_id, workspace=workspace_norm, day=now.date())
+                diary_path = diary_dir / f"{ts_id}.md"
+            else:
+                diary_dir = self._diary_root(user_id=user_id, workspace=workspace_norm)
+                for part in topic_parts:
+                    diary_dir = diary_dir / _slug(part, fallback="topic", max_len=48)
+                diary_path = diary_dir / file_name
             diary_content = self._build_human_diary_content(
                 title=title_text,
                 markdown=safe_markdown,
@@ -511,6 +652,12 @@ class TrackingFileMemoryBridge:
                 "tracking_path": str(legacy_path),
             }
             self._write_json(diary_path.with_suffix(".meta.json"), diary_meta)
+            if entry_kind_norm == "chat_diary":
+                self._rollup_closed_chat_diary_days(
+                    user_id=user_id,
+                    workspace=workspace_norm,
+                    current_day=now.date(),
+                )
             return diary_path
         except Exception as exc:
             _LOG.warning("file-memory insight append failed: %s", exc)
@@ -864,6 +1011,22 @@ class TrackingFileMemoryBridge:
             title = section_title
         elif title.lower() == "tracking insight" and target:
             title = target[:120]
+        sidecar = self._read_sidecar_meta(path)
+        if sidecar:
+            if not title:
+                title = str(sidecar.get("title") or "").strip()[:120]
+            if not source:
+                source = str(sidecar.get("source") or "").strip()[:48]
+            if not topic_path:
+                side_topic = sidecar.get("topic_path")
+                if isinstance(side_topic, list):
+                    topic_path = " > ".join(str(it).strip()[:64] for it in side_topic if str(it).strip())[:280]
+                else:
+                    topic_path = str(sidecar.get("topic_path") or "").strip()[:280]
+            if not entry_kind:
+                entry_kind = str(sidecar.get("entry_kind") or "").strip()[:48]
+            if not updated_at:
+                updated_at = str(sidecar.get("created_at") or sidecar.get("updated_at") or "").strip()[:80]
         preview = self._extract_preview(text)
         return {
             "title": title,
@@ -886,6 +1049,14 @@ class TrackingFileMemoryBridge:
     ) -> list[DiaryTreeNode]:
         if not self.enabled:
             return []
+        try:
+            self._rollup_closed_chat_diary_days(
+                user_id=user_id,
+                workspace=workspace,
+                current_day=_utcnow().date(),
+            )
+        except Exception:
+            pass
         root = self._diary_root(user_id=user_id, workspace=workspace)
         if not root.exists():
             return []

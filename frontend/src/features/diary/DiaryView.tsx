@@ -2,210 +2,163 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { BookOpenText, ChevronDown, ChevronRight, FileText, Folder, FolderOpen, RefreshCw, Search } from 'lucide-react'
+import { BookOpenText, CalendarDays, RefreshCw, Search } from 'lucide-react'
 import { aelinApi } from '@/shared/api/aelin'
 import { relativeTime } from '@/shared/utils/format'
 import { cn } from '@/shared/utils/cn'
 import { PageScaffold } from '@/shared/components/PageScaffold'
 import type { AelinDiaryTreeNode } from '@/shared/api/types'
 
-const HUMAN_SECTION_RE = /^(提炼信息（日记）|今日对话|Insight|Summary|总结|概要)$/i
-const HIDDEN_SECTION_RE = /^(Normalized Payload|Diff|Config|Tags|来源索引)$/i
 const HIDDEN_META_RE =
   /^-\s*(canonical_id|target|source|kind|entry_kind|topic_path|created_at|fetched_at|updated_at|confidence|query|reason|source_indices_json|fetch_status|item_count|fetch_error|version)\s*:/i
 
-function filterTree(nodes: AelinDiaryTreeNode[], query: string): AelinDiaryTreeNode[] {
-  const needle = query.trim().toLowerCase()
-  if (!needle) return nodes
+type DiaryListItem = {
+  path: string
+  title: string
+  preview: string
+  updatedAt: string
+  source: string
+  entryKind: string
+  dateKey: string
+  dayLabel: string
+  kind: 'daily' | 'raw' | 'legacy'
+}
 
-  const walk = (items: AelinDiaryTreeNode[]): AelinDiaryTreeNode[] => {
-    const out: AelinDiaryTreeNode[] = []
+function flattenFiles(nodes: AelinDiaryTreeNode[]): AelinDiaryTreeNode[] {
+  const out: AelinDiaryTreeNode[] = []
+  const walk = (items: AelinDiaryTreeNode[]) => {
     for (const item of items) {
-      const hit = `${item.name} ${item.title} ${item.preview} ${item.source} ${item.topic_path} ${item.entry_kind}`.toLowerCase().includes(needle)
-      if (item.kind === 'folder') {
-        const children = walk(item.children || [])
-        if (hit || children.length > 0) out.push({ ...item, children })
-      } else if (hit) {
+      if (item.kind === 'file') {
         out.push(item)
+        continue
       }
-    }
-    return out
-  }
-  return walk(nodes)
-}
-
-function findNodeByPath(nodes: AelinDiaryTreeNode[], path: string): AelinDiaryTreeNode | null {
-  for (const node of nodes) {
-    if (node.path === path) return node
-    if (node.children?.length) {
-      const child = findNodeByPath(node.children, path)
-      if (child) return child
+      if (item.children?.length) walk(item.children)
     }
   }
-  return null
-}
-
-function findFirstFilePath(nodes: AelinDiaryTreeNode[]): string {
-  for (const node of nodes) {
-    if (node.kind === 'file') return node.path
-    if (node.children?.length) {
-      const child = findFirstFilePath(node.children)
-      if (child) return child
-    }
-  }
-  return ''
-}
-
-function parentFolderPaths(path: string): string[] {
-  const parts = path.split('/').filter(Boolean)
-  const out: string[] = []
-  for (let i = 1; i < parts.length; i += 1) out.push(parts.slice(0, i).join('/'))
+  walk(nodes)
   return out
+}
+
+function extractDateKey(path: string, updatedAt: string): string {
+  const direct = path.match(/(\d{4}-\d{2}-\d{2})\.md$/)
+  if (direct?.[1]) return direct[1]
+  const nested = path.match(/\/(\d{4})\/(\d{2})\/(\d{2})(?:\/|$)/)
+  if (nested?.[1] && nested?.[2] && nested?.[3]) return `${nested[1]}-${nested[2]}-${nested[3]}`
+  const fromUpdated = (updatedAt || '').trim().slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fromUpdated)) return fromUpdated
+  return 'unknown'
+}
+
+function buildDiaryList(nodes: AelinDiaryTreeNode[]): DiaryListItem[] {
+  const files = flattenFiles(nodes)
+  const rows: DiaryListItem[] = files.map((item) => {
+    const path = String(item.path || '')
+    const entryKind = String(item.entry_kind || '')
+    const dateKey = extractDateKey(path, item.updated_at || '')
+    const isDaily = /\/daily\//i.test(path) || entryKind === 'chat_diary_daily'
+    const isRaw = /\/raw\//i.test(path) || entryKind === 'chat_diary'
+    return {
+      path,
+      title: String(item.title || item.name || '日记'),
+      preview: String(item.preview || ''),
+      updatedAt: String(item.updated_at || ''),
+      source: String(item.source || ''),
+      entryKind,
+      dateKey,
+      dayLabel: dateKey === 'unknown' ? '未标注日期' : dateKey,
+      kind: isDaily ? 'daily' : isRaw ? 'raw' : 'legacy',
+    }
+  })
+
+  rows.sort((a, b) => {
+    const ad = Date.parse(a.updatedAt || '')
+    const bd = Date.parse(b.updatedAt || '')
+    if (Number.isFinite(ad) && Number.isFinite(bd) && ad !== bd) return bd - ad
+    return b.path.localeCompare(a.path)
+  })
+
+  const dailyByDate = new Map<string, DiaryListItem>()
+  const leftovers: DiaryListItem[] = []
+  for (const row of rows) {
+    if (row.kind !== 'daily') {
+      leftovers.push(row)
+      continue
+    }
+    const prev = dailyByDate.get(row.dateKey)
+    if (!prev) {
+      dailyByDate.set(row.dateKey, row)
+      continue
+    }
+    const prevTs = Date.parse(prev.updatedAt || '')
+    const rowTs = Date.parse(row.updatedAt || '')
+    if ((Number.isFinite(rowTs) ? rowTs : 0) > (Number.isFinite(prevTs) ? prevTs : 0)) {
+      dailyByDate.set(row.dateKey, row)
+    }
+  }
+  return [...dailyByDate.values(), ...leftovers].sort((a, b) => {
+    if (a.dateKey !== b.dateKey) return b.dateKey.localeCompare(a.dateKey)
+    const ad = Date.parse(a.updatedAt || '')
+    const bd = Date.parse(b.updatedAt || '')
+    if (Number.isFinite(ad) && Number.isFinite(bd) && ad !== bd) return bd - ad
+    return b.path.localeCompare(a.path)
+  })
+}
+
+function filterEntries(items: DiaryListItem[], query: string): DiaryListItem[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return items
+  return items.filter((item) =>
+    `${item.title} ${item.preview} ${item.path} ${item.dayLabel} ${item.entryKind}`.toLowerCase().includes(needle)
+  )
 }
 
 function collapseMarkdownNoise(raw: string): string {
   const lines = raw.replace(/\r\n/g, '\n').split('\n')
-  const withoutCodeBlocks: string[] = []
+  const out: string[] = []
   let inCode = false
   for (const line of lines) {
-    if (line.trim().startsWith('```')) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```')) {
       inCode = !inCode
       continue
     }
-    if (!inCode) withoutCodeBlocks.push(line)
+    if (inCode) continue
+    if (HIDDEN_META_RE.test(trimmed)) continue
+    out.push(line)
   }
-
-  const sections = new Map<string, string[]>()
-  let current = ''
-  for (const line of withoutCodeBlocks) {
-    const h2 = line.match(/^##\s+(.+)$/)
-    if (h2) {
-      current = h2[1].trim()
-      if (!sections.has(current)) sections.set(current, [])
-      continue
-    }
-    if (HIDDEN_META_RE.test(line.trim())) continue
-    if (current && !HIDDEN_SECTION_RE.test(current)) {
-      sections.get(current)?.push(line)
-    }
-  }
-
-  const humanSections = [...sections.entries()]
-    .filter(([title]) => HUMAN_SECTION_RE.test(title))
-    .map(([title, content]) => {
-      const cleaned = content
-        .map((line) => line.trimEnd())
-        .filter((line) => line.trim() && !HIDDEN_META_RE.test(line.trim()))
-      return { title, text: cleaned.join('\n').trim() }
-    })
-    .filter((row) => row.text)
-
-  let merged = ''
-  if (humanSections.length > 0) {
-    merged = humanSections.map((row) => `## ${row.title}\n\n${row.text}`).join('\n\n')
-  } else {
-    const cleaned = withoutCodeBlocks
-      .map((line) => line.trimEnd())
-      .filter((line) => {
-        const t = line.trim()
-        if (!t) return false
-        if (t.startsWith('# Tracking')) return false
-        if (t === '# Tracking Snapshot' || t === '# Tracking Change' || t === '# Tracking Profile') return false
-        if (HIDDEN_META_RE.test(t)) return false
-        if (/^##\s+/.test(t) && HIDDEN_SECTION_RE.test(t.replace(/^##\s+/, '').trim())) return false
-        return true
-      })
-    merged = cleaned.join('\n')
-  }
-
-  const dedup: string[] = []
-  const seen = new Set<string>()
-  for (const line of merged.split('\n')) {
-    const key = line.trim().toLowerCase()
-    if (key && seen.has(key)) continue
-    if (key) seen.add(key)
-    dedup.push(line)
-  }
-  return dedup.join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 3600)
-}
-
-type TreeNodeProps = {
-  node: AelinDiaryTreeNode
-  depth: number
-  expanded: Set<string>
-  selectedPath: string
-  onToggle: (path: string) => void
-  onSelect: (path: string) => void
-}
-
-function DiaryTreeNodeItem({ node, depth, expanded, selectedPath, onToggle, onSelect }: TreeNodeProps) {
-  const isFolder = node.kind === 'folder'
-  const isOpen = expanded.has(node.path)
-  const isSelected = selectedPath === node.path
-  const pad = 10 + depth * 14
-
-  if (isFolder) {
-    return (
-      <div>
-        <button
-          onClick={() => onToggle(node.path)}
-          className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-xs hover:bg-[var(--color-accent-soft)]"
-          style={{ paddingLeft: `${pad}px` }}
-        >
-          {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          {isOpen ? <FolderOpen size={13} /> : <Folder size={13} />}
-          <span className="truncate">{node.name}</span>
-        </button>
-        {isOpen && (
-          <div>
-            {node.children?.map((child) => (
-              <DiaryTreeNodeItem
-                key={child.path}
-                node={child}
-                depth={depth + 1}
-                expanded={expanded}
-                selectedPath={selectedPath}
-                onToggle={onToggle}
-                onSelect={onSelect}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <button
-      onClick={() => onSelect(node.path)}
-      className={cn(
-        'flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-xs hover:bg-[var(--color-accent-soft)]',
-        isSelected && 'bg-[var(--color-accent-soft)]'
-      )}
-      style={{ paddingLeft: `${pad}px` }}
-      title={node.title || node.name}
-    >
-      <FileText size={12} />
-      <span className="truncate">{node.title || node.name}</span>
-    </button>
-  )
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 7000)
 }
 
 export function DiaryView() {
   const [query, setQuery] = useState('')
-  const [selectedPath, setSelectedPath] = useState<string>('')
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [selectedPath, setSelectedPath] = useState('')
 
   const { data: tree, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['diary-tree'],
     queryFn: () =>
       aelinApi.fileMemoryTree({
         workspace: 'default',
-        max_files: '1200',
+        max_files: '2000',
       }),
   })
-  const treeItems = tree?.items ?? []
-  const filteredTree = useMemo(() => filterTree(treeItems, query), [treeItems, query])
+
+  const entries = useMemo(() => buildDiaryList(tree?.items || []), [tree?.items])
+  const filteredEntries = useMemo(() => filterEntries(entries, query), [entries, query])
+
+  useEffect(() => {
+    if (!filteredEntries.length) {
+      setSelectedPath('')
+      return
+    }
+    if (!selectedPath || !filteredEntries.some((it) => it.path === selectedPath)) {
+      setSelectedPath(filteredEntries[0].path)
+    }
+  }, [filteredEntries, selectedPath])
+
+  const selectedEntry = useMemo(
+    () => filteredEntries.find((it) => it.path === selectedPath) || entries.find((it) => it.path === selectedPath) || null,
+    [entries, filteredEntries, selectedPath]
+  )
 
   const { data: fileContent, isLoading: contentLoading } = useQuery({
     queryKey: ['diary-file-content', selectedPath],
@@ -217,68 +170,10 @@ export function DiaryView() {
     enabled: Boolean(selectedPath),
   })
 
-  useEffect(() => {
-    if (!filteredTree.length) {
-      setSelectedPath('')
-      return
-    }
-    if (!selectedPath || !findNodeByPath(filteredTree, selectedPath)) {
-      setSelectedPath(findFirstFilePath(filteredTree))
-    }
-  }, [filteredTree, selectedPath])
-
-  useEffect(() => {
-    if (!selectedPath) return
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      for (const path of parentFolderPaths(selectedPath)) next.add(path)
-      return next
-    })
-  }, [selectedPath])
-
-  useEffect(() => {
-    if (!treeItems.length) return
-    setExpanded((prev) => {
-      if (prev.size > 0) return prev
-      const next = new Set<string>()
-      for (const node of treeItems.slice(0, 2)) {
-        if (node.kind === 'folder') next.add(node.path)
-      }
-      return next
-    })
-  }, [treeItems])
-
-  const selectedNode = useMemo(() => findNodeByPath(treeItems, selectedPath), [treeItems, selectedPath])
-  const humanMarkdown = useMemo(
-    () => collapseMarkdownNoise(fileContent?.content || ''),
-    [fileContent?.content]
-  )
-  const mergedPreview = useMemo(() => {
-    const preview = (selectedNode?.preview || '').trim()
-    if (!preview) return ''
-    const headline = `## 摘要\n\n${preview}`
-    if (!humanMarkdown) return headline
-    return `${headline}\n\n${humanMarkdown}`
-  }, [selectedNode?.preview, humanMarkdown])
-
-  const fileCount = tree?.total || 0
-  const shownCount = useMemo(() => {
-    const walk = (nodes: AelinDiaryTreeNode[]): number =>
-      nodes.reduce((sum, n) => sum + (n.kind === 'file' ? 1 : walk(n.children || [])), 0)
-    return walk(filteredTree)
-  }, [filteredTree])
-
-  const toggleFolder = (path: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
-  }
+  const readableMarkdown = useMemo(() => collapseMarkdownNoise(fileContent?.content || ''), [fileContent?.content])
 
   return (
-    <PageScaffold title="Aelinの日记" subtitle={`分层树浏览 · ${shownCount}/${fileCount} 条`}>
+    <PageScaffold title="Aelinの日记" subtitle={`按日期查看 · ${filteredEntries.length}/${entries.length} 条`}>
       <div className="flex h-full min-h-0 flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1">
@@ -287,73 +182,78 @@ export function DiaryView() {
               className="aelin-input pl-8"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="过滤树节点（标题/路径/来源）"
+              placeholder="搜索日期/标题/内容预览"
             />
           </div>
           <button onClick={() => refetch()} className="aelin-btn w-full sm:w-auto" type="button">
             <RefreshCw size={13} className={cn(isFetching && 'animate-spin')} />
-            刷新树
+            刷新
           </button>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[330px_minmax(0,1fr)]">
+        <div className="grid h-[min(76vh,calc(100vh-210px))] min-h-[540px] min-w-0 grid-cols-1 gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
           <div className="aelin-card min-h-0 overflow-hidden">
             <div className="border-b border-[var(--color-border)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
-              日记树可展开/收缩，点击文件查看阅读版内容
+              左侧是日记列表（可滚动），优先展示每天汇总；未汇总当天显示原子记录
             </div>
-            <div className="min-h-0 overflow-y-auto p-2">
-              {filteredTree.map((node) => (
-                <DiaryTreeNodeItem
-                  key={node.path}
-                  node={node}
-                  depth={0}
-                  expanded={expanded}
-                  selectedPath={selectedPath}
-                  onToggle={toggleFolder}
-                  onSelect={setSelectedPath}
-                />
+            <div className="h-full min-h-0 overflow-y-auto p-2">
+              {filteredEntries.map((entry) => (
+                <button
+                  key={entry.path}
+                  onClick={() => setSelectedPath(entry.path)}
+                  className={cn(
+                    'mb-1 w-full rounded px-2 py-2 text-left text-xs hover:bg-[var(--color-accent-soft)]',
+                    selectedPath === entry.path && 'bg-[var(--color-accent-soft)]'
+                  )}
+                  title={entry.path}
+                >
+                  <div className="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                    <CalendarDays size={11} />
+                    <span>{entry.dayLabel}</span>
+                    <span>·</span>
+                    <span>{entry.kind === 'daily' ? '日汇总' : entry.kind === 'raw' ? '当日记录' : '历史记录'}</span>
+                  </div>
+                  <div className="mt-1 truncate font-medium text-[var(--color-text)]">{entry.title || '日记'}</div>
+                  {entry.preview && (
+                    <div className="mt-1 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">{entry.preview}</div>
+                  )}
+                </button>
               ))}
+              {!isLoading && filteredEntries.length === 0 && (
+                <div className="px-3 py-8 text-center text-xs text-[var(--color-text-muted)]">没有可显示的日记</div>
+              )}
+              {isError && (
+                <div className="px-3 py-4 text-center text-xs text-[var(--color-danger)]">
+                  日记读取失败：{(error as Error)?.message || 'unknown error'}
+                </div>
+              )}
             </div>
-            {!isLoading && filteredTree.length === 0 && (
-              <div className="px-3 py-8 text-center text-xs text-[var(--color-text-muted)]">当前筛选下没有节点</div>
-            )}
-            {isError && (
-              <div className="px-3 py-4 text-center text-xs text-[var(--color-danger)]">
-                日记读取失败：{(error as Error)?.message || 'unknown error'}
-              </div>
-            )}
           </div>
 
-          <div className="aelin-card min-h-0 overflow-y-auto p-4">
-            {!selectedNode && (
+          <div className="aelin-card min-h-0 overflow-hidden">
+            {!selectedEntry && (
               <div className="flex h-full items-center justify-center text-xs text-[var(--color-text-muted)]">
                 <BookOpenText size={15} className="mr-2" />
-                选择左侧树节点查看内容
+                选择一条日记查看全文
               </div>
             )}
-            {selectedNode && (
-              <div className="space-y-3">
-                <div>
-                  <h2 className="text-sm font-semibold">{fileContent?.title || selectedNode.title || selectedNode.name || '日记条目'}</h2>
-                  <p className="text-[11px] text-[var(--color-text-muted)]">
-                    {(fileContent?.entry_kind || selectedNode.entry_kind || selectedNode.kind || 'memory')}
-                    {' · '}
-                    {(fileContent?.source || selectedNode.source || 'tracking')}
-                    {' · '}
-                    {(fileContent?.topic_path || selectedNode.topic_path || '未分类')}
-                    {' · '}
-                    {selectedNode.path}
-                  </p>
+            {selectedEntry && (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="border-b border-[var(--color-border)] px-4 py-3">
+                  <h2 className="text-sm font-semibold">{fileContent?.title || selectedEntry.title || '日记'}</h2>
                   <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                    {relativeTime(fileContent?.updated_at || selectedNode.updated_at)}
+                    {selectedEntry.dayLabel} · {selectedEntry.kind === 'daily' ? '日汇总' : selectedEntry.kind === 'raw' ? '当日记录' : '历史记录'} ·{' '}
+                    {relativeTime(fileContent?.updated_at || selectedEntry.updatedAt)}
                   </p>
                 </div>
-                <article className="prose prose-sm max-w-none text-[var(--color-text)] [&_*]:text-[var(--color-text)]">
-                  {contentLoading && <p>正在加载全文…</p>}
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {mergedPreview || selectedNode.preview || '暂无预览内容'}
-                  </ReactMarkdown>
-                </article>
+                <div className="h-full min-h-0 overflow-y-auto p-4">
+                  <article className="prose prose-sm max-w-none text-[var(--color-text)] [&_*]:text-[var(--color-text)]">
+                    {contentLoading && <p>正在加载全文…</p>}
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {readableMarkdown || selectedEntry.preview || '暂无内容'}
+                    </ReactMarkdown>
+                  </article>
+                </div>
               </div>
             )}
           </div>

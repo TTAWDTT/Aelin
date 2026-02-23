@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -172,3 +173,66 @@ def test_append_insight_writes_human_diary_content_and_sidecar(monkeypatch):
         assert sidecar.get("entry_kind") == "chat_diary"
         assert sidecar.get("title") == "聊天纪要：今天聊模型"
         assert isinstance(sidecar.get("source_indices"), list) and sidecar.get("source_indices")
+
+
+def test_chat_diary_rollup_merges_closed_day_and_cleans_raw(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr(settings, "openviking_enabled", True)
+        monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
+        bridge = TrackingFileMemoryBridge()
+        bridge._openviking = None
+
+        target = SimpleNamespace(
+            user_id=1,
+            workspace="default",
+            source_type="chat",
+            track_type="conversation",
+            source_key="chat:rollup",
+            display_name="与主人的聊天日记",
+        )
+
+        monkeypatch.setattr(
+            "app.services.openviking_bridge._utcnow",
+            lambda: datetime(2026, 2, 22, 14, 30, tzinfo=timezone.utc),
+        )
+        first = bridge.append_insight(
+            target=target,
+            title="第一条",
+            markdown="今天第一条记录",
+            reason="unit-test",
+            confidence=0.8,
+            source_query="q1",
+            topic_path=["与主人的聊天日记"],
+            source_indices=[],
+            entry_kind="chat_diary",
+        )
+        assert first is not None
+
+        monkeypatch.setattr(
+            "app.services.openviking_bridge._utcnow",
+            lambda: datetime(2026, 2, 23, 9, 5, tzinfo=timezone.utc),
+        )
+        second = bridge.append_insight(
+            target=target,
+            title="第二条",
+            markdown="今天第二条记录",
+            reason="unit-test",
+            confidence=0.8,
+            source_query="q2",
+            topic_path=["与主人的聊天日记"],
+            source_indices=[],
+            entry_kind="chat_diary",
+        )
+        assert second is not None
+
+        root = Path(tmpdir) / "users" / "1" / "workspaces" / "default" / "diary"
+        daily_file = root / "daily" / "2026" / "02" / "2026-02-22.md"
+        assert daily_file.exists()
+        assert "今天第一条记录" in daily_file.read_text(encoding="utf-8")
+
+        old_raw_dir = root / "raw" / "2026" / "02" / "22"
+        assert not old_raw_dir.exists()
+
+        today_raw_dir = root / "raw" / "2026" / "02" / "23"
+        assert today_raw_dir.exists()
+        assert any(today_raw_dir.glob("*.md"))
