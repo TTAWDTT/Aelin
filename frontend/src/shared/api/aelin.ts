@@ -6,7 +6,7 @@ import type {
   AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
   AelinTrackingItem, AelinTrackingRunResponse,
   AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
-  AelinTrackingFileMemorySearchResponse, AelinTrackingFileMemoryContentResponse,
+  AelinTrackingFileMemorySearchResponse, AelinTrackingFileMemoryContentResponse, AelinDiaryTreeResponse,
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse,
@@ -53,6 +53,9 @@ export const aelinApi = {
 
   fileMemoryContent: (params: Record<string, string>) =>
     fetchJson<AelinTrackingFileMemoryContentResponse>(`/api/v1/aelin/tracking/file-memory/content?${new URLSearchParams(params)}`),
+
+  fileMemoryTree: (params: Record<string, string>) =>
+    fetchJson<AelinDiaryTreeResponse>(`/api/v1/aelin/tracking/file-memory/tree?${new URLSearchParams(params)}`),
 
   // Device
   deviceCapabilities: () =>

@@ -384,6 +384,37 @@ def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
     assert isinstance(data.get("content"), str) and data.get("content")
     assert data.get("content").lstrip().startswith("#")
 
+    tree_resp = client.get(
+        "/api/v1/aelin/tracking/file-memory/tree",
+        params={"workspace": "default", "max_files": 500},
+        headers=headers,
+    )
+    assert tree_resp.status_code == 200, tree_resp.text
+    tree_items = tree_resp.json().get("items") or []
+    assert tree_items
+
+    def _first_file(nodes: list[dict]) -> str:
+        for node in nodes:
+            if str(node.get("kind") or "") == "file":
+                return str(node.get("path") or "")
+            children = node.get("children") or []
+            if isinstance(children, list):
+                nested = _first_file(children)
+                if nested:
+                    return nested
+        return ""
+
+    rel_path = _first_file(tree_items)
+    assert rel_path
+    rel_content_resp = client.get(
+        "/api/v1/aelin/tracking/file-memory/content",
+        params={"workspace": "default", "path": rel_path},
+        headers=headers,
+    )
+    assert rel_content_resp.status_code == 200, rel_content_resp.text
+    rel_data = rel_content_resp.json()
+    assert isinstance(rel_data.get("content"), str) and rel_data.get("content")
+
 
 def test_aelin_chat_can_use_web_search_plan(monkeypatch):
     client = _create_test_client()

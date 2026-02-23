@@ -827,20 +827,34 @@ class TrackingFileMemoryBridge:
             return None
 
         workspace_root = self._workspace_root(user_id=user_id, workspace=workspace).resolve()
-        try:
-            candidate = Path(raw_path)
-            if candidate.is_absolute():
-                resolved = candidate.resolve()
-            else:
-                resolved = (workspace_root / candidate).resolve()
-        except Exception:
-            return None
+        resolved: Path | None = None
 
-        try:
-            resolved.relative_to(workspace_root)
-        except Exception:
-            return None
-        if not resolved.exists() or not resolved.is_file() or resolved.suffix.lower() != ".md":
+        candidate = Path(raw_path)
+        if candidate.is_absolute():
+            try:
+                abs_path = candidate.resolve()
+                abs_path.relative_to(workspace_root)
+                if abs_path.exists() and abs_path.is_file() and abs_path.suffix.lower() == ".md":
+                    resolved = abs_path
+            except Exception:
+                resolved = None
+        else:
+            candidate_paths = [
+                workspace_root / candidate,
+                self._diary_root(user_id=user_id, workspace=workspace).resolve() / candidate,
+                self._tracking_root(user_id=user_id, workspace=workspace).resolve() / candidate,
+            ]
+            for path_item in candidate_paths:
+                try:
+                    abs_path = path_item.resolve()
+                    abs_path.relative_to(workspace_root)
+                except Exception:
+                    continue
+                if abs_path.exists() and abs_path.is_file() and abs_path.suffix.lower() == ".md":
+                    resolved = abs_path
+                    break
+
+        if resolved is None:
             return None
 
         loaded = self._load_local_doc_entry(resolved)
