@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -788,6 +789,31 @@ def test_diary_only_detection_covers_cn_and_en():
     assert aelin_router._is_diary_only_query("仅根据我在Aelinの日记里的记录回答：刚刚写入的内容讲了什么？")
     assert aelin_router._is_diary_only_query("Please only use my diary memory to answer this question.")
     assert not aelin_router._is_diary_only_query("NBA最近如何，顺便联网查一下")
+
+
+def test_build_fixed_profile_injection_uses_layers_and_profile_notes():
+    bundle = {
+        "memory_layers": SimpleNamespace(
+            preferences=[
+                SimpleNamespace(title="称呼", detail="用户希望被叫 TTAWDTT"),
+                SimpleNamespace(title="风格偏好", detail="回答尽量简洁"),
+            ],
+            facts=[
+                SimpleNamespace(title="项目阶段", detail="正在做记忆系统重构"),
+            ],
+        ),
+        "notes": [
+            SimpleNamespace(kind="profile", source="profile:manual", content="用户长期关注模型发布节奏"),
+            SimpleNamespace(kind="tracking_insight", source="tracking", content="这条不应进入固定注入"),
+        ],
+    }
+    lines = aelin_router._build_fixed_profile_injection(bundle, max_items=12)
+    assert lines
+    assert any(("称呼" in line) for line in lines)
+    assert any(("风格偏好" in line) for line in lines)
+    assert any(("项目阶段" in line) for line in lines)
+    assert any(("用户长期关注模型发布节奏" in line) for line in lines)
+    assert not any(("这条不应进入固定注入" in line) for line in lines)
 
 
 def test_aelin_chat_diary_only_query_forces_no_web(monkeypatch):

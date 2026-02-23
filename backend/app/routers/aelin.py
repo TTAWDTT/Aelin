@@ -397,6 +397,70 @@ def _to_layout_cards(raw_cards: list[dict]) -> list[AelinLayoutCard]:
     return out[:80]
 
 
+def _build_fixed_profile_injection(bundle: dict[str, Any], *, max_items: int = 12) -> list[str]:
+    if not isinstance(bundle, dict):
+        return []
+
+    safe_limit = max(1, min(24, int(max_items or 12)))
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _read(item: Any, key: str) -> str:
+        if isinstance(item, dict):
+            return str(item.get(key) or "").strip()
+        return str(getattr(item, key, "") or "").strip()
+
+    def _push(text: str, *, label: str) -> None:
+        cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not cleaned:
+            return
+        normalized = cleaned.lower()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        out.append(f"- [{label}] {cleaned[:220]}")
+
+    memory_layers = bundle.get("memory_layers")
+    preference_rows = list(getattr(memory_layers, "preferences", []) or [])
+    fact_rows = list(getattr(memory_layers, "facts", []) or [])
+
+    for row in preference_rows[:10]:
+        title = _read(row, "title")
+        detail = _read(row, "detail")
+        merged = f"{title}: {detail}" if detail else title
+        _push(merged, label="preference")
+        if len(out) >= safe_limit:
+            return out[:safe_limit]
+
+    for row in fact_rows[:10]:
+        title = _read(row, "title")
+        detail = _read(row, "detail")
+        merged = f"{title}: {detail}" if detail else title
+        _push(merged, label="fact")
+        if len(out) >= safe_limit:
+            return out[:safe_limit]
+
+    profile_kinds = {
+        "profile",
+        "identity",
+        "preference",
+        "user_profile",
+        "user_note",
+        "manual_note",
+    }
+    notes = bundle.get("notes") if isinstance(bundle.get("notes"), list) else []
+    for row in notes:
+        kind = _read(row, "kind").lower()
+        source = _read(row, "source").lower()
+        if (kind not in profile_kinds) and (not source.startswith("profile")):
+            continue
+        content = _read(row, "content")
+        _push(content, label="note")
+        if len(out) >= safe_limit:
+            break
+    return out[:safe_limit]
+
+
 def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: str) -> dict:
     workspace_norm = _normalize_workspace(workspace)
     snap = _memory.snapshot(db, user_id, query=query)
@@ -4049,6 +4113,7 @@ def _aelin_chat_impl(
     memory_summary = str(base_bundle.get("summary") or "")
     brief_summary = base_bundle["daily_brief"].summary if base_bundle.get("daily_brief") else ""
     todo_titles = [item.title for item in base_bundle.get("todos", [])]
+    profile_injection_lines = _build_fixed_profile_injection(base_bundle, max_items=12)
     images = _normalize_images(payload.images)
     history_turns = _normalize_history(payload.history)
     diary_only_mode = _is_diary_only_query(payload.query)
@@ -4710,7 +4775,8 @@ def _aelin_chat_impl(
             f"planner={planning_reason}; "
             f"local={'on' if need_local_search else 'off'}; "
             f"web={'on' if need_web_search else 'off'}; "
-            f"file_mem={len(file_memory_items)}"
+            f"file_mem={len(file_memory_items)}; "
+            f"profile={len(profile_injection_lines)}"
         )
         user_msg = (
             f"用户问题: {payload.query.strip()}\n\n"
@@ -4726,6 +4792,12 @@ def _aelin_chat_impl(
                 if history_turns else ""
             )
             + f"长期记忆摘要: {memory_summary or '暂无'}\n\n"
+            + (
+                "固定注入用户画像/备注:\n"
+                + "\n".join(profile_injection_lines[:12])
+                + "\n\n"
+                if profile_injection_lines else "固定注入用户画像/备注: 暂无\n\n"
+            )
             + f"今日简报: {brief_summary or '暂无'}\n\n"
             + f"待跟进事项: {'; '.join(todo_titles[:5]) if todo_titles else '暂无'}\n\n"
             + f"置顶建议: {'; '.join(pin_lines) if pin_lines else '暂无'}\n\n"
