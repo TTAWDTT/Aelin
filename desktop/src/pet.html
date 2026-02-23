@@ -123,7 +123,6 @@
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;
-        background-blend-mode: overlay;
         overflow: hidden;
         isolation: isolate;
       }
@@ -399,12 +398,11 @@
         const hueB = (hue + 55) % 360;
         const hueC = (hue + 140) % 360;
         return [
-          "radial-gradient(circle at 84% 18%,",
-          `hsla(${hueC}, 88%, 62%, 0.42) 0%,`,
-          "transparent 42%),",
-          `linear-gradient(136deg, hsl(${hue} 82% 53%) 0%, hsl(${hueB} 86% 57%) 56%, hsl(${hueC} 78% 51%) 100%),`,
-          "linear-gradient(rgba(8,12,20,0.38), rgba(8,12,20,0.82))",
-        ].join(" ");
+          `radial-gradient(circle at 84% 14%, hsla(${hueC}, 90%, 62%, 0.26) 0%, transparent 45%)`,
+          `radial-gradient(circle at 10% 90%, hsla(${hue}, 86%, 60%, 0.2) 0%, transparent 52%)`,
+          `linear-gradient(136deg, hsl(${hue} 56% 24%) 0%, hsl(${hueB} 54% 20%) 56%, hsl(${hueC} 52% 16%) 100%)`,
+          "linear-gradient(rgba(8,12,20,0.34), rgba(8,12,20,0.82))",
+        ].join(", ");
       }
 
       function computeShellLayout() {
@@ -671,7 +669,7 @@
         musicMeta.textContent = [artist || fallbackPlayer, status, app].filter(Boolean).join(" · ");
         if (coverDataUrl) {
           musicPanel.classList.add("with-cover");
-          musicPanel.style.backgroundImage = `linear-gradient(rgba(8,12,20,0.45), rgba(8,12,20,0.8)), url('${coverDataUrl}')`;
+          musicPanel.style.backgroundImage = `linear-gradient(rgba(8,12,20,0.42), rgba(8,12,20,0.8)), url('${coverDataUrl}'), ${buildFallbackCover(title, artist || fallbackPlayer, app || fallbackPlayer)}`;
         } else {
           musicPanel.classList.add("with-cover");
           musicPanel.style.backgroundImage = buildFallbackCover(title, artist || fallbackPlayer, app || fallbackPlayer);

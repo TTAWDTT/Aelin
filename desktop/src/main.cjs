@@ -803,6 +803,24 @@ function selectBestMediaSession(sessions, preferredProcesses = []) {
   return best;
 }
 
+function normalizeCoverMime(mime) {
+  const raw = String(mime || "").trim().toLowerCase();
+  if (!raw) return "image/jpeg";
+  const allowed = new Set([
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/bmp",
+    "image/gif",
+  ]);
+  if (allowed.has(raw)) {
+    return raw === "image/jpg" ? "image/jpeg" : raw;
+  }
+  if (raw.startsWith("image/")) return raw;
+  return "image/jpeg";
+}
+
 function mapMediaSnapshotToRuntime(snapshot, selectedSession) {
   const target = selectedSession || null;
   if (!target) {
@@ -810,6 +828,7 @@ function mapMediaSnapshotToRuntime(snapshot, selectedSession) {
   }
   const status = String(target.status || "").toLowerCase();
   const coverBase64 = String(target.coverBase64 || "").trim();
+  const coverMime = normalizeCoverMime(target.coverMime);
   return {
     available: Boolean(target.ok !== false),
     title: target.title,
@@ -822,7 +841,7 @@ function mapMediaSnapshotToRuntime(snapshot, selectedSession) {
     canNext: target.canNext,
     canPrev: target.canPrev,
     volume: petVolumeEstimate,
-    coverDataUrl: coverBase64 ? `data:image/jpeg;base64,${coverBase64}` : "",
+    coverDataUrl: coverBase64 ? `data:${coverMime};base64,${coverBase64}` : "",
     error: "",
   };
 }

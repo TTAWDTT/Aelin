@@ -42,26 +42,46 @@ function Await-WinRt {
   return $task.Result
 }
 
-function Read-ThumbnailBase64 {
+function Read-ThumbnailData {
   param($ThumbnailRef)
   if ($null -eq $ThumbnailRef -or $null -eq $streamType) {
-    return ""
+    return [pscustomobject]@{
+      base64 = ""
+      mime = ""
+    }
   }
   try {
     $stream = Await-WinRt ($ThumbnailRef.OpenReadAsync()) $streamType
-    if ($null -eq $stream) { return "" }
+    if ($null -eq $stream) {
+      return [pscustomobject]@{ base64 = ""; mime = "" }
+    }
+    $mime = ""
+    try {
+      $mime = [string]$stream.ContentType
+    }
+    catch {
+      $mime = ""
+    }
     $netStream = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($stream)
-    if ($null -eq $netStream) { return "" }
+    if ($null -eq $netStream) {
+      return [pscustomobject]@{ base64 = ""; mime = "" }
+    }
     $memory = New-Object System.IO.MemoryStream
     $netStream.CopyTo($memory)
     $bytes = $memory.ToArray()
     if ($null -eq $bytes -or $bytes.Length -le 0 -or $bytes.Length -gt 838860) {
-      return ""
+      return [pscustomobject]@{ base64 = ""; mime = "" }
     }
-    return [System.Convert]::ToBase64String($bytes)
+    return [pscustomobject]@{
+      base64 = [System.Convert]::ToBase64String($bytes)
+      mime = $mime
+    }
   }
   catch {
-    return ""
+    return [pscustomobject]@{
+      base64 = ""
+      mime = ""
+    }
   }
 }
 
@@ -99,7 +119,7 @@ foreach ($session in $sessions) {
       }
     }
 
-    $cover = Read-ThumbnailBase64 $props.Thumbnail
+    $cover = Read-ThumbnailData $props.Thumbnail
 
     $result += [pscustomobject]@{
       title = [string]$props.Title
@@ -112,7 +132,8 @@ foreach ($session in $sessions) {
       canNext = [bool]$controls.IsNextEnabled
       canPrev = [bool]$controls.IsPreviousEnabled
       isPreferred = $isPreferred
-      coverBase64 = $cover
+      coverBase64 = [string]$cover.base64
+      coverMime = [string]$cover.mime
     }
   }
   catch {
