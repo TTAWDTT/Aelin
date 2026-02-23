@@ -67,10 +67,15 @@ class Settings(BaseSettings):
     openviking_enabled: bool = True
     openviking_data_dir: str = "../data/aelin_memory"
     openviking_query_limit: int = 8
+    openviking_local_cache_max_entries: int = 2000
     aelin_parallel_memory_draft_enabled: bool = True
     aelin_parallel_memory_draft_workers: int = 4
     aelin_parallel_memory_draft_timeout_seconds: float = 2.0
     aelin_parallel_memory_draft_min_confidence: float = 0.58
+    aelin_base_context_cache_ttl_seconds: float = 4.0
+    aelin_base_context_cache_max_entries: int = 128
+    aelin_tracking_snapshot_cache_ttl_seconds: float = 10.0
+    aelin_tracking_snapshot_cache_max_entries: int = 256
 
     # LLM client runtime tuning.
     llm_request_timeout_seconds: float = 90.0

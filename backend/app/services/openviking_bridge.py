@@ -4,6 +4,7 @@ import importlib
 import logging
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,12 @@ class TrackingFileMemoryBridge:
         self.root.mkdir(parents=True, exist_ok=True)
         self._io_lock = threading.Lock()
         self._openviking = self._load_openviking()
+        self._local_cache_lock = threading.Lock()
+        self._local_cache_max_entries = max(
+            200,
+            min(20000, int(getattr(settings, "openviking_local_cache_max_entries", 2000) or 2000)),
+        )
+        self._local_doc_cache: dict[str, dict[str, Any]] = {}
 
     def _load_openviking(self) -> Any | None:
         if not self.enabled:
@@ -439,6 +446,57 @@ class TrackingFileMemoryBridge:
             source=source,
         )
 
+    def _local_cache_key(self, path: Path) -> str:
+        try:
+            return str(path.resolve()).lower()
+        except Exception:
+            return str(path).lower()
+
+    def _prune_local_doc_cache(self) -> None:
+        overflow = len(self._local_doc_cache) - self._local_cache_max_entries
+        if overflow <= 0:
+            return
+        stale_keys = sorted(
+            self._local_doc_cache.items(),
+            key=lambda item: float(item[1].get("accessed_at") or 0.0),
+        )[:overflow]
+        for key, _ in stale_keys:
+            self._local_doc_cache.pop(str(key), None)
+
+    def _load_local_doc_entry(self, path: Path) -> tuple[float, str, dict[str, str]] | None:
+        cache_key = self._local_cache_key(path)
+        try:
+            mtime = float(path.stat().st_mtime)
+        except Exception:
+            return None
+
+        now = time.monotonic()
+        with self._local_cache_lock:
+            cached = self._local_doc_cache.get(cache_key)
+            if cached is not None and float(cached.get("mtime") or -1.0) == mtime:
+                text = str(cached.get("text") or "")
+                meta = cached.get("meta") if isinstance(cached.get("meta"), dict) else {}
+                cached["accessed_at"] = now
+                if text.strip():
+                    return mtime, text, {str(k): str(v) for k, v in meta.items()}
+
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+        if not text.strip():
+            return None
+        meta = self._parse_markdown_meta(path, raw_text=text)
+        with self._local_cache_lock:
+            self._local_doc_cache[cache_key] = {
+                "mtime": mtime,
+                "text": text,
+                "meta": meta,
+                "accessed_at": now,
+            }
+            self._prune_local_doc_cache()
+        return mtime, text, meta
+
     def _search_with_openviking(
         self,
         *,
@@ -485,7 +543,12 @@ class TrackingFileMemoryBridge:
                 if key in seen_paths:
                     continue
                 seen_paths.add(key)
-                parsed = self._parse_markdown_meta(abs_path)
+                cached = self._load_local_doc_entry(abs_path)
+                parsed = (
+                    cached[2]
+                    if isinstance(cached, tuple) and len(cached) >= 3 and isinstance(cached[2], dict)
+                    else self._parse_markdown_meta(abs_path)
+                )
                 out.append(
                     FileMemoryHit(
                         path=str(abs_path),
@@ -515,7 +578,7 @@ class TrackingFileMemoryBridge:
         source: str | None,
     ) -> list[FileMemoryHit]:
         tokens = [it.lower() for it in _TOKEN_RE.findall(query.lower()) if len(it) >= 1][:16]
-        rows: list[tuple[float, float, Path, str]] = []
+        rows: list[tuple[float, float, Path, dict[str, str], str]] = []
         seen_paths: set[str] = set()
         for base_dir in self._candidate_search_dirs(user_id=user_id, workspace=workspace, source=source):
             if not base_dir.exists():
@@ -525,28 +588,21 @@ class TrackingFileMemoryBridge:
                 if key in seen_paths:
                     continue
                 seen_paths.add(key)
-                try:
-                    text = path.read_text(encoding="utf-8")
-                except Exception:
+                loaded = self._load_local_doc_entry(path)
+                if loaded is None:
                     continue
-                if not text.strip():
-                    continue
+                ts, text, meta = loaded
                 score = self._score_text(text, query=query, tokens=tokens)
                 if query and score <= 0.0:
                     continue
-                try:
-                    ts = path.stat().st_mtime
-                except Exception:
-                    ts = 0.0
-                rows.append((score, ts, path, text))
+                preview = meta.get("preview") or self._extract_preview(text)
+                rows.append((score, ts, path, meta, preview))
         if not rows:
             return []
 
         rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
         out: list[FileMemoryHit] = []
-        for score, ts, path, text in rows[: max(limit * 3, limit)]:
-            meta = self._parse_markdown_meta(path, raw_text=text)
-            preview = meta.get("preview") or self._extract_preview(text)
+        for score, ts, path, meta, preview in rows[: max(limit * 3, limit)]:
             out.append(
                 FileMemoryHit(
                     path=str(path),
