@@ -12,17 +12,23 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
-import re
 import json
 import threading
 from datetime import datetime, timezone
-from html import escape
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from app.connectors.base import IncomingMessage
+from app.connectors.douyin_utils import (
+    _CHROME_UA,
+    _POST_API_PATTERN,
+    _RSSHUB_MIRRORS,
+    _build_preview_html,
+    _extract_sec_uid,
+    _to_datetime,
+)
 
 from app.connectors.feed import FeedConnector
 from app.services.avatar import normalize_http_avatar_url
@@ -41,96 +47,6 @@ except ImportError:
     _HAS_PLAYWRIGHT = False
 
 logger = logging.getLogger(__name__)
-
-_SEC_UID_RE = re.compile(r"sec_uid=([A-Za-z0-9_-]+)")
-_USER_ID_RE = re.compile(r"user/([A-Za-z0-9_-]+)")
-
-# 浏览器 User-Agent（与 Playwright 里保持一致）
-_CHROME_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
-
-# RSSHub 公共镜像（仅作最后回退；自建实例请通过 settings 配置）
-_RSSHUB_MIRRORS: list[str] = [
-    "https://rsshub.rssforever.com",
-    "https://rsshub.moeyy.cn",
-    "https://rsshub-instance.zeabur.app",
-    "https://rsshub.pseudoyu.com",
-]
-
-# API URL 片段，用于从浏览器网络请求中识别视频列表响应
-_POST_API_PATTERN = "/aweme/v1/web/aweme/post/"
-
-
-# =====================================================================
-# 工具函数
-# =====================================================================
-
-
-def _extract_sec_uid(value: str) -> str:
-    """从各种格式的输入中提取抖音 sec_uid 或抖音号"""
-    candidate = (value or "").strip()
-    if not candidate:
-        return ""
-
-    if candidate.lower().startswith("douyin:"):
-        candidate = candidate.split(":", 1)[1].strip()
-
-    # 从 URL 中提取 sec_uid 参数
-    sec_uid_match = _SEC_UID_RE.search(candidate)
-    if sec_uid_match:
-        return sec_uid_match.group(1)
-
-    # 从 URL 路径中提取 user ID
-    user_match = _USER_ID_RE.search(candidate)
-    if user_match:
-        return user_match.group(1)
-
-    # 直接返回输入（可能是抖音号或 sec_uid）
-    return candidate
-
-
-def _to_datetime(value: object) -> datetime:
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
-        except Exception:
-            pass
-    return datetime.now(timezone.utc)
-
-
-def _build_preview_html(
-    *, title: str, description: str, link: str, cover_url: str | None
-) -> str:
-    title_safe = escape((title or "").strip() or "抖音更新")
-    description_safe = escape((description or "").strip())
-    link_safe = escape((link or "").strip(), quote=True)
-    cover_safe = (
-        escape((cover_url or "").strip(), quote=True) if cover_url else ""
-    )
-
-    parts = [
-        '<article class="md-link-preview">',
-        f'<meta property="og:title" content="{title_safe}" />',
-        f'<meta property="og:description" content="{description_safe}" />',
-        f'<meta property="og:url" content="{link_safe}" />',
-    ]
-    if cover_safe:
-        parts.append(f'<meta property="og:image" content="{cover_safe}" />')
-        parts.append(f'<img src="{cover_safe}" alt="{title_safe}" />')
-    parts.append(f"<h3>{title_safe}</h3>")
-    if description_safe:
-        parts.append(f"<p>{description_safe}</p>")
-    parts.append(
-        '<p><a href="'
-        + link_safe
-        + '" target="_blank" rel="noopener noreferrer">查看视频</a></p>'
-    )
-    parts.append("</article>")
-    return "".join(parts)
-
 
 # =====================================================================
 # DouyinConnector
