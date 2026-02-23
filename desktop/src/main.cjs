@@ -926,6 +926,35 @@ function invokeWindowsMediaControl(action) {
   }
 }
 
+function invokeSystemVolumeControl(action, value) {
+  if (process.platform !== "win32") {
+    return { ok: false, detail: "unsupported_platform", volume: null };
+  }
+  const actionNorm = String(action || "").trim().toLowerCase();
+  if (!["get", "set", "up", "down"].includes(actionNorm)) {
+    return { ok: false, detail: "invalid_volume_action", volume: null };
+  }
+  const scriptPath = resolveDesktopScriptPath("system_volume.ps1");
+  if (!scriptPath) return { ok: false, detail: "missing_script", volume: null };
+  try {
+    const cmdParts = [`& '${scriptPath.replace(/'/g, "''")}'`, `-Action '${actionNorm}'`];
+    if (Number.isFinite(Number(value))) {
+      cmdParts.push(`-Value ${Number(value)}`);
+    }
+    const raw = runPowerShellScript(cmdParts.join(" "));
+    const parsed = parseJsonSafely(raw, { ok: false, reason: "parse_error", volume: null });
+    const volumeNum = Number(parsed.volume);
+    return {
+      ok: Boolean(parsed.ok),
+      detail: String(parsed.reason || ""),
+      volume: Number.isFinite(volumeNum) ? Math.max(0, Math.min(100, Math.round(volumeNum))) : null,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error || "system_volume_error");
+    return { ok: false, detail, volume: null };
+  }
+}
+
 function sendWindowsMediaTransportKey(action) {
   if (process.platform !== "win32") return false;
   const actionNorm = String(action || "").trim().toLowerCase();
@@ -961,41 +990,61 @@ function sendWindowsVolumeKeys(kind, steps = 1) {
 }
 
 function controlSystemVolume(action, value) {
-  const syncCacheVolume = () => {
+  const syncCacheVolume = (nextVolume) => {
+    if (Number.isFinite(Number(nextVolume))) {
+      petVolumeEstimate = Math.max(0, Math.min(100, Math.round(Number(nextVolume))));
+    }
     if (petMediaCache.snapshot && typeof petMediaCache.snapshot === "object") {
       petMediaCache.snapshot.volume = petVolumeEstimate;
     }
   };
   const actionNorm = String(action || "").trim().toLowerCase();
-  if (actionNorm === "volume_up") {
-    const ok = sendWindowsVolumeKeys("UP", 3);
-    if (ok) {
-      petVolumeEstimate = Math.min(100, petVolumeEstimate + 6);
-      syncCacheVolume();
+  const applyRealVolumeResult = (result) => {
+    if (result?.ok && Number.isFinite(Number(result.volume))) {
+      syncCacheVolume(result.volume);
     }
-    return { ok };
+    return {
+      ok: Boolean(result?.ok),
+      detail: String(result?.detail || ""),
+      volume: petVolumeEstimate,
+    };
+  };
+
+  if (actionNorm === "get_volume") {
+    const result = invokeSystemVolumeControl("get");
+    if (!result.ok) return { ok: false, detail: result.detail || "volume_get_failed", volume: petVolumeEstimate };
+    return applyRealVolumeResult(result);
+  }
+
+  if (actionNorm === "volume_up") {
+    const result = invokeSystemVolumeControl("up");
+    if (result.ok) return applyRealVolumeResult(result);
+    const ok = sendWindowsVolumeKeys("UP", 3);
+    if (!ok) return { ok: false, detail: result.detail || "volume_up_failed", volume: petVolumeEstimate };
+    syncCacheVolume(petVolumeEstimate + 6);
+    return { ok: true, detail: "fallback_sendkeys", volume: petVolumeEstimate };
   }
   if (actionNorm === "volume_down") {
+    const result = invokeSystemVolumeControl("down");
+    if (result.ok) return applyRealVolumeResult(result);
     const ok = sendWindowsVolumeKeys("DOWN", 3);
-    if (ok) {
-      petVolumeEstimate = Math.max(0, petVolumeEstimate - 6);
-      syncCacheVolume();
-    }
-    return { ok };
+    if (!ok) return { ok: false, detail: result.detail || "volume_down_failed", volume: petVolumeEstimate };
+    syncCacheVolume(petVolumeEstimate - 6);
+    return { ok: true, detail: "fallback_sendkeys", volume: petVolumeEstimate };
   }
   if (actionNorm === "set_volume") {
     const target = Math.max(0, Math.min(100, Number(value || 0)));
+    const result = invokeSystemVolumeControl("set", target);
+    if (result.ok) return applyRealVolumeResult(result);
     const diff = target - petVolumeEstimate;
-    if (Math.abs(diff) < 2) return { ok: true };
+    if (Math.abs(diff) < 2) return { ok: true, detail: "skip_small_diff", volume: petVolumeEstimate };
     const steps = Math.max(1, Math.round(Math.abs(diff) / 2));
     const ok = sendWindowsVolumeKeys(diff > 0 ? "UP" : "DOWN", steps);
-    if (ok) {
-      petVolumeEstimate = target;
-      syncCacheVolume();
-    }
-    return { ok };
+    if (!ok) return { ok: false, detail: result.detail || "set_volume_failed", volume: petVolumeEstimate };
+    syncCacheVolume(target);
+    return { ok: true, detail: "fallback_sendkeys", volume: petVolumeEstimate };
   }
-  return { ok: false };
+  return { ok: false, detail: "unsupported_volume_action", volume: petVolumeEstimate };
 }
 
 function sanitizeCoachLine(rawText) {
@@ -1363,6 +1412,7 @@ function startPetStateTicker() {
   stopPetStateTicker();
   petCpuSnapshot = null;
   sampleSystemCpuUsage();
+  controlSystemVolume("get_volume");
   schedulePetProcessProbe(true);
   schedulePetMediaProbe(true);
   petStateTimer = setInterval(() => {
