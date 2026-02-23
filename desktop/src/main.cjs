@@ -32,6 +32,10 @@ const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
 const PET_PROCESS_CACHE_MS = 4500;
 const PET_MEDIA_CACHE_MS = 3500;
 const PET_PROBE_COMMAND_TIMEOUT_MS = 5000;
+const PET_HOVER_GUARD_INTERVAL_MS = 250;
+const PET_HOVER_GUARD_MARGIN_PX = 18;
+const PET_HOVER_GUARD_OUTSIDE_TICKS = 4;
+const PET_DEBUG_LOG_ENABLED = process.env.AELIN_PET_DEBUG !== "0";
 
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -52,6 +56,7 @@ let petVisible = true;
 let petClickThroughEnabled = true;
 let petStateAssets = {};
 let petStateTimer = null;
+let petHoverGuardTimer = null;
 let petStateLastKey = "";
 let petLastState = "happy";
 let petCpuSnapshot = null;
@@ -86,6 +91,20 @@ let petLayoutState = {
   anchorX: PET_COMPACT_WINDOW_SIZE / 2,
   anchorY: PET_COMPACT_WINDOW_SIZE / 2,
 };
+let petHoverGuardOutsideCount = 0;
+
+function petDebugLog(tag, payload = {}) {
+  if (!PET_DEBUG_LOG_ENABLED) return;
+  const stamp = new Date().toISOString();
+  let body = "";
+  try {
+    body = JSON.stringify(payload || {});
+  } catch {
+    body = "{\"detail\":\"stringify_failed\"}";
+  }
+  const suffix = body && body !== "{}" ? ` ${body}` : "";
+  console.log(`[pet-debug ${stamp}] ${String(tag || "event")}${suffix}`);
+}
 
 function nowLocalDateStamp(ts) {
   const date = new Date(ts);
@@ -526,14 +545,18 @@ async function collectSystemProcessNamesAsync() {
 }
 
 function matchProcessTokens(processNames, tokens) {
+  const tokenSet = new Set(
+    Array.isArray(tokens)
+      ? tokens.map((item) => normalizeProcessToken(item)).filter(Boolean)
+      : []
+  );
+  if (!tokenSet.size) return [];
   const matches = [];
   for (const procName of processNames) {
-    for (const token of tokens) {
-      if (!token) continue;
-      if (procName === token || procName.includes(token)) {
-        matches.push(procName);
-        break;
-      }
+    const normalized = normalizeProcessToken(procName);
+    if (!normalized) continue;
+    if (tokenSet.has(normalized)) {
+      matches.push(normalized);
     }
   }
   return Array.from(new Set(matches));
@@ -1250,11 +1273,90 @@ function pushPetState(force = false) {
   petWindow.webContents.send("pet:state", payload);
 }
 
+function stopPetHoverGuard() {
+  if (petHoverGuardTimer) {
+    clearInterval(petHoverGuardTimer);
+    petHoverGuardTimer = null;
+  }
+  petHoverGuardOutsideCount = 0;
+}
+
+function runPetHoverGuardTick() {
+  if (!petWindow || petWindow.isDestroyed()) {
+    petHoverGuardOutsideCount = 0;
+    return;
+  }
+  if (!petWindow.isVisible()) {
+    petHoverGuardOutsideCount = 0;
+    return;
+  }
+  if (petDragState) {
+    petHoverGuardOutsideCount = 0;
+    return;
+  }
+  if (String(petLayoutState.mode || "compact") !== "expanded") {
+    petHoverGuardOutsideCount = 0;
+    return;
+  }
+
+  const cursor = screen.getCursorScreenPoint();
+  const bounds = petWindow.getBounds();
+  const margin = PET_HOVER_GUARD_MARGIN_PX;
+  const inside = (
+    Number(cursor.x || 0) >= Number(bounds.x || 0) - margin
+    && Number(cursor.x || 0) <= Number(bounds.x || 0) + Number(bounds.width || 0) + margin
+    && Number(cursor.y || 0) >= Number(bounds.y || 0) - margin
+    && Number(cursor.y || 0) <= Number(bounds.y || 0) + Number(bounds.height || 0) + margin
+  );
+  if (inside) {
+    petHoverGuardOutsideCount = 0;
+    return;
+  }
+
+  petHoverGuardOutsideCount += 1;
+  if (petHoverGuardOutsideCount < PET_HOVER_GUARD_OUTSIDE_TICKS) return;
+  petHoverGuardOutsideCount = 0;
+  petDebugLog("main:hover-guard-collapse", {
+    cursor: {
+      x: Number(cursor.x || 0),
+      y: Number(cursor.y || 0),
+    },
+    bounds: {
+      x: Number(bounds.x || 0),
+      y: Number(bounds.y || 0),
+      width: Number(bounds.width || 0),
+      height: Number(bounds.height || 0),
+    },
+    clickThroughEnabled: petClickThroughEnabled,
+    pointerActive: petPointerActive,
+  });
+  try {
+    if (petClickThroughEnabled) {
+      petPointerActive = false;
+      applyPetMouseMode();
+    }
+    petWindow.webContents.send("pet:force-collapse", {
+      reason: "main_guard_pointer_outside",
+      ts: Date.now(),
+    });
+  } catch {
+    // ignore renderer sync failures
+  }
+}
+
+function startPetHoverGuard() {
+  stopPetHoverGuard();
+  petHoverGuardTimer = setInterval(() => {
+    runPetHoverGuardTick();
+  }, PET_HOVER_GUARD_INTERVAL_MS);
+}
+
 function stopPetStateTicker() {
   if (petStateTimer) {
     clearInterval(petStateTimer);
     petStateTimer = null;
   }
+  stopPetHoverGuard();
 }
 
 function startPetStateTicker() {
@@ -1266,6 +1368,7 @@ function startPetStateTicker() {
   petStateTimer = setInterval(() => {
     pushPetState(false);
   }, 2500);
+  startPetHoverGuard();
   pushPetState(true);
 }
 
@@ -1755,7 +1858,14 @@ function setPetPointerActive(active) {
   if (!petWindow || petWindow.isDestroyed()) return;
   const next = !!active;
   if (petPointerActive === next && petClickThroughEnabled) return;
+  const prev = petPointerActive;
   petPointerActive = next;
+  petDebugLog("main:pointer-active", {
+    prev,
+    next,
+    clickThroughEnabled: petClickThroughEnabled,
+    hasDragState: Boolean(petDragState),
+  });
   applyPetMouseMode();
   if (!next) {
     petDragState = null;
@@ -1790,8 +1900,7 @@ function clampNumber(value, min, max, fallback) {
   return Math.max(lower, Math.min(upper, safe));
 }
 
-function normalizePetLayoutPayload(payload, currentBounds) {
-  const bounds = currentBounds || { width: PET_COMPACT_WINDOW_SIZE, height: PET_COMPACT_WINDOW_SIZE };
+function normalizePetLayoutPayload(payload) {
   const mode = String(payload?.mode || "compact").toLowerCase() === "expanded" ? "expanded" : "compact";
   const width = mode === "expanded"
     ? Math.round(clampNumber(payload?.width, PET_EXPANDED_WINDOW_WIDTH, PET_EXPANDED_WINDOW_WIDTH, PET_EXPANDED_WINDOW_WIDTH))
@@ -1799,18 +1908,6 @@ function normalizePetLayoutPayload(payload, currentBounds) {
   const height = mode === "expanded"
     ? Math.round(clampNumber(payload?.height, PET_COMPACT_WINDOW_SIZE, PET_EXPANDED_WINDOW_MAX_HEIGHT, 300))
     : PET_COMPACT_WINDOW_SIZE;
-  const currentAnchorX = clampNumber(
-    payload?.currentAnchorX,
-    0,
-    Number(bounds.width || PET_COMPACT_WINDOW_SIZE),
-    Number(bounds.width || PET_COMPACT_WINDOW_SIZE) / 2
-  );
-  const currentAnchorY = clampNumber(
-    payload?.currentAnchorY,
-    0,
-    Number(bounds.height || PET_COMPACT_WINDOW_SIZE),
-    Number(bounds.height || PET_COMPACT_WINDOW_SIZE) / 2
-  );
   const anchorX = clampNumber(payload?.anchorX, 0, width, width / 2);
   const anchorY = clampNumber(payload?.anchorY, 0, height, mode === "expanded" ? Math.min(height - 16, height * 0.62) : height / 2);
   return {
@@ -1819,8 +1916,24 @@ function normalizePetLayoutPayload(payload, currentBounds) {
     height,
     anchorX,
     anchorY,
-    currentAnchorX,
-    currentAnchorY,
+  };
+}
+
+function resolveCurrentPetAnchor(bounds) {
+  const safeBounds = bounds || { width: PET_COMPACT_WINDOW_SIZE, height: PET_COMPACT_WINDOW_SIZE };
+  return {
+    x: clampNumber(
+      petLayoutState.anchorX,
+      0,
+      Number(safeBounds.width || PET_COMPACT_WINDOW_SIZE),
+      Number(safeBounds.width || PET_COMPACT_WINDOW_SIZE) / 2
+    ),
+    y: clampNumber(
+      petLayoutState.anchorY,
+      0,
+      Number(safeBounds.height || PET_COMPACT_WINDOW_SIZE),
+      Number(safeBounds.height || PET_COMPACT_WINDOW_SIZE) / 2
+    ),
   };
 }
 
@@ -1838,11 +1951,10 @@ function clampBoundsToArea(x, y, width, height, area) {
 function applyPetWindowLayout(payload) {
   if (!petWindow || petWindow.isDestroyed()) return null;
   const currentBounds = petWindow.getBounds();
-  const normalized = normalizePetLayoutPayload(payload, currentBounds);
-  const currentAnchorX = normalized.currentAnchorX;
-  const currentAnchorY = normalized.currentAnchorY;
-  const screenAnchorX = Number(currentBounds.x || 0) + currentAnchorX;
-  const screenAnchorY = Number(currentBounds.y || 0) + currentAnchorY;
+  const normalized = normalizePetLayoutPayload(payload);
+  const currentAnchor = resolveCurrentPetAnchor(currentBounds);
+  const screenAnchorX = Number(currentBounds.x || 0) + Number(currentAnchor.x || 0);
+  const screenAnchorY = Number(currentBounds.y || 0) + Number(currentAnchor.y || 0);
 
   let nextX = screenAnchorX - normalized.anchorX;
   let nextY = screenAnchorY - normalized.anchorY;
@@ -1864,6 +1976,35 @@ function applyPetWindowLayout(payload) {
     }, false);
   } catch {
     return null;
+  }
+
+  const changed = (
+    Math.abs(Number(currentBounds.x || 0) - Math.round(nextX)) > 0
+    || Math.abs(Number(currentBounds.y || 0) - Math.round(nextY)) > 0
+    || Math.abs(Number(currentBounds.width || 0) - Math.round(normalized.width)) > 0
+    || Math.abs(Number(currentBounds.height || 0) - Math.round(normalized.height)) > 0
+    || String(petLayoutState.mode || "compact") !== String(normalized.mode || "compact")
+  );
+  if (changed) {
+    petDebugLog("main:layout-apply", {
+      mode: normalized.mode,
+      from: {
+        x: Number(currentBounds.x || 0),
+        y: Number(currentBounds.y || 0),
+        width: Number(currentBounds.width || 0),
+        height: Number(currentBounds.height || 0),
+        anchorX: Number(currentAnchor.x || 0),
+        anchorY: Number(currentAnchor.y || 0),
+      },
+      to: {
+        x: Math.round(nextX),
+        y: Math.round(nextY),
+        width: Math.round(normalized.width),
+        height: Math.round(normalized.height),
+        anchorX: Math.round(normalized.anchorX),
+        anchorY: Math.round(normalized.anchorY),
+      },
+    });
   }
 
   petLayoutState = {
@@ -1890,8 +2031,6 @@ function ensurePetWindowCompactBounds() {
     height: target,
     anchorX: target / 2,
     anchorY: target / 2,
-    currentAnchorX: clampNumber(petLayoutState.anchorX, 0, Number(bounds.width || target), Number(bounds.width || target) / 2),
-    currentAnchorY: clampNumber(petLayoutState.anchorY, 0, Number(bounds.height || target), Number(bounds.height || target) / 2),
   });
   return compact || petWindow.getBounds();
 }
@@ -2048,6 +2187,19 @@ function setupPetIpcHandlers() {
     setPetPointerActive(Boolean(payload?.active));
   });
 
+  ipcMain.on("pet:debug-log", (event, payload) => {
+    if (!fromPet(event) || !PET_DEBUG_LOG_ENABLED) return;
+    const tag = String(payload?.tag || "renderer:event");
+    const seq = Number(payload?.seq || 0);
+    const ts = Number(payload?.ts || 0);
+    const data = payload?.data && typeof payload.data === "object" ? payload.data : {};
+    petDebugLog(tag, {
+      seq,
+      ts,
+      ...data,
+    });
+  });
+
   ipcMain.on("pet:open-menu", (event, payload) => {
     if (!fromPet(event)) return;
     popupPetMenu({
@@ -2059,7 +2211,7 @@ function setupPetIpcHandlers() {
   ipcMain.on("pet:drag-start", (event, payload) => {
     if (!fromPet(event) || !petWindow || petWindow.isDestroyed()) return;
     setPetPointerActive(true);
-    const bounds = ensurePetWindowCompactBounds() || petWindow.getBounds();
+    const bounds = petWindow.getBounds();
     const anchor = chooseDragAnchor(payload, bounds);
     petDragState = {
       source: anchor.source,
@@ -2088,9 +2240,53 @@ function setupPetIpcHandlers() {
 
   ipcMain.on("pet:set-layout", (event, payload) => {
     if (!fromPet(event) || !petWindow || petWindow.isDestroyed()) return;
-    applyPetWindowLayout(payload || {});
+    const appliedBounds = applyPetWindowLayout(payload || {});
     if (!petWindow.isVisible()) return;
     syncWindowZOrder();
+    return appliedBounds;
+  });
+
+  ipcMain.on("pet:apply-layout-sync", (event, payload) => {
+    if (!fromPet(event) || !petWindow || petWindow.isDestroyed()) {
+      event.returnValue = { ok: false, applied: null };
+      return;
+    }
+    const applied = applyPetWindowLayout(payload || {});
+    if (petWindow.isVisible()) {
+      syncWindowZOrder();
+    }
+    event.returnValue = {
+      ok: true,
+      applied: applied
+        ? {
+            x: Number(applied.x || 0),
+            y: Number(applied.y || 0),
+            width: Number(applied.width || 0),
+            height: Number(applied.height || 0),
+          }
+        : null,
+    };
+  });
+
+  ipcMain.handle("pet:apply-layout", (event, payload) => {
+    if (!fromPet(event) || !petWindow || petWindow.isDestroyed()) {
+      return { ok: false, applied: null };
+    }
+    const applied = applyPetWindowLayout(payload || {});
+    if (petWindow.isVisible()) {
+      syncWindowZOrder();
+    }
+    return {
+      ok: true,
+      applied: applied
+        ? {
+            x: Number(applied.x || 0),
+            y: Number(applied.y || 0),
+            width: Number(applied.width || 0),
+            height: Number(applied.height || 0),
+          }
+        : null,
+    };
   });
 
   ipcMain.handle("pet:get-config", (event) => {
@@ -2191,6 +2387,7 @@ function createPetWindow() {
   petWindow.loadFile(path.join(__dirname, "pet.html"), {
     query: {
       icon: `http://127.0.0.1:${frontendPort}/aelin-icon.ico`,
+      debug: PET_DEBUG_LOG_ENABLED ? "1" : "0",
     },
   });
   petWindow.webContents.on("did-finish-load", () => {

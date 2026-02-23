@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld("petBridge", {
   setLayout(payload) {
     ipcRenderer.send("pet:set-layout", payload || {});
   },
+  applyLayout(payload) {
+    return ipcRenderer.invoke("pet:apply-layout", payload || {});
+  },
+  applyLayoutSync(payload) {
+    return ipcRenderer.sendSync("pet:apply-layout-sync", payload || {});
+  },
+  debugLog(payload) {
+    ipcRenderer.send("pet:debug-log", payload || {});
+  },
   mediaControl(action, payload) {
     return ipcRenderer.invoke("pet:media-control", {
       action: String(action || ""),
@@ -42,5 +51,11 @@ contextBridge.exposeInMainWorld("petBridge", {
     const handler = (_event, payload) => callback(payload || {});
     ipcRenderer.on("pet:config", handler);
     return () => ipcRenderer.removeListener("pet:config", handler);
+  },
+  onForceCollapse(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload || {});
+    ipcRenderer.on("pet:force-collapse", handler);
+    return () => ipcRenderer.removeListener("pet:force-collapse", handler);
   },
 });

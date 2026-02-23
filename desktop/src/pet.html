@@ -102,16 +102,20 @@
         color: #f9fafb;
         pointer-events: none;
         opacity: 0;
-        transform: translate(-50%, 4px);
-        transition: opacity 140ms ease, transform 140ms ease;
+        transform: translateX(-50%);
+        transition: opacity 90ms ease;
       }
-      .pet-hover .pet-panel {
+      .panels-visible .pet-panel {
         opacity: 1;
-        transform: translate(-50%, 0);
         pointer-events: auto;
       }
       .pet-panel.hidden {
         display: none;
+      }
+      #petWrap.dragging-panels-hidden .pet-panel {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
       }
       #musicPanel {
         top: var(--music-top);
@@ -280,6 +284,8 @@
     <script>
       const params = new URLSearchParams(location.search);
       let fallbackIcon = params.get("icon") || "";
+      const debugEnabled = params.get("debug") !== "0";
+      let debugSeq = 0;
 
       const wrap = document.getElementById("petWrap");
       const pet = document.getElementById("pet");
@@ -319,13 +325,23 @@
       let hoverSyncRaf = 0;
       let pendingHoverPoint = null;
       let layoutSyncRaf = 0;
+      let compactCommitTimer = 0;
       let lastLayoutKey = "";
+      let desiredHoverActive = false;
+      let visualLayoutMode = "compact";
+      let lastInsideInteractiveAt = 0;
+      let pointerActivatedAt = 0;
+      let suppressExpandUntil = 0;
       const petLayoutConfig = {
         compactSize: 128,
         expandedWidth: 236,
         expandedMaxHeight: 420,
       };
-      const DEACTIVATE_DELAY_MS = 90;
+      const DEACTIVATE_DELAY_MS = 180;
+      const HOVER_SAFE_ZONE_PADDING = 12;
+      const PANEL_FADE_MS = 100;
+      const POINTER_ACTIVE_HOLD_MS = 140;
+      const DRAG_END_REOPEN_GUARD_MS = 260;
       const iconMarkup = {
         prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6l-8.5 6L18 18V6Z"></path><path d="M7 6v12"></path></svg>',
         next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l8.5 6L6 18V6Z"></path><path d="M17 6v12"></path></svg>',
@@ -334,6 +350,27 @@
         volDown: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 7.8 9H5v6h2.8L11 18V6Z"></path><path d="M15 12h4"></path></svg>',
         volUp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 7.8 9H5v6h2.8L11 18V6Z"></path><path d="M15 12h4"></path><path d="M17 10v4"></path></svg>',
       };
+
+      function petDebug(tag, data = {}) {
+        if (!debugEnabled) return;
+        debugSeq += 1;
+        const payload = {
+          tag: String(tag || "event"),
+          seq: debugSeq,
+          ts: Date.now(),
+          data: data && typeof data === "object" ? data : { value: String(data || "") },
+        };
+        try {
+          window.petBridge?.debugLog?.(payload);
+        } catch {
+          // ignore debug bridge failures
+        }
+        try {
+          console.debug(`[pet-debug][${payload.seq}] ${payload.tag}`, payload.data);
+        } catch {
+          // ignore console failures
+        }
+      }
 
       function setButtonIcon(button, name) {
         if (!button) return;
@@ -369,40 +406,35 @@
         ].join(" ");
       }
 
-      function getPetAnchorInWindow() {
-        const rect = pet.getBoundingClientRect();
-        const anchorX = rect.left + rect.width / 2;
-        const anchorY = rect.top + rect.height / 2;
+      function computeShellLayout() {
+        const width = Math.max(petLayoutConfig.expandedWidth, petLayoutConfig.compactSize);
+        const height = Math.max(width, Math.round(Number(petLayoutConfig.expandedMaxHeight || 420)));
+        const petCenterY = Math.round(Math.max(72, Math.min(height - 96, height * 0.39)));
         return {
-          x: Number.isFinite(anchorX) ? anchorX : window.innerWidth / 2,
-          y: Number.isFinite(anchorY) ? anchorY : window.innerHeight / 2,
+          width,
+          height,
+          petCenterY,
         };
       }
 
       function computeExpandedLayout() {
-        const width = Math.max(petLayoutConfig.expandedWidth, petLayoutConfig.compactSize);
+        const shell = computeShellLayout();
         const musicVisible = !musicPanel.classList.contains("hidden");
         const panelGap = 8;
         const topPadding = 8;
         const bottomPadding = 8;
         const petSize = 96;
         const musicHeight = musicVisible ? Math.ceil(musicPanel.scrollHeight || 0) : 0;
-        const workNaturalHeight = Math.ceil(Math.max(workPanel.scrollHeight || 0, 44));
-        const workDesired = Math.min(Math.max(workNaturalHeight, 44), 170);
-        const topSection = musicVisible ? musicHeight + panelGap : 0;
-        const petTop = topPadding + topSection;
-        const petCenterY = petTop + petSize / 2;
-        const workTop = petTop + petSize + panelGap;
-        const minHeight = Math.max(petLayoutConfig.compactSize, Math.ceil(workTop + 40 + bottomPadding));
-        const unclampedHeight = Math.ceil(workTop + workDesired + bottomPadding);
-        const height = Math.max(minHeight, Math.min(petLayoutConfig.expandedMaxHeight, unclampedHeight));
-        const workMaxHeight = Math.max(40, height - workTop - bottomPadding);
+        const petTop = Math.max(topPadding, Math.round(shell.petCenterY - petSize / 2));
+        const musicTop = Math.max(topPadding, Math.round(petTop - panelGap - musicHeight));
+        const workTop = Math.round(shell.petCenterY + petSize / 2 + panelGap);
+        const workMaxHeight = Math.max(40, shell.height - workTop - bottomPadding);
         return {
           mode: "expanded",
-          width,
-          height,
-          musicTop: topPadding,
-          petCenterY,
+          width: shell.width,
+          height: shell.height,
+          musicTop,
+          petCenterY: shell.petCenterY,
           workTop,
           workMaxHeight,
         };
@@ -410,11 +442,14 @@
 
       function applyLayoutVars(layout) {
         if (!layout || layout.mode !== "expanded") {
+          const shell = computeShellLayout();
+          const workTop = Math.round(shell.petCenterY + 56);
+          const workMaxHeight = Math.max(40, shell.height - workTop - 8);
           wrap.style.setProperty("--panel-width", "212px");
-          wrap.style.setProperty("--pet-center-y", "50%");
+          wrap.style.setProperty("--pet-center-y", `${shell.petCenterY}px`);
           wrap.style.setProperty("--music-top", "8px");
-          wrap.style.setProperty("--work-top", "168px");
-          wrap.style.setProperty("--work-max-h", "56px");
+          wrap.style.setProperty("--work-top", `${workTop}px`);
+          wrap.style.setProperty("--work-max-h", `${workMaxHeight}px`);
           return;
         }
         wrap.style.setProperty("--panel-width", `${Math.max(160, layout.width - 24)}px`);
@@ -424,45 +459,130 @@
         wrap.style.setProperty("--work-max-h", `${Math.round(layout.workMaxHeight)}px`);
       }
 
-      function sendLayoutToMain(layout, mode, anchorOverride) {
-        const anchor = anchorOverride || getPetAnchorInWindow();
-        const compactSize = Math.max(96, Number(petLayoutConfig.compactSize || 128));
-        const payload = mode === "expanded" && layout
-          ? {
-              mode: "expanded",
-              width: Math.round(layout.width),
-              height: Math.round(layout.height),
-              anchorX: Math.round(layout.width / 2),
-              anchorY: Math.round(layout.petCenterY),
-              currentAnchorX: Math.round(anchor.x),
-              currentAnchorY: Math.round(anchor.y),
-            }
-          : {
-              mode: "compact",
-              width: compactSize,
-              height: compactSize,
-              anchorX: Math.round(compactSize / 2),
-              anchorY: Math.round(compactSize / 2),
-              currentAnchorX: Math.round(anchor.x),
-              currentAnchorY: Math.round(anchor.y),
-            };
-        const key = `${payload.mode}|${payload.width}|${payload.height}|${payload.anchorX}|${payload.anchorY}|${payload.currentAnchorX}|${payload.currentAnchorY}`;
-        if (key === lastLayoutKey) return;
+      function clearCompactCommitTimer() {
+        if (!compactCommitTimer) return;
+        clearTimeout(compactCommitTimer);
+        compactCommitTimer = 0;
+        petDebug("renderer:compact-timer-clear");
+      }
+
+      function sendLayoutToMainSync(layout, mode) {
+        const shell = computeShellLayout();
+        const payload = {
+          mode: "expanded",
+          width: Math.round(shell.width),
+          height: Math.round(shell.height),
+          anchorX: Math.round(shell.width / 2),
+          anchorY: Math.round(shell.petCenterY),
+        };
+        const key = `${payload.width}|${payload.height}|${payload.anchorX}|${payload.anchorY}`;
+        if (key === lastLayoutKey) {
+          petDebug("renderer:layout-skip-same-key", { key });
+          return true;
+        }
         lastLayoutKey = key;
-        window.petBridge?.setLayout?.(payload);
+        try {
+          if (typeof window.petBridge?.applyLayoutSync === "function") {
+            const result = window.petBridge.applyLayoutSync(payload);
+            if (result && result.ok === false) {
+              throw new Error("layout sync failed");
+            }
+            petDebug("renderer:layout-sync", {
+              mode: String(mode || "expanded"),
+              width: payload.width,
+              height: payload.height,
+              anchorX: payload.anchorX,
+              anchorY: payload.anchorY,
+              applied: result?.applied || null,
+            });
+          } else if (typeof window.petBridge?.setLayout === "function") {
+            window.petBridge.setLayout(payload);
+            petDebug("renderer:layout-async-fallback", {
+              mode: String(mode || "expanded"),
+              width: payload.width,
+              height: payload.height,
+              anchorX: payload.anchorX,
+              anchorY: payload.anchorY,
+            });
+          }
+          return true;
+        } catch {
+          lastLayoutKey = "";
+          petDebug("renderer:layout-error", {
+            mode: payload.mode,
+            width: payload.width,
+            height: payload.height,
+            anchorX: payload.anchorX,
+            anchorY: payload.anchorY,
+          });
+          return false;
+        }
+      }
+
+      function commitCompactLayout() {
+        clearCompactCommitTimer();
+        applyLayoutVars(null);
+        sendLayoutToMainSync(null, "compact");
+        visualLayoutMode = "compact";
+        petDebug("renderer:compact-commit", {
+          desiredHoverActive,
+          dragging,
+          pointerActive,
+        });
+      }
+
+      function scheduleCompactLayoutCommit() {
+        if (compactCommitTimer) return;
+        petDebug("renderer:compact-timer-set", {
+          delayMs: PANEL_FADE_MS,
+          desiredHoverActive,
+          dragging,
+          pointerActive,
+        });
+        compactCommitTimer = window.setTimeout(() => {
+          compactCommitTimer = 0;
+          if (desiredHoverActive || dragging) {
+            petDebug("renderer:compact-timer-abort", {
+              desiredHoverActive,
+              dragging,
+            });
+            scheduleLayoutSync(true);
+            return;
+          }
+          petDebug("renderer:compact-timer-fire");
+          commitCompactLayout();
+        }, PANEL_FADE_MS);
       }
 
       function syncLayoutNow() {
-        const anchorBeforeLayout = getPetAnchorInWindow();
-        const expanded = wrap.classList.contains("pet-hover") && !dragging;
+        const expanded = desiredHoverActive && !dragging;
         if (expanded) {
+          clearCompactCommitTimer();
           const layout = computeExpandedLayout();
           applyLayoutVars(layout);
-          sendLayoutToMain(layout, "expanded", anchorBeforeLayout);
+          const applied = sendLayoutToMainSync(layout, "expanded");
+          if (!applied) return;
+          visualLayoutMode = "expanded";
+          petDebug("renderer:expanded-commit", {
+            width: layout.width,
+            height: layout.height,
+            petCenterY: layout.petCenterY,
+            workTop: layout.workTop,
+            musicVisible: !musicPanel.classList.contains("hidden"),
+          });
+          setPanelsVisible(true);
           return;
         }
-        applyLayoutVars(null);
-        sendLayoutToMain(null, "compact", anchorBeforeLayout);
+        setPanelsVisible(false);
+        if (dragging) {
+          commitCompactLayout();
+          return;
+        }
+        if (visualLayoutMode === "compact") {
+          commitCompactLayout();
+          return;
+        }
+        scheduleCompactLayoutCommit();
       }
 
       function scheduleLayoutSync(force = false) {
@@ -504,8 +624,23 @@
       }
 
       function setHoverActive(active) {
-        wrap.classList.toggle("pet-hover", Boolean(active));
+        const next = Boolean(active);
+        if (desiredHoverActive === next) return;
+        petDebug("renderer:hover-active", {
+          prev: desiredHoverActive,
+          next,
+          pointerActive,
+          dragging,
+        });
+        desiredHoverActive = next;
         scheduleLayoutSync();
+      }
+
+      function setPanelsVisible(visible) {
+        const next = Boolean(visible);
+        if (wrap.classList.contains("panels-visible") === next) return;
+        petDebug("renderer:panels-visible", { next });
+        wrap.classList.toggle("panels-visible", next);
       }
 
       function setMusicPanel(payload) {
@@ -593,6 +728,7 @@
           if (config.icon) fallbackIcon = String(config.icon);
           if (Number.isFinite(Number(config.compactSize))) {
             petLayoutConfig.compactSize = Math.max(96, Math.round(Number(config.compactSize)));
+            lastLayoutKey = "";
           }
           if (Number.isFinite(Number(config.expandedWidth))) {
             petLayoutConfig.expandedWidth = Math.max(200, Math.round(Number(config.expandedWidth)));
@@ -605,12 +741,8 @@
           }
           if (typeof config.clickThroughEnabled === "boolean") {
             clickThroughEnabled = config.clickThroughEnabled;
-            if (!clickThroughEnabled) {
-              clearDeactivateTimer();
-              setPointerActive(true);
-            } else {
-              setPointerActive(false);
-            }
+            clearDeactivateTimer();
+            setPointerActive(false);
           }
         }
         applyState({ state: config?.state || currentState }, force);
@@ -619,19 +751,17 @@
 
       function isInsidePet(clientX, clientY) {
         const rect = pet.getBoundingClientRect();
-        if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
-          return false;
-        }
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const dx = clientX - cx;
-        const dy = clientY - cy;
-        const radius = rect.width / 2;
-        return dx * dx + dy * dy <= radius * radius * 0.94;
+        const pad = 4;
+        return (
+          clientX >= rect.left - pad &&
+          clientX <= rect.right + pad &&
+          clientY >= rect.top - pad &&
+          clientY <= rect.bottom + pad
+        );
       }
 
       function isInsideRect(el, clientX, clientY, pad = 2) {
-        if (!wrap.classList.contains("pet-hover")) return false;
+        if (!wrap.classList.contains("panels-visible")) return false;
         if (!el || el.classList.contains("hidden")) return false;
         const rect = el.getBoundingClientRect();
         return (
@@ -642,10 +772,50 @@
         );
       }
 
+      function mergeRect(base, next) {
+        if (!base) return next ? { ...next } : null;
+        if (!next) return { ...base };
+        return {
+          left: Math.min(base.left, next.left),
+          top: Math.min(base.top, next.top),
+          right: Math.max(base.right, next.right),
+          bottom: Math.max(base.bottom, next.bottom),
+        };
+      }
+
+      function buildInteractiveRect() {
+        let rect = null;
+        const petRect = pet?.getBoundingClientRect?.();
+        if (petRect) {
+          rect = mergeRect(rect, petRect);
+        }
+        if (wrap.classList.contains("panels-visible")) {
+          if (musicPanel && !musicPanel.classList.contains("hidden")) {
+            rect = mergeRect(rect, musicPanel.getBoundingClientRect());
+          }
+          if (workPanel && !workPanel.classList.contains("hidden")) {
+            rect = mergeRect(rect, workPanel.getBoundingClientRect());
+          }
+        }
+        return rect;
+      }
+
       function isInsideInteractive(clientX, clientY) {
         if (isInsidePet(clientX, clientY)) return true;
         if (isInsideRect(musicPanel, clientX, clientY, 3)) return true;
         if (isInsideRect(workPanel, clientX, clientY, 3)) return true;
+        if (desiredHoverActive || wrap.classList.contains("panels-visible")) {
+          const rect = buildInteractiveRect();
+          if (!rect) return false;
+          if (
+            clientX >= rect.left - HOVER_SAFE_ZONE_PADDING &&
+            clientX <= rect.right + HOVER_SAFE_ZONE_PADDING &&
+            clientY >= rect.top - HOVER_SAFE_ZONE_PADDING &&
+            clientY <= rect.bottom + HOVER_SAFE_ZONE_PADDING
+          ) {
+            return true;
+          }
+        }
         return false;
       }
 
@@ -656,20 +826,34 @@
       }
 
       function schedulePointerInactive() {
-        if (!clickThroughEnabled || dragging) return;
+        if (dragging) return;
         clearDeactivateTimer();
+        petDebug("renderer:pointer-inactive-scheduled", {
+          delayMs: DEACTIVATE_DELAY_MS,
+          pointerActive,
+        });
         deactivateTimer = setTimeout(() => {
           deactivateTimer = null;
+          const now = Date.now();
+          const recentlyInside = now - Number(lastInsideInteractiveAt || 0) < DEACTIVATE_DELAY_MS;
+          const holdActive = pointerActive && (now - Number(pointerActivatedAt || 0) < POINTER_ACTIVE_HOLD_MS);
+          if (recentlyInside || holdActive) {
+            petDebug("renderer:pointer-inactive-delayed", {
+              recentlyInside,
+              holdActive,
+              pointerActive,
+            });
+            schedulePointerInactive();
+            return;
+          }
+          petDebug("renderer:pointer-inactive-commit", { pointerActive });
           setPointerActive(false);
         }, DEACTIVATE_DELAY_MS);
       }
 
       function syncPointerByPoint(clientX, clientY) {
-        if (!clickThroughEnabled) {
-          setPointerActive(true);
-          return;
-        }
         if (isInsideInteractive(clientX, clientY)) {
+          lastInsideInteractiveAt = Date.now();
           clearDeactivateTimer();
           setPointerActive(true);
           return;
@@ -679,24 +863,31 @@
 
       function setPointerActive(next) {
         const active = Boolean(next);
-        if (!clickThroughEnabled) {
-          if (!pointerActive) {
-            pointerActive = true;
-            window.petBridge?.setPointerActive(true);
-          }
-          setHoverActive(true);
-          return;
-        }
+        const now = Date.now();
+        const canExpand = active && !dragging && now >= Number(suppressExpandUntil || 0);
         if (pointerActive === active) {
-          const nextHover = active && !dragging;
-          if (wrap.classList.contains("pet-hover") !== nextHover) {
+          const nextHover = canExpand;
+          if (desiredHoverActive !== nextHover) {
             setHoverActive(nextHover);
           }
           return;
         }
+        const prev = pointerActive;
         pointerActive = active;
-        setHoverActive(active && !dragging);
-        window.petBridge?.setPointerActive(active);
+        if (active) {
+          pointerActivatedAt = Date.now();
+        }
+        petDebug("renderer:pointer-active", {
+          prev,
+          next: active,
+          canExpand,
+          dragging,
+          clickThroughEnabled,
+        });
+        setHoverActive(canExpand);
+        if (clickThroughEnabled) {
+          window.petBridge?.setPointerActive(active);
+        }
       }
 
       function scheduleHoverSync(clientX, clientY) {
@@ -709,6 +900,23 @@
           if (!point || dragging) return;
           syncPointerByPoint(point.x, point.y);
         });
+      }
+
+      function forceCollapsePanels(reason = "") {
+        desiredHoverActive = false;
+        lastInsideInteractiveAt = 0;
+        clearDeactivateTimer();
+        setPanelsVisible(false);
+        petDebug("renderer:force-collapse", {
+          reason: String(reason || ""),
+          pointerActive,
+          dragging,
+        });
+        if (clickThroughEnabled) {
+          pointerActive = false;
+          window.petBridge?.setPointerActive(false);
+        }
+        scheduleLayoutSync(true);
       }
 
       async function runMediaAction(action, payload = {}) {
@@ -781,6 +989,14 @@
         clearDeactivateTimer();
         setPointerActive(true);
         dragging = true;
+        petDebug("renderer:drag-start", {
+          pointerId: event.pointerId,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          screenX: event.screenX,
+          screenY: event.screenY,
+        });
+        wrap.classList.add("dragging-panels-hidden");
         moved = false;
         setHoverActive(false);
         scheduleLayoutSync(true);
@@ -820,6 +1036,20 @@
         if (event && event.pointerId !== undefined && event.pointerId !== activePointerId) return;
         const wasMoved = moved;
         dragging = false;
+        petDebug("renderer:drag-end", {
+          cancelled: Boolean(cancelled),
+          wasMoved: Boolean(wasMoved),
+          pointerId: activePointerId,
+        });
+        if (wasMoved) {
+          suppressExpandUntil = Date.now() + DRAG_END_REOPEN_GUARD_MS;
+          petDebug("renderer:drag-end-suppress-expand", {
+            until: suppressExpandUntil,
+            guardMs: DRAG_END_REOPEN_GUARD_MS,
+          });
+          setHoverActive(false);
+        }
+        wrap.classList.remove("dragging-panels-hidden");
         moved = false;
         scheduleLayoutSync(true);
         const pointerId = activePointerId;
@@ -839,7 +1069,7 @@
         if (!cancelled && !wasMoved && event?.button === 0) {
           window.petBridge?.openChat();
         }
-        if (event) {
+        if (event && !wasMoved) {
           syncPointerByPoint(event.clientX, event.clientY);
         } else {
           schedulePointerInactive();
@@ -884,6 +1114,13 @@
       const offConfig = window.petBridge?.onConfig?.((payload) => {
         applyConfig(payload || {});
       });
+      const offForceCollapse = window.petBridge?.onForceCollapse?.((payload) => {
+        petDebug("renderer:force-collapse-recv", {
+          reason: String(payload?.reason || ""),
+          ts: Number(payload?.ts || 0),
+        });
+        forceCollapsePanels(String(payload?.reason || ""));
+      });
 
       window.petBridge?.getConfig?.().then((config) => {
         applyConfig(config || {}, true);
@@ -897,11 +1134,13 @@
 
       window.addEventListener("beforeunload", () => {
         clearDeactivateTimer();
+        clearCompactCommitTimer();
         if (volumeDebounceTimer) clearTimeout(volumeDebounceTimer);
         if (hoverSyncRaf) window.cancelAnimationFrame(hoverSyncRaf);
         if (layoutSyncRaf) window.cancelAnimationFrame(layoutSyncRaf);
         if (typeof offState === "function") offState();
         if (typeof offConfig === "function") offConfig();
+        if (typeof offForceCollapse === "function") offForceCollapse();
       });
     </script>
   </body>
