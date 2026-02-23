@@ -14,7 +14,9 @@ const isDev = process.env.MERCURYDESK_DESKTOP_DEV === "1" || !app.isPackaged;
 const backendPort = Number(process.env.MERCURYDESK_BACKEND_PORT || (isDev ? 8000 : 18080));
 const frontendPort = Number(process.env.MERCURYDESK_DESKTOP_PORT || (isDev ? 5173 : 1420));
 const desktopZoom = Number(process.env.MERCURYDESK_DESKTOP_ZOOM || "1.0");
-const PET_WINDOW_SIZE = 248;
+const PET_COMPACT_WINDOW_SIZE = 128;
+const PET_EXPANDED_WINDOW_WIDTH = 236;
+const PET_EXPANDED_WINDOW_MAX_HEIGHT = 420;
 const MAIN_ZOOM_MIN = 0.5;
 const MAIN_ZOOM_MAX = 2.0;
 const MAIN_ZOOM_STEP = 0.1;
@@ -69,6 +71,13 @@ let petMediaCache = {
   inFlight: false,
 };
 let petVolumeEstimate = 50;
+let petLayoutState = {
+  mode: "compact",
+  width: PET_COMPACT_WINDOW_SIZE,
+  height: PET_COMPACT_WINDOW_SIZE,
+  anchorX: PET_COMPACT_WINDOW_SIZE / 2,
+  anchorY: PET_COMPACT_WINDOW_SIZE / 2,
+};
 
 const DEFAULT_WORK_PROCESS_TOKENS = [
   "codex",
@@ -539,6 +548,10 @@ function buildPetConfigPayload() {
     clickThroughEnabled: petClickThroughEnabled,
     visible: petVisible,
     state: petLastState,
+    compactSize: PET_COMPACT_WINDOW_SIZE,
+    expandedWidth: PET_EXPANDED_WINDOW_WIDTH,
+    expandedMaxHeight: PET_EXPANDED_WINDOW_MAX_HEIGHT,
+    layout: { ...petLayoutState },
   };
 }
 
@@ -1946,70 +1959,118 @@ function isFinitePoint(point) {
   return !!point && Number.isFinite(point.x) && Number.isFinite(point.y);
 }
 
+function clampNumber(value, min, max, fallback) {
+  const raw = Number(value);
+  const safe = Number.isFinite(raw) ? raw : Number(fallback);
+  const lower = Number(min);
+  const upper = Number(max);
+  return Math.max(lower, Math.min(upper, safe));
+}
+
+function normalizePetLayoutPayload(payload, currentBounds) {
+  const bounds = currentBounds || { width: PET_COMPACT_WINDOW_SIZE, height: PET_COMPACT_WINDOW_SIZE };
+  const mode = String(payload?.mode || "compact").toLowerCase() === "expanded" ? "expanded" : "compact";
+  const width = mode === "expanded"
+    ? Math.round(clampNumber(payload?.width, PET_EXPANDED_WINDOW_WIDTH, PET_EXPANDED_WINDOW_WIDTH, PET_EXPANDED_WINDOW_WIDTH))
+    : PET_COMPACT_WINDOW_SIZE;
+  const height = mode === "expanded"
+    ? Math.round(clampNumber(payload?.height, PET_COMPACT_WINDOW_SIZE, PET_EXPANDED_WINDOW_MAX_HEIGHT, 300))
+    : PET_COMPACT_WINDOW_SIZE;
+  const currentAnchorX = clampNumber(
+    payload?.currentAnchorX,
+    0,
+    Number(bounds.width || PET_COMPACT_WINDOW_SIZE),
+    Number(bounds.width || PET_COMPACT_WINDOW_SIZE) / 2
+  );
+  const currentAnchorY = clampNumber(
+    payload?.currentAnchorY,
+    0,
+    Number(bounds.height || PET_COMPACT_WINDOW_SIZE),
+    Number(bounds.height || PET_COMPACT_WINDOW_SIZE) / 2
+  );
+  const anchorX = clampNumber(payload?.anchorX, 0, width, width / 2);
+  const anchorY = clampNumber(payload?.anchorY, 0, height, mode === "expanded" ? Math.min(height - 16, height * 0.62) : height / 2);
+  return {
+    mode,
+    width,
+    height,
+    anchorX,
+    anchorY,
+    currentAnchorX,
+    currentAnchorY,
+  };
+}
+
+function clampBoundsToArea(x, y, width, height, area) {
+  const minX = Number(area?.x || 0);
+  const minY = Number(area?.y || 0);
+  const maxX = minX + Number(area?.width || width) - Number(width || 0);
+  const maxY = minY + Number(area?.height || height) - Number(height || 0);
+  return {
+    x: Math.max(minX, Math.min(maxX, Math.round(x))),
+    y: Math.max(minY, Math.min(maxY, Math.round(y))),
+  };
+}
+
+function applyPetWindowLayout(payload) {
+  if (!petWindow || petWindow.isDestroyed()) return null;
+  const currentBounds = petWindow.getBounds();
+  const normalized = normalizePetLayoutPayload(payload, currentBounds);
+  const currentAnchorX = normalized.currentAnchorX;
+  const currentAnchorY = normalized.currentAnchorY;
+  const screenAnchorX = Number(currentBounds.x || 0) + currentAnchorX;
+  const screenAnchorY = Number(currentBounds.y || 0) + currentAnchorY;
+
+  let nextX = screenAnchorX - normalized.anchorX;
+  let nextY = screenAnchorY - normalized.anchorY;
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(screenAnchorX),
+    y: Math.round(screenAnchorY),
+  });
+  const area = display?.workArea || display?.bounds || screen.getPrimaryDisplay()?.workArea || { x: 0, y: 0, width: 1280, height: 720 };
+  const clamped = clampBoundsToArea(nextX, nextY, normalized.width, normalized.height, area);
+  nextX = clamped.x;
+  nextY = clamped.y;
+
+  try {
+    petWindow.setBounds({
+      x: Math.round(nextX),
+      y: Math.round(nextY),
+      width: Math.round(normalized.width),
+      height: Math.round(normalized.height),
+    }, false);
+  } catch {
+    return null;
+  }
+
+  petLayoutState = {
+    mode: normalized.mode,
+    width: normalized.width,
+    height: normalized.height,
+    anchorX: normalized.anchorX,
+    anchorY: normalized.anchorY,
+  };
+  return petWindow.getBounds();
+}
+
 function ensurePetWindowCompactBounds() {
   if (!petWindow || petWindow.isDestroyed()) return null;
-  let bounds = petWindow.getBounds();
-  const target = PET_WINDOW_SIZE;
+  const bounds = petWindow.getBounds();
+  const target = PET_COMPACT_WINDOW_SIZE;
   const invalidSize = Math.abs(Number(bounds.width || 0) - target) > 2
-    || Math.abs(Number(bounds.height || 0) - target) > 2;
+    || Math.abs(Number(bounds.height || 0) - target) > 2
+    || petLayoutState.mode !== "compact";
   if (!invalidSize) return bounds;
-  const before = {
-    x: Number(bounds.x || 0),
-    y: Number(bounds.y || 0),
-    width: Number(bounds.width || 0),
-    height: Number(bounds.height || 0),
-  };
-  try {
-    if (typeof petWindow.isMaximized === "function" && petWindow.isMaximized()) {
-      petWindow.unmaximize();
-    }
-  } catch {
-    // ignore unmaximize failures
-  }
-  try {
-    if (typeof petWindow.isFullScreen === "function" && petWindow.isFullScreen()) {
-      petWindow.setFullScreen(false);
-    }
-  } catch {
-    // ignore fullscreen reset failures
-  }
-  try {
-    petWindow.restore();
-  } catch {
-    // ignore restore failures
-  }
-  try {
-    petWindow.setResizable(true);
-    petWindow.setMinimumSize(target, target);
-    petWindow.setMaximumSize(target, target);
-    petWindow.setBounds({
-      x: Number(bounds.x || 0),
-      y: Number(bounds.y || 0),
-      width: target,
-      height: target,
-    }, false);
-    petWindow.setResizable(false);
-  } catch {
-    // ignore set bounds failures
-  }
-  bounds = petWindow.getBounds();
-  if (Math.abs(Number(bounds.width || 0) - target) > 2 || Math.abs(Number(bounds.height || 0) - target) > 2) {
-    const cursor = getCursorDipPoint();
-    const fallbackX = Math.round(Number(cursor.x || 0) - target / 2);
-    const fallbackY = Math.round(Number(cursor.y || 0) - target / 2);
-    try {
-      petWindow.setBounds({
-        x: fallbackX,
-        y: fallbackY,
-        width: target,
-        height: target,
-      }, false);
-    } catch {
-      // ignore fallback set bounds failures
-    }
-    bounds = petWindow.getBounds();
-  }
-  return bounds;
+  const compact = applyPetWindowLayout({
+    mode: "compact",
+    width: target,
+    height: target,
+    anchorX: target / 2,
+    anchorY: target / 2,
+    currentAnchorX: clampNumber(petLayoutState.anchorX, 0, Number(bounds.width || target), Number(bounds.width || target) / 2),
+    currentAnchorY: clampNumber(petLayoutState.anchorY, 0, Number(bounds.height || target), Number(bounds.height || target) / 2),
+  });
+  return compact || petWindow.getBounds();
 }
 
 function chooseDragAnchor(payload, bounds) {
@@ -2023,8 +2084,8 @@ function chooseDragAnchor(payload, bounds) {
   const targetY = Number.isFinite(localY)
     ? Math.max(0, Math.min(Number(bounds.height || 0), Math.round(localY)))
     : Math.round(Number(bounds.height || 0) / 2);
-  const width = Number(bounds.width || PET_WINDOW_SIZE);
-  const height = Number(bounds.height || PET_WINDOW_SIZE);
+  const width = Number(bounds.width || PET_COMPACT_WINDOW_SIZE);
+  const height = Number(bounds.height || PET_COMPACT_WINDOW_SIZE);
   const rawAnchorX = isFinitePoint(cursorPoint) ? Number(cursorPoint.x || 0) - Number(bounds.x || 0) : NaN;
   const rawAnchorY = isFinitePoint(cursorPoint) ? Number(cursorPoint.y || 0) - Number(bounds.y || 0) : NaN;
   const localInRangeX = Number.isFinite(localX) && localX >= 0 && localX <= width;
@@ -2118,8 +2179,8 @@ function clampPetWindowPosition(nextX, nextY, pointer) {
   const bounds = petWindow.getBounds();
   const minX = Number(area.x || 0);
   const minY = Number(area.y || 0);
-  const maxX = minX + Number(area.width || 0) - Number(bounds.width || PET_WINDOW_SIZE);
-  const maxY = minY + Number(area.height || 0) - Number(bounds.height || PET_WINDOW_SIZE);
+  const maxX = minX + Number(area.width || 0) - Number(bounds.width || PET_COMPACT_WINDOW_SIZE);
+  const maxY = minY + Number(area.height || 0) - Number(bounds.height || PET_COMPACT_WINDOW_SIZE);
   return {
     x: Math.max(minX, Math.min(maxX, Math.round(nextX))),
     y: Math.max(minY, Math.min(maxY, Math.round(nextY))),
@@ -2202,6 +2263,13 @@ function setupPetIpcHandlers() {
     stopPetDragLoop();
   });
 
+  ipcMain.on("pet:set-layout", (event, payload) => {
+    if (!fromPet(event) || !petWindow || petWindow.isDestroyed()) return;
+    applyPetWindowLayout(payload || {});
+    if (!petWindow.isVisible()) return;
+    syncWindowZOrder();
+  });
+
   ipcMain.handle("pet:get-config", (event) => {
     if (!fromPet(event)) return {};
     return buildPetConfigPayload();
@@ -2247,7 +2315,7 @@ function createPetWindow() {
   if (!Object.keys(petStateAssets).length) {
     petStateAssets = buildPetStateAssets();
   }
-  const petSize = PET_WINDOW_SIZE;
+  const petSize = PET_COMPACT_WINDOW_SIZE;
   const display = screen.getPrimaryDisplay();
   const area = display?.workArea || { x: 0, y: 0, width: 1280, height: 720 };
   const x = area.x + area.width - petSize - 18;
@@ -2256,10 +2324,10 @@ function createPetWindow() {
   petWindow = new BrowserWindow({
     width: petSize,
     height: petSize,
-    minWidth: petSize,
-    minHeight: petSize,
-    maxWidth: petSize,
-    maxHeight: petSize,
+    minWidth: PET_COMPACT_WINDOW_SIZE,
+    minHeight: PET_COMPACT_WINDOW_SIZE,
+    maxWidth: PET_EXPANDED_WINDOW_WIDTH,
+    maxHeight: PET_EXPANDED_WINDOW_MAX_HEIGHT,
     x,
     y,
     frame: false,
@@ -2288,6 +2356,13 @@ function createPetWindow() {
   petWindow.setSkipTaskbar(true);
   petWindow.setMenuBarVisibility(false);
   petPointerActive = false;
+  petLayoutState = {
+    mode: "compact",
+    width: petSize,
+    height: petSize,
+    anchorX: petSize / 2,
+    anchorY: petSize / 2,
+  };
   applyPetMouseMode();
 
   petWindow.loadFile(path.join(__dirname, "pet.html"), {
