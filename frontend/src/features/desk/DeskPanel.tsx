@@ -1,18 +1,24 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { RefreshCw, Search, X } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinTrackingChangeItem, AelinTrackingItem, DeskFeedItem } from '@/shared/api/types'
-import { relativeTime } from '@/shared/utils/format'
-import { cn } from '@/shared/utils/cn'
-import { X, ExternalLink, RefreshCw, Search } from 'lucide-react'
-import toast from 'react-hot-toast'
+import { SOURCE_OPTIONS } from './constants'
+import { ChangeStreamSection } from './components/ChangeStreamSection'
+import { FeedItemsSection } from './components/FeedItemsSection'
+import { FilterChip } from './components/FilterChip'
+import { TrackingTargetsSection } from './components/TrackingTargetsSection'
+import type { DeskPanelContext, TrackingChangeRow } from './types'
+import {
+  extractChangePreview,
+  normalizeSource,
+  normalizeUrl,
+  sourceLabel,
+  toUnixTs,
+} from './utils'
 
-export type DeskPanelContext = {
-  targetId?: number | null
-  source?: string | null
-  keyword?: string | null
-  title?: string | null
-}
+export type { DeskPanelContext } from './types'
 
 type Props = {
   onClose?: () => void
@@ -21,103 +27,11 @@ type Props = {
   onSelectContext?: (context: DeskPanelContext) => void
 }
 
-type TrackingChangeRow = AelinTrackingChangeItem & {
-  target_name: string
-  target_source: string
-}
-
-type ChangePreview = {
-  title: string
-  url: string
-  imageUrl: string
-}
-
-const SOURCE_OPTIONS: Array<{ key: string; label: string }> = [
-  { key: '', label: '全部来源' },
-  { key: 'x', label: 'X' },
-  { key: 'weibo', label: '微博' },
-  { key: 'xiaohongshu', label: '小红书' },
-  { key: 'douyin', label: '抖音' },
-  { key: 'bilibili', label: 'Bilibili' },
-  { key: 'rss', label: 'RSS' },
-  { key: 'web', label: 'Web' },
-]
-
-const DESK_SOURCE_SET = new Set(SOURCE_OPTIONS.map((item) => item.key).filter(Boolean))
-
-function normalizeSource(raw: string | null | undefined): string {
-  const value = String(raw || '').trim().toLowerCase()
-  if (!value) return ''
-  if (DESK_SOURCE_SET.has(value)) return value
-  if (value === 'xhs') return 'xiaohongshu'
-  if (value === 'news' || value === 'website') return 'web'
-  return ''
-}
-
-function normalizeUrl(raw: string | null | undefined): string {
-  const text = String(raw || '').trim()
-  if (!text) return ''
-  try {
-    return new URL(text).toString()
-  } catch {
-    return ''
-  }
-}
-
-function firstHttpUrl(text: string | null | undefined): string {
-  const value = String(text || '').trim()
-  if (!value) return ''
-  const match = value.match(/https?:\/\/[^\s<>"')\]]+/i)
-  return normalizeUrl(match?.[0] || '')
-}
-
-function extractChangePreview(change: TrackingChangeRow, feedItems: DeskFeedItem[]): ChangePreview {
-  const diff = (change.diff_json || {}) as Record<string, any>
-  const added = (diff.added || {}) as Record<string, any>
-  const updated = (diff.updated || {}) as Record<string, any>
-
-  const byDiff = [
-    normalizeUrl(added.url),
-    normalizeUrl(updated.url),
-    normalizeUrl(diff.url),
-    normalizeUrl(diff.link),
-    firstHttpUrl(change.summary),
-    firstHttpUrl(change.title),
-  ].find(Boolean) || ''
-
-  const diffTitle =
-    String(added.title || '').trim()
-    || String(updated.title || '').trim()
-    || String(change.summary || '').trim()
-    || String(change.title || '').trim()
-    || '内容更新'
-
-  let imageUrl = ''
-  if (byDiff) {
-    const exact = feedItems.find((item) => normalizeUrl(item.external_url) === byDiff)
-    if (exact?.image_url) imageUrl = exact.image_url
-  }
-  if (!imageUrl) {
-    const hint = diffTitle.toLowerCase().slice(0, 18)
-    if (hint) {
-      const fuzzy = feedItems.find((item) => {
-        const title = String(item.title || '').toLowerCase()
-        return title.includes(hint)
-      })
-      if (fuzzy?.image_url) imageUrl = fuzzy.image_url
-    }
-  }
-
-  return {
-    title: diffTitle,
-    url: byDiff,
-    imageUrl: imageUrl || '',
-  }
-}
+type TrackingStatus = 'all' | 'active' | 'paused' | 'error'
 
 export function DeskPanel({ onClose, context, onClearContext, onSelectContext }: Props) {
   const qc = useQueryClient()
-  const [trackingStatus, setTrackingStatus] = useState<'all' | 'active' | 'paused' | 'error'>('all')
+  const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>('all')
   const [trackingKeyword, setTrackingKeyword] = useState('')
   const [activeTag, setActiveTag] = useState('all')
   const [items, setItems] = useState<DeskFeedItem[]>([])
@@ -127,7 +41,7 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
   const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
-  const [linkedMode, setLinkedMode] = useState(false)
+  const prevHasContextRef = useRef(false)
 
   const { data: tags, isLoading: tagsLoading, isFetching: tagsFetching } = useQuery({
     queryKey: ['desk-tags'],
@@ -190,8 +104,8 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
     setItems((prev) => {
       if (reset) return rows
       const map = new Map<number, DeskFeedItem>()
-      for (const x of prev) map.set(x.message_id, x)
-      for (const x of rows) map.set(x.message_id, x)
+      for (const row of prev) map.set(row.message_id, row)
+      for (const row of rows) map.set(row.message_id, row)
       return Array.from(map.values())
     })
     setCursor({ at: resp.next_before_received_at, id: resp.next_before_id })
@@ -199,31 +113,28 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
   }
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearchQuery(searchInput.trim())
-    }, 250)
+    const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 250)
     return () => clearTimeout(timer)
   }, [searchInput])
 
   useEffect(() => {
     if (!hasContext) {
-      if (linkedMode) {
+      if (prevHasContextRef.current) {
         setActiveTag('all')
         setSourceFilter('')
         setSearchInput('')
         setSearchQuery('')
-        setLinkedMode(false)
       }
+      prevHasContextRef.current = false
       return
     }
+
     setActiveTag('all')
-    if (contextSource) setSourceFilter(contextSource)
-    if (contextKeyword) {
-      setSearchInput(contextKeyword)
-      setSearchQuery(contextKeyword)
-    }
-    setLinkedMode(true)
-  }, [hasContext, contextKeyword, contextSource, linkedMode])
+    setSourceFilter(contextSource || '')
+    setSearchInput(contextKeyword || '')
+    setSearchQuery(contextKeyword || '')
+    prevHasContextRef.current = true
+  }, [contextKeyword, contextSource, hasContext])
 
   useEffect(() => {
     setItems([])
@@ -241,17 +152,17 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
     () => linkedChangesData?.items ?? [],
     [linkedChangesData?.items]
   )
+
   const filteredTrackingItems = useMemo<AelinTrackingItem[]>(() => {
     const keyword = trackingKeyword.trim().toLowerCase()
     return trackingItems.filter((item) => {
-      const normalizedSource = normalizeSource(item.source || '')
-      if (sourceFilter && normalizedSource !== sourceFilter) return false
+      const normalized = normalizeSource(item.source || '')
+      if (sourceFilter && normalized !== sourceFilter) return false
       if (!keyword) return true
-      return `${item.target || ''} ${item.description || ''} ${item.source || ''}`
-        .toLowerCase()
-        .includes(keyword)
+      return `${item.target || ''} ${item.description || ''} ${item.source || ''}`.toLowerCase().includes(keyword)
     })
   }, [trackingItems, trackingKeyword, sourceFilter])
+
   const recentTargetIds = useMemo<number[]>(
     () => filteredTrackingItems
       .map((item) => Number(item.target_id || 0))
@@ -289,14 +200,9 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
         })
       )
 
-      const toTs = (value: string | undefined) => {
-        const parsed = Date.parse(String(value || ''))
-        return Number.isFinite(parsed) ? parsed : 0
-      }
-
       return rows
         .flat()
-        .sort((a, b) => toTs(b.created_at) - toTs(a.created_at))
+        .sort((a, b) => toUnixTs(b.created_at) - toUnixTs(a.created_at))
         .slice(0, 24)
     },
     staleTime: 15_000,
@@ -305,17 +211,19 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
   const firstRowTags = useMemo(() => {
     const seen = new Set<string>(['all'])
     const out: string[] = ['all']
+
     for (const row of followedTags) {
-      const t = String(row.tag || '').trim()
-      if (!t || seen.has(t)) continue
-      seen.add(t)
-      out.push(t)
+      const tag = String(row.tag || '').trim()
+      if (!tag || seen.has(tag)) continue
+      seen.add(tag)
+      out.push(tag)
     }
+
     for (const row of discoverTags) {
-      const t = String(row.tag || '').trim()
-      if (!t || seen.has(t)) continue
-      seen.add(t)
-      out.push(t)
+      const tag = String(row.tag || '').trim()
+      if (!tag || seen.has(tag)) continue
+      seen.add(tag)
+      out.push(tag)
     }
     return out.slice(0, 12)
   }, [discoverTags, followedTags])
@@ -323,7 +231,7 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
   const toggleFollow = async (tag: string) => {
     const normalized = String(tag || '').trim()
     if (!normalized) return
-    const followed = followedTags.some((x) => x.tag === normalized)
+    const followed = followedTags.some((item) => item.tag === normalized)
     if (followed) await aelinApi.deskUnfollowTag(normalized)
     else await aelinApi.deskFollowTag(normalized)
     await qc.invalidateQueries({ queryKey: ['desk-tags'] })
@@ -360,6 +268,7 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
     }
     return recentTrackingChanges ?? []
   }, [contextTargetId, contextSource, contextTitle, linkedChanges, recentTrackingChanges, trackingItems])
+
   const changeStreamLoading = contextTargetId > 0 ? linkedChangesFetching : recentTrackingChangesFetching
   const changePreviewRows = useMemo(
     () => changeStreamRows.map((row) => ({ row, preview: extractChangePreview(row, items) })),
@@ -372,21 +281,26 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
       ? '暂未命中与当前条件相关的内容，可尝试调整关键词或来源。'
       : '暂无可展示内容。请先绑定内容平台并同步。'
 
-  const trackingStatusLabel = (value: string) => {
-    if (value === 'active') return '活跃'
-    if (value === 'paused') return '暂停'
-    if (value === 'error') return '异常'
-    return value || 'unknown'
-  }
-  const activeSourceLabel = sourceFilter
-    ? (SOURCE_OPTIONS.find((item) => item.key === sourceFilter)?.label || sourceFilter)
-    : '全部来源'
+  const activeSourceLabel = sourceLabel(sourceFilter)
 
   const openExternal = (rawUrl: string | null | undefined) => {
     const url = normalizeUrl(rawUrl)
     if (!url) return
     window.open(url, '_blank', 'noopener,noreferrer')
   }
+
+  const refreshDesk = () => {
+    setItems([])
+    setCursor({})
+    setHasMore(true)
+    void loadFeed(true)
+    if (contextTargetId > 0) void refetchLinkedChanges()
+    void qc.invalidateQueries({ queryKey: ['desk-tags'] })
+    void qc.invalidateQueries({ queryKey: ['desk-tracking-list'] })
+    void qc.invalidateQueries({ queryKey: ['desk-recent-tracking-changes'] })
+  }
+
+  const runTrackingPendingTargetId = runTrackingNow.isPending ? Number(runTrackingNow.variables || 0) : null
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[var(--color-panel)]">
@@ -396,20 +310,7 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
           <p className="text-[11px] text-[var(--color-text-muted)]">跨平台内容流 · 时间倒序</p>
         </div>
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => {
-              setItems([])
-              setCursor({})
-              setHasMore(true)
-              void loadFeed(true)
-              if (contextTargetId > 0) void refetchLinkedChanges()
-              void qc.invalidateQueries({ queryKey: ['desk-tags'] })
-              void qc.invalidateQueries({ queryKey: ['desk-tracking-list'] })
-              void qc.invalidateQueries({ queryKey: ['desk-recent-tracking-changes'] })
-            }}
-            className="aelin-btn h-8 px-2.5 text-[11px]"
-            title="刷新"
-          >
+          <button onClick={refreshDesk} className="aelin-btn h-8 px-2.5 text-[11px]" title="刷新">
             <RefreshCw size={13} />
           </button>
           {onClose ? (
@@ -428,7 +329,7 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
               <p className="truncate">
                 {contextTargetId > 0 ? `目标 #${contextTargetId}` : ''}
                 {contextTargetId > 0 && (contextSource || contextKeyword) ? ' · ' : ''}
-                {contextSource ? `来源: ${SOURCE_OPTIONS.find((x) => x.key === contextSource)?.label || contextSource}` : ''}
+                {contextSource ? `来源: ${sourceLabel(contextSource)}` : ''}
                 {contextSource && contextKeyword ? ' · ' : ''}
                 {contextKeyword ? `关键词: ${contextKeyword}` : ''}
               </p>
@@ -445,7 +346,7 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
           <Search size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
           <input
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
+            onChange={(event) => setSearchInput(event.target.value)}
             placeholder="搜索标题、作者或摘要"
             className="aelin-input h-8 pl-8 text-xs"
             style={{ paddingLeft: '2rem' }}
@@ -454,45 +355,31 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
 
         <div className="mb-2 flex flex-wrap gap-1.5">
           {SOURCE_OPTIONS.map((source) => (
-            <button
+            <FilterChip
               key={source.key || 'all-source'}
+              selected={sourceFilter === source.key}
+              label={source.label}
               onClick={() => setSourceFilter(source.key)}
-              className={`rounded-full border px-2.5 py-1 text-[11px] ${
-                sourceFilter === source.key
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-bg)]'
-                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
-              }`}
-            >
-              {source.label}
-            </button>
+            />
           ))}
         </div>
 
         <div className="mb-1.5 flex flex-wrap gap-1.5">
           {firstRowTags.map((tag) => (
-            <button
+            <FilterChip
               key={tag}
+              selected={activeTag === tag}
+              label={tag === 'all' ? '全部标签' : tag}
               onClick={() => setActiveTag(tag)}
-              className={`rounded-full border px-2.5 py-1 text-[11px] ${
-                activeTag === tag
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-bg)]'
-                  : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
-              }`}
-            >
-              {tag === 'all' ? '全部标签' : tag}
-            </button>
+            />
           ))}
         </div>
 
         <div className="flex flex-wrap gap-1.5">
           {(recommendedTags || []).slice(0, 6).map((row) => {
-            const followed = followedTags.some((x) => x.tag === row.tag)
+            const followed = followedTags.some((item) => item.tag === row.tag)
             return (
-              <button
-                key={`rec-${row.tag}`}
-                onClick={() => void toggleFollow(row.tag)}
-                className="aelin-btn h-7 px-2 text-[11px]"
-              >
+              <button key={`rec-${row.tag}`} onClick={() => void toggleFollow(row.tag)} className="aelin-btn h-7 px-2 text-[11px]">
                 {followed ? `已关注 ${row.tag}` : `+关注 ${row.tag}`}
               </button>
             )
@@ -504,288 +391,46 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
-        <section className="mb-3 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] p-2.5">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                {'全部追踪目标'}
-                {` (${filteredTrackingItems.length}/${trackingListData?.total ?? trackingItems.length})`}
-              </p>
-              <p className="text-[11px] text-[var(--color-text-muted)]">{`和 Tracking 页面同步 · ${activeSourceLabel}`}</p>
-            </div>
-            <a href="/tracking" className="aelin-btn h-7 px-2 text-[11px]">
-              {'打开 Tracking'}
-            </a>
-          </div>
+        <TrackingTargetsSection
+          activeSourceLabel={activeSourceLabel}
+          trackingItemsTotal={trackingListData?.total ?? trackingItems.length}
+          trackingStatus={trackingStatus}
+          trackingKeyword={trackingKeyword}
+          trackingListFetching={trackingListFetching}
+          filteredTrackingItems={filteredTrackingItems}
+          runTrackingPendingTargetId={runTrackingPendingTargetId}
+          onTrackingStatusChange={setTrackingStatus}
+          onTrackingKeywordChange={setTrackingKeyword}
+          onApplyTrackingContext={applyTrackingContext}
+          onRunTrackingNow={(targetId) => runTrackingNow.mutate(targetId)}
+        />
 
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {(['all', 'active', 'paused', 'error'] as const).map((status) => (
-              <button
-                key={`tracking-${status}`}
-                onClick={() => setTrackingStatus(status)}
-                className={`rounded-full border px-2.5 py-1 text-[11px] ${
-                  trackingStatus === status
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-bg)]'
-                    : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
-                }`}
-              >
-                {status === 'all' ? '全部' : trackingStatusLabel(status)}
-              </button>
-            ))}
-          </div>
+        <ChangeStreamSection
+          contextTargetId={contextTargetId}
+          changeStreamLoading={changeStreamLoading}
+          changePreviewRows={changePreviewRows}
+          onOpenExternal={openExternal}
+          onLinkTarget={(targetId) => {
+            const target = trackingItems.find((item) => Number(item.target_id || 0) === Number(targetId || 0))
+            if (target) applyTrackingContext(target)
+          }}
+        />
 
-          <div className="relative mb-2">
-            <Search size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-            <input
-              value={trackingKeyword}
-              onChange={(e) => setTrackingKeyword(e.target.value)}
-              placeholder={'搜索追踪目标'}
-              className="aelin-input h-8 pl-8 text-xs"
-              style={{ paddingLeft: '2rem' }}
-            />
-          </div>
-
-          <div className="max-h-[300px] space-y-2 overflow-y-auto pr-1">
-            {filteredTrackingItems.map((item) => (
-              <article key={`tracking-item-${item.target_id ?? item.target}`} className="aelin-card p-2">
-                <div className="mb-1 flex items-start justify-between gap-2">
-                  <p className="line-clamp-1 text-[12px] font-medium">{item.target}</p>
-                  <span
-                    className={cn(
-                      'rounded-full px-2 py-0.5 text-[10px]',
-                      item.status === 'active'
-                        ? 'bg-[color-mix(in_srgb,var(--color-green)_15%,transparent)] text-[var(--color-green)]'
-                        : item.status === 'paused'
-                          ? 'bg-[var(--color-accent-soft)] text-[var(--color-text-muted)]'
-                          : 'bg-[color-mix(in_srgb,var(--color-danger)_15%,transparent)] text-[var(--color-danger)]'
-                    )}
-                  >
-                    {trackingStatusLabel(item.status)}
-                  </span>
-                </div>
-                <p className="line-clamp-1 text-[11px] text-[var(--color-text-muted)]">
-                  {`${item.source || 'web'} · 每 ${item.interval_seconds}s`}
-                  {item.last_checked_at ? ` · ${relativeTime(item.last_checked_at)}` : ''}
-                </p>
-                {item.unread_changes > 0 ? (
-                  <p className="mt-1 text-[11px] font-medium text-[var(--color-orange)]">
-                    {`未读变化 ${item.unread_changes} 条`}
-                  </p>
-                ) : null}
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  <button onClick={() => applyTrackingContext(item)} className="aelin-btn h-7 px-2 text-[11px]">
-                    {'联动内容'}
-                  </button>
-                  {item.target_id ? (
-                    <button
-                      onClick={() => runTrackingNow.mutate(item.target_id as number)}
-                      className="aelin-btn h-7 px-2 text-[11px]"
-                      disabled={runTrackingNow.isPending && Number(runTrackingNow.variables || 0) === Number(item.target_id)}
-                    >
-                      {runTrackingNow.isPending && Number(runTrackingNow.variables || 0) === Number(item.target_id)
-                        ? '运行中…'
-                        : '运行'}
-                    </button>
-                  ) : null}
-                  {item.target_id ? (
-                    <a href={`/tracking/${item.target_id}`} className="aelin-btn h-7 px-2 text-[11px]">
-                      {'详情'}
-                    </a>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-            {filteredTrackingItems.length === 0 ? (
-              <p className="py-4 text-center text-[11px] text-[var(--color-text-muted)]">
-                {trackingListFetching ? '追踪加载中…' : '暂无追踪目标'}
-              </p>
-            ) : null}
-          </div>
-        </section>
-
-        <section className="mb-3 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] p-2.5">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                {contextTargetId > 0 ? '追踪变更流 (当前联动)' : '追踪变更流 (全部)'}
-              </p>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                {contextTargetId > 0 ? '只显示当前目标变更' : '聚合所有追踪目标的最新变更'}
-              </p>
-            </div>
-          </div>
-          <div className="max-h-[250px] space-y-2 overflow-y-auto pr-1">
-            {changePreviewRows.map(({ row: change, preview }) => (
-              <article
-                key={`tracking-change-${change.id}`}
-                className={cn(
-                  'aelin-card p-2',
-                  preview.url ? 'cursor-pointer hover:border-[var(--color-border-strong)]' : ''
-                )}
-                onClick={() => {
-                  if (preview.url) openExternal(preview.url)
-                }}
-                onKeyDown={(event) => {
-                  if (!preview.url) return
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    openExternal(preview.url)
-                  }
-                }}
-                role={preview.url ? 'button' : undefined}
-                tabIndex={preview.url ? 0 : -1}
-              >
-                <div className="mb-1 flex items-start justify-between gap-2">
-                  <p className="line-clamp-1 text-[12px] font-medium">{change.title || '变更'}</p>
-                  <span className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[var(--color-text-muted)]">
-                    {change.severity || 'info'}
-                  </span>
-                </div>
-
-                {preview.imageUrl ? (
-                  <div className="mb-1.5 flex gap-2">
-                    <div className="h-16 w-24 shrink-0 overflow-hidden rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                      <img src={preview.imageUrl} alt={preview.title} className="h-full w-full object-cover" loading="lazy" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="line-clamp-2 text-[11px] font-medium text-[var(--color-text)]">
-                        {preview.title}
-                      </p>
-                      <p className="mt-0.5 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">
-                        {change.summary || '本次变更暂无摘要。'}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mb-1.5">
-                    <p className="line-clamp-2 text-[11px] font-medium text-[var(--color-text)]">
-                      {preview.title}
-                    </p>
-                    <p className="mt-0.5 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">
-                      {change.summary || '本次变更暂无摘要。'}
-                    </p>
-                  </div>
-                )}
-
-                <p className="line-clamp-1 text-[11px] text-[var(--color-text-muted)]">
-                  {change.target_name}
-                  {change.target_source ? ` · ${change.target_source}` : ''}
-                  {change.created_at ? ` · ${relativeTime(change.created_at) || change.created_at}` : ''}
-                </p>
-
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {preview.url ? (
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        openExternal(preview.url)
-                      }}
-                      className="aelin-btn h-7 px-2 text-[11px]"
-                    >
-                      {'查看来源'}
-                    </button>
-                  ) : null}
-                  {contextTargetId <= 0 && change.target_id ? (
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        const target = trackingItems.find((item) => Number(item.target_id || 0) === Number(change.target_id || 0))
-                        if (target) applyTrackingContext(target)
-                      }}
-                      className="aelin-btn h-7 px-2 text-[11px]"
-                    >
-                      {'联动到该目标'}
-                    </button>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-            {changeStreamRows.length === 0 ? (
-              <p className="py-4 text-center text-[11px] text-[var(--color-text-muted)]">
-                {changeStreamLoading ? '变更加载中…' : '暂无变更'}
-              </p>
-            ) : null}
-          </div>
-        </section>
-
-        <div className="space-y-2.5">
-          {items.map((item) => (
-            <article key={item.message_id} className="aelin-card p-2.5">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-[12px] font-semibold">{item.sender || item.source_label}</p>
-                  <p className="truncate text-[11px] text-[var(--color-text-muted)]">
-                    {item.source_label} · {relativeTime(item.received_at) || item.received_at}
-                  </p>
-                </div>
-                {item.external_url ? (
-                  <a
-                    href={item.external_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="aelin-btn h-7 px-2 text-[11px]"
-                    title="查看原文"
-                  >
-                    <ExternalLink size={12} />
-                  </a>
-                ) : null}
-              </div>
-
-              <h3 className="mb-1.5 line-clamp-2 text-[13px] font-semibold">{item.title}</h3>
-              {item.image_url ? (
-                <img
-                  src={item.image_url}
-                  alt={item.title}
-                  className="mb-2 max-h-[220px] w-full rounded-[10px] border border-[var(--color-border)] object-cover"
-                  loading="lazy"
-                />
-              ) : null}
-              {!!item.preview && (
-                <p className="line-clamp-3 text-[12px] text-[var(--color-text-muted)]">{item.preview}</p>
-              )}
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {(item.tags || []).slice(0, 5).map((tag) => (
-                  <span
-                    key={`${item.message_id}-${tag}`}
-                    className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                      tag === item.primary_tag
-                        ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-bg)]'
-                        : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
-                    }`}
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </article>
-          ))}
-
-        </div>
-
-        {items.length === 0 && (
-          <div className="py-12 text-center text-[12px] text-[var(--color-text-muted)]">{emptyHint}</div>
-        )}
-
-        {hasMore && items.length > 0 && (
-          <div className="mt-3 flex justify-center">
-            <button
-              onClick={async () => {
-                setLoadingMore(true)
-                try {
-                  await loadFeed(false)
-                } finally {
-                  setLoadingMore(false)
-                }
-              }}
-              disabled={loadingMore}
-              className="aelin-btn h-8 px-3 text-[11px]"
-            >
-              {loadingMore ? '加载中…' : '加载更多'}
-            </button>
-          </div>
-        )}
+        <FeedItemsSection
+          items={items}
+          emptyHint={emptyHint}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onLoadMore={async () => {
+            setLoadingMore(true)
+            try {
+              await loadFeed(false)
+            } finally {
+              setLoadingMore(false)
+            }
+          }}
+        />
       </div>
     </section>
   )
 }
-
