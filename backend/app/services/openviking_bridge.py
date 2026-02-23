@@ -185,6 +185,8 @@ class TrackingFileMemoryBridge:
             "title",
             "insight",
             "summary",
+            "今日对话",
+            "小结",
             "提炼信息（日记）",
             "来源索引",
             "最终回答归档",
@@ -237,21 +239,16 @@ class TrackingFileMemoryBridge:
         created_at_iso: str,
         topic_parts: list[str],
     ) -> str:
+        del title
+        del created_at_iso
+        del topic_parts
         human_body = self._humanize_diary_markdown(markdown)
-        topic_text = " / ".join(topic_parts[:3]).strip()
-        header_lines = [f"# {title}", ""]
-        if created_at_iso:
-            header_lines.append(created_at_iso)
-            header_lines.append("")
-        if topic_text:
-            header_lines.append(f"今天我继续关注了「{topic_text}」。")
-            header_lines.append("")
         if human_body:
-            header_lines.append(human_body)
-        else:
-            header_lines.append("今天有记录，但暂时没有沉淀出完整文字。")
-        header_lines.extend(["", "后续如果有新的变化，我会继续补写。", ""])
-        return "\n".join(header_lines)
+            return human_body.strip() + "\n"
+        fallback = str(markdown or "").strip()
+        if fallback:
+            return fallback[:5000] + "\n"
+        return "今天有记录。\n"
 
     def sync_target_profile(self, target: Any) -> None:
         if not self.enabled:

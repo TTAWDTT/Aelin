@@ -163,6 +163,8 @@ def test_append_insight_writes_human_diary_content_and_sidecar(monkeypatch):
         assert "今天我们聊了模型迭代节奏" in diary_text
         assert "- canonical_id:" not in diary_text
         assert "- source_indices_json:" not in diary_text
+        assert "后续如果有新的变化，我会继续补写。" not in diary_text
+        assert "## 今日对话" not in diary_text
 
         sidecar_path = diary_path.with_suffix(".meta.json")
         assert sidecar_path.exists()

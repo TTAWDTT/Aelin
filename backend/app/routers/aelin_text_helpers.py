@@ -301,51 +301,49 @@ def _build_source_indices_from_citations(citations: list[AelinCitation]) -> list
 
 
 def _sanitize_diary_answer(answer: str) -> str:
+    text = str(answer or "").replace("\r\n", "\n")
     rows: list[str] = []
-    for raw in str(answer or "").splitlines():
-        line = re.sub(r"\s+", " ", raw).strip()
-        if not line:
+    in_code = False
+    blank_pending = False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
             continue
-        lowered = line.lower()
+        if in_code:
+            continue
+        if not stripped:
+            blank_pending = True
+            continue
+        lowered = stripped.lower()
         if "path=" in lowered:
             continue
         if "tracking snapshot" in lowered:
             continue
-        if lowered.startswith("```") or lowered.startswith("{") or lowered.startswith("["):
+        if lowered.startswith("[expression:") or lowered.startswith("[emoji:"):
             continue
-        rows.append(line[:220])
-        if len(rows) >= 6:
+        if stripped.startswith("{") or stripped.startswith("["):
+            continue
+        if blank_pending and rows:
+            rows.append("")
+        blank_pending = False
+        rows.append(stripped)
+        if len("\n".join(rows)) >= 2800:
             break
-    merged = re.sub(r"\s+", " ", " ".join(rows)).strip()
+    merged = "\n".join(rows).strip()
+    merged = re.sub(r"\n{3,}", "\n\n", merged)
     if not merged:
-        merged = re.sub(r"\s+", " ", str(answer or "")).strip()
-    return merged[:420]
+        merged = re.sub(r"\s+", " ", text).strip()
+    return merged[:2600]
 
 
 def _build_chat_diary_entry(query: str, answer: str, citations: list[AelinCitation]) -> tuple[str, str]:
+    del citations
     q = re.sub(r"\s+", " ", str(query or "").strip())[:220]
     a = _sanitize_diary_answer(answer)
-    title = (f"聊天纪要：{q[:40]}" if q else "聊天纪要").strip()
-    evidence_lines: list[str] = []
-    for cite in citations[:4]:
-        evidence_lines.append(f"- [{cite.source_label}] {cite.title}（{cite.sender}）")
-    evidence_text = "\n".join(evidence_lines) if evidence_lines else "- （本轮未生成可引用证据）"
-    body = (
-        f"今天主人问了我：「{q or '（未记录问题）'}」。\n\n"
-        f"我给出的核心结论是：{a or '（未记录回答）'}\n\n"
-        "这轮我参考的关键线索：\n"
-        f"{evidence_text}\n\n"
-        "我会继续观察这个主题，如果后续有新的事实或变化，会补写新的日记条目。"
-    )
-    markdown = "\n".join(
-        [
-            "## 今日对话",
-            "",
-            body,
-            "",
-            "## 小结",
-            "",
-            "这是一条面向后续检索的聊天日记，保留可复用结论与证据锚点。",
-        ]
-    )
-    return title[:120], markdown.strip()
+    title = (f"日记：{q[:40]}" if q else "日记").strip()
+    if a:
+        return title[:120], a
+    fallback = f"今天记录了一个问题：{q}" if q else "今天有记录。"
+    return title[:120], fallback
