@@ -8,9 +8,15 @@ import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { AgentTracePanel } from './AgentTracePanel'
 
 const EXPRESSION_LABELS: Record<string, string> = {
-  'exp-01': '捂嘴惊喜', 'exp-02': '热情出击', 'exp-03': '温柔赞同', 'exp-04': '托腮思考',
+  'exp-02': '热情出击', 'exp-03': '温柔赞同', 'exp-04': '托腮思考',
   'exp-05': '轻声提醒', 'exp-06': '偷看观察', 'exp-07': '低落求助', 'exp-08': '不满委屈',
   'exp-09': '指着大笑', 'exp-10': '发财得意', 'exp-11': '趴桌躺平',
+}
+
+function resolveExpressionSticker(expression?: string) {
+  const exp = String(expression || '').trim().toLowerCase()
+  if (/^exp-(0[2-9]|1[0-1])$/.test(exp)) return `/expressions/${exp}.png`
+  return ''
 }
 
 interface MessageBubbleProps {
@@ -31,6 +37,8 @@ function calculateCompactMaxWidth(viewportWidth: number) {
 export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
+  const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
+  const stickerLabel = message.expression ? (EXPRESSION_LABELS[message.expression] ?? 'Aelin 表情') : 'Aelin 表情'
 
   return (
     <article className={cn(
@@ -43,8 +51,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
         <div className="shrink-0 max-[500px]:hidden">
           <AelinAvatar
             size="sm"
-            expression={message.expression}
-            title={message.expression ? EXPRESSION_LABELS[message.expression] : 'Aelin'}
+            title="Aelin"
             className={cn('!rounded-[10px]', compact && '!h-6 !w-6')}
           />
         </div>
@@ -95,6 +102,18 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
         </div>
+
+        {!isUser && stickerSrc && !isThinking && (
+          <div className="mt-2">
+            <img
+              src={stickerSrc}
+              alt={stickerLabel}
+              title={stickerLabel}
+              className={cn('block object-contain', compact ? 'h-16 w-16' : 'h-20 w-20')}
+              draggable={false}
+            />
+          </div>
+        )}
 
         {/* Citations */}
         {message.citations && message.citations.length > 0 && (
