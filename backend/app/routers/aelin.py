@@ -152,6 +152,22 @@ _PROACTIVE_STATE_SOURCE_PREFIX = "proactive_state"
 _PROACTIVE_SEEN_LIMIT = 180
 _DEVICE_MODE_SOURCE = "device_mode_state"
 _DEVICE_ALLOWED_PROCESS_ACTIONS = {"terminate", "set_low_priority", "set_high_priority"}
+_AELIN_BASE_CONTEXT_CACHE_TTL_SECONDS = max(
+    0.0,
+    float(getattr(settings, "aelin_base_context_cache_ttl_seconds", 4.0) or 4.0),
+)
+_AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES = max(
+    0,
+    int(getattr(settings, "aelin_base_context_cache_max_entries", 128) or 128),
+)
+_AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS = max(
+    0.0,
+    float(getattr(settings, "aelin_tracking_snapshot_cache_ttl_seconds", 10.0) or 10.0),
+)
+_AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES = max(
+    0,
+    int(getattr(settings, "aelin_tracking_snapshot_cache_max_entries", 256) or 256),
+)
 
 _MEDIA_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
 _MEDIA_SUMMARY_HINTS_ZH = (
@@ -177,6 +193,12 @@ _MEDIA_SUMMARY_HINTS_EN = (
     "ingest",
     "diary",
 )
+
+_base_context_cache_lock = threading.Lock()
+_base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
+
+_tracking_snapshot_cache_lock = threading.Lock()
+_tracking_snapshot_cache: dict[tuple[int, str, str, int], tuple[float, dict[str, Any]]] = {}
 
 
 def _default_config() -> AgentConfigOut:
@@ -447,6 +469,100 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
     }
 
 
+def _prune_ttl_cache(
+    cache: dict[Any, tuple[float, Any]],
+    *,
+    max_entries: int,
+) -> None:
+    if max_entries <= 0:
+        cache.clear()
+        return
+    overflow = len(cache) - max_entries
+    if overflow <= 0:
+        return
+    for key, _ in sorted(cache.items(), key=lambda item: float(item[1][0]))[:overflow]:
+        cache.pop(key, None)
+
+
+def _build_cached_base_context_bundle(db: Session, user_id: int, *, workspace: str) -> dict[str, Any]:
+    workspace_norm = _normalize_workspace(workspace)
+    if _AELIN_BASE_CONTEXT_CACHE_TTL_SECONDS <= 0 or _AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES <= 0:
+        return _build_context_bundle(db, user_id, workspace=workspace_norm, query="")
+
+    cache_key = (int(user_id), workspace_norm)
+    now = time.monotonic()
+    with _base_context_cache_lock:
+        hit = _base_context_cache.get(cache_key)
+        if hit is not None:
+            ts, cached_bundle = hit
+            if (now - float(ts)) <= _AELIN_BASE_CONTEXT_CACHE_TTL_SECONDS and isinstance(cached_bundle, dict):
+                return cached_bundle
+            _base_context_cache.pop(cache_key, None)
+
+    bundle = _build_context_bundle(db, user_id, workspace=workspace_norm, query="")
+    with _base_context_cache_lock:
+        _base_context_cache[cache_key] = (now, bundle)
+        _prune_ttl_cache(_base_context_cache, max_entries=_AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES)
+    return bundle
+
+
+def _empty_tracking_snapshot() -> dict[str, Any]:
+    return {
+        "active_items": [],
+        "matched_items": [],
+        "active_count": 0,
+        "matched_count": 0,
+        "matched_file_items": [],
+    }
+
+
+def _build_cached_tracking_snapshot(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: str,
+    query: str,
+    include_file_memory: bool,
+) -> dict[str, Any]:
+    query_text = (query or "").strip()
+    if not query_text:
+        return _empty_tracking_snapshot()
+
+    workspace_norm = _normalize_workspace(workspace)
+    query_key = _normalize_match_text(query_text)[:220]
+    include_file_flag = 1 if include_file_memory else 0
+    if _AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS <= 0 or _AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES <= 0:
+        return _build_planner_tracking_snapshot(
+            db,
+            user_id=user_id,
+            workspace=workspace_norm,
+            query=query_text,
+            include_file_memory=include_file_memory,
+        )
+
+    cache_key = (int(user_id), workspace_norm, query_key, include_file_flag)
+    now = time.monotonic()
+    with _tracking_snapshot_cache_lock:
+        hit = _tracking_snapshot_cache.get(cache_key)
+        if hit is not None:
+            ts, cached_snapshot = hit
+            if (now - float(ts)) <= _AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS and isinstance(cached_snapshot, dict):
+                return cached_snapshot
+            _tracking_snapshot_cache.pop(cache_key, None)
+
+    snapshot = _build_planner_tracking_snapshot(
+        db,
+        user_id=user_id,
+        workspace=workspace_norm,
+        query=query_text,
+        include_file_memory=include_file_memory,
+    )
+    with _tracking_snapshot_cache_lock:
+        _tracking_snapshot_cache[cache_key] = (now, snapshot)
+        _prune_ttl_cache(_tracking_snapshot_cache, max_entries=_AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES)
+    return snapshot
+
+
 def _to_citations(raw_focus_items: list[dict], max_items: int) -> list[AelinCitation]:
     items: list[AelinCitation] = []
     for row in raw_focus_items[: max(1, min(20, max_items))]:
@@ -468,6 +584,39 @@ def _to_citations(raw_focus_items: list[dict], max_items: int) -> list[AelinCita
         except Exception:
             continue
     return items
+
+
+def _fetch_local_focus_citations(
+    *,
+    user_id: int,
+    query: str,
+    max_citations: int,
+) -> tuple[list[AelinCitation], str]:
+    local_db = create_session()
+    try:
+        n = max(4, min(20, int(max_citations or 6) * 2))
+        focus_items = _memory.build_focus_items(local_db, user_id, query=query, limit=n)
+        rows = [
+            {
+                "message_id": int(item.message_id or 0),
+                "source": str(item.source or "unknown"),
+                "source_label": str(item.source or "unknown"),
+                "sender": str(item.sender or ""),
+                "sender_avatar_url": str(item.sender_avatar_url or "").strip() or None,
+                "title": str(item.title or ""),
+                "received_at": str(item.received_at or ""),
+                "score": float(item.score or 0.0),
+            }
+            for item in focus_items
+        ]
+        return _to_citations(rows, max_citations), ""
+    except Exception as exc:
+        return [], str(exc)[:140]
+    finally:
+        try:
+            local_db.close()
+        except Exception:
+            pass
 
 
 def _hydrate_citation_avatars(
@@ -1857,7 +2006,14 @@ def _normalize_match_text(text: str) -> str:
     return re.sub(r"\s+", "", (text or "").strip().lower())
 
 
-def _build_planner_tracking_snapshot(db: Session, *, user_id: int, workspace: str, query: str) -> dict[str, Any]:
+def _build_planner_tracking_snapshot(
+    db: Session,
+    *,
+    user_id: int,
+    workspace: str,
+    query: str,
+    include_file_memory: bool = True,
+) -> dict[str, Any]:
     workspace_norm = _normalize_workspace(workspace)
     active_items: list[dict[str, Any]] = []
 
@@ -1952,12 +2108,14 @@ def _build_planner_tracking_snapshot(db: Session, *, user_id: int, workspace: st
             if len(matched_items) >= 8:
                 break
 
-    memory_hits = _tracking_file_memory.search(
-        user_id=user_id,
-        workspace=workspace_norm,
-        query=query,
-        limit=12,
-    )
+    memory_hits: list[Any] = []
+    if include_file_memory:
+        memory_hits = _tracking_file_memory.search(
+            user_id=user_id,
+            workspace=workspace_norm,
+            query=query,
+            limit=12,
+        )
     file_items = [
         {
             "path": item.path,
@@ -3874,11 +4032,10 @@ def _aelin_chat_impl(
             generated_at=datetime.now(timezone.utc),
         )
 
-    base_bundle = _build_context_bundle(
+    base_bundle = _build_cached_base_context_bundle(
         db,
         current_user.id,
         workspace=payload.workspace,
-        query="",
     )
     active_bundle = base_bundle
     memory_summary = str(base_bundle.get("summary") or "")
@@ -3886,8 +4043,15 @@ def _aelin_chat_impl(
     todo_titles = [item.title for item in base_bundle.get("todos", [])]
     images = _normalize_images(payload.images)
     history_turns = _normalize_history(payload.history)
-
-    tracking_snapshot = _build_planner_tracking_snapshot(db, user_id=current_user.id, workspace=payload.workspace, query=payload.query)
+    diary_only_mode = _is_diary_only_query(payload.query)
+    include_file_memory_for_plan = bool(not _is_smalltalk_query(payload.query))
+    tracking_snapshot = _build_cached_tracking_snapshot(
+        db,
+        user_id=current_user.id,
+        workspace=payload.workspace,
+        query=payload.query,
+        include_file_memory=include_file_memory_for_plan,
+    )
     intent_contract = _build_intent_contract(
         query=payload.query,
         service=service,
@@ -3895,7 +4059,6 @@ def _aelin_chat_impl(
         memory_summary=memory_summary,
         tracking_snapshot=tracking_snapshot,
     )
-    diary_only_mode = _is_diary_only_query(payload.query)
     if diary_only_mode:
         intent_contract = dict(intent_contract)
         intent_contract["diary_only"] = True
@@ -4109,31 +4272,17 @@ def _aelin_chat_impl(
 
     def _run_local_worker(jobs: list[tuple[int, dict[str, str], str, str]]) -> dict[str, Any]:
         if not jobs:
-            return {"sub_results": [], "citations": [], "active_bundle": None}
+            return {"sub_results": [], "citations": []}
 
-        best_local_count = -1
-        active_local_bundle: dict[str, Any] | None = None
         merged_citations: list[AelinCitation] = []
         sub_results: list[dict[str, Any]] = []
 
-        def _fetch_local_bundle(raw_query: str) -> tuple[dict[str, Any] | None, list[AelinCitation], str]:
-            local_db = create_session()
-            try:
-                bundle = _build_context_bundle(
-                    local_db,
-                    current_user.id,
-                    workspace=payload.workspace,
-                    query=raw_query,
-                )
-                cites = _to_citations(bundle["focus_items_raw"], payload.max_citations)
-                return bundle, cites, ""
-            except Exception as exc:
-                return None, [], str(exc)[:140]
-            finally:
-                try:
-                    local_db.close()
-                except Exception:
-                    pass
+        def _fetch_local_bundle(raw_query: str) -> tuple[list[AelinCitation], str]:
+            return _fetch_local_focus_citations(
+                user_id=current_user.id,
+                query=raw_query,
+                max_citations=payload.max_citations,
+            )
 
         futures: dict[Any, tuple[int, dict[str, str], str, str]] = {}
         max_workers = max(1, min(len(jobs), _MAX_LOCAL_SUBAGENTS))
@@ -4145,28 +4294,24 @@ def _aelin_chat_impl(
                 idx, _, sub_query, sub_scope = futures[fut]
                 scope_text = sub_scope or sub_query
                 try:
-                    bundle, cites, local_error = fut.result()
+                    cites, local_error = fut.result()
                 except Exception as exc:
                     sub_results.append(
                         {"idx": idx, "status": "failed", "detail": f"{scope_text}: {str(exc)[:140]}", "count": 0}
                     )
                     continue
-                if local_error or (not isinstance(bundle, dict)):
+                if local_error:
                     sub_results.append(
                         {"idx": idx, "status": "failed", "detail": f"{scope_text}: {local_error or 'local error'}", "count": 0}
                     )
                     continue
                 merged_citations.extend(cites)
-                if len(cites) > best_local_count:
-                    best_local_count = len(cites)
-                    active_local_bundle = bundle
                 sub_results.append({"idx": idx, "status": "completed", "detail": scope_text, "count": len(cites)})
 
         sub_results.sort(key=lambda item: int(item.get("idx") or 0))
         return {
             "sub_results": sub_results,
             "citations": merged_citations,
-            "active_bundle": active_local_bundle,
         }
 
     def _run_web_worker(jobs: list[tuple[int, dict[str, str], str]]) -> dict[str, Any]:
@@ -4211,7 +4356,7 @@ def _aelin_chat_impl(
         sub_results.sort(key=lambda item: int(item.get("idx") or 0))
         return {"sub_results": sub_results}
 
-    local_state: dict[str, Any] = {"sub_results": [], "citations": [], "active_bundle": None}
+    local_state: dict[str, Any] = {"sub_results": [], "citations": []}
     web_state: dict[str, Any] = {"sub_results": []}
     if local_jobs or web_jobs:
         futures: dict[Any, str] = {}
@@ -4245,9 +4390,6 @@ def _aelin_chat_impl(
                     count=max(0, int(item.get("count") or 0)),
                 )
             local_citations = list(local_state.get("citations") or [])
-            bundle_candidate = local_state.get("active_bundle")
-            if isinstance(bundle_candidate, dict):
-                active_bundle = bundle_candidate
             if local_citations:
                 local_citations = _hydrate_citation_avatars(db, current_user.id, local_citations)
             add_trace(
@@ -4957,23 +5099,11 @@ def _aelin_chat_impl(
             )
 
         def _trace_local_lookup(raw_query: str) -> tuple[list[AelinCitation], str]:
-            local_db = create_session()
-            try:
-                bundle = _build_context_bundle(
-                    local_db,
-                    current_user.id,
-                    workspace=payload.workspace,
-                    query=raw_query,
-                )
-                cites = _to_citations(bundle["focus_items_raw"], payload.max_citations)
-                return cites, ""
-            except Exception as exc:
-                return [], str(exc)[:140]
-            finally:
-                try:
-                    local_db.close()
-                except Exception:
-                    pass
+            return _fetch_local_focus_citations(
+                user_id=current_user.id,
+                query=raw_query,
+                max_citations=payload.max_citations,
+            )
 
         def _trace_web_lookup(raw_query: str) -> list[WebSearchResult]:
             return _web_search.search_and_fetch(raw_query, max_results=5, fetch_top_k=2)
@@ -5284,12 +5414,19 @@ def get_aelin_context(
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    bundle = _build_context_bundle(
-        db,
-        current_user.id,
-        workspace=workspace,
-        query=query,
-    )
+    if not (query or "").strip():
+        bundle = _build_cached_base_context_bundle(
+            db,
+            current_user.id,
+            workspace=workspace,
+        )
+    else:
+        bundle = _build_context_bundle(
+            db,
+            current_user.id,
+            workspace=workspace,
+            query=query,
+        )
     return AelinContextResponse(
         workspace=bundle["workspace"],
         summary=bundle["summary"],
