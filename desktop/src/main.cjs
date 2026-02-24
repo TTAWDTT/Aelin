@@ -17,6 +17,7 @@ const {
   normalizeProcessToken,
   uniqueDisplayNames,
 } = require("./pet-process-utils.cjs");
+const { DEFAULT_BEHAVIOR, loadPetBehaviorConfig } = require("./pet-behavior.cjs");
 
 const isDev = process.env.MERCURYDESK_DESKTOP_DEV === "1" || !app.isPackaged;
 const backendPort = Number(process.env.MERCURYDESK_BACKEND_PORT || (isDev ? 8000 : 18080));
@@ -29,12 +30,6 @@ const MAIN_ZOOM_MIN = 0.5;
 const MAIN_ZOOM_MAX = 2.0;
 const MAIN_ZOOM_STEP = 0.1;
 const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
-const PET_PROCESS_CACHE_MS = 4500;
-const PET_MEDIA_CACHE_MS = 3500;
-const PET_PROBE_COMMAND_TIMEOUT_MS = 5000;
-const PET_HOVER_GUARD_INTERVAL_MS = 250;
-const PET_HOVER_GUARD_MARGIN_PX = 18;
-const PET_HOVER_GUARD_OUTSIDE_TICKS = 4;
 const PET_DEBUG_LOG_ENABLED = process.env.AELIN_PET_DEBUG !== "0";
 
 if (process.platform === "win32") {
@@ -92,6 +87,8 @@ let petLayoutState = {
   anchorY: PET_COMPACT_WINDOW_SIZE / 2,
 };
 let petHoverGuardOutsideCount = 0;
+let petBehaviorConfig = JSON.parse(JSON.stringify(DEFAULT_BEHAVIOR));
+let petBehaviorLoadedFrom = "";
 let stdioErrorGuardsInstalled = false;
 
 function installStdioErrorGuards() {
@@ -161,6 +158,173 @@ function nowLocalDateStamp(ts) {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function cloneBehaviorDefaults() {
+  return JSON.parse(JSON.stringify(DEFAULT_BEHAVIOR));
+}
+
+function getBehaviorRoot() {
+  const raw = petBehaviorConfig;
+  return raw && typeof raw === "object" ? raw : cloneBehaviorDefaults();
+}
+
+function getBehaviorNumber(pathParts, fallback, options = {}) {
+  const parts = Array.isArray(pathParts) ? pathParts : [];
+  let cursor = getBehaviorRoot();
+  for (const part of parts) {
+    if (!cursor || typeof cursor !== "object") {
+      cursor = undefined;
+      break;
+    }
+    cursor = cursor[part];
+  }
+  const raw = Number(cursor);
+  const min = Number.isFinite(options.min) ? Number(options.min) : Number.NEGATIVE_INFINITY;
+  const max = Number.isFinite(options.max) ? Number(options.max) : Number.POSITIVE_INFINITY;
+  const base = Number.isFinite(raw) ? raw : Number(fallback);
+  const clamped = Math.max(min, Math.min(max, base));
+  return options.integer ? Math.round(clamped) : clamped;
+}
+
+function getStateCompletionHoldMs() {
+  return getBehaviorNumber(["state", "completionHoldMs"], DEFAULT_BEHAVIOR.state.completionHoldMs, {
+    min: 5_000,
+    max: 8 * 60 * 60 * 1000,
+    integer: true,
+  });
+}
+
+function getLateNightStartHour() {
+  return getBehaviorNumber(["state", "lateNightStartHour"], DEFAULT_BEHAVIOR.state.lateNightStartHour, {
+    min: 0,
+    max: 23,
+    integer: true,
+  });
+}
+
+function getLateNightEndHour() {
+  return getBehaviorNumber(["state", "lateNightEndHour"], DEFAULT_BEHAVIOR.state.lateNightEndHour, {
+    min: 0,
+    max: 23,
+    integer: true,
+  });
+}
+
+function isWithinLateNightWindow(hour) {
+  const value = Math.max(0, Math.min(23, Math.floor(Number(hour || 0))));
+  const start = getLateNightStartHour();
+  const end = getLateNightEndHour();
+  if (start === end) return true;
+  if (start < end) return value >= start && value <= end;
+  return value >= start || value <= end;
+}
+
+function getCoachLongFocusTriggerMin() {
+  return getBehaviorNumber(["coach", "longFocusTriggerMin"], DEFAULT_BEHAVIOR.coach.longFocusTriggerMin, {
+    min: 1,
+    max: 12 * 60,
+    integer: true,
+  });
+}
+
+function getCoachCooldownMs() {
+  return getBehaviorNumber(["coach", "cooldownMs"], DEFAULT_BEHAVIOR.coach.cooldownMs, {
+    min: 5_000,
+    max: 12 * 60 * 60 * 1000,
+    integer: true,
+  });
+}
+
+function getCoachVisibleMs() {
+  return getBehaviorNumber(["coach", "visibleMs"], DEFAULT_BEHAVIOR.coach.visibleMs, {
+    min: 5_000,
+    max: 12 * 60 * 60 * 1000,
+    integer: true,
+  });
+}
+
+function getHoverGuardIntervalMs() {
+  return getBehaviorNumber(["hoverGuard", "intervalMs"], DEFAULT_BEHAVIOR.hoverGuard.intervalMs, {
+    min: 40,
+    max: 5_000,
+    integer: true,
+  });
+}
+
+function getHoverGuardMarginPx() {
+  return getBehaviorNumber(["hoverGuard", "marginPx"], DEFAULT_BEHAVIOR.hoverGuard.marginPx, {
+    min: 0,
+    max: 240,
+    integer: true,
+  });
+}
+
+function getHoverGuardOutsideTicks() {
+  return getBehaviorNumber(["hoverGuard", "outsideTicks"], DEFAULT_BEHAVIOR.hoverGuard.outsideTicks, {
+    min: 1,
+    max: 60,
+    integer: true,
+  });
+}
+
+function getStatePushIntervalMs() {
+  return getBehaviorNumber(["ticker", "statePushIntervalMs"], DEFAULT_BEHAVIOR.ticker.statePushIntervalMs, {
+    min: 120,
+    max: 20_000,
+    integer: true,
+  });
+}
+
+function getProcessProbeCacheMs() {
+  return getBehaviorNumber(["ticker", "processProbeCacheMs"], DEFAULT_BEHAVIOR.ticker.processProbeCacheMs, {
+    min: 250,
+    max: 20_000,
+    integer: true,
+  });
+}
+
+function getMediaProbeCacheMs() {
+  return getBehaviorNumber(["ticker", "mediaProbeCacheMs"], DEFAULT_BEHAVIOR.ticker.mediaProbeCacheMs, {
+    min: 250,
+    max: 20_000,
+    integer: true,
+  });
+}
+
+function getProbeCommandTimeoutMs() {
+  return getBehaviorNumber(["probe", "commandTimeoutMs"], DEFAULT_BEHAVIOR.probe.commandTimeoutMs, {
+    min: 1_000,
+    max: 120_000,
+    integer: true,
+  });
+}
+
+function reloadPetBehaviorConfig() {
+  try {
+    const defaultPath = path.join(__dirname, "pet-behavior.json");
+    const options = {
+      envPath: process.env.AELIN_PET_BEHAVIOR_CONFIG || "",
+      userDataPath: app.getPath("userData"),
+      defaultPath,
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+    };
+    const loaded = loadPetBehaviorConfig(options);
+    petBehaviorConfig = loaded?.config && typeof loaded.config === "object"
+      ? loaded.config
+      : cloneBehaviorDefaults();
+    petBehaviorLoadedFrom = String(loaded?.loadedFrom || "");
+    petDebugLog("main:behavior-config-loaded", {
+      from: petBehaviorLoadedFrom || "default",
+    });
+  } catch (error) {
+    petBehaviorConfig = cloneBehaviorDefaults();
+    petBehaviorLoadedFrom = "";
+    petDebugLog("main:behavior-config-fallback", {
+      reason: error instanceof Error ? error.message : String(error || "unknown"),
+    });
+  }
 }
 
 function projectRoot() {
@@ -508,7 +672,7 @@ function parseProcessNamesFromText(text) {
   return new Set(lines);
 }
 
-function runCommandAsync(command, args, timeoutMs = PET_PROBE_COMMAND_TIMEOUT_MS) {
+function runCommandAsync(command, args, timeoutMs = getProbeCommandTimeoutMs()) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       windowsHide: true,
@@ -555,11 +719,11 @@ function runCommandAsync(command, args, timeoutMs = PET_PROBE_COMMAND_TIMEOUT_MS
         // ignore timeout kill failures
       }
       finish(new Error(`timeout:${command}`));
-    }, Math.max(1000, Number(timeoutMs || PET_PROBE_COMMAND_TIMEOUT_MS)));
+    }, Math.max(1000, Number(timeoutMs || getProbeCommandTimeoutMs())));
   });
 }
 
-function runPowerShellScriptAsync(script, timeoutMs = PET_PROBE_COMMAND_TIMEOUT_MS) {
+function runPowerShellScriptAsync(script, timeoutMs = getProbeCommandTimeoutMs()) {
   const wrapped = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[Console]::OutputEncoding; ${String(script || "")}`;
   return runCommandAsync(
     "powershell",
@@ -570,7 +734,7 @@ function runPowerShellScriptAsync(script, timeoutMs = PET_PROBE_COMMAND_TIMEOUT_
 
 async function collectWindowsProcessNamesAsync() {
   const cmd = "$ErrorActionPreference='Stop'; Get-Process | Select-Object -ExpandProperty ProcessName | ConvertTo-Json -Compress";
-  const raw = await runPowerShellScriptAsync(cmd, PET_PROBE_COMMAND_TIMEOUT_MS);
+  const raw = await runPowerShellScriptAsync(cmd, getProbeCommandTimeoutMs());
   if (!raw) return new Set();
   let parsed = [];
   try {
@@ -584,7 +748,7 @@ async function collectWindowsProcessNamesAsync() {
 }
 
 async function collectPosixProcessNamesAsync() {
-  const raw = await runCommandAsync("ps", ["-A", "-o", "comm="], PET_PROBE_COMMAND_TIMEOUT_MS);
+  const raw = await runCommandAsync("ps", ["-A", "-o", "comm="], getProbeCommandTimeoutMs());
   return parseProcessNamesFromText(raw || "");
 }
 
@@ -614,7 +778,7 @@ function matchProcessTokens(processNames, tokens) {
 function schedulePetProcessProbe(force = false) {
   const nowTs = Date.now();
   if (petProcessProbeCache.inFlight) return;
-  if (!force && nowTs - Number(petProcessProbeCache.ts || 0) < PET_PROCESS_CACHE_MS) return;
+  if (!force && nowTs - Number(petProcessProbeCache.ts || 0) < getProcessProbeCacheMs()) return;
 
   petProcessProbeCache.inFlight = true;
   collectSystemProcessNamesAsync()
@@ -701,7 +865,7 @@ function resolveDesktopScriptPath(scriptName) {
   return "";
 }
 
-function runPowerShellFileAsync(scriptPath, args = [], timeoutMs = PET_PROBE_COMMAND_TIMEOUT_MS) {
+function runPowerShellFileAsync(scriptPath, args = [], timeoutMs = getProbeCommandTimeoutMs()) {
   if (!scriptPath) {
     return Promise.reject(new Error("missing_script_path"));
   }
@@ -722,7 +886,7 @@ async function collectWindowsMediaSessionsAsync() {
   const raw = await runPowerShellFileAsync(
     scriptPath,
     ["-Preferred", preferred],
-    PET_PROBE_COMMAND_TIMEOUT_MS
+    getProbeCommandTimeoutMs()
   );
   const parsed = parseJsonSafely(raw, { ok: false, reason: "invalid_json", sessions: [] });
   const sessionsRaw = Array.isArray(parsed.sessions)
@@ -784,7 +948,7 @@ async function collectWindowsMusicWindowTitlesAsync(processTokens) {
     "if([string]::IsNullOrWhiteSpace($items)){ '[]'; exit 0 }",
     "$items",
   ].join("; ");
-  const raw = await runPowerShellScriptAsync(script, PET_PROBE_COMMAND_TIMEOUT_MS);
+  const raw = await runPowerShellScriptAsync(script, getProbeCommandTimeoutMs());
   const parsed = parseJsonSafely(raw, []);
   const rows = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" ? [parsed] : [];
   return rows
@@ -916,7 +1080,7 @@ function buildEmptyMediaRuntime(errorText = "") {
 function schedulePetMediaProbe(force = false, preferredProcesses = []) {
   const nowTs = Date.now();
   if (petMediaCache.inFlight) return;
-  if (!force && nowTs - Number(petMediaCache.ts || 0) < PET_MEDIA_CACHE_MS) return;
+  if (!force && nowTs - Number(petMediaCache.ts || 0) < getMediaProbeCacheMs()) return;
   const preferred = Array.isArray(preferredProcesses)
     ? preferredProcesses.map((item) => normalizeProcessToken(item)).filter(Boolean)
     : [];
@@ -1223,7 +1387,7 @@ function maybeTriggerCoachLine(context) {
   if (nowTs < petCoachCooldownUntil) return;
 
   let reason = "";
-  if (context.isWorking && Number(context.workDurationMin || 0) >= 45) {
+  if (context.isWorking && Number(context.workDurationMin || 0) >= getCoachLongFocusTriggerMin()) {
     reason = "long_focus";
   } else if (context.isLateNight) {
     const stamp = nowLocalDateStamp(nowTs);
@@ -1235,7 +1399,7 @@ function maybeTriggerCoachLine(context) {
   if (!reason) return;
 
   petCoachPending = true;
-  petCoachCooldownUntil = nowTs + 20 * 60 * 1000;
+  petCoachCooldownUntil = nowTs + getCoachCooldownMs();
 
   (async () => {
     try {
@@ -1246,7 +1410,7 @@ function maybeTriggerCoachLine(context) {
       petCoachLine = fallbackCoachLine(reason);
       petCoachReason = `${reason}:fallback`;
     } finally {
-      petCoachLineUntil = Date.now() + 25 * 60 * 1000;
+      petCoachLineUntil = Date.now() + getCoachVisibleMs();
       petCoachPending = false;
       pushPetState(true);
     }
@@ -1323,7 +1487,7 @@ function computePetRuntimeState() {
   } else {
     if (petWorkingPhase) {
       petWorkingPhase = false;
-      petCompletionUntil = nowTs + 45_000;
+      petCompletionUntil = nowTs + getStateCompletionHoldMs();
     }
     if (nowTs < petCompletionUntil) {
       state = "completed";
@@ -1335,7 +1499,7 @@ function computePetRuntimeState() {
 
   const workDurationMin = petWorkStartedAt ? Math.max(0, Math.floor((nowTs - petWorkStartedAt) / 60000)) : 0;
   const hour = new Date(nowTs).getHours();
-  const isLateNight = hour >= 23 || hour <= 5;
+  const isLateNight = isWithinLateNightWindow(hour);
 
   maybeTriggerCoachLine({
     nowTs,
@@ -1418,7 +1582,7 @@ function runPetHoverGuardTick() {
 
   const cursor = screen.getCursorScreenPoint();
   const bounds = petWindow.getBounds();
-  const margin = PET_HOVER_GUARD_MARGIN_PX;
+  const margin = getHoverGuardMarginPx();
   const inside = (
     Number(cursor.x || 0) >= Number(bounds.x || 0) - margin
     && Number(cursor.x || 0) <= Number(bounds.x || 0) + Number(bounds.width || 0) + margin
@@ -1431,7 +1595,7 @@ function runPetHoverGuardTick() {
   }
 
   petHoverGuardOutsideCount += 1;
-  if (petHoverGuardOutsideCount < PET_HOVER_GUARD_OUTSIDE_TICKS) return;
+  if (petHoverGuardOutsideCount < getHoverGuardOutsideTicks()) return;
   petHoverGuardOutsideCount = 0;
   petDebugLog("main:hover-guard-collapse", {
     cursor: {
@@ -1465,7 +1629,7 @@ function startPetHoverGuard() {
   stopPetHoverGuard();
   petHoverGuardTimer = setInterval(() => {
     runPetHoverGuardTick();
-  }, PET_HOVER_GUARD_INTERVAL_MS);
+  }, getHoverGuardIntervalMs());
 }
 
 function stopPetStateTicker() {
@@ -1485,7 +1649,7 @@ function startPetStateTicker() {
   schedulePetMediaProbe(true);
   petStateTimer = setInterval(() => {
     pushPetState(false);
-  }, 2500);
+  }, getStatePushIntervalMs());
   startPetHoverGuard();
   pushPetState(true);
 }
@@ -2597,6 +2761,7 @@ function createPetWindow() {
 }
 
 async function boot() {
+  reloadPetBehaviorConfig();
   startBackend();
   const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/healthz`, 60000);
   if (!backendReady) {

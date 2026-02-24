@@ -1,0 +1,34 @@
+{
+  "state": {
+    "completionHoldMs": 45000,
+    "lateNightStartHour": 23,
+    "lateNightEndHour": 5
+  },
+  "coach": {
+    "longFocusTriggerMin": 45,
+    "cooldownMs": 1200000,
+    "visibleMs": 1500000
+  },
+  "hoverGuard": {
+    "intervalMs": 250,
+    "marginPx": 18,
+    "outsideTicks": 4
+  },
+  "ticker": {
+    "statePushIntervalMs": 2500,
+    "processProbeCacheMs": 4500,
+    "mediaProbeCacheMs": 3500
+  },
+  "probe": {
+    "commandTimeoutMs": 5000
+  },
+  "emotion": {
+    "focusWarmupMin": 10,
+    "focusFlowMin": 45,
+    "focusDeepMin": 90,
+    "restIdleSec": 240,
+    "highCpuThreshold": 0.78,
+    "musicValenceBoost": 8,
+    "musicEnergyBoost": 6
+  }
+}
