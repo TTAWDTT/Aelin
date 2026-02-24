@@ -18,6 +18,7 @@ const {
   uniqueDisplayNames,
 } = require("./pet-process-utils.cjs");
 const { DEFAULT_BEHAVIOR, loadPetBehaviorConfig } = require("./pet-behavior.cjs");
+const { computePetEmotion } = require("./pet-emotion-engine.cjs");
 
 const isDev = process.env.MERCURYDESK_DESKTOP_DEV === "1" || !app.isPackaged;
 const backendPort = Number(process.env.MERCURYDESK_BACKEND_PORT || (isDev ? 8000 : 18080));
@@ -89,6 +90,7 @@ let petLayoutState = {
 let petHoverGuardOutsideCount = 0;
 let petBehaviorConfig = JSON.parse(JSON.stringify(DEFAULT_BEHAVIOR));
 let petBehaviorLoadedFrom = "";
+let petEmotionOverride = null;
 let stdioErrorGuardsInstalled = false;
 
 function installStdioErrorGuards() {
@@ -325,6 +327,24 @@ function reloadPetBehaviorConfig() {
       reason: error instanceof Error ? error.message : String(error || "unknown"),
     });
   }
+}
+
+function getActivePetEmotionOverride(nowTs = Date.now()) {
+  if (!petEmotionOverride || typeof petEmotionOverride !== "object") return null;
+  const expiresAt = Number(petEmotionOverride.expiresAt || 0);
+  if (Number.isFinite(expiresAt) && expiresAt > 0 && nowTs >= expiresAt) {
+    petEmotionOverride = null;
+    return null;
+  }
+  return {
+    mood: petEmotionOverride.mood,
+    valence: petEmotionOverride.valence,
+    energy: petEmotionOverride.energy,
+    focus: petEmotionOverride.focus,
+    tension: petEmotionOverride.tension,
+    label: petEmotionOverride.label,
+    reason: petEmotionOverride.reason,
+  };
 }
 
 function projectRoot() {
@@ -1514,6 +1534,20 @@ function computePetRuntimeState() {
     petCoachReason = "";
   }
 
+  const emotion = computePetEmotion(
+    {
+      isWorking,
+      workDurationMin,
+      idleSec,
+      cpuUsage,
+      isLateNight,
+      hasMusic,
+      isMusicPlaying: Boolean(mediaRuntime.isPlaying),
+    },
+    getBehaviorRoot(),
+    getActivePetEmotionOverride(nowTs)
+  );
+
   const workNarration = buildWorkNarration(workMatches, workDisplayNames, workDurationMin);
 
   petLastState = state;
@@ -1533,6 +1567,7 @@ function computePetRuntimeState() {
     hasMusic,
     media: mediaRuntime,
     workNarration,
+    emotion,
     coachLine: petCoachLine || "",
     coachReason: petCoachReason || "",
     isLateNight,
@@ -1546,9 +1581,18 @@ function pushPetState(force = false) {
   const mediaKey = `${String(payload.media?.title || "")}|${String(payload.media?.artist || "")}|${payload.media?.isPlaying ? "1" : "0"}|${Number(payload.media?.volume || 0)}`;
   const workKey = Array.isArray(payload.workMatches) ? payload.workMatches.join(",") : "";
   const coachKey = String(payload.coachLine || "");
+  const emotion = payload.emotion && typeof payload.emotion === "object" ? payload.emotion : {};
+  const emotionKey = [
+    String(emotion.mood || ""),
+    Number(emotion.valence || 0),
+    Number(emotion.energy || 0),
+    Number(emotion.focus || 0),
+    Number(emotion.tension || 0),
+    String(emotion.source || ""),
+  ].join("|");
   const idleBucket = payload.state === "resting" ? Math.floor(Number(payload.idleSec || 0) / 15) : 0;
   const workDurationBucket = Math.floor(Math.max(0, Number(payload.workDurationMin || 0)));
-  const key = `${payload.state}|${idleBucket}|${payload.route}|${workKey}|${workDurationBucket}|${mediaKey}|${coachKey}`;
+  const key = `${payload.state}|${idleBucket}|${payload.route}|${workKey}|${workDurationBucket}|${mediaKey}|${coachKey}|${emotionKey}`;
   if (!force && key === petStateLastKey) return;
   petStateLastKey = key;
   petWindow.webContents.send("pet:state", payload);
