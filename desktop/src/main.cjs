@@ -32,6 +32,8 @@ const MAIN_ZOOM_MAX = 2.0;
 const MAIN_ZOOM_STEP = 0.1;
 const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
 const PET_DEBUG_LOG_ENABLED = process.env.AELIN_PET_DEBUG !== "0";
+const PET_PLUGIN_API_ENABLED = process.env.AELIN_PET_PLUGIN_API_DISABLED !== "1";
+const PET_PLUGIN_API_TOKEN = String(process.env.AELIN_PET_PLUGIN_TOKEN || "").trim();
 
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -91,6 +93,10 @@ let petHoverGuardOutsideCount = 0;
 let petBehaviorConfig = JSON.parse(JSON.stringify(DEFAULT_BEHAVIOR));
 let petBehaviorLoadedFrom = "";
 let petEmotionOverride = null;
+let petLastRuntimeState = null;
+let petPluginApiServer = null;
+let petPluginApiPort = 0;
+let petPluginLastEvent = null;
 let stdioErrorGuardsInstalled = false;
 
 function installStdioErrorGuards() {
@@ -345,6 +351,245 @@ function getActivePetEmotionOverride(nowTs = Date.now()) {
     label: petEmotionOverride.label,
     reason: petEmotionOverride.reason,
   };
+}
+
+function parsePluginApiPort() {
+  const raw = Number(process.env.AELIN_PET_PLUGIN_PORT || 21914);
+  if (!Number.isFinite(raw)) return 21914;
+  const normalized = Math.round(raw);
+  if (normalized === 0) return 0;
+  if (normalized < 1024 || normalized > 65535) return 21914;
+  return normalized;
+}
+
+function normalizeEmotionOverrideInput(payload = {}) {
+  const raw = payload && typeof payload === "object" ? payload : {};
+  const parseNumberField = (name) => {
+    const num = Number(raw[name]);
+    if (!Number.isFinite(num)) return undefined;
+    return Math.max(0, Math.min(100, Math.round(num)));
+  };
+  const mood = String(raw.mood || "").trim();
+  const label = String(raw.label || "").trim();
+  const reason = String(raw.reason || "").trim();
+  const ttlRaw = Number(raw.ttlMs);
+  const ttlMs = Number.isFinite(ttlRaw) ? Math.max(0, Math.min(24 * 60 * 60 * 1000, Math.round(ttlRaw))) : 0;
+  const patch = {
+    mood: mood || undefined,
+    label: label || undefined,
+    reason: reason || undefined,
+    valence: parseNumberField("valence"),
+    energy: parseNumberField("energy"),
+    focus: parseNumberField("focus"),
+    tension: parseNumberField("tension"),
+  };
+  const hasValue = Object.values(patch).some((item) => item !== undefined);
+  return {
+    hasValue,
+    patch,
+    ttlMs,
+  };
+}
+
+function setPetEmotionOverride(payload = {}) {
+  const normalized = normalizeEmotionOverrideInput(payload);
+  if (!normalized.hasValue) {
+    return { ok: false, detail: "empty_override" };
+  }
+  const nowTs = Date.now();
+  petEmotionOverride = {
+    ...normalized.patch,
+    setAt: nowTs,
+    expiresAt: normalized.ttlMs > 0 ? nowTs + normalized.ttlMs : 0,
+  };
+  pushPetState(true);
+  return {
+    ok: true,
+    override: {
+      ...petEmotionOverride,
+    },
+  };
+}
+
+function clearPetEmotionOverride() {
+  if (!petEmotionOverride) {
+    return { ok: true, changed: false };
+  }
+  petEmotionOverride = null;
+  pushPetState(true);
+  return { ok: true, changed: true };
+}
+
+function createPluginApiAuthMiddleware() {
+  if (!PET_PLUGIN_API_TOKEN) {
+    return (_req, _res, next) => next();
+  }
+  return (req, res, next) => {
+    const authHeader = String(req.headers.authorization || "").trim();
+    const tokenHeader = String(req.headers["x-aelin-token"] || "").trim();
+    const bearer = authHeader.toLowerCase().startsWith("bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+    const provided = tokenHeader || bearer;
+    if (provided && provided === PET_PLUGIN_API_TOKEN) {
+      next();
+      return;
+    }
+    res.status(401).json({
+      ok: false,
+      detail: "unauthorized",
+    });
+  };
+}
+
+function buildPetPluginStateSnapshot() {
+  const latest = petLastRuntimeState && typeof petLastRuntimeState === "object"
+    ? petLastRuntimeState
+    : computePetRuntimeState();
+  return {
+    ...latest,
+    behaviorSource: petBehaviorLoadedFrom || "default",
+    pluginEvent: petPluginLastEvent || null,
+  };
+}
+
+function createPetPluginApiApp() {
+  const api = express();
+  api.disable("x-powered-by");
+  api.use(express.json({ limit: "128kb" }));
+  api.use(createPluginApiAuthMiddleware());
+
+  api.get("/healthz", (_req, res) => {
+    res.json({
+      ok: true,
+      service: "aelin-pet-plugin-api",
+      ts: Date.now(),
+    });
+  });
+
+  api.get("/v1/pet/state", (_req, res) => {
+    res.json({
+      ok: true,
+      state: buildPetPluginStateSnapshot(),
+      ts: Date.now(),
+    });
+  });
+
+  api.get("/v1/pet/behavior", (_req, res) => {
+    res.json({
+      ok: true,
+      behavior: getBehaviorRoot(),
+      source: petBehaviorLoadedFrom || "default",
+      ts: Date.now(),
+    });
+  });
+
+  api.post("/v1/pet/behavior/reload", (_req, res) => {
+    reloadPetBehaviorConfig();
+    if (petWindow && !petWindow.isDestroyed()) {
+      startPetStateTicker();
+    }
+    res.json({
+      ok: true,
+      behavior: getBehaviorRoot(),
+      source: petBehaviorLoadedFrom || "default",
+      ts: Date.now(),
+    });
+  });
+
+  api.post("/v1/pet/emotion/override", (req, res) => {
+    const result = setPetEmotionOverride(req.body || {});
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    res.json({
+      ok: true,
+      override: result.override,
+      state: buildPetPluginStateSnapshot(),
+      ts: Date.now(),
+    });
+  });
+
+  api.delete("/v1/pet/emotion/override", (_req, res) => {
+    const result = clearPetEmotionOverride();
+    res.json({
+      ok: true,
+      changed: Boolean(result.changed),
+      state: buildPetPluginStateSnapshot(),
+      ts: Date.now(),
+    });
+  });
+
+  api.post("/v1/pet/events", (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const type = String(body.type || "").trim() || "unknown";
+    petPluginLastEvent = {
+      type,
+      payload: body.payload && typeof body.payload === "object" ? body.payload : {},
+      ts: Date.now(),
+    };
+    pushPetState(true);
+    res.json({
+      ok: true,
+      event: petPluginLastEvent,
+    });
+  });
+
+  api.use((error, _req, res, _next) => {
+    res.status(500).json({
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error || "plugin_api_error"),
+    });
+  });
+
+  return api;
+}
+
+function stopPetPluginApiServer() {
+  if (!petPluginApiServer) return;
+  try {
+    petPluginApiServer.close();
+  } catch {
+    // ignore close failures
+  }
+  petPluginApiServer = null;
+  petPluginApiPort = 0;
+}
+
+function listenPluginApi(port) {
+  return new Promise((resolve, reject) => {
+    const api = createPetPluginApiApp();
+    const server = api.listen(port, "127.0.0.1", () => {
+      petPluginApiServer = server;
+      const addr = server.address();
+      petPluginApiPort = Number(addr && typeof addr === "object" ? addr.port : port) || port;
+      petDebugLog("main:plugin-api-started", {
+        port: petPluginApiPort,
+        tokenRequired: Boolean(PET_PLUGIN_API_TOKEN),
+      });
+      resolve();
+    });
+    server.on("error", (error) => {
+      reject(error);
+    });
+  });
+}
+
+async function startPetPluginApiServer() {
+  if (!PET_PLUGIN_API_ENABLED) return;
+  stopPetPluginApiServer();
+  const preferredPort = parsePluginApiPort();
+  try {
+    await listenPluginApi(preferredPort);
+  } catch (error) {
+    const code = String(error?.code || "");
+    if (code === "EADDRINUSE" && preferredPort !== 0) {
+      await listenPluginApi(0);
+      return;
+    }
+    throw error;
+  }
 }
 
 function projectRoot() {
@@ -1578,6 +1823,7 @@ function computePetRuntimeState() {
 function pushPetState(force = false) {
   if (!petWindow || petWindow.isDestroyed()) return;
   const payload = computePetRuntimeState();
+  petLastRuntimeState = payload;
   const mediaKey = `${String(payload.media?.title || "")}|${String(payload.media?.artist || "")}|${payload.media?.isPlaying ? "1" : "0"}|${Number(payload.media?.volume || 0)}`;
   const workKey = Array.isArray(payload.workMatches) ? payload.workMatches.join(",") : "";
   const coachKey = String(payload.coachLine || "");
@@ -2625,6 +2871,7 @@ function setupPetIpcHandlers() {
     const action = String(payload?.action || "");
     const result = handlePetMediaControl(action, payload || {});
     const state = computePetRuntimeState();
+    petLastRuntimeState = state;
     if (petWindow && !petWindow.isDestroyed()) {
       petWindow.webContents.send("pet:state", state);
     }
@@ -2826,6 +3073,8 @@ async function boot() {
   if (!frontendReady) {
     throw new Error("Frontend startup timed out.");
   }
+
+  await startPetPluginApiServer();
 }
 
 function cleanup() {
@@ -2833,6 +3082,7 @@ function cleanup() {
   petDragState = null;
   stopPetDragLoop();
   stopPetStateTicker();
+  stopPetPluginApiServer();
   if (tray) {
     try {
       tray.destroy();
