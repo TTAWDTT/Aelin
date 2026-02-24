@@ -442,10 +442,12 @@ function createPluginApiAuthMiddleware() {
   };
 }
 
-function buildPetPluginStateSnapshot() {
-  const latest = petLastRuntimeState && typeof petLastRuntimeState === "object"
-    ? petLastRuntimeState
-    : computePetRuntimeState();
+function buildPetPluginStateSnapshot(forceRefresh = false) {
+  const hasCachedState = petLastRuntimeState && typeof petLastRuntimeState === "object";
+  const latest = forceRefresh || !hasCachedState
+    ? computePetRuntimeState()
+    : petLastRuntimeState;
+  petLastRuntimeState = latest;
   return {
     ...latest,
     behaviorSource: petBehaviorLoadedFrom || "default",
@@ -470,7 +472,7 @@ function createPetPluginApiApp() {
   api.get("/v1/pet/state", (_req, res) => {
     res.json({
       ok: true,
-      state: buildPetPluginStateSnapshot(),
+      state: buildPetPluginStateSnapshot(true),
       ts: Date.now(),
     });
   });
@@ -506,7 +508,7 @@ function createPetPluginApiApp() {
     res.json({
       ok: true,
       override: result.override,
-      state: buildPetPluginStateSnapshot(),
+      state: buildPetPluginStateSnapshot(true),
       ts: Date.now(),
     });
   });
@@ -516,7 +518,7 @@ function createPetPluginApiApp() {
     res.json({
       ok: true,
       changed: Boolean(result.changed),
-      state: buildPetPluginStateSnapshot(),
+      state: buildPetPluginStateSnapshot(true),
       ts: Date.now(),
     });
   });
