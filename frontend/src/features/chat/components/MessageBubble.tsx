@@ -3,7 +3,6 @@ import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { sourceIcon, relativeTime } from '@/shared/utils/format'
-import { ExternalLink } from 'lucide-react'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { AgentTracePanel } from './AgentTracePanel'
 
@@ -115,33 +114,31 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           </div>
         )}
 
-        {/* Citations */}
+        {/* Citations (collapsed by default) */}
         {message.citations && message.citations.length > 0 && (
-          <div className="mt-3.5 space-y-1.5">
-            <div className="text-[11px] text-[var(--color-text-muted)] font-semibold uppercase tracking-wide">引用来源</div>
-            {message.citations.map((c, i) => (
-              <div key={i} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1.5 text-[11px] sm:flex-nowrap sm:gap-2 sm:px-2.5 sm:text-xs">
-                <span>{sourceIcon(c.source)}</span>
-                <span className="font-medium min-w-0 flex-1 break-all sm:truncate">[{i + 1}] {c.title}</span>
-                <span className="text-[var(--color-text-muted)]">{c.source_label}</span>
-                <span className="text-[var(--color-text-muted)] sm:inline">{relativeTime(c.received_at)}</span>
+          <details className="group mt-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-2">
+            <summary className="cursor-pointer text-[11px] text-[var(--color-text-muted)] font-semibold uppercase tracking-wide">
+              引用来源 ({message.citations.length})
+            </summary>
+            <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-out group-open:grid-rows-[1fr]">
+              <div className="overflow-hidden">
+                <div className="mt-2 space-y-1.5 opacity-0 translate-y-1 transition-all duration-300 ease-out group-open:translate-y-0 group-open:opacity-100">
+                  {message.citations.map((c, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1.5 text-[11px] sm:flex-nowrap sm:gap-2 sm:px-2.5 sm:text-xs">
+                      <span>{sourceIcon(c.source)}</span>
+                      <span className="font-medium min-w-0 flex-1 break-all sm:truncate">[{i + 1}] {c.title}</span>
+                      <span className="text-[var(--color-text-muted)]">{c.source_label}</span>
+                      <span className="text-[var(--color-text-muted)] sm:inline">{relativeTime(c.received_at)}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+            </div>
+          </details>
         )}
-
         {/* Tool trace */}
         {message.toolTrace && message.toolTrace.length > 0 && (
           <AgentTracePanel trace={message.toolTrace} live={isThinking} />
-        )}
-
-        {/* Actions */}
-        {message.actions && message.actions.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {message.actions.map((a, i) => (
-              <ActionChip key={i} action={a} />
-            ))}
-          </div>
         )}
 
         <div className="mt-2 text-[10px] tracking-wide text-[var(--color-text-muted)]">
@@ -149,27 +146,6 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
         </div>
       </div>
     </article>
-  )
-}
-
-function ActionChip({ action }: { action: { kind: string; title: string; detail?: string; payload?: Record<string, string> } }) {
-  const handleClick = () => {
-    if (action.kind === 'open_url' && action.payload?.url) {
-      window.open(action.payload.url, '_blank')
-    }
-    // track_confirm and other actions will be handled by parent
-  }
-
-  return (
-    <button
-      onClick={handleClick}
-      className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-xs font-medium transition-colors hover:bg-[var(--color-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
-      title={action.detail}
-    >
-      {action.kind === 'open_url' && <ExternalLink size={12} />}
-      {action.kind === 'track_confirm' && <span>🔔</span>}
-      {action.title}
-    </button>
   )
 }
 
