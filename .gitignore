@@ -45,3 +45,5 @@ nul
 
 .alma-snapshots
 .tmp_youwee_*/
+
+.tmp/

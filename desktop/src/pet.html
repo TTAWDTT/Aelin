@@ -22,33 +22,39 @@
         position: relative;
         width: 100%;
         height: 100%;
+        --pet-center-x: 64px;
         --pet-center-y: 50%;
-        --music-top: 8px;
-        --work-top: 168px;
-        --work-max-h: 56px;
-        --panel-width: 212px;
+        --controls-left: 120px;
+        --controls-top: 14px;
+        --controls-entry-x: 8px;
+        --controls-entry-y: 0px;
+        --button-entry-x: 6px;
+        --button-entry-y: 0px;
+        --control-size: 28px;
+        --control-gap: 8px;
         pointer-events: auto;
       }
       #petShell {
         position: absolute;
-        left: 50%;
+        left: var(--pet-center-x);
         top: var(--pet-center-y);
         transform: translate(-50%, -50%);
+        will-change: transform;
       }
       #pet {
         width: 96px;
         height: 96px;
         border-radius: 22px;
         border: 1px solid rgba(255, 255, 255, 0.22);
-        box-shadow: 0 12px 26px rgba(0, 0, 0, 0.34);
+        box-shadow: none;
         object-fit: cover;
         cursor: grab;
-        transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+        transition: filter 140ms ease;
         pointer-events: auto;
       }
       #pet:hover {
-        transform: scale(1.035);
-        box-shadow: 0 16px 30px rgba(0, 0, 0, 0.4);
+        transform: none;
+        box-shadow: none;
       }
       #pet.dragging {
         cursor: grabbing;
@@ -57,7 +63,7 @@
       }
       #pet.dragging:hover {
         transform: none;
-        box-shadow: 0 12px 26px rgba(0, 0, 0, 0.34);
+        box-shadow: none;
       }
       #pet.pressing {
         transform: none;
@@ -90,116 +96,84 @@
         white-space: nowrap;
         pointer-events: none;
       }
-      .pet-panel {
+      #controlRail {
         position: absolute;
-        left: 50%;
-        width: min(var(--panel-width), calc(100% - 12px));
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.24);
-        background: rgba(16, 23, 36, 0.82);
-        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
-        backdrop-filter: blur(8px);
-        color: #f9fafb;
+        left: var(--controls-left);
+        top: var(--controls-top);
+        display: grid;
+        grid-auto-flow: row;
+        gap: var(--control-gap);
         pointer-events: none;
         opacity: 0;
-        transform: translateX(-50%);
-        transition: opacity 90ms ease;
+        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0) scale(0.92);
+        transform-origin: center;
+        will-change: opacity, transform;
+        backface-visibility: hidden;
+        transition: opacity 160ms ease, transform 180ms cubic-bezier(0.22, 0.9, 0.24, 1);
       }
-      .panels-visible .pet-panel {
-        opacity: 1;
-        pointer-events: auto;
+      #petWrap[data-controls-axis="x"] #controlRail {
+        grid-auto-flow: column;
       }
-      .pet-panel.hidden {
+      #controlRail.hidden {
         display: none;
       }
-      #petWrap.dragging-panels-hidden .pet-panel {
-        display: none !important;
+      .panels-visible #controlRail:not(.hidden) {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+        pointer-events: auto;
+      }
+      #petWrap.dragging-panels-hidden #controlRail {
         opacity: 0 !important;
         pointer-events: none !important;
+        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0) scale(0.9) !important;
       }
-      #musicPanel {
-        top: var(--music-top);
-        padding: 6px 10px;
-        background-size: cover;
-        background-position: center;
-        background-repeat: no-repeat;
-        overflow: hidden;
-        isolation: isolate;
-      }
-      #musicPanel::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 1px;
-        background: rgba(255, 255, 255, 0.5);
-        z-index: 2;
-        pointer-events: none;
-      }
-      #musicPanel::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.2));
-        z-index: 0;
-        pointer-events: none;
-      }
-      #musicPanel.with-cover {
-        background-color: rgba(7, 12, 20, 0.74);
-      }
-      #musicTitle {
-        position: relative;
-        z-index: 1;
-        font-size: 12px;
-        font-weight: 700;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      #musicMeta {
-        position: relative;
-        z-index: 1;
-        margin-top: 2px;
-        font-size: 10px;
-        color: rgba(226, 232, 240, 0.88);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      #musicControls {
-        position: relative;
-        z-index: 1;
-        margin-top: 6px;
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        align-items: center;
-        gap: 4px;
-      }
-      .music-btn {
-        border: 1px solid rgba(255, 255, 255, 0.22);
-        background: rgba(15, 23, 42, 0.62);
-        color: #f8fafc;
-        border-radius: 9px;
-        height: 24px;
-        width: 100%;
+      .control-btn {
+        border: 1px solid rgba(255, 255, 255, 0.62);
+        background:
+          radial-gradient(circle at 26% 18%, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.12) 58%),
+          linear-gradient(180deg, rgba(248, 250, 252, 0.72), rgba(226, 232, 240, 0.52));
+        color: #0f172a;
+        border-radius: 999px;
+        width: var(--control-size);
+        height: var(--control-size);
         display: inline-flex;
         align-items: center;
         justify-content: center;
         padding: 0;
         cursor: pointer;
-        transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+        opacity: 0;
+        transform: translate3d(var(--button-entry-x), var(--button-entry-y), 0) scale(0.92);
+        box-shadow: 0 8px 20px rgba(100, 116, 139, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.84);
+        transition:
+          opacity 130ms ease,
+          background 140ms ease,
+          border-color 140ms ease,
+          transform 180ms cubic-bezier(0.22, 0.9, 0.24, 1),
+          box-shadow 140ms ease;
       }
-      .music-btn:hover:not(:disabled) {
-        background: rgba(30, 41, 59, 0.82);
-        border-color: rgba(255, 255, 255, 0.36);
-        transform: translateY(-1px);
+      .panels-visible #controlRail:not(.hidden) .control-btn {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
       }
-      .music-btn:disabled {
+      .panels-visible #controlRail:not(.hidden) .control-btn:nth-child(1) { transition-delay: 0ms; }
+      .panels-visible #controlRail:not(.hidden) .control-btn:nth-child(2) { transition-delay: 25ms; }
+      .panels-visible #controlRail:not(.hidden) .control-btn:nth-child(3) { transition-delay: 50ms; }
+      .control-btn:hover:not(:disabled) {
+        background:
+          radial-gradient(circle at 26% 18%, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.2) 62%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(241, 245, 249, 0.62));
+        border-color: rgba(255, 255, 255, 0.9);
+        transform: translate3d(0, -1px, 0) scale(1);
+        box-shadow: 0 12px 22px rgba(100, 116, 139, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+      }
+      .control-btn:active:not(:disabled) {
+        transform: translate3d(0, 0, 0) scale(0.94);
+      }
+      .control-btn:disabled {
         opacity: 0.45;
         cursor: not-allowed;
       }
-      .music-btn svg {
+      .control-btn svg {
         width: 12px;
         height: 12px;
         stroke: currentColor;
@@ -209,74 +183,41 @@
         fill: none;
       }
       #btnPlay {
-        background: rgba(13, 148, 136, 0.28);
-        border-color: rgba(45, 212, 191, 0.36);
+        background:
+          radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.14) 62%),
+          linear-gradient(180deg, rgba(204, 251, 241, 0.72), rgba(167, 243, 208, 0.54));
+        border-color: rgba(153, 246, 228, 0.74);
       }
       #btnPlay:hover:not(:disabled) {
-        background: rgba(13, 148, 136, 0.4);
-        border-color: rgba(94, 234, 212, 0.56);
+        background:
+          radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.2) 64%),
+          linear-gradient(180deg, rgba(153, 246, 228, 0.78), rgba(110, 231, 183, 0.62));
+        border-color: rgba(236, 253, 245, 0.96);
       }
-      #volumeWrap {
-        grid-column: span 3;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      #volumeSlider {
-        width: 100%;
-        accent-color: #f8fafc;
-      }
-      .icon-only {
-        display: inline-flex;
-      }
-      #workPanel {
-        top: var(--work-top);
-        padding: 8px 10px;
-        max-height: var(--work-max-h);
-        min-height: 32px;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
-      #workText {
-        font-size: 11px;
-        line-height: 1.4;
-      }
-      #coachText {
-        margin-top: 6px;
-        font-size: 11px;
-        line-height: 1.4;
-        color: rgba(191, 219, 254, 0.95);
-      }
-      #coachText.hidden {
-        display: none;
+      @media (prefers-reduced-motion: reduce) {
+        #controlRail,
+        .control-btn {
+          transition-duration: 80ms !important;
+          transition-delay: 0ms !important;
+        }
+        #controlRail,
+        .control-btn {
+          transform: none !important;
+        }
       }
     </style>
   </head>
   <body>
     <div id="petWrap">
-      <div id="musicPanel" class="pet-panel hidden">
-        <div id="musicTitle">未播放音乐</div>
-        <div id="musicMeta">将自动显示曲名和歌手</div>
-        <div id="musicControls">
-          <button class="music-btn" id="btnPrev" type="button" aria-label="上一首"></button>
-          <button class="music-btn" id="btnPlay" type="button" aria-label="播放或暂停"></button>
-          <button class="music-btn" id="btnNext" type="button" aria-label="下一首"></button>
-          <div id="volumeWrap">
-            <button class="music-btn" id="btnVolDown" type="button" aria-label="降低音量"></button>
-            <input id="volumeSlider" type="range" min="0" max="100" value="50" step="2" />
-            <button class="music-btn" id="btnVolUp" type="button" aria-label="提高音量"></button>
-          </div>
-        </div>
+      <div id="controlRail" class="hidden" aria-label="音乐控制">
+        <button class="control-btn" id="btnPrev" type="button" aria-label="上一首"></button>
+        <button class="control-btn" id="btnPlay" type="button" aria-label="播放或暂停"></button>
+        <button class="control-btn" id="btnNext" type="button" aria-label="下一首"></button>
       </div>
 
       <div id="petShell">
         <img id="pet" alt="Aelin" draggable="false" />
         <div id="stateBadge">开心</div>
-      </div>
-
-      <div id="workPanel" class="pet-panel">
-        <div id="workText">当前没有检测到工作进程哦主人~</div>
-        <div id="coachText" class="hidden"></div>
       </div>
     </div>
 
@@ -289,18 +230,10 @@
       const wrap = document.getElementById("petWrap");
       const pet = document.getElementById("pet");
       const badge = document.getElementById("stateBadge");
-      const musicPanel = document.getElementById("musicPanel");
-      const musicTitle = document.getElementById("musicTitle");
-      const musicMeta = document.getElementById("musicMeta");
+      const controlRail = document.getElementById("controlRail");
       const btnPrev = document.getElementById("btnPrev");
       const btnPlay = document.getElementById("btnPlay");
       const btnNext = document.getElementById("btnNext");
-      const btnVolDown = document.getElementById("btnVolDown");
-      const btnVolUp = document.getElementById("btnVolUp");
-      const volumeSlider = document.getElementById("volumeSlider");
-      const workPanel = document.getElementById("workPanel");
-      const workText = document.getElementById("workText");
-      const coachText = document.getElementById("coachText");
 
       const stateLabels = {
         happy: "开心",
@@ -319,11 +252,11 @@
       let activePointerId = null;
       let pointerActive = false;
       let deactivateTimer = null;
-      let volumeDebounceTimer = null;
       let latestMedia = null;
       let hoverSyncRaf = 0;
       let pendingHoverPoint = null;
       let layoutSyncRaf = 0;
+      let panelsVisibleRaf = 0;
       let compactCommitTimer = 0;
       let lastLayoutKey = "";
       let desiredHoverActive = false;
@@ -332,23 +265,32 @@
       let pointerActivatedAt = 0;
       let suppressExpandUntil = 0;
       let mediaControlIntentSeq = 0;
+      let pendingPlayVisual = null;
+      let controlsPlacementLock = "";
+      let lastAppliedBounds = null;
+      let currentAnchorX = 64;
+      let currentAnchorY = 64;
       const petLayoutConfig = {
         compactSize: 128,
-        expandedWidth: 236,
-        expandedMaxHeight: 420,
       };
       const DEACTIVATE_DELAY_MS = 180;
       const HOVER_SAFE_ZONE_PADDING = 12;
       const PANEL_FADE_MS = 100;
       const POINTER_ACTIVE_HOLD_MS = 140;
       const DRAG_END_REOPEN_GUARD_MS = 260;
+      const PLAY_VISUAL_STALE_GUARD_MS = 1200;
+      const PET_SIZE = 96;
+      const PET_RADIUS = PET_SIZE / 2;
+      const CONTROL_SIZE = 28;
+      const CONTROL_GAP = 8;
+      const CONTROL_MARGIN = 8;
+      const CONTROL_RAIL_LENGTH = CONTROL_SIZE * 3 + CONTROL_GAP * 2;
+      const CONTROL_SIDE_BAND = CONTROL_MARGIN * 2 + CONTROL_SIZE;
       const iconMarkup = {
         prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6l-8.5 6L18 18V6Z"></path><path d="M7 6v12"></path></svg>',
         next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l8.5 6L6 18V6Z"></path><path d="M17 6v12"></path></svg>',
         play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6l10 6-10 6V6Z"></path></svg>',
         pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12"></path><path d="M15 6v12"></path></svg>',
-        volDown: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 7.8 9H5v6h2.8L11 18V6Z"></path><path d="M15 12h4"></path></svg>',
-        volUp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 7.8 9H5v6h2.8L11 18V6Z"></path><path d="M15 12h4"></path><path d="M17 10v4"></path></svg>',
       };
 
       function petDebug(tag, data = {}) {
@@ -380,82 +322,153 @@
       setButtonIcon(btnPrev, "prev");
       setButtonIcon(btnPlay, "play");
       setButtonIcon(btnNext, "next");
-      setButtonIcon(btnVolDown, "volDown");
-      setButtonIcon(btnVolUp, "volUp");
 
-      function hashHue(input) {
-        const text = String(input || "");
-        let hash = 0;
-        for (let i = 0; i < text.length; i += 1) {
-          hash = (hash * 31 + text.charCodeAt(i)) % 360;
-        }
-        return Math.abs(hash % 360);
-      }
-
-      function buildFallbackCover(title, artist, app) {
-        const key = `${title}|${artist}|${app}`;
-        const hue = hashHue(key);
-        const hueB = (hue + 55) % 360;
-        const hueC = (hue + 140) % 360;
-        return [
-          `radial-gradient(circle at 84% 14%, hsla(${hueC}, 90%, 62%, 0.26) 0%, transparent 45%)`,
-          `radial-gradient(circle at 10% 90%, hsla(${hue}, 86%, 60%, 0.2) 0%, transparent 52%)`,
-          `linear-gradient(136deg, hsl(${hue} 56% 24%) 0%, hsl(${hueB} 54% 20%) 56%, hsl(${hueC} 52% 16%) 100%)`,
-          "linear-gradient(rgba(8,12,20,0.34), rgba(8,12,20,0.82))",
-        ].join(", ");
-      }
-
-      function computeShellLayout() {
-        const width = Math.max(petLayoutConfig.expandedWidth, petLayoutConfig.compactSize);
-        const height = Math.max(width, Math.round(Number(petLayoutConfig.expandedMaxHeight || 420)));
-        const petCenterY = Math.round(Math.max(72, Math.min(height - 96, height * 0.39)));
+      function getScreenWorkArea() {
+        const left = Number(window.screen?.availLeft ?? 0);
+        const top = Number(window.screen?.availTop ?? 0);
+        const width = Number(window.screen?.availWidth || window.screen?.width || 1920);
+        const height = Number(window.screen?.availHeight || window.screen?.height || 1080);
         return {
-          width,
-          height,
-          petCenterY,
+          left,
+          top,
+          right: left + width,
+          bottom: top + height,
         };
+      }
+
+      function getCurrentWindowBounds() {
+        const liveX = Number(window.screenX);
+        const liveY = Number(window.screenY);
+        const liveW = Number(window.innerWidth || document.documentElement?.clientWidth || petLayoutConfig.compactSize);
+        const liveH = Number(window.innerHeight || document.documentElement?.clientHeight || petLayoutConfig.compactSize);
+        if (Number.isFinite(liveX) && Number.isFinite(liveY) && Number.isFinite(liveW) && Number.isFinite(liveH)) {
+          return {
+            x: liveX,
+            y: liveY,
+            width: liveW,
+            height: liveH,
+          };
+        }
+        if (lastAppliedBounds && Number.isFinite(lastAppliedBounds.x) && Number.isFinite(lastAppliedBounds.y)) {
+          return {
+            x: Number(lastAppliedBounds.x),
+            y: Number(lastAppliedBounds.y),
+            width: Number(lastAppliedBounds.width || petLayoutConfig.compactSize),
+            height: Number(lastAppliedBounds.height || petLayoutConfig.compactSize),
+          };
+        }
+        return { x: 0, y: 0, width: petLayoutConfig.compactSize, height: petLayoutConfig.compactSize };
+      }
+
+      function chooseControlPlacement() {
+        const bounds = getCurrentWindowBounds();
+        const area = getScreenWorkArea();
+        const petCenterX = Number(bounds.x || 0) + Number(currentAnchorX || petLayoutConfig.compactSize / 2);
+        const petCenterY = Number(bounds.y || 0) + Number(currentAnchorY || petLayoutConfig.compactSize / 2);
+        const rightSpace = area.right - (petCenterX + PET_RADIUS);
+        const leftSpace = (petCenterX - PET_RADIUS) - area.left;
+        const topSpace = (petCenterY - PET_RADIUS) - area.top;
+        const bottomSpace = area.bottom - (petCenterY + PET_RADIUS);
+        const need = CONTROL_SIDE_BAND;
+
+        if (rightSpace >= need) return "right";
+
+        const topOk = topSpace >= need;
+        const bottomOk = bottomSpace >= need;
+        if (topOk || bottomOk) {
+          return topSpace >= bottomSpace ? "top" : "bottom";
+        }
+
+        if (leftSpace >= need) return "left";
+
+        const ranked = [
+          { placement: "top", space: topSpace },
+          { placement: "bottom", space: bottomSpace },
+          { placement: "left", space: leftSpace },
+          { placement: "right", space: rightSpace },
+        ].sort((a, b) => b.space - a.space);
+        return ranked[0]?.placement || "right";
       }
 
       function computeExpandedLayout() {
-        const shell = computeShellLayout();
-        const musicVisible = !musicPanel.classList.contains("hidden");
-        const panelGap = 8;
-        const topPadding = 8;
-        const bottomPadding = 8;
-        const petSize = 96;
-        const musicHeight = musicVisible ? Math.ceil(musicPanel.scrollHeight || 0) : 0;
-        const petTop = Math.max(topPadding, Math.round(shell.petCenterY - petSize / 2));
-        const musicTop = Math.max(topPadding, Math.round(petTop - panelGap - musicHeight));
-        const workTop = Math.round(shell.petCenterY + petSize / 2 + panelGap);
-        const workMaxHeight = Math.max(40, shell.height - workTop - bottomPadding);
-        return {
+        const compact = Number(petLayoutConfig.compactSize || 128);
+        const placement = controlsPlacementLock || chooseControlPlacement();
+        controlsPlacementLock = placement;
+        const base = {
           mode: "expanded",
-          width: shell.width,
-          height: shell.height,
-          musicTop,
-          petCenterY: shell.petCenterY,
-          workTop,
-          workMaxHeight,
+          placement,
+          axis: placement === "top" || placement === "bottom" ? "x" : "y",
+          width: compact,
+          height: compact,
+          petCenterX: compact / 2,
+          petCenterY: compact / 2,
+          controlsLeft: compact - CONTROL_MARGIN - CONTROL_SIZE,
+          controlsTop: Math.round((compact - CONTROL_RAIL_LENGTH) / 2),
+          controlsEntryX: 8,
+          controlsEntryY: 0,
+          buttonEntryX: 6,
+          buttonEntryY: 0,
         };
+
+        if (placement === "right") {
+          base.width = compact + CONTROL_SIDE_BAND;
+          base.controlsLeft = Math.round(base.petCenterX + PET_RADIUS + CONTROL_MARGIN);
+          base.controlsTop = Math.round((compact - CONTROL_RAIL_LENGTH) / 2);
+          base.controlsEntryX = 8;
+          base.buttonEntryX = 6;
+          return base;
+        }
+
+        if (placement === "left") {
+          base.width = compact + CONTROL_SIDE_BAND;
+          base.petCenterX = compact / 2 + CONTROL_SIDE_BAND;
+          base.controlsLeft = CONTROL_MARGIN;
+          base.controlsTop = Math.round((compact - CONTROL_RAIL_LENGTH) / 2);
+          base.controlsEntryX = -8;
+          base.buttonEntryX = -6;
+          return base;
+        }
+
+        base.height = compact + CONTROL_SIDE_BAND;
+        base.controlsLeft = Math.round((compact - CONTROL_RAIL_LENGTH) / 2);
+        base.controlsEntryX = 0;
+        base.buttonEntryX = 0;
+        if (placement === "top") {
+          base.petCenterY = compact / 2 + CONTROL_SIDE_BAND;
+          base.controlsTop = CONTROL_MARGIN;
+          base.controlsEntryY = -8;
+          base.buttonEntryY = -6;
+          return base;
+        }
+
+        base.controlsTop = Math.round(base.petCenterY + PET_RADIUS + CONTROL_MARGIN);
+        base.controlsEntryY = 8;
+        base.buttonEntryY = 6;
+        return base;
       }
 
       function applyLayoutVars(layout) {
         if (!layout || layout.mode !== "expanded") {
-          const shell = computeShellLayout();
-          const workTop = Math.round(shell.petCenterY + 56);
-          const workMaxHeight = Math.max(40, shell.height - workTop - 8);
-          wrap.style.setProperty("--panel-width", "212px");
-          wrap.style.setProperty("--pet-center-y", `${shell.petCenterY}px`);
-          wrap.style.setProperty("--music-top", "8px");
-          wrap.style.setProperty("--work-top", `${workTop}px`);
-          wrap.style.setProperty("--work-max-h", `${workMaxHeight}px`);
+          wrap.dataset.controlsAxis = "y";
+          wrap.style.setProperty("--pet-center-x", `${Math.round(petLayoutConfig.compactSize / 2)}px`);
+          wrap.style.setProperty("--pet-center-y", `${Math.round(petLayoutConfig.compactSize / 2)}px`);
+          wrap.style.setProperty("--controls-left", `${petLayoutConfig.compactSize - CONTROL_MARGIN - CONTROL_SIZE}px`);
+          wrap.style.setProperty("--controls-top", `${Math.round((petLayoutConfig.compactSize - CONTROL_RAIL_LENGTH) / 2)}px`);
+          wrap.style.setProperty("--controls-entry-x", "8px");
+          wrap.style.setProperty("--controls-entry-y", "0px");
+          wrap.style.setProperty("--button-entry-x", "6px");
+          wrap.style.setProperty("--button-entry-y", "0px");
           return;
         }
-        wrap.style.setProperty("--panel-width", `${Math.max(160, layout.width - 24)}px`);
+        wrap.dataset.controlsAxis = String(layout.axis || "y");
+        wrap.style.setProperty("--pet-center-x", `${Math.round(layout.petCenterX)}px`);
         wrap.style.setProperty("--pet-center-y", `${Math.round(layout.petCenterY)}px`);
-        wrap.style.setProperty("--music-top", `${Math.round(layout.musicTop)}px`);
-        wrap.style.setProperty("--work-top", `${Math.round(layout.workTop)}px`);
-        wrap.style.setProperty("--work-max-h", `${Math.round(layout.workMaxHeight)}px`);
+        wrap.style.setProperty("--controls-left", `${Math.round(layout.controlsLeft)}px`);
+        wrap.style.setProperty("--controls-top", `${Math.round(layout.controlsTop)}px`);
+        wrap.style.setProperty("--controls-entry-x", `${Math.round(layout.controlsEntryX || 0)}px`);
+        wrap.style.setProperty("--controls-entry-y", `${Math.round(layout.controlsEntryY || 0)}px`);
+        wrap.style.setProperty("--button-entry-x", `${Math.round(layout.buttonEntryX || 0)}px`);
+        wrap.style.setProperty("--button-entry-y", `${Math.round(layout.buttonEntryY || 0)}px`);
       }
 
       function clearCompactCommitTimer() {
@@ -465,17 +478,47 @@
         petDebug("renderer:compact-timer-clear");
       }
 
+      function cancelPanelsVisibleRaf() {
+        if (!panelsVisibleRaf) return;
+        window.cancelAnimationFrame(panelsVisibleRaf);
+        panelsVisibleRaf = 0;
+      }
+
+      function requestPanelsVisible() {
+        cancelPanelsVisibleRaf();
+        panelsVisibleRaf = window.requestAnimationFrame(() => {
+          panelsVisibleRaf = 0;
+          setPanelsVisible(true);
+        });
+      }
+
       function sendLayoutToMainSync(layout, mode) {
-        const shell = computeShellLayout();
-        const payload = {
-          mode: "expanded",
-          width: Math.round(shell.width),
-          height: Math.round(shell.height),
-          anchorX: Math.round(shell.width / 2),
-          anchorY: Math.round(shell.petCenterY),
-        };
-        const key = `${payload.width}|${payload.height}|${payload.anchorX}|${payload.anchorY}`;
+        const payload = layout && layout.mode === "expanded"
+          ? {
+              mode: "expanded",
+              width: Math.round(layout.width),
+              height: Math.round(layout.height),
+              anchorX: Math.round(layout.petCenterX),
+              anchorY: Math.round(layout.petCenterY),
+            }
+          : {
+              mode: "compact",
+              width: Math.round(petLayoutConfig.compactSize),
+              height: Math.round(petLayoutConfig.compactSize),
+              anchorX: Math.round(petLayoutConfig.compactSize / 2),
+              anchorY: Math.round(petLayoutConfig.compactSize / 2),
+            };
+        const key = `${payload.mode}|${payload.width}|${payload.height}|${payload.anchorX}|${payload.anchorY}`;
         if (key === lastLayoutKey) {
+          const live = getCurrentWindowBounds();
+          lastAppliedBounds = {
+            x: Number(live.x || 0),
+            y: Number(live.y || 0),
+            width: Number(live.width || payload.width),
+            height: Number(live.height || payload.height),
+          };
+          currentAnchorX = Number(payload.anchorX || petLayoutConfig.compactSize / 2);
+          currentAnchorY = Number(payload.anchorY || petLayoutConfig.compactSize / 2);
           petDebug("renderer:layout-skip-same-key", { key });
           return true;
         }
@@ -494,6 +537,15 @@
               anchorY: payload.anchorY,
               applied: result?.applied || null,
             });
+            const applied = result?.applied;
+            if (applied && Number.isFinite(applied.x) && Number.isFinite(applied.y)) {
+              lastAppliedBounds = {
+                x: Number(applied.x || 0),
+                y: Number(applied.y || 0),
+                width: Number(applied.width || payload.width),
+                height: Number(applied.height || payload.height),
+              };
+            }
           } else if (typeof window.petBridge?.setLayout === "function") {
             window.petBridge.setLayout(payload);
             petDebug("renderer:layout-async-fallback", {
@@ -503,7 +555,15 @@
               anchorX: payload.anchorX,
               anchorY: payload.anchorY,
             });
+            lastAppliedBounds = {
+              x: Number(window.screenX || 0),
+              y: Number(window.screenY || 0),
+              width: Number(payload.width || petLayoutConfig.compactSize),
+              height: Number(payload.height || petLayoutConfig.compactSize),
+            };
           }
+          currentAnchorX = Number(payload.anchorX || petLayoutConfig.compactSize / 2);
+          currentAnchorY = Number(payload.anchorY || petLayoutConfig.compactSize / 2);
           return true;
         } catch {
           lastLayoutKey = "";
@@ -520,8 +580,9 @@
 
       function commitCompactLayout() {
         clearCompactCommitTimer();
+        const applied = sendLayoutToMainSync(null, "compact");
+        if (!applied) return;
         applyLayoutVars(null);
-        sendLayoutToMainSync(null, "compact");
         visualLayoutMode = "compact";
         petDebug("renderer:compact-commit", {
           desiredHoverActive,
@@ -554,27 +615,31 @@
       }
 
       function syncLayoutNow() {
-        const expanded = desiredHoverActive && !dragging;
+        const controlsReady = !controlRail.classList.contains("hidden");
+        const expanded = desiredHoverActive && !dragging && controlsReady;
         if (expanded) {
           clearCompactCommitTimer();
           const layout = computeExpandedLayout();
-          applyLayoutVars(layout);
           const applied = sendLayoutToMainSync(layout, "expanded");
           if (!applied) return;
+          applyLayoutVars(layout);
           visualLayoutMode = "expanded";
           petDebug("renderer:expanded-commit", {
             width: layout.width,
             height: layout.height,
+            petCenterX: layout.petCenterX,
             petCenterY: layout.petCenterY,
-            workTop: layout.workTop,
-            musicVisible: !musicPanel.classList.contains("hidden"),
+            placement: layout.placement,
+            controlsReady,
           });
-          setPanelsVisible(true);
+          requestPanelsVisible();
           return;
         }
+        cancelPanelsVisibleRaf();
         setPanelsVisible(false);
         if (dragging) {
-          commitCompactLayout();
+          clearCompactCommitTimer();
+          petDebug("renderer:drag-layout-hold", { visualLayoutMode });
           return;
         }
         if (visualLayoutMode === "compact") {
@@ -632,6 +697,9 @@
           dragging,
         });
         desiredHoverActive = next;
+        if (!next) {
+          controlsPlacementLock = "";
+        }
         scheduleLayoutSync();
       }
 
@@ -642,64 +710,68 @@
         wrap.classList.toggle("panels-visible", next);
       }
 
+      function beginPendingPlayVisual(intentId, expectedIsPlaying) {
+        pendingPlayVisual = {
+          intentId: Number(intentId || 0),
+          expectedIsPlaying: Boolean(expectedIsPlaying),
+          expiresAt: Date.now() + PLAY_VISUAL_STALE_GUARD_MS,
+        };
+      }
+
+      function clearPendingPlayVisual(reason = "") {
+        if (!pendingPlayVisual) return;
+        petDebug("renderer:media-play-pending-clear", {
+          intentId: Number(pendingPlayVisual.intentId || 0),
+          reason: String(reason || ""),
+        });
+        pendingPlayVisual = null;
+      }
+
+      function resolvePlayVisualState(rawIsPlaying) {
+        const incoming = Boolean(rawIsPlaying);
+        if (!pendingPlayVisual) return incoming;
+        const now = Date.now();
+        if (now > Number(pendingPlayVisual.expiresAt || 0)) {
+          clearPendingPlayVisual("expired");
+          return incoming;
+        }
+        if (incoming === Boolean(pendingPlayVisual.expectedIsPlaying)) {
+          clearPendingPlayVisual("ack");
+          return incoming;
+        }
+        return Boolean(pendingPlayVisual.expectedIsPlaying);
+      }
+
       function setMusicPanel(payload) {
         const media = payload?.media && typeof payload.media === "object" ? payload.media : null;
-        latestMedia = media;
         const musicNames = Array.isArray(payload?.musicDisplayNames)
           ? payload.musicDisplayNames.filter((item) => typeof item === "string" && item.trim())
           : [];
         const hasMediaDetail = !!(media && (media.title || media.artist || media.app));
         const hasMusic = Boolean(payload?.hasMusic) || musicNames.length > 0 || hasMediaDetail;
-        musicPanel.classList.toggle("hidden", !hasMusic);
+        controlRail.classList.toggle("hidden", !hasMusic);
         if (!hasMusic) {
-          musicPanel.classList.remove("with-cover");
-          musicPanel.style.backgroundImage = "";
+          latestMedia = null;
+          controlsPlacementLock = "";
+          clearPendingPlayVisual("no_music");
+          btnPrev.disabled = true;
+          btnPlay.disabled = true;
+          btnNext.disabled = true;
+          setButtonIcon(btnPlay, "play");
+          setPanelsVisible(false);
           scheduleLayoutSync();
           return;
         }
 
-        const fallbackPlayer = musicNames[0] || String(media?.app || "").trim() || "音乐播放器";
-        const title = String(media?.title || "").trim() || `${fallbackPlayer} 正在运行`;
-        const artist = String(media?.artist || "").trim();
-        const status = media?.isPlaying ? "播放中" : "待机中";
-        const app = String(media?.app || "").trim();
-        const coverDataUrl = String(media?.coverDataUrl || "").trim();
-
-        musicTitle.textContent = title;
-        musicMeta.textContent = [artist || fallbackPlayer, status, app].filter(Boolean).join(" · ");
-        if (coverDataUrl) {
-          musicPanel.classList.add("with-cover");
-          musicPanel.style.backgroundImage = `linear-gradient(rgba(8,12,20,0.42), rgba(8,12,20,0.8)), url('${coverDataUrl}'), ${buildFallbackCover(title, artist || fallbackPlayer, app || fallbackPlayer)}`;
-        } else {
-          musicPanel.classList.add("with-cover");
-          musicPanel.style.backgroundImage = buildFallbackCover(title, artist || fallbackPlayer, app || fallbackPlayer);
-        }
+        const visualIsPlaying = resolvePlayVisualState(media?.isPlaying);
+        latestMedia = media && typeof media === "object" ? { ...media, isPlaying: visualIsPlaying } : { isPlaying: visualIsPlaying };
 
         const mediaControllable = Boolean(media && media.available && (media.canPlay || media.canPause || media.canNext || media.canPrev));
         btnPrev.disabled = !hasMusic || (mediaControllable && !media?.canPrev);
         btnNext.disabled = !hasMusic || (mediaControllable && !media?.canNext);
         btnPlay.disabled = !hasMusic || (mediaControllable && !(media?.canPlay || media?.canPause));
-        setButtonIcon(btnPlay, media?.isPlaying ? "pause" : "play");
+        setButtonIcon(btnPlay, visualIsPlaying ? "pause" : "play");
 
-        const volume = Number(media?.volume);
-        if (Number.isFinite(volume)) {
-          volumeSlider.value = String(Math.max(0, Math.min(100, Math.round(volume))));
-        }
-        scheduleLayoutSync();
-      }
-
-      function setWorkPanel(payload) {
-        const narration = String(payload?.workNarration || "").trim() || "当前没有检测到工作进程哦主人~";
-        workText.textContent = narration;
-
-        const line = String(payload?.coachLine || "").trim();
-        if (line) {
-          coachText.textContent = line;
-          coachText.classList.remove("hidden");
-        } else {
-          coachText.textContent = "";
-          coachText.classList.add("hidden");
-        }
         scheduleLayoutSync();
       }
 
@@ -718,7 +790,6 @@
 
         badge.textContent = stateLabel(nextState, payload);
         setMusicPanel(payload || {});
-        setWorkPanel(payload || {});
         scheduleLayoutSync();
       }
 
@@ -728,12 +799,8 @@
           if (Number.isFinite(Number(config.compactSize))) {
             petLayoutConfig.compactSize = Math.max(96, Math.round(Number(config.compactSize)));
             lastLayoutKey = "";
-          }
-          if (Number.isFinite(Number(config.expandedWidth))) {
-            petLayoutConfig.expandedWidth = Math.max(200, Math.round(Number(config.expandedWidth)));
-          }
-          if (Number.isFinite(Number(config.expandedMaxHeight))) {
-            petLayoutConfig.expandedMaxHeight = Math.max(240, Math.round(Number(config.expandedMaxHeight)));
+            currentAnchorX = petLayoutConfig.compactSize / 2;
+            currentAnchorY = petLayoutConfig.compactSize / 2;
           }
           if (config.stateAssets && typeof config.stateAssets === "object") {
             stateAssets = { ...config.stateAssets };
@@ -789,11 +856,8 @@
           rect = mergeRect(rect, petRect);
         }
         if (wrap.classList.contains("panels-visible")) {
-          if (musicPanel && !musicPanel.classList.contains("hidden")) {
-            rect = mergeRect(rect, musicPanel.getBoundingClientRect());
-          }
-          if (workPanel && !workPanel.classList.contains("hidden")) {
-            rect = mergeRect(rect, workPanel.getBoundingClientRect());
+          if (controlRail && !controlRail.classList.contains("hidden")) {
+            rect = mergeRect(rect, controlRail.getBoundingClientRect());
           }
         }
         return rect;
@@ -801,8 +865,7 @@
 
       function isInsideInteractive(clientX, clientY) {
         if (isInsidePet(clientX, clientY)) return true;
-        if (isInsideRect(musicPanel, clientX, clientY, 3)) return true;
-        if (isInsideRect(workPanel, clientX, clientY, 3)) return true;
+        if (isInsideRect(controlRail, clientX, clientY, 3)) return true;
         if (desiredHoverActive || wrap.classList.contains("panels-visible")) {
           const rect = buildInteractiveRect();
           if (!rect) return false;
@@ -903,8 +966,10 @@
 
       function forceCollapsePanels(reason = "") {
         desiredHoverActive = false;
+        controlsPlacementLock = "";
         lastInsideInteractiveAt = 0;
         clearDeactivateTimer();
+        cancelPanelsVisibleRaf();
         setPanelsVisible(false);
         petDebug("renderer:force-collapse", {
           reason: String(reason || ""),
@@ -931,7 +996,8 @@
         }
       }
 
-      function setOptimisticPlayVisual(isPlaying) {
+      function setOptimisticPlayVisual(isPlaying, intentId = 0) {
+        beginPendingPlayVisual(intentId, isPlaying);
         if (!latestMedia || typeof latestMedia !== "object") {
           latestMedia = {};
         }
@@ -956,7 +1022,7 @@
         const intentId = ++mediaControlIntentSeq;
         const action = wasPlaying ? "pause" : "play";
         const canDirect = wasPlaying ? latestMedia?.canPause : latestMedia?.canPlay;
-        setOptimisticPlayVisual(nextPlaying);
+        setOptimisticPlayVisual(nextPlaying, intentId);
         petDebug("renderer:media-play-optimistic", {
           intentId,
           action: canDirect ? action : "play_pause",
@@ -967,6 +1033,7 @@
           const result = await runMediaAction(canDirect ? action : "play_pause");
           if (intentId !== mediaControlIntentSeq) return;
           if (result?.ok) return;
+          clearPendingPlayVisual("rollback");
           latestMedia = previousMedia;
           setButtonIcon(btnPlay, previousMedia?.isPlaying ? "pause" : "play");
           petDebug("renderer:media-play-rollback", {
@@ -979,24 +1046,6 @@
         event.preventDefault();
         event.stopPropagation();
         runMediaAction("next");
-      });
-      btnVolDown.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        runMediaAction("volume_down");
-      });
-      btnVolUp.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        runMediaAction("volume_up");
-      });
-      volumeSlider.addEventListener("input", (event) => {
-        event.stopPropagation();
-        const value = Number(event.target?.value || 0);
-        if (volumeDebounceTimer) clearTimeout(volumeDebounceTimer);
-        volumeDebounceTimer = setTimeout(() => {
-          runMediaAction("set_volume", { value });
-        }, 150);
       });
 
       pet.addEventListener("contextmenu", (event) => {
@@ -1105,6 +1154,7 @@
         if (event && !wasMoved) {
           syncPointerByPoint(event.clientX, event.clientY);
         } else {
+          lastAppliedBounds = null;
           schedulePointerInactive();
         }
       }
@@ -1130,7 +1180,7 @@
         window.petBridge?.openChat();
       });
 
-      [pet, musicPanel, workPanel].forEach((el) => {
+      [pet, controlRail].forEach((el) => {
         el?.addEventListener("mouseenter", (event) => {
           if (dragging) return;
           syncPointerByPoint(event.clientX, event.clientY);
@@ -1168,7 +1218,7 @@
       window.addEventListener("beforeunload", () => {
         clearDeactivateTimer();
         clearCompactCommitTimer();
-        if (volumeDebounceTimer) clearTimeout(volumeDebounceTimer);
+        cancelPanelsVisibleRaf();
         if (hoverSyncRaf) window.cancelAnimationFrame(hoverSyncRaf);
         if (layoutSyncRaf) window.cancelAnimationFrame(layoutSyncRaf);
         if (typeof offState === "function") offState();

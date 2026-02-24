@@ -92,6 +92,55 @@ let petLayoutState = {
   anchorY: PET_COMPACT_WINDOW_SIZE / 2,
 };
 let petHoverGuardOutsideCount = 0;
+let stdioErrorGuardsInstalled = false;
+
+function installStdioErrorGuards() {
+  if (stdioErrorGuardsInstalled) return;
+  stdioErrorGuardsInstalled = true;
+  const suppressBrokenPipe = (error) => {
+    const code = String(error?.code || "");
+    return code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
+  };
+  const streams = [process.stdout, process.stderr];
+  for (const stream of streams) {
+    if (!stream || typeof stream.on !== "function") continue;
+    stream.on("error", (error) => {
+      if (suppressBrokenPipe(error)) return;
+      try {
+        const fallback = process.stderr;
+        if (fallback && !fallback.destroyed && !fallback.writableEnded && fallback.writable !== false) {
+          fallback.write(`[aelin-stream-error] ${String(error?.message || error)}\n`);
+        }
+      } catch {
+        // ignore nested stream failures
+      }
+    });
+  }
+}
+
+function safeConsoleLog(message) {
+  const line = String(message ?? "");
+  const out = process.stdout;
+  if (!out) return;
+  if (out.destroyed || out.writableEnded || out.writable === false) return;
+  try {
+    out.write(`${line}\n`);
+  } catch (error) {
+    const code = String(error?.code || "");
+    if (code !== "EPIPE" && code !== "ERR_STREAM_DESTROYED") {
+      try {
+        const errOut = process.stderr;
+        if (errOut && !errOut.destroyed && !errOut.writableEnded && errOut.writable !== false) {
+          errOut.write(`[aelin-log-error] ${String(error?.message || error)}\n`);
+        }
+      } catch {
+        // ignore stderr write failures
+      }
+    }
+  }
+}
+
+installStdioErrorGuards();
 
 function petDebugLog(tag, payload = {}) {
   if (!PET_DEBUG_LOG_ENABLED) return;
@@ -103,7 +152,7 @@ function petDebugLog(tag, payload = {}) {
     body = "{\"detail\":\"stringify_failed\"}";
   }
   const suffix = body && body !== "{}" ? ` ${body}` : "";
-  console.log(`[pet-debug ${stamp}] ${String(tag || "event")}${suffix}`);
+  safeConsoleLog(`[pet-debug ${stamp}] ${String(tag || "event")}${suffix}`);
 }
 
 function nowLocalDateStamp(ts) {
@@ -1664,7 +1713,7 @@ function startBackend() {
       failed.push(`${candidate.label}: ${probe.reason}`);
       continue;
     }
-    console.log(`[backend] Python runner selected: ${candidate.label}`);
+    safeConsoleLog(`[backend] Python runner selected: ${candidate.label}`);
     backendProc = spawn(
       candidate.command,
       [...candidate.args, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(backendPort)],
@@ -1972,7 +2021,7 @@ function clampNumber(value, min, max, fallback) {
 function normalizePetLayoutPayload(payload) {
   const mode = String(payload?.mode || "compact").toLowerCase() === "expanded" ? "expanded" : "compact";
   const width = mode === "expanded"
-    ? Math.round(clampNumber(payload?.width, PET_EXPANDED_WINDOW_WIDTH, PET_EXPANDED_WINDOW_WIDTH, PET_EXPANDED_WINDOW_WIDTH))
+    ? Math.round(clampNumber(payload?.width, PET_COMPACT_WINDOW_SIZE, PET_EXPANDED_WINDOW_WIDTH, PET_EXPANDED_WINDOW_WIDTH))
     : PET_COMPACT_WINDOW_SIZE;
   const height = mode === "expanded"
     ? Math.round(clampNumber(payload?.height, PET_COMPACT_WINDOW_SIZE, PET_EXPANDED_WINDOW_MAX_HEIGHT, 300))
