@@ -54,6 +54,7 @@ export function useChatStream() {
 
     const body: AelinChatRequest = {
       query: text,
+      workspace: session?.workspace || 'default',
       history,
       images: images?.map(i => ({ data_url: i.dataUrl, name: i.name })),
     }

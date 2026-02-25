@@ -5,6 +5,10 @@ import { cn } from '@/shared/utils/cn'
 import { sourceIcon, relativeTime } from '@/shared/utils/format'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { AgentTracePanel } from './AgentTracePanel'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
+import { aelinApi } from '@/shared/api/aelin'
+import type { AelinAction, AelinTrackConfirmRequest } from '@/shared/api/types'
 
 const EXPRESSION_LABELS: Record<string, string> = {
   'exp-02': '热情出击', 'exp-03': '温柔赞同', 'exp-04': '托腮思考',
@@ -33,11 +37,73 @@ function calculateCompactMaxWidth(viewportWidth: number) {
   return Math.max(minWidth, Math.floor(width * ratio))
 }
 
+function resolveActionHref(action: AelinAction): string {
+  const kind = String(action.kind || '').trim().toLowerCase()
+  const payload = action.payload || {}
+  if (kind === 'open_tracking') {
+    const targetId = String(payload.target_id || '').trim()
+    if (targetId) return `/tracking/${encodeURIComponent(targetId)}`
+    return '/tracking'
+  }
+  if (kind === 'open_desk' || kind === 'open_todos') {
+    const path = String(payload.path || '').trim()
+    return path || '/tracking?panel=desk'
+  }
+  if (kind === 'open_settings') {
+    const path = String(payload.path || '').trim()
+    return path || '/settings'
+  }
+  if (kind === 'open_message') {
+    const messageId = String(payload.message_id || '').trim()
+    if (messageId) return `/tracking?panel=desk&message_id=${encodeURIComponent(messageId)}`
+    return '/tracking?panel=desk'
+  }
+  return ''
+}
+
+function buildTrackConfirmBody(action: AelinAction, fallbackText: string): AelinTrackConfirmRequest | null {
+  const payload = action.payload || {}
+  const target = String(payload.target || payload.query || fallbackText || '').trim().slice(0, 240)
+  if (!target) return null
+  const source = String(payload.source || 'auto').trim().toLowerCase() || 'auto'
+  const query = String(payload.query || '').trim().slice(0, 500)
+  const workspace = String(payload.workspace || 'default').trim() || 'default'
+  return {
+    target,
+    source,
+    query: query || undefined,
+    workspace,
+  }
+}
+
 export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
   const stickerLabel = message.expression ? (EXPRESSION_LABELS[message.expression] ?? 'Aelin 表情') : 'Aelin 表情'
+  const qc = useQueryClient()
+  const confirmTrack = useMutation({
+    mutationFn: async (action: AelinAction) => {
+      const body = buildTrackConfirmBody(action, message.content)
+      if (!body) {
+        throw new Error('缺少可追踪目标')
+      }
+      return aelinApi.trackConfirm(body)
+    },
+    onSuccess: (res) => {
+      toast.success(String(res.message || '已创建追踪'))
+      qc.invalidateQueries({ queryKey: ['tracking'] })
+      qc.invalidateQueries({ queryKey: ['desk-tracking-list'] })
+    },
+    onError: (error: any) => {
+      toast.error(String(error?.message || '追踪创建失败'))
+    },
+  })
+
+  const isTrackAction = (action: AelinAction) => {
+    const kind = String(action.kind || '').trim().toLowerCase()
+    return kind === 'confirm_track' || kind === 'track_topic'
+  }
 
   return (
     <article className={cn(
@@ -131,6 +197,51 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
                       <span className="text-[var(--color-text-muted)] sm:inline">{relativeTime(c.received_at)}</span>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+          </details>
+        )}
+
+        {message.actions && message.actions.length > 0 && (
+          <details className="group mt-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-2">
+            <summary className="cursor-pointer text-[11px] text-[var(--color-text-muted)] font-semibold uppercase tracking-wide">
+              建议动作 ({message.actions.length})
+            </summary>
+            <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-out group-open:grid-rows-[1fr]">
+              <div className="overflow-hidden">
+                <div className="mt-2 space-y-1.5 opacity-0 translate-y-1 transition-all duration-300 ease-out group-open:translate-y-0 group-open:opacity-100">
+                  {message.actions.map((action, i) => {
+                    const href = resolveActionHref(action)
+                    const detail = String(action.detail || '').trim()
+                    const key = `${String(action.kind || 'action')}-${i}`
+                    if (isTrackAction(action)) {
+                      return (
+                        <div key={key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-2">
+                          <div className="text-[11px] font-medium text-[var(--color-text)]">{action.title}</div>
+                          {detail ? <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{detail}</div> : null}
+                          <button
+                            className="aelin-btn mt-2 h-7 px-2 text-[11px]"
+                            onClick={() => confirmTrack.mutate(action)}
+                            disabled={confirmTrack.isPending}
+                          >
+                            {confirmTrack.isPending ? '处理中…' : '执行'}
+                          </button>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div key={key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-2">
+                        <div className="text-[11px] font-medium text-[var(--color-text)]">{action.title}</div>
+                        {detail ? <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{detail}</div> : null}
+                        {href ? (
+                          <a className="aelin-btn mt-2 inline-flex h-7 items-center px-2 text-[11px]" href={href}>
+                            打开
+                          </a>
+                        ) : null}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             </div>
