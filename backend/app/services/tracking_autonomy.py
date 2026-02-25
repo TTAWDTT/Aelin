@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import logging
 import random
 import re
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -16,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import create_session
-from app.models import AgentMemoryNote, TrackingChange, TrackingSnapshot, TrackingTarget
+from app.models import AgentMemoryNote, ConnectedAccount, TrackingChange, TrackingSnapshot, TrackingTarget
 from app.services.encryption import encrypt_optional
 from app.services.openviking_bridge import tracking_file_memory_bridge
 from app.services.tracking_autonomy_utils import (
@@ -35,6 +36,19 @@ from app.services.web_search import WebSearchService
 from app.settings import settings
 
 _LOG = logging.getLogger(__name__)
+_TRACKING_CONNECTOR_SOURCES = {"x", "bilibili", "douyin", "xiaohongshu", "weibo", "rss"}
+_TRACKING_SOURCE_ALIAS = {
+    "twitter": "x",
+    "x.com": "x",
+    "bili": "bilibili",
+    "bilibili.com": "bilibili",
+    "bsite": "bilibili",
+    "xhs": "xiaohongshu",
+    "rednote": "xiaohongshu",
+}
+_OG_URL_RE = re.compile(r'property=["\']og:url["\'][^>]*content=["\']([^"\']+)["\']', flags=re.I)
+_HREF_RE = re.compile(r'href=["\'](https?://[^"\']+)["\']', flags=re.I)
+_URL_RE = re.compile(r"https?://[^\s<>'\"]+", flags=re.I)
 
 
 class TrackingAutonomyService:
@@ -397,7 +411,8 @@ class TrackingAutonomyService:
             groups: dict[str, list[int]] = defaultdict(list)
             source_by_group: dict[str, str] = {}
             for row in rows:
-                if row.is_temporary and row.expires_at and row.expires_at <= now:
+                expires_at = self._as_utc_datetime(row.expires_at)
+                if row.is_temporary and expires_at and expires_at <= now:
                     row.status = "paused"
                     db.add(row)
                     continue
@@ -474,7 +489,7 @@ class TrackingAutonomyService:
         primary = targets[0]
         now = _utcnow()
         try:
-            raw_payload, normalized_payload = self._fetch_payload(primary)
+            raw_payload, normalized_payload = self._fetch_payload(db, primary)
         except Exception as exc:
             err = str(exc or "fetch failed")[:500]
             for target in targets:
@@ -490,7 +505,8 @@ class TrackingAutonomyService:
             target.last_run_at = now
             target.last_checked_at = now
             target.next_run_at = self._next_run_time(interval_seconds=target.interval_seconds, error_count=0)
-            if target.is_temporary and target.expires_at and target.expires_at <= now:
+            expires_at = self._as_utc_datetime(target.expires_at)
+            if target.is_temporary and expires_at and expires_at <= now:
                 target.status = "paused"
                 db.add(target)
                 continue
@@ -627,7 +643,7 @@ class TrackingAutonomyService:
                 now=now,
             )
 
-    def _fetch_payload(self, target: TrackingTarget) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _fetch_payload(self, db: Session, target: TrackingTarget) -> tuple[dict[str, Any], dict[str, Any]]:
         config = _json_loads_dict(target.config_json)
         query = (str(config.get("query") or "").strip() or target.display_name or target.source_key).strip()
         if target.track_type == "url":
@@ -641,6 +657,17 @@ class TrackingAutonomyService:
                 {"kind": "url", "url": url, "title": title, "excerpt": excerpt, "links": links, "fetched_at": _utcnow().isoformat()},
                 {"kind": "url", "source_key": url, "items": items[:40], "meta": {"count": len(items)}},
             )
+
+        source_type = self._normalize_source_type(target.source_type)
+        if source_type in _TRACKING_CONNECTOR_SOURCES:
+            connector_payload = self._fetch_payload_via_connector(
+                db,
+                target=target,
+                query=query,
+                source_type=source_type,
+            )
+            if connector_payload is not None:
+                return connector_payload
 
         rows = self._web_search.search_and_fetch(query, max_results=8, fetch_top_k=4)
         items: list[dict[str, Any]] = []
@@ -657,9 +684,295 @@ class TrackingAutonomyService:
                 "query": query,
                 "rows": [{"title": row.title, "url": row.url, "snippet": row.snippet, "fetched_excerpt": row.fetched_excerpt, "provider": row.provider, "fetch_mode": row.fetch_mode, "rank": row.rank} for row in rows],
                 "fetched_at": _utcnow().isoformat(),
+                "source": source_type,
+                "fetch_path": "web_search",
             },
-            {"kind": "term", "source_key": target.source_key, "items": items[:40], "meta": {"count": len(items), "query": query}},
+            {"kind": "term", "source_key": target.source_key, "items": items[:40], "meta": {"count": len(items), "query": query, "source": source_type, "fetch_path": "web_search"}},
         )
+
+    def _normalize_source_type(self, source_type: str | None) -> str:
+        clean = (source_type or "").strip().lower()
+        if not clean:
+            return "web"
+        return _TRACKING_SOURCE_ALIAS.get(clean, clean)
+
+    def _fetch_payload_via_connector(
+        self,
+        db: Session,
+        *,
+        target: TrackingTarget,
+        query: str,
+        source_type: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        accounts = self._matching_connector_accounts(db, target=target, source_type=source_type, query=query)
+        if not accounts:
+            _LOG.info(
+                "tracking connector skipped: no account user_id=%s source=%s target=%s",
+                target.user_id,
+                source_type,
+                target.display_name or target.source_key,
+            )
+            return None
+
+        try:
+            from app.sync import _connector_for  # lazy import to avoid heavy startup dependency
+        except Exception as exc:
+            _LOG.warning("tracking connector unavailable source=%s error=%s", source_type, str(exc)[:240])
+            return None
+
+        attempt_errors: list[str] = []
+        for account in accounts:
+            account_label = f"{source_type}:{getattr(account, 'id', 0)}:{getattr(account, 'identifier', '')}"
+            try:
+                connector = _connector_for(db, account)
+            except Exception as exc:
+                attempt_errors.append(f"{account_label}:init:{str(exc)[:140]}")
+                continue
+
+            try:
+                messages = connector.fetch_new_messages(since=None)
+            except Exception as exc:
+                attempt_errors.append(f"{account_label}:fetch:{str(exc)[:140]}")
+                continue
+
+            payload = self._build_connector_payload(
+                target=target,
+                query=query,
+                source_type=source_type,
+                account=account,
+                messages=messages,
+            )
+            if payload is None:
+                attempt_errors.append(f"{account_label}:empty")
+                continue
+            return payload
+
+        if attempt_errors:
+            _LOG.info(
+                "tracking connector fallback to web_search user_id=%s source=%s details=%s",
+                target.user_id,
+                source_type,
+                "; ".join(attempt_errors[:6]),
+            )
+        return None
+
+    def _matching_connector_accounts(
+        self,
+        db: Session,
+        *,
+        target: TrackingTarget,
+        source_type: str,
+        query: str,
+    ) -> list[ConnectedAccount]:
+        rows = list(
+            db.scalars(
+                select(ConnectedAccount)
+                .where(
+                    ConnectedAccount.user_id == int(target.user_id),
+                    func.lower(ConnectedAccount.provider) == source_type,
+                )
+                .order_by(ConnectedAccount.id.asc())
+            )
+        )
+        if not rows:
+            return []
+
+        config = _json_loads_dict(target.config_json)
+        preferred_account_id = 0
+        try:
+            preferred_account_id = int(config.get("account_id") or 0)
+        except Exception:
+            preferred_account_id = 0
+        source_hint = " ".join(
+            [
+                str(target.display_name or ""),
+                str(target.source_key or ""),
+                str(query or ""),
+                str(config.get("query") or ""),
+                str(config.get("target") or ""),
+            ]
+        ).strip().lower()
+
+        def _score(account: ConnectedAccount) -> tuple[int, int]:
+            score = 0
+            if preferred_account_id > 0 and int(account.id) == preferred_account_id:
+                score += 1000
+            identifier = str(getattr(account, "identifier", "") or "").strip().lower()
+            if identifier:
+                if identifier in source_hint:
+                    score += 120
+                token = identifier.split(":", 1)[-1].split("/")[-1].lstrip("@").strip()
+                if token and token in source_hint:
+                    score += 160
+            feed_cfg = getattr(account, "feed_config", None)
+            if feed_cfg is not None:
+                display_name = str(getattr(feed_cfg, "display_name", "") or "").strip().lower()
+                homepage_url = str(getattr(feed_cfg, "homepage_url", "") or "").strip().lower()
+                feed_url = str(getattr(feed_cfg, "feed_url", "") or "").strip().lower()
+                for hint in (display_name, homepage_url, feed_url):
+                    if hint and hint in source_hint:
+                        score += 90
+            return score, int(account.id)
+
+        return sorted(rows, key=_score, reverse=True)
+
+    def _build_connector_payload(
+        self,
+        *,
+        target: TrackingTarget,
+        query: str,
+        source_type: str,
+        account: ConnectedAccount,
+        messages: list[Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        if not messages:
+            return None
+
+        def _message_sort_ts(row: Any) -> float:
+            received = getattr(row, "received_at", None)
+            if isinstance(received, datetime):
+                if received.tzinfo is None:
+                    received = received.replace(tzinfo=_utcnow().tzinfo)
+                return float(received.timestamp())
+            return 0.0
+
+        ordered = sorted(
+            [item for item in messages if item is not None],
+            key=_message_sort_ts,
+            reverse=True,
+        )
+        items: list[dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for msg in ordered[:120]:
+            normalized = self._normalize_connector_message(msg=msg, source_type=source_type)
+            if normalized is None:
+                continue
+            key = str(normalized.get("key") or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            item = {
+                "key": key[:240],
+                "url": normalized.get("url") or "",
+                "title": normalized.get("title") or "",
+                "snippet": str(normalized.get("snippet") or "")[:300],
+                "provider": source_type,
+                "fetch_mode": "connector",
+                "published_at": normalized.get("published_at") or "",
+                "sender": normalized.get("sender") or "",
+            }
+            items.append(item)
+            rows.append(
+                {
+                    "external_id": normalized.get("external_id") or "",
+                    "title": item["title"],
+                    "url": item["url"],
+                    "snippet": item["snippet"],
+                    "published_at": item["published_at"],
+                    "sender": item["sender"],
+                    "source": source_type,
+                    "fetch_mode": "connector",
+                }
+            )
+            if len(items) >= 40:
+                break
+
+        if not items:
+            return None
+
+        now_iso = _utcnow().isoformat()
+        account_id = int(getattr(account, "id", 0) or 0)
+        account_identifier = str(getattr(account, "identifier", "") or "").strip()
+        raw_payload = {
+            "kind": "term",
+            "query": query,
+            "source": source_type,
+            "fetch_path": "connector",
+            "account_id": account_id,
+            "account_identifier": account_identifier,
+            "rows": rows,
+            "fetched_at": now_iso,
+        }
+        normalized_payload = {
+            "kind": "term",
+            "source_key": target.source_key,
+            "items": items,
+            "meta": {
+                "count": len(items),
+                "query": query,
+                "source": source_type,
+                "fetch_path": "connector",
+                "account_id": account_id,
+                "account_identifier": account_identifier,
+            },
+        }
+        return raw_payload, normalized_payload
+
+    def _normalize_connector_message(self, *, msg: Any, source_type: str) -> dict[str, str] | None:
+        subject = str(getattr(msg, "subject", "") or "").strip()
+        body = str(getattr(msg, "body", "") or "")
+        sender = str(getattr(msg, "sender", "") or "").strip()
+        external_id = str(getattr(msg, "external_id", "") or "").strip()
+        received_at = getattr(msg, "received_at", None)
+
+        title = subject or sender or f"{source_type} update"
+        snippet = self._strip_html(body)
+        if not snippet:
+            snippet = title
+        url = self._extract_message_url(body)
+        if not url:
+            url = self._extract_message_url(subject)
+        published_at = ""
+        if isinstance(received_at, datetime):
+            if received_at.tzinfo is None:
+                received_at = received_at.replace(tzinfo=_utcnow().tzinfo)
+            published_at = received_at.isoformat()
+
+        if external_id:
+            key = f"{source_type}:{external_id}".strip().lower()
+        elif url:
+            key = _normalize_url_key(url)
+        else:
+            key_seed = f"{source_type}:{sender}:{title}:{published_at}".lower()
+            key = hashlib.sha1(key_seed.encode("utf-8", errors="ignore")).hexdigest()
+        key = (key or "").strip()[:240]
+        if not key:
+            return None
+        return {
+            "key": key,
+            "url": url,
+            "title": title[:220],
+            "snippet": snippet[:300],
+            "sender": sender[:120],
+            "external_id": external_id[:120],
+            "published_at": published_at,
+        }
+
+    def _strip_html(self, text: str) -> str:
+        clean = html.unescape(str(text or ""))
+        clean = re.sub(r"<[^>]+>", " ", clean)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        return clean[:1200]
+
+    def _extract_message_url(self, text: str) -> str:
+        content = str(text or "")
+        match = _OG_URL_RE.search(content)
+        if match:
+            normalized = _normalize_url_key(match.group(1))
+            if normalized:
+                return normalized
+        match = _HREF_RE.search(content)
+        if match:
+            normalized = _normalize_url_key(match.group(1))
+            if normalized:
+                return normalized
+        match = _URL_RE.search(content)
+        if match:
+            normalized = _normalize_url_key(match.group(0))
+            if normalized:
+                return normalized
+        return ""
 
     def _extract_url_links(self, url: str) -> list[dict[str, Any]]:
         headers = {
@@ -763,6 +1076,13 @@ class TrackingAutonomyService:
             return now + timedelta(seconds=base + random.randint(1, 9))
         backoff = min(self._max_backoff_seconds, max(base, (2 ** max(0, error_count - 1)) * base))
         return now + timedelta(seconds=backoff + random.randint(1, 12))
+
+    def _as_utc_datetime(self, value: datetime | None) -> datetime | None:
+        if not isinstance(value, datetime):
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     def _group_key(self, row: TrackingTarget) -> str:
         return f"{row.user_id}:{row.workspace}:{row.track_type}:{row.source_type}:{row.source_key}".lower()
