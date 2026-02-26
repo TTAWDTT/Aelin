@@ -9,6 +9,7 @@ import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from app.settings import settings
 from app.services.openviking_utils import (
@@ -26,6 +27,204 @@ from app.services.openviking_utils import (
 _LOG = logging.getLogger(__name__)
 
 
+class _OpenVikingAdapter:
+    """Thin compatibility adapter for different OpenViking Python SDK versions."""
+
+    def __init__(self, *, root_dir: Path) -> None:
+        self.root_dir = root_dir
+        self.client = self._build_client(root_dir=root_dir)
+
+    def _build_client(self, *, root_dir: Path) -> Any | None:
+        try:
+            module = importlib.import_module("openviking")
+        except Exception:
+            return None
+        client_cls = (
+            getattr(module, "SyncOpenViking", None)
+            or getattr(module, "OpenViking", None)
+            or getattr(module, "Client", None)
+        )
+        if client_cls is None:
+            return None
+        candidates = (
+            lambda: client_cls(root_dir=str(root_dir)),
+            lambda: client_cls(path=str(root_dir)),
+            lambda: client_cls(str(root_dir)),
+            lambda: client_cls(),
+        )
+        for build in candidates:
+            try:
+                client = build()
+            except TypeError:
+                continue
+            except Exception:
+                continue
+            initializer = getattr(client, "initialize", None)
+            if callable(initializer):
+                try:
+                    initializer()
+                except TypeError:
+                    try:
+                        initializer(str(root_dir))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            return client
+        return None
+
+    @property
+    def available(self) -> bool:
+        return self.client is not None
+
+    def add_resource(self, *, path: Path) -> dict[str, Any]:
+        client = self.client
+        if client is None:
+            return {}
+        fn = getattr(client, "add_resource", None) or getattr(client, "add", None)
+        if not callable(fn):
+            return {}
+        payload: Any = None
+        path_text = str(path)
+        call_variants = (
+            lambda: fn(path=path_text),
+            lambda: fn(resource_path=path_text),
+            lambda: fn(uri=path_text),
+            lambda: fn(path_text),
+        )
+        for invoke in call_variants:
+            try:
+                payload = invoke()
+                break
+            except TypeError:
+                continue
+            except Exception:
+                return {}
+        if payload is None:
+            return {}
+        return self._normalize_payload(payload)
+
+    def wait_processed(self, *, timeout_seconds: float) -> None:
+        client = self.client
+        if client is None:
+            return
+        fn = getattr(client, "wait_processed", None)
+        if not callable(fn):
+            return
+        timeout = max(1.0, float(timeout_seconds or 0.0))
+        for invoke in (
+            lambda: fn(timeout=timeout),
+            lambda: fn(timeout_seconds=timeout),
+            lambda: fn(timeout),
+            lambda: fn(),
+        ):
+            try:
+                invoke()
+                return
+            except TypeError:
+                continue
+            except Exception:
+                return
+
+    def find(self, *, query: str, limit: int, target_uri: str | None) -> list[dict[str, Any]]:
+        client = self.client
+        if client is None:
+            return []
+
+        def _call_find() -> Any:
+            fn = getattr(client, "find", None)
+            if not callable(fn):
+                return None
+            variants: list[Any] = []
+            if target_uri:
+                variants = [
+                    lambda: fn(query=query, top_k=limit, target_uri=target_uri),
+                    lambda: fn(query=query, n_results=limit, target_uri=target_uri),
+                    lambda: fn(query, limit, target_uri),
+                ]
+            else:
+                variants = [
+                    lambda: fn(query=query, top_k=limit),
+                    lambda: fn(query=query, n_results=limit),
+                    lambda: fn(query, limit),
+                ]
+            for invoke in variants:
+                try:
+                    return invoke()
+                except TypeError:
+                    continue
+            return None
+
+        def _call_search() -> Any:
+            fn = getattr(client, "search", None)
+            if not callable(fn):
+                return None
+            variants = [
+                lambda: fn(query=query, top_k=limit, base_dir=target_uri or str(self.root_dir)),
+                lambda: fn(query, limit),
+                lambda: fn(query=query, top_k=limit),
+            ]
+            for invoke in variants:
+                try:
+                    return invoke()
+                except TypeError:
+                    continue
+            return None
+
+        raw = _call_find()
+        if raw is None:
+            raw = _call_search()
+        if raw is None:
+            return []
+        rows = self._normalize_rows(raw)
+        return rows[: max(1, int(limit))]
+
+    def _normalize_rows(self, raw: Any) -> list[dict[str, Any]]:
+        if raw is None:
+            return []
+        if isinstance(raw, list):
+            return [self._normalize_payload(item) for item in raw]
+        if isinstance(raw, dict):
+            items = raw.get("items") or raw.get("results") or raw.get("resources")
+            if isinstance(items, list):
+                return [self._normalize_payload(item) for item in items]
+            return [self._normalize_payload(raw)]
+        for attr in ("items", "results", "resources"):
+            items = getattr(raw, attr, None)
+            if isinstance(items, list):
+                return [self._normalize_payload(item) for item in items]
+        return [self._normalize_payload(raw)]
+
+    def _normalize_payload(self, payload: Any) -> dict[str, Any]:
+        if isinstance(payload, dict):
+            return dict(payload)
+        out: dict[str, Any] = {}
+        for key in (
+            "uri",
+            "path",
+            "resource_uri",
+            "resource_path",
+            "title",
+            "preview",
+            "snippet",
+            "content",
+            "text",
+            "score",
+            "root_uri",
+            "base_uri",
+        ):
+            value = getattr(payload, key, None)
+            if value is not None:
+                out[key] = value
+        try:
+            as_dict = dict(payload)  # type: ignore[arg-type]
+            if isinstance(as_dict, dict):
+                out.update(as_dict)
+        except Exception:
+            pass
+        return out
+
+
 class TrackingFileMemoryBridge:
     """
     File-first memory projection for tracking targets.
@@ -36,6 +235,10 @@ class TrackingFileMemoryBridge:
 
     def __init__(self) -> None:
         self.enabled = bool(getattr(settings, "openviking_enabled", True))
+        self.semantic_enabled = bool(getattr(settings, "openviking_semantic_enabled", True))
+        self.sync_on_write = bool(getattr(settings, "openviking_sync_on_write", True))
+        self.wait_processed_on_search = bool(getattr(settings, "openviking_wait_processed_on_search", False))
+        self.resync_interval_seconds = max(10.0, float(getattr(settings, "openviking_resync_interval_seconds", 120.0)))
         self.query_limit = max(1, min(32, int(getattr(settings, "openviking_query_limit", 8))))
         configured_root = str(getattr(settings, "openviking_data_dir", "../data/aelin_memory")).strip() or "../data/aelin_memory"
         root_path = Path(configured_root)
@@ -46,6 +249,9 @@ class TrackingFileMemoryBridge:
         self.root.mkdir(parents=True, exist_ok=True)
         self._io_lock = threading.Lock()
         self._openviking = self._load_openviking()
+        self._openviking_lock = threading.Lock()
+        self._openviking_dir_state: dict[str, dict[str, Any]] = {}
+        self._openviking_uri_to_path: dict[str, str] = {}
         self._local_cache_lock = threading.Lock()
         self._local_cache_max_entries = max(
             200,
@@ -53,25 +259,13 @@ class TrackingFileMemoryBridge:
         )
         self._local_doc_cache: dict[str, dict[str, Any]] = {}
 
-    def _load_openviking(self) -> Any | None:
-        if not self.enabled:
+    def _load_openviking(self) -> _OpenVikingAdapter | None:
+        if (not self.enabled) or (not self.semantic_enabled):
             return None
-        try:
-            module = importlib.import_module("openviking")
-        except Exception:
+        adapter = _OpenVikingAdapter(root_dir=self.root)
+        if not adapter.available:
             return None
-        client_cls = getattr(module, "OpenViking", None) or getattr(module, "Client", None)
-        if client_cls is None:
-            return None
-        try:
-            return client_cls(root_dir=str(self.root))
-        except TypeError:
-            try:
-                return client_cls(str(self.root))
-            except Exception:
-                return None
-        except Exception:
-            return None
+        return adapter
 
     def _target_meta(self, target: Any) -> dict[str, str]:
         user_id = int(getattr(target, "user_id", 0) or 0)
@@ -178,12 +372,110 @@ class TrackingFileMemoryBridge:
             out.append(self._diary_root(user_id=user_id, workspace=workspace))
         return out
 
+    def _extract_openviking_uri(self, payload: dict[str, Any]) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("root_uri", "base_uri", "uri", "resource_uri"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+        items = payload.get("items") or payload.get("resources") or payload.get("results")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    candidate = self._extract_openviking_uri(item)
+                    if candidate:
+                        return candidate
+        return ""
+
+    def _remember_openviking_path_mapping(self, *, payload: dict[str, Any], fallback_path: Path | None = None) -> None:
+        if not isinstance(payload, dict):
+            return
+        uri = str(payload.get("uri") or payload.get("resource_uri") or "").strip()
+        path_value = str(payload.get("path") or payload.get("resource_path") or "").strip()
+        if (not path_value) and fallback_path is not None:
+            path_value = str(fallback_path)
+        if uri and path_value:
+            self._openviking_uri_to_path[uri] = path_value
+        items = payload.get("items") or payload.get("resources") or payload.get("results")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    self._remember_openviking_path_mapping(payload=item, fallback_path=fallback_path)
+
+    def _register_openviking_dir(self, base_dir: Path, *, force: bool = False) -> str:
+        adapter = self._openviking
+        if adapter is None:
+            return ""
+        if not base_dir.exists():
+            return ""
+        key = self._local_cache_key(base_dir.resolve())
+        now = time.monotonic()
+        with self._openviking_lock:
+            state = self._openviking_dir_state.get(key) or {}
+            last_sync = float(state.get("last_sync") or 0.0)
+            cached_uri = str(state.get("uri") or "")
+            if (not force) and cached_uri and (now - last_sync) < self.resync_interval_seconds:
+                return cached_uri
+
+        payload = adapter.add_resource(path=base_dir)
+        uri = self._extract_openviking_uri(payload)
+        with self._openviking_lock:
+            self._openviking_dir_state[key] = {"uri": uri, "last_sync": now}
+            self._remember_openviking_path_mapping(payload=payload, fallback_path=base_dir)
+        return uri
+
+    def _sync_openviking_path(self, path: Path) -> None:
+        adapter = self._openviking
+        if adapter is None or (not self.sync_on_write):
+            return
+        if (not path.exists()) or path.suffix.lower() != ".md":
+            return
+        try:
+            self._register_openviking_dir(path.parent, force=False)
+            payload = adapter.add_resource(path=path)
+            with self._openviking_lock:
+                self._remember_openviking_path_mapping(payload=payload, fallback_path=path)
+        except Exception as exc:
+            _LOG.debug("openviking add_resource failed: %s", exc)
+
+    def _resolve_openviking_hit_path(self, *, base_dir: Path, row: dict[str, Any], target_uri: str) -> Path | None:
+        row_path = str(row.get("path") or row.get("resource_path") or "").strip()
+        if row_path:
+            candidate = Path(row_path)
+            if not candidate.is_absolute():
+                candidate = (base_dir / row_path).resolve()
+            if candidate.exists():
+                return candidate
+
+        row_uri = str(row.get("uri") or row.get("resource_uri") or "").strip()
+        if row_uri:
+            with self._openviking_lock:
+                mapped = self._openviking_uri_to_path.get(row_uri)
+            if mapped:
+                mapped_path = Path(mapped)
+                if mapped_path.exists():
+                    return mapped_path.resolve()
+            parsed = urlparse(row_uri)
+            if parsed.scheme == "file":
+                local_path = Path(unquote(parsed.path))
+                if local_path.exists():
+                    return local_path.resolve()
+            if target_uri and row_uri.startswith(target_uri):
+                suffix = row_uri[len(target_uri) :].lstrip("/\\")
+                if suffix:
+                    candidate = (base_dir / suffix).resolve()
+                    if candidate.exists():
+                        return candidate
+        return None
+
     def _write_markdown(self, path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         with self._io_lock:
             tmp_path.write_text(content, encoding="utf-8")
             tmp_path.replace(path)
+        self._sync_openviking_path(path)
 
     def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
         content = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
@@ -762,8 +1054,8 @@ class TrackingFileMemoryBridge:
         source: str | None,
         include_diary: bool,
     ) -> list[FileMemoryHit]:
-        client = self._openviking
-        if client is None:
+        adapter = self._openviking
+        if adapter is None:
             return []
         out: list[FileMemoryHit] = []
         seen_paths: set[str] = set()
@@ -775,35 +1067,32 @@ class TrackingFileMemoryBridge:
         ):
             if not base_dir.exists():
                 continue
-            raw: Any = None
-            if hasattr(client, "search"):
-                try:
-                    raw = client.search(query=query, top_k=limit, base_dir=str(base_dir))
-                except TypeError:
-                    raw = client.search(query, limit)
-            if not raw:
+            target_uri = self._register_openviking_dir(base_dir, force=False)
+            if self.wait_processed_on_search:
+                adapter.wait_processed(timeout_seconds=max(2.0, self.resync_interval_seconds))
+            rows = adapter.find(
+                query=query,
+                limit=max(limit * 3, limit),
+                target_uri=target_uri or None,
+            )
+            if not rows:
                 continue
-            rows = raw if isinstance(raw, list) else list(getattr(raw, "items", []) or [])
             for row in rows:
-                path = str(getattr(row, "path", "") or row.get("path") or "").strip() if isinstance(row, dict) else str(getattr(row, "path", "")).strip()
-                if not path:
+                row_payload = dict(row) if isinstance(row, dict) else {}
+                abs_path = self._resolve_openviking_hit_path(
+                    base_dir=base_dir,
+                    row=row_payload,
+                    target_uri=target_uri,
+                )
+                if abs_path is None:
                     continue
-                preview = ""
-                title = ""
-                score = 0.0
-                if isinstance(row, dict):
-                    preview = str(row.get("preview") or row.get("snippet") or "")
-                    title = str(row.get("title") or "")
-                    score = float(row.get("score") or 0.0)
-                else:
-                    preview = str(getattr(row, "preview", "") or getattr(row, "snippet", "") or "")
-                    title = str(getattr(row, "title", "") or "")
-                    score = float(getattr(row, "score", 0.0) or 0.0)
-                abs_path = Path(path) if Path(path).is_absolute() else (base_dir / path)
                 key = str(abs_path).lower()
                 if key in seen_paths:
                     continue
                 seen_paths.add(key)
+                preview = str(row_payload.get("preview") or row_payload.get("snippet") or row_payload.get("content") or row_payload.get("text") or "")
+                title = str(row_payload.get("title") or "")
+                score = float(row_payload.get("score") or 0.0)
                 cached = self._load_local_doc_entry(abs_path)
                 parsed = (
                     cached[2]
