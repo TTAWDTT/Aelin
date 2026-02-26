@@ -65,6 +65,10 @@ class Settings(BaseSettings):
 
     # File memory bridge (OpenViking-compatible projection + retrieval fallback).
     openviking_enabled: bool = True
+    openviking_semantic_enabled: bool = True
+    openviking_sync_on_write: bool = True
+    openviking_wait_processed_on_search: bool = False
+    openviking_resync_interval_seconds: float = 120.0
     openviking_data_dir: str = "../data/aelin_memory"
     openviking_query_limit: int = 8
     openviking_local_cache_max_entries: int = 2000
