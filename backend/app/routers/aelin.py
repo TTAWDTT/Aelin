@@ -84,6 +84,12 @@ from app.services.agent_memory import AgentMemoryService
 from app.services import content_tagging
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
+from app.services.aelin_tools import (
+    AelinToolHub,
+    run_aelin_structured_tools,
+    should_attempt_aelin_tools,
+    summarize_tool_results_for_prompt,
+)
 from app.services.memory_draft import ParallelMemoryDraftResult, build_parallel_memory_draft
 from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
 from app.services.openviking_bridge import tracking_file_memory_bridge
@@ -4706,6 +4712,80 @@ def _aelin_chat_impl(
         current_user.id,
         query=payload.query if need_local_search else "",
     )
+    structured_tool_runs: list[dict[str, Any]] = []
+    structured_tool_lines: list[str] = []
+    structured_tool_actions: list[AelinAction] = []
+    if should_attempt_aelin_tools(payload.query):
+        add_trace("structured_tools", status="running", detail="planning structured tools")
+        tool_hub = AelinToolHub(
+            db=db,
+            user_id=current_user.id,
+            workspace=payload.workspace,
+            memory_service=_memory,
+            tracking_service=_tracking,
+            file_memory_bridge=_tracking_file_memory,
+        )
+        runs, tool_err = run_aelin_structured_tools(
+            service=service,
+            provider=provider,
+            query=payload.query,
+            memory_summary=memory_summary,
+            tool_hub=tool_hub,
+            max_calls=2,
+        )
+        structured_tool_runs = list(runs or [])
+        structured_tool_lines = summarize_tool_results_for_prompt(structured_tool_runs, max_lines=8)
+        if structured_tool_runs:
+            add_trace("structured_tools", status="completed", detail="structured tools executed", count=len(structured_tool_runs))
+        else:
+            add_trace(
+                "structured_tools",
+                status=("failed" if tool_err and not tool_err.startswith("no_tool_call") else "skipped"),
+                detail=(tool_err[:180] if tool_err else "no structured tools needed"),
+                count=0,
+            )
+        for run in structured_tool_runs:
+            if str(run.get("name") or "").strip().lower() != "tracking":
+                continue
+            result = run.get("result") if isinstance(run.get("result"), dict) else {}
+            target_id = int(result.get("target_id") or 0) if str(result.get("target_id") or "").isdigit() else 0
+            target = str(result.get("target") or "").strip()
+            if target_id <= 0:
+                continue
+            structured_tool_actions.append(
+                AelinAction(
+                    kind="open_tracking",
+                    title="已通过工具创建追踪",
+                    detail=(target[:120] if target else f"target_id={target_id}"),
+                    payload={"target_id": str(target_id), "workspace": payload.workspace},
+                )
+            )
+        if structured_tool_runs:
+            first_diary = next(
+                (
+                    run
+                    for run in structured_tool_runs
+                    if str(run.get("name") or "").strip().lower() == "diary"
+                    and isinstance(run.get("result"), dict)
+                ),
+                None,
+            )
+            if isinstance(first_diary, dict):
+                diary_result = first_diary.get("result") if isinstance(first_diary.get("result"), dict) else {}
+                first_item = (diary_result.get("items") or [None])[0] if isinstance(diary_result.get("items"), list) else None
+                if isinstance(first_item, dict):
+                    detail_path = str(first_item.get("path") or "").strip()[:220]
+                    if detail_path:
+                        structured_tool_actions.append(
+                            AelinAction(
+                                kind="open_tracking",
+                                title="查看工具命中的日记",
+                                detail=detail_path,
+                                payload={"workspace": payload.workspace, "path": detail_path},
+                            )
+                        )
+    else:
+        add_trace("structured_tools", status="skipped", detail="query not tool-oriented", count=0)
 
     add_trace("generation", status="running", detail="composing answer")
     generation_detail = "generation completed"
@@ -4776,7 +4856,8 @@ def _aelin_chat_impl(
             f"local={'on' if need_local_search else 'off'}; "
             f"web={'on' if need_web_search else 'off'}; "
             f"file_mem={len(file_memory_items)}; "
-            f"profile={len(profile_injection_lines)}"
+            f"profile={len(profile_injection_lines)}; "
+            f"structured_tools={len(structured_tool_runs)}"
         )
         user_msg = (
             f"用户问题: {payload.query.strip()}\n\n"
@@ -4809,6 +4890,7 @@ def _aelin_chat_impl(
             )
             + (f"本地证据:\n{evidence_block}\n\n" if evidence_block else "")
             + (f"文件记忆命中:\n{chr(10).join(file_memory_lines[:6])}\n\n" if file_memory_lines else "")
+            + (f"结构化工具结果:\n{chr(10).join(structured_tool_lines[:8])}\n\n" if structured_tool_lines else "")
             + (f"联网证据:\n{chr(10).join(web_evidence_lines[:8])}\n" if web_evidence_lines else "")
         )
         llm_messages: list[dict[str, Any]] = [{"role": "system", "content": prompt}]
@@ -5432,12 +5514,14 @@ def _aelin_chat_impl(
         db.rollback()
 
     final_memory_summary = str(active_bundle.get("summary") or memory_summary or "")
-    actions = _build_actions(
+    actions = [
+        *structured_tool_actions[:3],
+        *_build_actions(
         payload.query,
         citations,
         has_todos=bool(todo_titles),
         track_suggestion=track_suggestion if isinstance(track_suggestion, dict) else None,
-    )
+    )]
     if media_result is not None:
         actions.insert(
             0,
