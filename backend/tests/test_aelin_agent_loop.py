@@ -107,3 +107,38 @@ def test_agent_loop_parallel_reads_and_serial_write():
     assert "context_get" in starts and "diary" in starts and "profile" in starts
     assert starts["profile"] >= max(ends["context_get"], ends["diary"])
 
+
+def test_agent_loop_rejected_calls_do_not_consume_budget():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "w1", "name": "profile", "arguments": '{"action":"append_note","note":"n1"}'},
+                {"id": "w2", "name": "tracking", "arguments": '{"action":"create","target":"x"}'},
+            ]
+        },
+        {"content": "ok"},
+    ]
+    tool_hub = _FakeToolHub(sleep_seconds=0.01)
+    loop = AelinAgentLoop(
+        service=_fake_service(rounds),
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=2,
+            max_write_calls=1,
+            allow_write_tools=False,
+        ),
+        max_rounds=3,
+    )
+
+    result = loop.run(query="test", memory_summary="m", history_turns=[])
+
+    assert result.ok is True
+    assert result.answer == "ok"
+    assert result.total_calls == 0
+    assert result.write_calls == 0
+    assert result.tool_runs
+    assert all(run.status == "failed" for run in result.tool_runs)
+    # Rejected writes should not execute actual tool handlers.
+    assert not tool_hub.events

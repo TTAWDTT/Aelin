@@ -70,12 +70,16 @@ class AelinAgentLoop:
         tool_hub: AelinToolHub,
         policy: AelinToolPolicy,
         max_rounds: int,
+        round_timeout_seconds: float = 10.0,
+        total_timeout_seconds: float = 12.0,
     ) -> None:
         self._service = service
         self._provider = str(provider or "").strip().lower()
         self._tool_hub = tool_hub
         self._policy = policy
         self._max_rounds = max(1, int(max_rounds or 1))
+        self._round_timeout_seconds = max(2.0, float(round_timeout_seconds or 10.0))
+        self._total_timeout_seconds = max(3.0, float(total_timeout_seconds or 12.0))
 
     def run(
         self,
@@ -83,6 +87,8 @@ class AelinAgentLoop:
         query: str,
         memory_summary: str,
         history_turns: list[dict[str, str]] | None = None,
+        forced_intent: str = "",
+        forced_tool_runs: list[dict[str, Any]] | None = None,
     ) -> AelinAgentLoopResult:
         trace_steps: list[AgentLoopTraceStep] = []
         tool_runs: list[AgentLoopToolRun] = []
@@ -149,6 +155,26 @@ class AelinAgentLoop:
                 "content": f"memory_summary={str(memory_summary or '')[:1000]}",
             },
         ]
+        if forced_intent:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"forced_intent={str(forced_intent).strip()[:120]}",
+                }
+            )
+        for run in list(forced_tool_runs or [])[:4]:
+            name = str(run.get("name") or "").strip().lower()[:64]
+            args = run.get("args") if isinstance(run.get("args"), dict) else {}
+            result = run.get("result") if isinstance(run.get("result"), dict) else {}
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"forced_tool_result[{name}] "
+                        + json.dumps({"args": args, "result": result}, ensure_ascii=False)[:1800]
+                    ),
+                }
+            )
         if history_turns:
             for row in history_turns[-10:]:
                 role = str(row.get("role") or "").strip().lower()
@@ -158,8 +184,21 @@ class AelinAgentLoop:
         messages.append({"role": "user", "content": str(query or "").strip()[:1200]})
         trace_steps.append(AgentLoopTraceStep(stage="agent_loop", status="running", detail="start", count=0))
 
+        loop_started = time.perf_counter()
         idle_rounds = 0
         for round_index in range(1, self._max_rounds + 1):
+            elapsed_total = time.perf_counter() - loop_started
+            if elapsed_total >= self._total_timeout_seconds:
+                stop_reason = "total_timeout"
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_round",
+                        status="failed",
+                        detail=f"total_timeout={self._total_timeout_seconds:.1f}s",
+                        count=0,
+                    )
+                )
+                break
             rounds = round_index
             usage.round_calls = 0
             trace_steps.append(AgentLoopTraceStep(stage="agent_loop_round", status="running", detail=f"round={round_index}", count=0))
@@ -171,6 +210,7 @@ class AelinAgentLoop:
                     max_tokens=420,
                     tools=tools,
                     tool_choice="auto",
+                    timeout=self._round_timeout_seconds,
                 )
             except Exception as exc:
                 stop_reason = "llm_error"
@@ -235,10 +275,11 @@ class AelinAgentLoop:
                 args = _safe_json_loads(str(fn.get("arguments") or "{}"))
                 tc_id = str(tc.get("id") or "")
                 policy = self._policy.evaluate(name=tool_name, args=args, usage=usage)
-                usage.round_calls += 1
-                usage.total_calls += 1
-                if policy.allowed and policy.is_write:
-                    usage.write_calls += 1
+                if policy.allowed:
+                    usage.round_calls += 1
+                    usage.total_calls += 1
+                    if policy.is_write:
+                        usage.write_calls += 1
                 planned_calls.append(
                     {
                         "tool_name": tool_name,
@@ -247,7 +288,7 @@ class AelinAgentLoop:
                         "policy": policy,
                     }
                 )
-                if usage.total_calls >= self._policy.max_tool_calls:
+                if policy.allowed and usage.total_calls >= self._policy.max_tool_calls:
                     reached_total_limit = True
                     break
 
@@ -426,9 +467,12 @@ class AelinAgentLoop:
             stop_reason = "max_rounds"
 
         if not answer:
-            answer = self._final_answer(messages, query=query)
-            if answer and stop_reason == "empty_answer":
-                stop_reason = "finalized_after_tools"
+            if stop_reason == "total_timeout":
+                answer = "我已达到本轮时限，先返回阶段性结论。你可以缩小问题范围后我继续执行。"
+            else:
+                answer = self._final_answer(messages, query=query)
+                if answer and stop_reason == "empty_answer":
+                    stop_reason = "finalized_after_tools"
 
         actions = self._build_actions(tool_runs)
         trace_steps.append(
@@ -469,6 +513,7 @@ class AelinAgentLoop:
                 messages=final_messages,
                 temperature=self._service.config.temperature,
                 max_tokens=420,
+                timeout=self._round_timeout_seconds,
             )
             choice = response.choices[0] if getattr(response, "choices", None) else None
             message = getattr(choice, "message", None) if choice else None

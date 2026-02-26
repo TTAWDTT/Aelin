@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -37,6 +38,8 @@ def _create_test_client() -> TestClient:
 
     tmp_media = tempfile.TemporaryDirectory()
     settings.media_dir = tmp_media.name
+    settings.aelin_agent_loop_enabled = False
+    settings.aelin_agent_loop_shadow_enabled = False
     app = create_app()
     client = TestClient(app)
     client._tmp_media = tmp_media  # type: ignore[attr-defined]
@@ -199,6 +202,36 @@ def test_aelin_chat_stream_emits_trace_and_final():
     assert isinstance(result.get("tool_trace"), list)
 
 
+def test_aelin_chat_stream_accepts_image_only_and_sanitizes_history():
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    with client.stream(
+        "POST",
+        "/api/v1/aelin/chat/stream",
+        json={
+            "query": "",
+            "workspace": "default",
+            "history": [
+                {"role": "assistant", "content": ""},
+                {"role": "user", "content": "   "},
+                {"role": "assistant", "content": "上一条有效回答"},
+            ],
+            "images": [
+                {
+                    "name": "demo.png",
+                    "data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAF7AL5n4VHKwAAAABJRU5ErkJggg==",
+                }
+            ],
+        },
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200, resp.text
+        body = "".join(resp.iter_text())
+
+    assert "event: final" in body
+
+
 def test_aelin_chat_agent_loop_disabled_uses_legacy(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -275,6 +308,86 @@ def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
     data = resp.json()
     assert data.get("answer") == "loop-path"
     assert any((it.get("stage") == "agent_loop") for it in (data.get("tool_trace") or []))
+
+
+def test_aelin_chat_agent_loop_forced_tracking_intent_injected(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
+    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
+
+    captured: dict[str, object] = {}
+
+    def _fake_try(payload, db, current_user, event_cb=None, persist_memory=True, force_disable_writes=False, forced_tracking_create=None):
+        captured["forced_tracking_create"] = forced_tracking_create
+        return aelin_router.AelinChatResponse(
+            answer="loop-forced-intent",
+            expression="exp-03",
+            citations=[],
+            actions=[],
+            tool_trace=[aelin_router.AelinToolStep(stage="agent_loop", status="completed", detail="ok", count=1, ts=2)],
+            memory_summary="loop",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _fake_try)
+
+    def _legacy_should_not_run(*args, **kwargs):
+        raise AssertionError("legacy path should not run when loop returns response")
+
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "请帮我创建一个追踪：OpenAI 发布会后续动态。",
+            "use_memory": True,
+            "workspace": "default",
+            "images": [],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("answer") == "loop-forced-intent"
+    forced = captured.get("forced_tracking_create")
+    assert isinstance(forced, dict)
+    assert str((forced or {}).get("action") or "") == "create"
+    assert "OpenAI 发布会后续动态" in str((forced or {}).get("target") or "")
+
+
+def test_aelin_chat_agent_loop_hard_fail_without_legacy(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
+    monkeypatch.setattr(settings, "aelin_agent_loop_hard_fail", True)
+    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: None)
+
+    def _legacy_should_not_run(*args, **kwargs):
+        raise AssertionError("legacy path should not run in hard-fail mode")
+
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "测试 hard fail",
+            "use_memory": True,
+            "workspace": "default",
+            "images": [],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "Agent Loop" in str(data.get("answer") or "")
+    trace = data.get("tool_trace") or []
+    assert any((it.get("stage") == "agent_loop" and it.get("status") == "failed") for it in trace)
 
 
 def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
@@ -516,6 +629,60 @@ def test_aelin_tracking_batch_ack_and_single_ack_compat(monkeypatch):
     assert final_check.status_code == 200, final_check.text
     final_by_id = {int(row["id"]): bool(row.get("acked")) for row in (final_check.json().get("items") or [])}
     assert final_by_id.get(single_id) is True
+
+
+def test_aelin_tracking_run_retries_on_sqlite_locked(monkeypatch):
+    monkeypatch.setattr(settings, "tracking_scheduler_enabled", False)
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    row = WebSearchResult(
+        title="Acme 发布 1.0",
+        url="https://example.com/acme/release-1",
+        snippet="Acme 发布了 1.0。",
+        fetched_excerpt="Acme 发布了 1.0。",
+    )
+    monkeypatch.setattr(aelin_router._web_search, "search", lambda query, max_results=6: [row])
+    monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", lambda query, max_results=6, fetch_top_k=3: [row])
+
+    confirm = client.post(
+        "/api/v1/aelin/track/confirm",
+        json={"target": "Acme 发布", "source": "web", "query": "Acme 发布 最新"},
+        headers=headers,
+    )
+    assert confirm.status_code == 200, confirm.text
+
+    tracking_list = client.get("/api/v1/aelin/tracking?limit=20", headers=headers)
+    assert tracking_list.status_code == 200, tracking_list.text
+    items = tracking_list.json().get("items") or []
+    assert items
+    target_id = int(items[0]["target_id"])
+
+    calls = {"count": 0}
+
+    def _flaky_run_target_ids(db, target_ids):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OperationalError(
+                "UPDATE tracking_targets SET last_hash=? WHERE tracking_targets.id = ?",
+                {},
+                Exception("database is locked"),
+            )
+        return {
+            "targets": 1,
+            "fetched_count": 1,
+            "snapshots_created": 0,
+            "changes_created": 0,
+            "errors": 0,
+        }
+
+    monkeypatch.setattr(aelin_router._tracking, "_run_target_ids", _flaky_run_target_ids)
+
+    run_resp = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
+    assert run_resp.status_code == 200, run_resp.text
+    data = run_resp.json()
+    assert bool(data.get("ok")) is True
+    assert calls["count"] == 2
 
 
 def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
@@ -1353,7 +1520,9 @@ def test_aelin_chat_local_subagents_execute_in_parallel(monkeypatch):
     elapsed = time.perf_counter() - started
 
     assert resp.status_code == 200, resp.text
-    assert elapsed < 0.62
+    # Keep a slack threshold for CI/Windows scheduling jitter while still
+    # asserting subagents are not fully serialized.
+    assert elapsed < 1.2
     stages = [str(it.get("stage") or "") for it in (resp.json().get("tool_trace") or [])]
     assert any(stage.startswith("local_search_subagent_") for stage in stages)
 

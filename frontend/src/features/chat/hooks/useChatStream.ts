@@ -28,7 +28,14 @@ export function useChatStream() {
     if (!sessionId) sessionId = store.createSession()
 
     const session = store.sessions.find(s => s.id === sessionId)
-    const history = (session?.messages ?? []).slice(-10).map(m => ({ role: m.role, content: m.content }))
+    const history = (session?.messages ?? [])
+      .slice(-20)
+      .filter(m => {
+        const role = String(m.role || '').trim()
+        const content = String(m.content || '').trim()
+        return (role === 'user' || role === 'assistant') && content.length > 0
+      })
+      .map(m => ({ role: m.role, content: String(m.content || '').trim() }))
 
     // Add user message
     const userMsg: ChatMessage = {
@@ -52,8 +59,9 @@ export function useChatStream() {
       store.renameSession(sessionId!, title)
     }
 
+    const normalizedQuery = String(text || '').trim()
     const body: AelinChatRequest = {
-      query: text,
+      query: normalizedQuery || (images?.length ? '请结合图片内容分析一下。' : ''),
       workspace: session?.workspace || 'default',
       history,
       images: images?.map(i => ({ data_url: i.dataUrl, name: i.name })),

@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     tracking_dedupe_window_hours: int = 24
     tracking_quiet_start_hour: int = 23
     tracking_quiet_end_hour: int = 8
+    tracking_sqlite_lock_retry_attempts: int = 4
+    tracking_sqlite_lock_retry_base_delay_seconds: float = 0.15
 
     # File memory bridge (OpenViking-compatible projection + retrieval fallback).
     openviking_enabled: bool = True
@@ -80,15 +82,18 @@ class Settings(BaseSettings):
     aelin_base_context_cache_max_entries: int = 128
     aelin_tracking_snapshot_cache_ttl_seconds: float = 10.0
     aelin_tracking_snapshot_cache_max_entries: int = 256
-    aelin_agent_loop_enabled: bool = False
+    aelin_agent_loop_enabled: bool = True
     aelin_agent_loop_shadow_enabled: bool = False
-    aelin_agent_loop_max_rounds: int = 20
-    aelin_agent_loop_max_tool_calls: int = 40
-    aelin_agent_loop_max_calls_per_round: int = 3
+    aelin_agent_loop_max_rounds: int = 3
+    aelin_agent_loop_max_tool_calls: int = 6
+    aelin_agent_loop_max_calls_per_round: int = 2
     aelin_agent_loop_max_write_calls: int = 1
     aelin_agent_loop_allow_write_tools: bool = False
+    aelin_agent_loop_hard_fail: bool = True
     aelin_agent_loop_user_whitelist_csv: str = ""
     aelin_agent_loop_workspace_whitelist_csv: str = ""
+    aelin_agent_loop_round_timeout_seconds: float = 10.0
+    aelin_agent_loop_total_timeout_seconds: float = 12.0
 
     # LLM client runtime tuning.
     llm_request_timeout_seconds: float = 90.0

@@ -79,7 +79,18 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     body: JSON.stringify(body),
     signal: combined,
   }).then(async (res) => {
-    if (!res.ok) { callbacks.onError?.({ message: `HTTP ${res.status}` }); return }
+    if (!res.ok) {
+      let detail = ''
+      try {
+        detail = await res.text()
+      } catch {
+        detail = ''
+      }
+      const trimmed = String(detail || '').trim()
+      const suffix = trimmed ? `: ${trimmed.slice(0, 240)}` : ''
+      callbacks.onError?.({ message: `HTTP ${res.status}${suffix}` })
+      return
+    }
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''

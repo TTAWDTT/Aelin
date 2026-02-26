@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class Token(BaseModel):
@@ -164,13 +164,54 @@ class AgentFocusItemOut(BaseModel):
 
 
 class AelinChatRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=1200)
+    query: str = Field(default="", max_length=1200)
     use_memory: bool = True
     max_citations: int = Field(default=6, ge=1, le=20)
     workspace: str = Field(default="default", min_length=1, max_length=64)
     images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
     history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
     search_mode: str = Field(default="auto", min_length=1, max_length=16)
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def _normalize_query(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+    @field_validator("images", mode="before")
+    @classmethod
+    def _normalize_images(cls, value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        return []
+
+    @field_validator("history", mode="before")
+    @classmethod
+    def _normalize_history(cls, value: Any) -> list[dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[dict[str, str]] = []
+        for item in value[:20]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+            if role not in {"user", "assistant", "system"}:
+                continue
+            if not content:
+                continue
+            normalized.append({"role": role[:16], "content": content[:3000]})
+        return normalized
+
+    @model_validator(mode="after")
+    def _finalize_query(self) -> "AelinChatRequest":
+        if self.query:
+            return self
+        if self.images:
+            self.query = "请结合这些图片给我一个简短说明。"
+            return self
+        raise ValueError("query is empty")
 
 
 class AelinChatHistoryTurn(BaseModel):

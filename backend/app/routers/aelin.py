@@ -6079,6 +6079,57 @@ def _csv_int_tokens(raw: str) -> set[int]:
     return out
 
 
+_TRACK_CREATE_COMMAND_RE = re.compile(
+    r"^(?:请|帮我|麻烦|给我)?\s*(?:创建|新建|添加|开始)?\s*(?:一个)?\s*(?:追踪|跟踪|监控|track(?:ing)?)",
+    flags=re.I,
+)
+
+
+def _detect_forced_tracking_create(query: str) -> dict[str, str] | None:
+    text = str(query or "").strip()
+    if not text:
+        return None
+    lower = text.lower()
+    has_track_word = any(token in text for token in ("追踪", "跟踪", "监控")) or any(
+        token in lower for token in ("track", "tracking", "monitor")
+    )
+    has_create_word = any(token in text for token in ("创建", "新建", "添加", "开始"))
+    if not has_track_word:
+        return None
+    if not (has_create_word or _TRACK_CREATE_COMMAND_RE.search(text)):
+        return None
+
+    target = ""
+    for sep in ("：", ":"):
+        if sep in text:
+            left, right = text.split(sep, 1)
+            if any(token in left for token in ("追踪", "跟踪", "监控")) or any(
+                token in left.lower() for token in ("track", "tracking", "monitor")
+            ):
+                target = right.strip()
+                break
+    if not target:
+        match = re.search(r"(?:追踪|跟踪|监控|track(?:ing)?)(?:目标|主题|一下)?\s*(.+)$", text, flags=re.I)
+        if match:
+            target = str(match.group(1) or "").strip()
+    if not target:
+        url_match = re.search(r"https?://[^\s<>()\"']+", text, flags=re.I)
+        if url_match:
+            target = str(url_match.group(0) or "").strip()
+
+    target = re.sub(r"^[\s\-:：]+|[\s，,。！？!?]+$", "", target).strip()
+    if len(target) < 2:
+        return None
+
+    source = _infer_tracking_source(target)
+    return {
+        "action": "create",
+        "target": target[:240],
+        "source": source[:32] or "web",
+        "query": text[:500],
+    }
+
+
 def _agent_loop_matches_scope(user: User, workspace: str) -> bool:
     users = _csv_int_tokens(str(getattr(settings, "aelin_agent_loop_user_whitelist_csv", "") or ""))
     workspaces = {
@@ -6116,6 +6167,7 @@ def _try_agent_loop_chat(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     persist_memory: bool = True,
     force_disable_writes: bool = False,
+    forced_tracking_create: dict[str, str] | None = None,
 ) -> AelinChatResponse | None:
     service, provider = _resolve_llm_service(db, current_user)
     if provider == "rule_based" or not service.is_configured():
@@ -6138,14 +6190,72 @@ def _try_agent_loop_chat(
         tracking_service=_tracking,
         file_memory_bridge=_tracking_file_memory,
     )
+
+    prefixed_traces: list[AelinToolStep] = []
+    prefixed_actions: list[AelinAction] = []
+    forced_intent = ""
+    forced_tool_runs: list[dict[str, Any]] = []
+
+    def _emit_prefixed(stage: str, *, status: str, detail: str = "", count: int = 0) -> None:
+        step = AelinToolStep(
+            stage=str(stage or "agent_loop")[:80],
+            status=str(status or "completed")[:24],
+            detail=str(detail or "")[:240],
+            count=max(0, int(count or 0)),
+            ts=_now_ms(),
+        )
+        prefixed_traces.append(step)
+        if event_cb is not None:
+            try:
+                event_cb("trace", {"step": step.model_dump()})
+            except Exception:
+                pass
+
+    if forced_tracking_create and not force_disable_writes:
+        forced_intent = "tracking_create"
+        forced_args = {
+            "action": "create",
+            "target": str(forced_tracking_create.get("target") or "")[:240],
+            "source": str(forced_tracking_create.get("source") or "web")[:32],
+            "query": str(forced_tracking_create.get("query") or payload.query or "")[:500],
+        }
+        _emit_prefixed("intent_router", status="completed", detail="forced_tracking_create", count=1)
+        started = time.perf_counter()
+        forced_result = tool_hub.execute("tracking", forced_args)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        forced_tool_runs.append({"name": "tracking", "args": forced_args, "result": forced_result})
+        if bool(forced_result.get("ok")) and int(forced_result.get("target_id") or 0) > 0:
+            target_id = int(forced_result.get("target_id") or 0)
+            prefixed_actions.append(
+                AelinAction(
+                    kind="open_tracking",
+                    title="已创建追踪",
+                    detail=str(forced_result.get("target") or f"target_id={target_id}")[:120],
+                    payload={"target_id": str(target_id), "workspace": workspace},
+                )
+            )
+            _emit_prefixed("forced_tool", status="completed", detail=f"tracking.create; latency_ms={latency_ms}", count=1)
+        else:
+            _emit_prefixed(
+                "forced_tool",
+                status="failed",
+                detail=f"tracking.create failed:{str(forced_result.get('error') or 'unknown')[:140]}",
+                count=0,
+            )
+
+    allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
+    if forced_tracking_create and not force_disable_writes:
+        # Temporarily allow writes for this request scope only.
+        allow_write_tools = True
+
     policy = AelinToolPolicy(
-        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 3) or 3),
-        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 40) or 40),
+        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 2) or 2),
+        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 6) or 6),
         max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 1) or 1),
         allow_write_tools=(
             False
             if force_disable_writes
-            else bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
+            else allow_write_tools
         ),
     )
     runner = AelinAgentLoop(
@@ -6153,15 +6263,19 @@ def _try_agent_loop_chat(
         provider=provider,
         tool_hub=tool_hub,
         policy=policy,
-        max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 20) or 20),
+        max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 3) or 3),
+        round_timeout_seconds=float(getattr(settings, "aelin_agent_loop_round_timeout_seconds", 10.0) or 10.0),
+        total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
     )
     result = runner.run(
         query=payload.query,
         memory_summary=memory_summary,
         history_turns=history_turns,
+        forced_intent=forced_intent,
+        forced_tool_runs=forced_tool_runs,
     )
 
-    trace_steps: list[AelinToolStep] = []
+    trace_steps: list[AelinToolStep] = [*prefixed_traces]
     for step in result.trace_steps:
         trace = AelinToolStep(
             stage=str(step.stage or "agent_loop")[:80],
@@ -6209,7 +6323,7 @@ def _try_agent_loop_chat(
             db.rollback()
 
     expression = _pick_expression(payload.query, result.answer)
-    actions: list[AelinAction] = []
+    actions: list[AelinAction] = [*prefixed_actions]
     for raw in result.actions[:4]:
         kind = str(raw.get("kind") or "").strip()
         title = str(raw.get("title") or "").strip()
@@ -6331,9 +6445,39 @@ def _dispatch_aelin_chat(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> AelinChatResponse:
     if _should_use_agent_loop(current_user, payload.workspace):
-        agent_response = _try_agent_loop_chat(payload, db, current_user, event_cb=event_cb)
+        forced_tracking_create = _detect_forced_tracking_create(payload.query)
+        agent_response = (
+            _try_agent_loop_chat(
+                payload,
+                db,
+                current_user,
+                event_cb=event_cb,
+                forced_tracking_create=forced_tracking_create,
+            )
+            if forced_tracking_create
+            else _try_agent_loop_chat(payload, db, current_user, event_cb=event_cb)
+        )
         if agent_response is not None:
             return agent_response
+        if bool(getattr(settings, "aelin_agent_loop_hard_fail", True)):
+            answer = "当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
+            return AelinChatResponse(
+                answer=answer,
+                expression=_pick_expression(payload.query, answer),
+                citations=[],
+                actions=[],
+                tool_trace=[
+                    AelinToolStep(
+                        stage="agent_loop",
+                        status="failed",
+                        detail="hard_fail_no_legacy_fallback",
+                        count=0,
+                        ts=_now_ms(),
+                    )
+                ],
+                memory_summary="",
+                generated_at=datetime.now(timezone.utc),
+            )
     legacy = _aelin_chat_impl(payload, db, current_user, event_cb=event_cb)
     if _should_use_agent_loop_shadow(current_user, payload.workspace):
         _start_agent_loop_shadow(

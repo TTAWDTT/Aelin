@@ -6,6 +6,7 @@ import logging
 import random
 import re
 import threading
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db import create_session
@@ -65,6 +67,8 @@ class TrackingAutonomyService:
         self._default_term_interval = max(self._min_interval, int(getattr(settings, "tracking_default_term_interval_seconds", 120)))
         self._default_url_interval = max(self._min_interval, int(getattr(settings, "tracking_default_url_interval_seconds", 180)))
         self._http_timeout = max(8.0, float(getattr(settings, "tracking_request_timeout_seconds", 15)))
+        self._sqlite_retry_attempts = max(1, int(getattr(settings, "tracking_sqlite_lock_retry_attempts", 4)))
+        self._sqlite_retry_base_delay_seconds = max(0.05, float(getattr(settings, "tracking_sqlite_lock_retry_base_delay_seconds", 0.15)))
 
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
@@ -295,32 +299,59 @@ class TrackingAutonomyService:
         return list(db.scalars(q))
 
     def run_target_now(self, *, user_id: int, target_id: int) -> dict[str, Any]:
-        db = create_session()
-        try:
-            target = db.get(TrackingTarget, target_id)
-            if target is None or target.user_id != user_id:
-                return {"ok": False, "message": "target not found"}
-            if target.status == "deleted" or target.deleted_at is not None:
-                return {"ok": False, "message": "target deleted"}
-            if target.status != "active":
-                return {"ok": False, "message": f"target status is {target.status}"}
+        max_attempts = max(1, int(self._sqlite_retry_attempts))
+        for attempt in range(1, max_attempts + 1):
+            db = create_session()
+            group_key = ""
+            source = "web"
+            group_marked = False
+            try:
+                target = db.get(TrackingTarget, target_id)
+                if target is None or target.user_id != user_id:
+                    return {"ok": False, "message": "target not found"}
+                if target.status == "deleted" or target.deleted_at is not None:
+                    return {"ok": False, "message": "target deleted"}
+                if target.status != "active":
+                    return {"ok": False, "message": f"target status is {target.status}"}
 
-            stats = self._run_target_ids(db, [int(target_id)])
-            db.commit()
+                group_key = self._group_key(target)
+                source = target.source_type or "web"
+                if not self._mark_group_running(group_key, source):
+                    return {"ok": False, "message": "target is busy, retry in a few seconds"}
+                group_marked = True
 
-            fetched_count = int(stats.get("fetched_count", 0))
-            snapshots_created = int(stats.get("snapshots_created", 0))
-            changes_created = int(stats.get("changes_created", 0))
-            if snapshots_created == 0 and fetched_count == 0:
-                message = "run completed: source_no_result (no snapshots/changes yet)"
-            else:
-                message = f"run completed: fetched={fetched_count}, snapshots={snapshots_created}, changes={changes_created}"
-            return {"ok": True, "message": message}
-        except Exception as exc:
-            db.rollback()
-            return {"ok": False, "message": f"run failed: {str(exc)[:220]}"}
-        finally:
-            db.close()
+                stats = self._run_target_ids(db, [int(target_id)])
+                db.commit()
+
+                fetched_count = int(stats.get("fetched_count", 0))
+                snapshots_created = int(stats.get("snapshots_created", 0))
+                changes_created = int(stats.get("changes_created", 0))
+                if snapshots_created == 0 and fetched_count == 0:
+                    message = "run completed: source_no_result (no snapshots/changes yet)"
+                else:
+                    message = f"run completed: fetched={fetched_count}, snapshots={snapshots_created}, changes={changes_created}"
+                return {"ok": True, "message": message}
+            except OperationalError as exc:
+                db.rollback()
+                if self._is_sqlite_locked_error(exc) and attempt < max_attempts:
+                    _LOG.warning(
+                        "tracking run_target_now locked: target_id=%s attempt=%s/%s",
+                        target_id,
+                        attempt,
+                        max_attempts,
+                    )
+                    self._sleep_sqlite_retry_backoff(attempt)
+                    continue
+                if self._is_sqlite_locked_error(exc):
+                    return {"ok": False, "message": "run failed: database is busy, retry in a few seconds"}
+                return {"ok": False, "message": f"run failed: {str(exc)[:220]}"}
+            except Exception as exc:
+                db.rollback()
+                return {"ok": False, "message": f"run failed: {str(exc)[:220]}"}
+            finally:
+                if group_marked and group_key:
+                    self._unmark_group_running(group_key, source)
+                db.close()
 
     def build_notification_items(self, db: Session, *, user_id: int, limit: int = 20) -> tuple[list[dict[str, Any]], list[int]]:
         q = (
@@ -450,15 +481,33 @@ class TrackingAutonomyService:
             self._running_source_counts[source] = max(0, self._running_source_counts[source] - 1)
 
     def _run_group_worker(self, group_key: str, source: str, target_ids: list[int]) -> None:
-        db = create_session()
         try:
-            self._run_target_ids(db, target_ids)
-            db.commit()
-        except Exception as exc:  # pragma: no cover
-            db.rollback()
-            _LOG.exception("tracking worker failed: %s", exc)
+            for attempt in range(1, self._sqlite_retry_attempts + 1):
+                db = create_session()
+                try:
+                    self._run_target_ids(db, target_ids)
+                    db.commit()
+                    return
+                except OperationalError as exc:
+                    db.rollback()
+                    if self._is_sqlite_locked_error(exc) and attempt < self._sqlite_retry_attempts:
+                        _LOG.warning(
+                            "tracking worker locked: group=%s attempt=%s/%s",
+                            group_key,
+                            attempt,
+                            self._sqlite_retry_attempts,
+                        )
+                        self._sleep_sqlite_retry_backoff(attempt)
+                        continue
+                    _LOG.exception("tracking worker failed: %s", exc)
+                    return
+                except Exception as exc:  # pragma: no cover
+                    db.rollback()
+                    _LOG.exception("tracking worker failed: %s", exc)
+                    return
+                finally:
+                    db.close()
         finally:
-            db.close()
             self._unmark_group_running(group_key, source)
 
     def _notify_pass(self, notify_level: str, severity: str) -> bool:
@@ -1086,6 +1135,15 @@ class TrackingAutonomyService:
 
     def _group_key(self, row: TrackingTarget) -> str:
         return f"{row.user_id}:{row.workspace}:{row.track_type}:{row.source_type}:{row.source_key}".lower()
+
+    def _is_sqlite_locked_error(self, exc: Exception) -> bool:
+        text = str(getattr(exc, "orig", exc) or exc).lower()
+        return "database is locked" in text or "database table is locked" in text
+
+    def _sleep_sqlite_retry_backoff(self, attempt: int) -> None:
+        base = self._sqlite_retry_base_delay_seconds
+        delay = min(1.6, base * (2 ** max(0, attempt - 1)) + random.uniform(0.0, base))
+        time.sleep(delay)
 
     def _parse_legacy_tracking_note(self, text: str) -> dict[str, str]:
         content = (text or "").strip()
