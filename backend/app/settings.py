@@ -81,9 +81,10 @@ class Settings(BaseSettings):
     aelin_tracking_snapshot_cache_ttl_seconds: float = 10.0
     aelin_tracking_snapshot_cache_max_entries: int = 256
     aelin_agent_loop_enabled: bool = False
-    aelin_agent_loop_max_rounds: int = 2
-    aelin_agent_loop_max_tool_calls: int = 3
-    aelin_agent_loop_max_calls_per_round: int = 2
+    aelin_agent_loop_shadow_enabled: bool = False
+    aelin_agent_loop_max_rounds: int = 20
+    aelin_agent_loop_max_tool_calls: int = 40
+    aelin_agent_loop_max_calls_per_round: int = 3
     aelin_agent_loop_max_write_calls: int = 1
     aelin_agent_loop_allow_write_tools: bool = False
     aelin_agent_loop_user_whitelist_csv: str = ""

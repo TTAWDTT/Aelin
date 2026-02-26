@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -223,7 +224,12 @@ class AelinAgentLoop:
             )
 
             successful_calls = 0
+            planned_calls: list[dict[str, Any]] = []
+            reached_total_limit = False
             for tc in tool_calls_payload:
+                if usage.total_calls >= self._policy.max_tool_calls:
+                    reached_total_limit = True
+                    break
                 fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
                 tool_name = str(fn.get("name") or "").strip().lower()
                 args = _safe_json_loads(str(fn.get("arguments") or "{}"))
@@ -231,32 +237,49 @@ class AelinAgentLoop:
                 policy = self._policy.evaluate(name=tool_name, args=args, usage=usage)
                 usage.round_calls += 1
                 usage.total_calls += 1
+                if policy.allowed and policy.is_write:
+                    usage.write_calls += 1
+                planned_calls.append(
+                    {
+                        "tool_name": tool_name,
+                        "args": args,
+                        "tc_id": tc_id,
+                        "policy": policy,
+                    }
+                )
+                if usage.total_calls >= self._policy.max_tool_calls:
+                    reached_total_limit = True
+                    break
 
+            def _run_tool_call(tool_name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any], str, int]:
                 status = "completed"
                 result: dict[str, Any] = {}
                 error = ""
                 started = time.perf_counter()
-
-                if not policy.allowed:
-                    status = "failed"
-                    error = f"policy:{policy.reason}"
-                    result = {"ok": False, "error": error}
-                else:
-                    try:
-                        result = self._tool_hub.execute(tool_name, args)
-                        if not bool(result.get("ok", True)):
-                            status = "failed"
-                            error = str(result.get("error") or "tool_not_ok")[:180]
-                        else:
-                            successful_calls += 1
-                        if policy.is_write:
-                            usage.write_calls += 1
-                    except Exception as exc:
+                try:
+                    result = self._tool_hub.execute(tool_name, args)
+                    if not bool(result.get("ok", True)):
                         status = "failed"
-                        error = str(exc)[:180]
-                        result = {"ok": False, "error": error}
-
+                        error = str(result.get("error") or "tool_not_ok")[:180]
+                except Exception as exc:
+                    status = "failed"
+                    error = str(exc)[:180]
+                    result = {"ok": False, "error": error}
                 latency_ms = int((time.perf_counter() - started) * 1000)
+                return status, result, error, latency_ms
+
+            def _record_tool_result(
+                *,
+                tool_name: str,
+                args: dict[str, Any],
+                tc_id: str,
+                is_write: bool,
+                status: str,
+                result: dict[str, Any],
+                error: str,
+                latency_ms: int,
+            ) -> None:
+                nonlocal successful_calls
                 run = AgentLoopToolRun(
                     round_index=round_index,
                     name=tool_name,
@@ -264,11 +287,10 @@ class AelinAgentLoop:
                     status=status,
                     result=result,
                     error=error,
-                    is_write=policy.is_write,
+                    is_write=is_write,
                     latency_ms=latency_ms,
                 )
                 tool_runs.append(run)
-
                 messages.append(
                     {
                         "role": "tool",
@@ -284,9 +306,102 @@ class AelinAgentLoop:
                         count=1,
                     )
                 )
+                if status == "completed":
+                    successful_calls += 1
 
-                if usage.total_calls >= self._policy.max_tool_calls:
-                    break
+            pending_reads: list[dict[str, Any]] = []
+
+            def _flush_pending_reads() -> None:
+                if not pending_reads:
+                    return
+                batch = list(pending_reads)
+                pending_reads.clear()
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_read_batch",
+                        status="running",
+                        detail=f"parallel_reads={len(batch)}",
+                        count=len(batch),
+                    )
+                )
+                results: list[tuple[str, dict[str, Any], str, int] | None] = [None] * len(batch)
+                max_workers = max(1, min(4, len(batch)))
+                with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="aelin-loop-read") as pool:
+                    future_map = {
+                        pool.submit(_run_tool_call, str(item.get("tool_name") or ""), item.get("args") if isinstance(item.get("args"), dict) else {}): idx
+                        for idx, item in enumerate(batch)
+                    }
+                    for future, idx in future_map.items():
+                        try:
+                            results[idx] = future.result()
+                        except Exception as exc:
+                            results[idx] = ("failed", {"ok": False, "error": str(exc)[:180]}, str(exc)[:180], 0)
+
+                for idx, item in enumerate(batch):
+                    tool_name = str(item.get("tool_name") or "")
+                    tc_id = str(item.get("tc_id") or "")
+                    args = item.get("args") if isinstance(item.get("args"), dict) else {}
+                    entry = results[idx] if isinstance(results[idx], tuple) else ("failed", {"ok": False, "error": "unknown"}, "unknown", 0)
+                    status, result, error, latency_ms = entry
+                    _record_tool_result(
+                        tool_name=tool_name,
+                        args=args,
+                        tc_id=tc_id,
+                        is_write=False,
+                        status=status,
+                        result=result,
+                        error=error,
+                        latency_ms=latency_ms,
+                    )
+
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_read_batch",
+                        status="completed",
+                        detail=f"parallel_reads={len(batch)}",
+                        count=len(batch),
+                    )
+                )
+
+            for planned in planned_calls:
+                tool_name = str(planned.get("tool_name") or "")
+                args = planned.get("args") if isinstance(planned.get("args"), dict) else {}
+                tc_id = str(planned.get("tc_id") or "")
+                policy = planned.get("policy")
+                is_write = bool(getattr(policy, "is_write", False))
+                allowed = bool(getattr(policy, "allowed", False))
+                reason = str(getattr(policy, "reason", "") or "")
+
+                if allowed and (not is_write):
+                    pending_reads.append(planned)
+                    continue
+
+                _flush_pending_reads()
+                if not allowed:
+                    _record_tool_result(
+                        tool_name=tool_name,
+                        args=args,
+                        tc_id=tc_id,
+                        is_write=is_write,
+                        status="failed",
+                        result={"ok": False, "error": f"policy:{reason}"},
+                        error=f"policy:{reason}",
+                        latency_ms=0,
+                    )
+                    continue
+                status, result, error, latency_ms = _run_tool_call(tool_name, args)
+                _record_tool_result(
+                    tool_name=tool_name,
+                    args=args,
+                    tc_id=tc_id,
+                    is_write=is_write,
+                    status=status,
+                    result=result,
+                    error=error,
+                    latency_ms=latency_ms,
+                )
+
+            _flush_pending_reads()
 
             if successful_calls <= 0:
                 idle_rounds += 1
@@ -300,7 +415,7 @@ class AelinAgentLoop:
                     count=usage.round_calls,
                 )
             )
-            if usage.total_calls >= self._policy.max_tool_calls:
+            if reached_total_limit or usage.total_calls >= self._policy.max_tool_calls:
                 stop_reason = "total_call_limit"
                 break
             if idle_rounds >= 2:
@@ -404,4 +519,3 @@ class AelinAgentLoop:
             if len(out) >= 4:
                 break
         return out
-

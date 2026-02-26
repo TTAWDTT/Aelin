@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import os
 import platform
 import queue
@@ -131,6 +132,7 @@ except Exception:  # pragma: no cover - optional runtime dependency
     psutil = None
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
+_log = logging.getLogger(__name__)
 
 _memory = AgentMemoryService()
 _summarizer = RuleBasedSummarizer()
@@ -6077,12 +6079,12 @@ def _csv_int_tokens(raw: str) -> set[int]:
     return out
 
 
-def _should_use_agent_loop(user: User, workspace: str) -> bool:
-    if not bool(getattr(settings, "aelin_agent_loop_enabled", False)):
-        return False
-
+def _agent_loop_matches_scope(user: User, workspace: str) -> bool:
     users = _csv_int_tokens(str(getattr(settings, "aelin_agent_loop_user_whitelist_csv", "") or ""))
-    workspaces = {str(_normalize_workspace(it)).lower() for it in _csv_tokens(str(getattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "") or ""))}
+    workspaces = {
+        str(_normalize_workspace(it)).lower()
+        for it in _csv_tokens(str(getattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "") or ""))
+    }
     if not users and not workspaces:
         return True
 
@@ -6092,12 +6094,28 @@ def _should_use_agent_loop(user: User, workspace: str) -> bool:
     return workspace_norm in workspaces
 
 
+def _should_use_agent_loop(user: User, workspace: str) -> bool:
+    if not bool(getattr(settings, "aelin_agent_loop_enabled", False)):
+        return False
+    return _agent_loop_matches_scope(user, workspace)
+
+
+def _should_use_agent_loop_shadow(user: User, workspace: str) -> bool:
+    if bool(getattr(settings, "aelin_agent_loop_enabled", False)):
+        return False
+    if not bool(getattr(settings, "aelin_agent_loop_shadow_enabled", False)):
+        return False
+    return _agent_loop_matches_scope(user, workspace)
+
+
 def _try_agent_loop_chat(
     payload: AelinChatRequest,
     db: Session,
     current_user: User,
     *,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+    persist_memory: bool = True,
+    force_disable_writes: bool = False,
 ) -> AelinChatResponse | None:
     service, provider = _resolve_llm_service(db, current_user)
     if provider == "rule_based" or not service.is_configured():
@@ -6121,17 +6139,21 @@ def _try_agent_loop_chat(
         file_memory_bridge=_tracking_file_memory,
     )
     policy = AelinToolPolicy(
-        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 2) or 2),
-        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 3) or 3),
+        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 3) or 3),
+        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 40) or 40),
         max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 1) or 1),
-        allow_write_tools=bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False)),
+        allow_write_tools=(
+            False
+            if force_disable_writes
+            else bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
+        ),
     )
     runner = AelinAgentLoop(
         service=service,
         provider=provider,
         tool_hub=tool_hub,
         policy=policy,
-        max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 2) or 2),
+        max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 20) or 20),
     )
     result = runner.run(
         query=payload.query,
@@ -6174,7 +6196,7 @@ def _try_agent_loop_chat(
                 pass
         return None
 
-    if payload.use_memory:
+    if persist_memory and payload.use_memory:
         try:
             _memory.update_after_turn(
                 db,
@@ -6212,6 +6234,95 @@ def _try_agent_loop_chat(
     )
 
 
+def _start_agent_loop_shadow(
+    payload: AelinChatRequest,
+    current_user: User,
+    *,
+    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+    baseline_answer: str = "",
+) -> None:
+    query_preview = str(payload.query or "").strip()[:120]
+
+    def _worker() -> None:
+        shadow_db = create_session()
+        started = time.perf_counter()
+        try:
+            shadow_user = shadow_db.get(User, int(current_user.id))
+            if shadow_user is None:
+                return
+            shadow_payload = AelinChatRequest.model_validate(payload.model_dump())
+            result = _try_agent_loop_chat(
+                shadow_payload,
+                shadow_db,
+                shadow_user,
+                event_cb=None,
+                persist_memory=False,
+                force_disable_writes=True,
+            )
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            if result is None:
+                _log.warning("aelin agent_loop shadow failed query=%s latency_ms=%s", query_preview, latency_ms)
+                if event_cb is not None:
+                    event_cb(
+                        "trace",
+                        {
+                            "step": AelinToolStep(
+                                stage="agent_loop_shadow",
+                                status="failed",
+                                detail=f"query={query_preview}; latency_ms={latency_ms}",
+                                count=0,
+                                ts=_now_ms(),
+                            ).model_dump()
+                        },
+                    )
+                return
+            answer_preview = str(result.answer or "").strip()[:120]
+            baseline_preview = str(baseline_answer or "").strip()[:120]
+            _log.info(
+                "aelin agent_loop shadow ok query=%s latency_ms=%s baseline_len=%s shadow_len=%s",
+                query_preview,
+                latency_ms,
+                len(baseline_preview),
+                len(answer_preview),
+            )
+            if event_cb is not None:
+                event_cb(
+                    "trace",
+                    {
+                        "step": AelinToolStep(
+                            stage="agent_loop_shadow",
+                            status="completed",
+                            detail=f"query={query_preview}; latency_ms={latency_ms}",
+                            count=1,
+                            ts=_now_ms(),
+                        ).model_dump()
+                    },
+                )
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            _log.warning("aelin agent_loop shadow exception query=%s latency_ms=%s err=%s", query_preview, latency_ms, str(exc)[:180])
+            if event_cb is not None:
+                event_cb(
+                    "trace",
+                    {
+                        "step": AelinToolStep(
+                            stage="agent_loop_shadow",
+                            status="failed",
+                            detail=f"query={query_preview}; err={str(exc)[:120]}",
+                            count=0,
+                            ts=_now_ms(),
+                        ).model_dump()
+                    },
+                )
+        finally:
+            try:
+                shadow_db.close()
+            except Exception:
+                pass
+
+    threading.Thread(target=_worker, daemon=True, name="aelin-agent-loop-shadow").start()
+
+
 def _dispatch_aelin_chat(
     payload: AelinChatRequest,
     db: Session,
@@ -6223,7 +6334,15 @@ def _dispatch_aelin_chat(
         agent_response = _try_agent_loop_chat(payload, db, current_user, event_cb=event_cb)
         if agent_response is not None:
             return agent_response
-    return _aelin_chat_impl(payload, db, current_user, event_cb=event_cb)
+    legacy = _aelin_chat_impl(payload, db, current_user, event_cb=event_cb)
+    if _should_use_agent_loop_shadow(current_user, payload.workspace):
+        _start_agent_loop_shadow(
+            payload,
+            current_user,
+            event_cb=event_cb,
+            baseline_answer=str(legacy.answer or "")[:800],
+        )
+    return legacy
 
 
 @router.post("/chat", response_model=AelinChatResponse)
