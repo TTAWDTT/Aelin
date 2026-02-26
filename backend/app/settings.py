@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     aelin_base_context_cache_max_entries: int = 128
     aelin_tracking_snapshot_cache_ttl_seconds: float = 10.0
     aelin_tracking_snapshot_cache_max_entries: int = 256
+    aelin_agent_loop_enabled: bool = False
+    aelin_agent_loop_max_rounds: int = 2
+    aelin_agent_loop_max_tool_calls: int = 3
+    aelin_agent_loop_max_calls_per_round: int = 2
+    aelin_agent_loop_max_write_calls: int = 1
+    aelin_agent_loop_allow_write_tools: bool = False
+    aelin_agent_loop_user_whitelist_csv: str = ""
+    aelin_agent_loop_workspace_whitelist_csv: str = ""
 
     # LLM client runtime tuning.
     llm_request_timeout_seconds: float = 90.0
