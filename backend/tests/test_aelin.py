@@ -336,6 +336,49 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
     assert any((it.get("stage") == "agent_loop_tool") for it in (data.get("tool_trace") or []))
 
 
+def test_aelin_chat_shadow_mode_triggers_background_loop(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", False)
+    monkeypatch.setattr(settings, "aelin_agent_loop_shadow_enabled", True)
+    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
+
+    called = {"shadow": 0}
+
+    def _fake_shadow(payload, current_user, event_cb=None, baseline_answer=""):
+        called["shadow"] += 1
+        assert isinstance(baseline_answer, str)
+
+    monkeypatch.setattr(aelin_router, "_start_agent_loop_shadow", _fake_shadow)
+
+    legacy_resp = aelin_router.AelinChatResponse(
+        answer="legacy-shadow-base",
+        expression="exp-04",
+        citations=[],
+        actions=[],
+        tool_trace=[],
+        memory_summary="legacy",
+        generated_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda payload, db, current_user, event_cb=None: legacy_resp)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "测试 shadow 路径",
+            "use_memory": True,
+            "workspace": "default",
+            "images": [],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json().get("answer") == "legacy-shadow-base"
+    assert called["shadow"] == 1
+
+
 def test_aelin_track_confirm_endpoint(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
