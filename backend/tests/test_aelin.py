@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -196,6 +197,143 @@ def test_aelin_chat_stream_emits_trace_and_final():
     result = final_payload.get("result") or {}
     assert isinstance(result.get("answer"), str) and result.get("answer")
     assert isinstance(result.get("tool_trace"), list)
+
+
+def test_aelin_chat_agent_loop_disabled_uses_legacy(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", False)
+
+    legacy_resp = aelin_router.AelinChatResponse(
+        answer="legacy-path",
+        expression="exp-04",
+        citations=[],
+        actions=[],
+        tool_trace=[aelin_router.AelinToolStep(stage="legacy", status="completed", detail="", count=0, ts=1)],
+        memory_summary="legacy",
+        generated_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda payload, db, current_user, event_cb=None: legacy_resp)
+
+    def _should_not_run(*args, **kwargs):
+        raise AssertionError("agent loop should not run when disabled")
+
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _should_not_run)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "测试 legacy 路径",
+            "use_memory": True,
+            "workspace": "default",
+            "images": [],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("answer") == "legacy-path"
+    assert any((it.get("stage") == "legacy") for it in (data.get("tool_trace") or []))
+
+
+def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
+    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
+
+    loop_resp = aelin_router.AelinChatResponse(
+        answer="loop-path",
+        expression="exp-03",
+        citations=[],
+        actions=[],
+        tool_trace=[aelin_router.AelinToolStep(stage="agent_loop", status="completed", detail="ok", count=1, ts=2)],
+        memory_summary="loop",
+        generated_at=datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
+
+    def _legacy_should_not_run(*args, **kwargs):
+        raise AssertionError("legacy path should not run when loop returns response")
+
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "测试 loop 路径",
+            "use_memory": True,
+            "workspace": "default",
+            "images": [],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("answer") == "loop-path"
+    assert any((it.get("stage") == "agent_loop") for it in (data.get("tool_trace") or []))
+
+
+def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
+    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_max_rounds", 2)
+    monkeypatch.setattr(settings, "aelin_agent_loop_max_tool_calls", 3)
+    monkeypatch.setattr(settings, "aelin_agent_loop_max_calls_per_round", 2)
+    monkeypatch.setattr(settings, "aelin_agent_loop_allow_write_tools", False)
+
+    class _FakeCompletions:
+        def __init__(self):
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                tool_call = SimpleNamespace(
+                    id="call_ctx_1",
+                    function=SimpleNamespace(name="context_get", arguments='{"query":"最近重点","max_items":3}'),
+                )
+                msg = SimpleNamespace(content="", tool_calls=[tool_call])
+                return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+            msg = SimpleNamespace(content="这是 loop 的最终回答。", tool_calls=[])
+            return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+
+    class _FakeService:
+        def __init__(self):
+            self.config = SimpleNamespace(model="fake-model", temperature=0.0)
+            self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+
+        def is_configured(self):
+            return True
+
+    monkeypatch.setattr(aelin_router, "_resolve_llm_service", lambda db, user: (_FakeService(), "openai"))
+
+    def _legacy_should_not_run(*args, **kwargs):
+        raise AssertionError("legacy path should not run in this test")
+
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "请结合上下文告诉我最近重点",
+            "use_memory": True,
+            "workspace": "default",
+            "images": [],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("answer") == "这是 loop 的最终回答。"
+    assert any((it.get("stage") == "agent_loop_tool") for it in (data.get("tool_trace") or []))
 
 
 def test_aelin_track_confirm_endpoint(monkeypatch):

@@ -90,6 +90,8 @@ from app.services.aelin_tools import (
     should_attempt_aelin_tools,
     summarize_tool_results_for_prompt,
 )
+from app.services.aelin_agent_loop import AelinAgentLoop
+from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.memory_draft import ParallelMemoryDraftResult, build_parallel_memory_draft
 from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
 from app.services.openviking_bridge import tracking_file_memory_bridge
@@ -6054,13 +6056,183 @@ def apply_device_mode(
     )
 
 
+def _csv_tokens(raw: str) -> set[str]:
+    out: set[str] = set()
+    for token in str(raw or "").split(","):
+        value = token.strip()
+        if value:
+            out.add(value)
+    return out
+
+
+def _csv_int_tokens(raw: str) -> set[int]:
+    out: set[int] = set()
+    for token in _csv_tokens(raw):
+        try:
+            value = int(token)
+        except Exception:
+            continue
+        if value > 0:
+            out.add(value)
+    return out
+
+
+def _should_use_agent_loop(user: User, workspace: str) -> bool:
+    if not bool(getattr(settings, "aelin_agent_loop_enabled", False)):
+        return False
+
+    users = _csv_int_tokens(str(getattr(settings, "aelin_agent_loop_user_whitelist_csv", "") or ""))
+    workspaces = {str(_normalize_workspace(it)).lower() for it in _csv_tokens(str(getattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "") or ""))}
+    if not users and not workspaces:
+        return True
+
+    if int(getattr(user, "id", 0) or 0) in users:
+        return True
+    workspace_norm = str(_normalize_workspace(workspace)).lower()
+    return workspace_norm in workspaces
+
+
+def _try_agent_loop_chat(
+    payload: AelinChatRequest,
+    db: Session,
+    current_user: User,
+    *,
+    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+) -> AelinChatResponse | None:
+    service, provider = _resolve_llm_service(db, current_user)
+    if provider == "rule_based" or not service.is_configured():
+        return None
+
+    workspace = _normalize_workspace(payload.workspace)
+    base_bundle = _build_cached_base_context_bundle(
+        db,
+        current_user.id,
+        workspace=workspace,
+    )
+    memory_summary = str(base_bundle.get("summary") or "")
+    history_turns = _normalize_history(payload.history)
+
+    tool_hub = AelinToolHub(
+        db=db,
+        user_id=current_user.id,
+        workspace=workspace,
+        memory_service=_memory,
+        tracking_service=_tracking,
+        file_memory_bridge=_tracking_file_memory,
+    )
+    policy = AelinToolPolicy(
+        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 2) or 2),
+        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 3) or 3),
+        max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 1) or 1),
+        allow_write_tools=bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False)),
+    )
+    runner = AelinAgentLoop(
+        service=service,
+        provider=provider,
+        tool_hub=tool_hub,
+        policy=policy,
+        max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 2) or 2),
+    )
+    result = runner.run(
+        query=payload.query,
+        memory_summary=memory_summary,
+        history_turns=history_turns,
+    )
+
+    trace_steps: list[AelinToolStep] = []
+    for step in result.trace_steps:
+        trace = AelinToolStep(
+            stage=str(step.stage or "agent_loop")[:80],
+            status=str(step.status or "completed")[:24],
+            detail=str(step.detail or "")[:240],
+            count=max(0, int(step.count or 0)),
+            ts=max(0, int(step.ts or _now_ms())),
+        )
+        trace_steps.append(trace)
+        if event_cb is not None:
+            try:
+                event_cb("trace", {"step": trace.model_dump()})
+            except Exception:
+                pass
+
+    if not bool(result.ok) or not str(result.answer or "").strip():
+        if event_cb is not None:
+            try:
+                event_cb(
+                    "trace",
+                    {
+                        "step": AelinToolStep(
+                            stage="agent_loop",
+                            status="failed",
+                            detail=f"fallback_to_legacy:{str(result.stop_reason or 'unknown')[:120]}",
+                            count=0,
+                            ts=_now_ms(),
+                        ).model_dump()
+                    },
+                )
+            except Exception:
+                pass
+        return None
+
+    if payload.use_memory:
+        try:
+            _memory.update_after_turn(
+                db,
+                current_user.id,
+                [{"role": "user", "content": payload.query}],
+                result.answer,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    expression = _pick_expression(payload.query, result.answer)
+    actions: list[AelinAction] = []
+    for raw in result.actions[:4]:
+        kind = str(raw.get("kind") or "").strip()
+        title = str(raw.get("title") or "").strip()
+        detail = str(raw.get("detail") or "").strip()
+        if not kind or not title:
+            continue
+        payload_map = {
+            str(k): str(v)
+            for k, v in raw.items()
+            if str(k) not in {"kind", "title", "detail"} and str(v or "").strip()
+        }
+        actions.append(AelinAction(kind=kind[:32], title=title[:120], detail=detail[:220], payload=payload_map))
+
+    return AelinChatResponse(
+        answer=str(result.answer or "").strip(),
+        expression=expression,
+        citations=[],
+        actions=actions,
+        tool_trace=trace_steps[:64],
+        memory_summary=memory_summary,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+def _dispatch_aelin_chat(
+    payload: AelinChatRequest,
+    db: Session,
+    current_user: User,
+    *,
+    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+) -> AelinChatResponse:
+    if _should_use_agent_loop(current_user, payload.workspace):
+        agent_response = _try_agent_loop_chat(payload, db, current_user, event_cb=event_cb)
+        if agent_response is not None:
+            return agent_response
+    return _aelin_chat_impl(payload, db, current_user, event_cb=event_cb)
+
+
 @router.post("/chat", response_model=AelinChatResponse)
 def aelin_chat(
     payload: AelinChatRequest,
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    return _aelin_chat_impl(payload, db, current_user)
+    return _dispatch_aelin_chat(payload, db, current_user)
 
 
 @router.get("/notifications", response_model=AelinNotificationResponse)
@@ -6110,7 +6282,7 @@ def aelin_chat_stream(
             local_db = create_session()
             try:
                 user = local_db.get(User, int(current_user.id)) or current_user
-                result = _aelin_chat_impl(payload, local_db, user, event_cb=_push)
+                result = _dispatch_aelin_chat(payload, local_db, user, event_cb=_push)
                 _push("final", {"result": result.model_dump()})
             except Exception as e:
                 _push("error", {"message": str(e)[:500] or "stream error"})
