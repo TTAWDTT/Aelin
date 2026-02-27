@@ -1,65 +1,83 @@
 # Aelin
 
-Aelin 是一个面向个人场景的长期记忆型 AI 助手：以 Chat 为主入口，融合多源数据接入、持续追踪、文件化记忆（OpenViking 兼容）和可控工具调用（Agent Loop）。
+<div align="center">
+  <img src="desktop/build/icon.png" width="108" alt="Aelin Logo" />
+  <h3>长期记忆型 AI 助手</h3>
+  <p>Chat + Tracking + File Memory + Agent Loop</p>
+  <p>
+    <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+    <img src="https://img.shields.io/badge/Frontend-React%2019-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React 19" />
+    <img src="https://img.shields.io/badge/Desktop-Electron-2B2E3A?style=flat-square&logo=electron&logoColor=9FEAF9" alt="Electron" />
+    <img src="https://img.shields.io/badge/Database-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
+    <img src="https://img.shields.io/badge/Agent-Tool%20Calling-6C63FF?style=flat-square" alt="Agent Tool Calling" />
+    <img src="https://img.shields.io/badge/RAG-OpenViking%20Compatible-1E88E5?style=flat-square" alt="OpenViking Compatible" />
+  </p>
+</div>
 
-## 目录
+---
 
-- [项目定位](#项目定位)
+## 为什么是 Aelin
+
+**Aelin 的目标不是“聊天机器人”，而是“可持续协作的个人 AI 系统”**：
+
+- 聊天时可直接调用工具检索上下文、日记、追踪和设备状态
+- 回答可附带证据链，不依赖纯猜测
+- 支持长期文件记忆（OpenViking 兼容结构）
+- 支持持续追踪并生成变化记录
+
+---
+
+## 导航
+
 - [核心能力](#核心能力)
 - [系统架构](#系统架构)
 - [快速启动](#快速启动)
 - [桌面版](#桌面版)
 - [配置说明](#配置说明)
-- [Aelin API 快速索引](#aelin-api-快速索引)
+- [Aelin API 索引](#aelin-api-索引)
 - [搜索与追踪说明](#搜索与追踪说明)
 - [测试与验证](#测试与验证)
 - [常见问题排查](#常见问题排查)
 - [相关文档](#相关文档)
 
-## 项目定位
-
-Aelin 聚焦三件事：
-
-1. 把“聊天、搜索、跟踪、记忆”放在同一个体验里。
-2. 给每个回答提供可追溯证据（本地消息、追踪快照、联网检索）。
-3. 在可控边界内支持 Agent 化工具调用，而不是纯模板回复。
+---
 
 ## 核心能力
 
-### 1) Chat-first 交互
+### Chat-first 入口
 
-- 默认首页是 Aelin 聊天入口。
-- 支持普通回复和流式回复。
-- 支持带历史上下文、多图输入、工作区隔离。
-- 支持动作回传（例如打开追踪详情、定位日记命中路径）。
+- 默认首页是 Aelin 聊天入口
+- 支持流式回复、上下文注入、历史对话、图像输入
+- 返回可执行动作（如打开追踪、定位日记命中）
 
-### 2) 多源接入与同步
+### 多源接入
 
-- IMAP 邮箱（Gmail / Outlook / QQ / 163 等）
-- GitHub 通知（OAuth 或 Token）
+- IMAP 邮箱
+- GitHub 通知（OAuth / Token）
 - RSS / Blog
-- Bilibili / X / Weibo / 小红书等平台链路（部分由 Connector + 调度执行）
-- 邮件转发接入（Forward Inbound）
+- Bilibili / X / Weibo / 小红书等链路
+- 邮件转发入口（Forward Inbound）
 
-### 3) 记忆系统
+### 长期记忆 + 日记系统
 
-- 短期记忆：会话上下文、focus items、todo 等。
-- 文件化长期记忆：Tracking File Memory（OpenViking 兼容结构）。
-- 日记文件树检索与内容读取接口（供 UI 和 Agent 工具使用）。
+- 会话记忆摘要（focus items / notes / todos）
+- Tracking File Memory（OpenViking 兼容）
+- 日记文件树检索、内容读取、前端呈现
 
-### 4) 追踪系统
+### 追踪系统
 
 - 追踪目标 CRUD
-- 定时调度（autonomy scheduler）
-- 变化快照与变更记录
-- 手动 run once 与批量 ack
+- 定时调度与手动 run once
+- 快照存储与变更记录
+- ack / 批量 ack
 
-### 5) Agent Loop + 工具调用
+### Agent Loop + 工具调用
 
-- 默认启用 Agent Loop（可通过配置关闭）。
-- 支持读工具并行执行、写工具策略受控。
-- 内置工具族：`context_get` / `diary` / `profile` / `tracking` / `device` / `web_search`。
-- 支持影子模式（shadow）与硬失败策略（hard fail）。
+- 默认支持 Agent Loop
+- 读工具可并行，写工具策略可控
+- 工具族：`context_get`、`diary`、`profile`、`tracking`、`device`、`web_search`
+
+---
 
 ## 系统架构
 
@@ -67,25 +85,26 @@ Aelin 聚焦三件事：
 
 - `backend/`：FastAPI + SQLAlchemy + 调度器 + Agent 核心服务
 - `frontend/`：React + Vite + TypeScript
-- `desktop/`：Electron 桌面壳（Windows 打包）
+- `desktop/`：Electron 桌面壳
 - `docs/`：产品与工程文档
-- `data/`：本地文件记忆数据（默认）
+- `data/`：本地文件记忆目录
 
-### 后端关键组件
+### 后端关键文件
 
-- 路由层：
-  - `app/routers/aelin.py`
-  - `app/routers/agent.py`
-  - `app/routers/accounts.py` / `messages.py` / `inbound.py` 等
-- 服务层：
-  - `app/services/aelin_agent_loop.py`
-  - `app/services/aelin_tools.py`
-  - `app/services/aelin_tool_policy.py`
-  - `app/services/web_search.py`
-  - `app/services/tracking_autonomy.py`
-  - `app/services/openviking_bridge.py`
-- 配置：
-  - `app/settings.py`（环境变量前缀仍是 `MERCURYDESK_`，为历史兼容）
+- 路由：
+  - `backend/app/routers/aelin.py`
+  - `backend/app/routers/agent.py`
+- Agent：
+  - `backend/app/services/aelin_agent_loop.py`
+  - `backend/app/services/aelin_tools.py`
+  - `backend/app/services/aelin_tool_policy.py`
+- 搜索/追踪：
+  - `backend/app/services/web_search.py`
+  - `backend/app/services/tracking_autonomy.py`
+- 记忆桥接：
+  - `backend/app/services/openviking_bridge.py`
+
+---
 
 ## 快速启动
 
@@ -117,21 +136,23 @@ npm install
 npm run dev
 ```
 
-浏览器打开：
+访问：
 
 ```text
 http://127.0.0.1:5173
 ```
 
-### 3) 首次登录后建议配置
+### 3) 首次建议配置
 
-1. 设置 Agent Provider / Model / API Key
-2. 配置连接源（IMAP / OAuth / RSS 等）
-3. 如需跨区域检索，在 Agent 设置中填写联网搜索代理 `web_search_proxy_url`
+1. 在设置中配置 Agent（Provider / Model / API Key）
+2. 连接数据源（IMAP / OAuth / RSS）
+3. 需要跨区域联网搜索时，设置 `web_search_proxy_url`
+
+---
 
 ## 桌面版
 
-桌面壳目录：`desktop/`
+目录：`desktop/`
 
 ### 开发模式
 
@@ -149,13 +170,15 @@ npm install
 npm run dist
 ```
 
-产物目录：`desktop/release/` 或 `desktop/release-dist/`
+输出目录：`desktop/release/` 或 `desktop/release-dist/`
 
-如果本机 Python 不在 PATH，可设置：
+若 Python 不在 PATH：
 
 ```powershell
 $env:MERCURYDESK_PYTHON="C:\\path\\to\\python.exe"
 ```
+
+---
 
 ## 配置说明
 
@@ -166,15 +189,15 @@ $env:MERCURYDESK_PYTHON="C:\\path\\to\\python.exe"
 - `POST /api/v1/agent/test`
 - `GET /api/v1/agent/catalog`
 
-`agent/config` 关键字段：
+配置关键字段：
 
 - `provider`
 - `base_url`
 - `model`
 - `temperature`
-- `web_search_proxy_url`（新增，按用户存储）
+- `web_search_proxy_url`（按用户存储）
 
-### 关键环境变量（后端）
+### 常用环境变量（后端）
 
 基础：
 
@@ -182,7 +205,6 @@ $env:MERCURYDESK_PYTHON="C:\\path\\to\\python.exe"
 - `MERCURYDESK_SECRET_KEY`
 - `MERCURYDESK_FERNET_KEY`
 - `MERCURYDESK_CORS_ORIGINS`
-- `MERCURYDESK_MEDIA_DIR`
 
 OAuth：
 
@@ -190,36 +212,28 @@ OAuth：
 - `MERCURYDESK_OUTLOOK_CLIENT_ID` / `MERCURYDESK_OUTLOOK_CLIENT_SECRET`
 - `MERCURYDESK_GITHUB_CLIENT_ID` / `MERCURYDESK_GITHUB_CLIENT_SECRET`
 
-OpenViking / 记忆：
-
-- `MERCURYDESK_OPENVIKING_ENABLED`
-- `MERCURYDESK_OPENVIKING_SEMANTIC_ENABLED`
-- `MERCURYDESK_OPENVIKING_DATA_DIR`
-
 Agent Loop：
 
 - `MERCURYDESK_AELIN_AGENT_LOOP_ENABLED`
 - `MERCURYDESK_AELIN_AGENT_LOOP_MAX_ROUNDS`
 - `MERCURYDESK_AELIN_AGENT_LOOP_MAX_TOOL_CALLS`
 - `MERCURYDESK_AELIN_AGENT_LOOP_ALLOW_WRITE_TOOLS`
-- `MERCURYDESK_AELIN_AGENT_LOOP_ROUND_TIMEOUT_SECONDS`
-- `MERCURYDESK_AELIN_AGENT_LOOP_TOTAL_TIMEOUT_SECONDS`
 
-### 配置持久化说明
+记忆：
 
-- 数据库默认 SQLite（当前目录下 `mercurydesk.db`）。
-- 应用启动时会做轻量列迁移（例如 `agent_configs.web_search_proxy_url`）。
+- `MERCURYDESK_OPENVIKING_ENABLED`
+- `MERCURYDESK_OPENVIKING_SEMANTIC_ENABLED`
+- `MERCURYDESK_OPENVIKING_DATA_DIR`
 
-## Aelin API 快速索引
+---
 
-以下为高频接口，完整参数请看 `backend/app/schemas.py` 与路由文件。
+## Aelin API 索引
 
-聊天与上下文：
+聊天：
 
 - `POST /api/v1/aelin/chat`
 - `POST /api/v1/aelin/chat/stream`
 - `GET /api/v1/aelin/context`
-- `GET /api/v1/aelin/notifications`
 
 追踪：
 
@@ -229,7 +243,7 @@ Agent Loop：
 - `GET /api/v1/aelin/tracking/targets/{target_id}/changes`
 - `POST /api/v1/aelin/tracking/targets/{target_id}/changes/ack`
 
-文件记忆 / 日记：
+文件记忆与日记：
 
 - `GET /api/v1/aelin/tracking/file-memory/search`
 - `GET /api/v1/aelin/tracking/file-memory/content`
@@ -241,11 +255,11 @@ Agent Loop：
 - `GET /api/v1/aelin/device/processes`
 - `POST /api/v1/aelin/device/mode/apply`
 
+---
+
 ## 搜索与追踪说明
 
-### 联网搜索（WebSearchService）
-
-当前组合检索源包括：
+### 当前联网搜索源（WebSearchService）
 
 - Bing HTML
 - DuckDuckGo Lite
@@ -255,60 +269,66 @@ Agent Loop：
 - Hacker News Algolia
 - Wikipedia API
 
-当前默认行为（核心链路）：
+默认策略（当前主链路）：
 
-- 默认 `max_results = 15`
-- 追踪/聊天链路抓取正文 `fetch_top_k = 5`
-- 会进行去重、打分、必要时 reader/browser 回退抓取
+- `max_results = 15`
+- `fetch_top_k = 5`
+- 去重 + 打分 + 回退抓取（reader/browser）
 
-### X/Twitter 现实边界
+### 关于 X/Twitter
 
-- Web 检索可以命中部分公开页面，但对实时性和完整性不稳定。
-- 对登录墙、反爬和地区限制场景，建议结合代理和可用 Connector。
+- 无登录或受限网络时，公开页面可见性有限
+- 对时效强、门槛高的信息，建议配合代理与可用 Connector
+
+---
 
 ## 测试与验证
 
-### 后端
+后端：
 
 ```powershell
 cd backend
 pytest -q
 ```
 
-### 前端
+前端构建：
 
 ```powershell
 cd frontend
 npm run build
 ```
 
-### 建议的最小回归
+建议回归：
 
-1. `POST /api/v1/aelin/chat/stream` 可正常返回事件流
-2. `GET/PATCH /api/v1/agent/config` 可读写 `web_search_proxy_url`
-3. 追踪 run once 可成功写入快照/变化
+1. `POST /api/v1/aelin/chat/stream` 正常返回
+2. `GET/PATCH /api/v1/agent/config` 能读写 `web_search_proxy_url`
+3. 追踪 run once 可写入快照/变化
+
+---
 
 ## 常见问题排查
 
-### 1) `422 Unprocessable Entity`（聊天流接口）
+### 1) `422 Unprocessable Entity`（聊天接口）
 
-先检查请求体是否满足 `AelinChatRequest`：
+优先检查请求体是否符合 `AelinChatRequest`：
 
-- `query` 非空（或有图片输入）
-- `workspace` 长度合法
-- `history` 格式为 `{role, content}` 列表
+- `query` 非空（或包含图片输入）
+- `workspace` 合法
+- `history` 为 `{role, content}` 列表
 
 ### 2) `sqlite3.OperationalError: database is locked`
 
-- 避免多个进程同时高频写同一 SQLite 文件
-- 保证只启动一套主要后端实例
-- 如为重度并发场景，建议迁移到 PostgreSQL
+- 避免多进程并发写同一 SQLite 文件
+- 避免重复启动后端实例
+- 高并发场景建议迁移 PostgreSQL
 
-### 3) 搜索结果偏少或偏“保守”
+### 3) 搜索结果偏少或偏保守
 
-- 在 Agent 设置中配置 `web_search_proxy_url`
-- 检查网络环境是否可访问对应搜索源
-- 对时间敏感问题，Aelin 默认会偏向“证据不足不下结论”
+- 在设置中配置 `web_search_proxy_url`
+- 检查当前网络能否访问搜索源
+- 时间敏感问题默认更保守，证据不足会拒绝给结论
+
+---
 
 ## 相关文档
 
@@ -317,10 +337,3 @@ npm run build
 - `docs/aelin/prd-v1.md`
 - `docs/aelin/memory-model.md`
 - `docs/email-forwarding.md`
-
----
-
-如果你要把 README 再细化成“开发者版 + 使用者版”两份，我建议下一步拆分为：
-
-- `README.md`（面向新用户）
-- `docs/dev/README.md`（面向开发者与二次开发）
