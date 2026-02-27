@@ -26,6 +26,21 @@ def _safe_json_loads(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _failed_loop_result(*, stop_reason: str, detail: str) -> "AelinAgentLoopResult":
+    return AelinAgentLoopResult(
+        ok=False,
+        answer="",
+        stop_reason=stop_reason,
+        rounds=0,
+        total_calls=0,
+        write_calls=0,
+        tool_runs=[],
+        trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail=detail)],
+        actions=[],
+        error=stop_reason,
+    )
+
+
 @dataclass
 class AgentLoopToolRun:
     round_index: int
@@ -99,47 +114,14 @@ class AelinAgentLoop:
         answer = ""
 
         if self._provider == "rule_based":
-            return AelinAgentLoopResult(
-                ok=False,
-                answer="",
-                stop_reason="provider_rule_based",
-                rounds=0,
-                total_calls=0,
-                write_calls=0,
-                tool_runs=[],
-                trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail="provider_rule_based")],
-                actions=[],
-                error="provider_rule_based",
-            )
+            return _failed_loop_result(stop_reason="provider_rule_based", detail="provider_rule_based")
         client = getattr(self._service, "client", None)
         if client is None:
-            return AelinAgentLoopResult(
-                ok=False,
-                answer="",
-                stop_reason="llm_not_configured",
-                rounds=0,
-                total_calls=0,
-                write_calls=0,
-                tool_runs=[],
-                trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail="llm_not_configured")],
-                actions=[],
-                error="llm_not_configured",
-            )
+            return _failed_loop_result(stop_reason="llm_not_configured", detail="llm_not_configured")
 
         tools = self._tool_hub.tool_definitions()
         if not tools:
-            return AelinAgentLoopResult(
-                ok=False,
-                answer="",
-                stop_reason="tool_definitions_empty",
-                rounds=0,
-                total_calls=0,
-                write_calls=0,
-                tool_runs=[],
-                trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail="tool_definitions_empty")],
-                actions=[],
-                error="tool_definitions_empty",
-            )
+            return _failed_loop_result(stop_reason="tool_definitions_empty", detail="tool_definitions_empty")
 
         messages: list[dict[str, Any]] = [
             {
@@ -497,9 +479,6 @@ class AelinAgentLoop:
         )
 
     def _final_answer(self, messages: list[dict[str, Any]], *, query: str) -> str:
-        client = getattr(self._service, "client", None)
-        if client is None:
-            return self._fallback_answer(query=query)
         try:
             final_messages = list(messages)
             final_messages.append(
@@ -508,7 +487,7 @@ class AelinAgentLoop:
                     "content": "请基于已完成的工具结果，直接给出最终中文回答。不要继续调用工具。",
                 }
             )
-            response = client.chat.completions.create(
+            response = self._service.client.chat.completions.create(
                 model=self._service.config.model,
                 messages=final_messages,
                 temperature=self._service.config.temperature,
