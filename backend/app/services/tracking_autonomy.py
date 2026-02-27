@@ -718,7 +718,7 @@ class TrackingAutonomyService:
             if connector_payload is not None:
                 return connector_payload
 
-        rows = self._web_search.search_and_fetch(query, max_results=8, fetch_top_k=4)
+        rows = self._web_search.search_and_fetch(query, max_results=15, fetch_top_k=5)
         items: list[dict[str, Any]] = []
         seen: set[str] = set()
         for row in rows:

@@ -152,23 +152,48 @@ class WebSearchService:
         self,
         *,
         timeout_seconds: float = 10.0,
-        max_parallel_providers: int = 4,
+        max_parallel_providers: int = 6,
         max_parallel_fetch: int = 4,
         enable_reader_fallback: bool = True,
         enable_browser_fallback: bool = True,
+        proxy_url: str = "",
     ):
         self.timeout_seconds = max(3.0, float(timeout_seconds))
         self.max_parallel_providers = max(1, min(6, int(max_parallel_providers)))
         self.max_parallel_fetch = max(1, min(8, int(max_parallel_fetch)))
         self.enable_reader_fallback = bool(enable_reader_fallback)
         self.enable_browser_fallback = bool(enable_browser_fallback)
+        self.proxy_url = str(proxy_url or "").strip()
         self._browser_ready: bool | None = None
 
-    def search(self, query: str, *, max_results: int = 6) -> list[WebSearchResult]:
+    def _new_http_client(
+        self,
+        *,
+        timeout: float | None = None,
+        follow_redirects: bool = True,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Client:
+        kwargs: dict[str, Any] = {
+            "timeout": timeout if timeout is not None else self.timeout_seconds,
+            "follow_redirects": follow_redirects,
+        }
+        if headers:
+            kwargs["headers"] = headers
+        if self.proxy_url and self.proxy_url.lower() != "off":
+            kwargs["proxy"] = self.proxy_url
+        try:
+            return httpx.Client(**kwargs)
+        except TypeError:
+            proxy = kwargs.pop("proxy", None)
+            if proxy:
+                kwargs["proxies"] = proxy
+            return httpx.Client(**kwargs)
+
+    def search(self, query: str, *, max_results: int = 15) -> list[WebSearchResult]:
         q = (query or "").strip()
         if not q:
             return []
-        n = max(1, min(10, int(max_results or 6)))
+        n = max(1, min(15, int(max_results or 6)))
         rows = self._search_with_ensemble(q, max_results=n)
         if not rows:
             return []
@@ -182,7 +207,7 @@ class WebSearchService:
         self,
         query: str,
         *,
-        max_results: int = 6,
+        max_results: int = 15,
         fetch_top_k: int = 3,
     ) -> list[WebSearchResult]:
         rows = self.search(query, max_results=max_results)
@@ -223,12 +248,15 @@ class WebSearchService:
             ("bing_html", self._search_bing_html),
             ("duckduckgo_lite", self._search_duckduckgo_lite),
             ("duckduckgo_instant", self._search_duckduckgo_instant),
+            ("google_news_rss", self._search_google_news_rss),
+            ("reddit_json", self._search_reddit_json),
+            ("hn_algolia", self._search_hn_algolia),
             ("wikipedia", self._search_wikipedia),
         ]
 
         rows_with_score: list[tuple[float, WebSearchResult]] = []
         query_tokens = _tokenize(query)
-        per_provider_limit = max(2, min(8, max_results + 2))
+        per_provider_limit = max(3, min(15, max_results + 3))
 
         with ThreadPoolExecutor(max_workers=min(len(providers), self.max_parallel_providers)) as pool:
             futures = {
@@ -289,6 +317,9 @@ class WebSearchService:
             "bing_html": 4.0,
             "duckduckgo_lite": 3.5,
             "duckduckgo_instant": 2.0,
+            "google_news_rss": 3.2,
+            "reddit_json": 2.8,
+            "hn_algolia": 2.6,
             "wikipedia": 1.0,
         }
         score = 80.0
@@ -354,7 +385,7 @@ class WebSearchService:
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
         }
         try:
-            with httpx.Client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
+            with self._new_http_client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
                 resp = client.get(url)
             if resp.status_code >= 400:
                 return "", "", {"status_code": resp.status_code}
@@ -409,7 +440,7 @@ class WebSearchService:
         reader_url = f"https://r.jina.ai/http://{url}"
         headers = {"User-Agent": _USER_AGENT}
         try:
-            with httpx.Client(timeout=max(8.0, self.timeout_seconds), follow_redirects=True, headers=headers) as client:
+            with self._new_http_client(timeout=max(8.0, self.timeout_seconds), follow_redirects=True, headers=headers) as client:
                 resp = client.get(reader_url)
             if resp.status_code >= 400:
                 return "", ""
@@ -526,7 +557,7 @@ class WebSearchService:
         url = "https://lite.duckduckgo.com/lite/"
         headers = {"User-Agent": _USER_AGENT}
         try:
-            with httpx.Client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
+            with self._new_http_client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
                 resp = client.get(url, params={"q": query})
             if resp.status_code != 200:
                 return []
@@ -574,7 +605,11 @@ class WebSearchService:
             "t": "aelin",
         }
         try:
-            with httpx.Client(timeout=self.timeout_seconds, follow_redirects=True, headers={"User-Agent": _USER_AGENT}) as client:
+            with self._new_http_client(
+                timeout=self.timeout_seconds,
+                follow_redirects=True,
+                headers={"User-Agent": _USER_AGENT},
+            ) as client:
                 resp = client.get(url, params=params)
             if resp.status_code != 200:
                 return []
@@ -627,7 +662,7 @@ class WebSearchService:
         url = f"https://www.bing.com/search?q={encoded}&setlang=en-us&mkt=en-US"
         headers = {"User-Agent": _USER_AGENT, "Accept-Language": "en-US,en;q=0.8"}
         try:
-            with httpx.Client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
+            with self._new_http_client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
                 resp = client.get(url)
             if resp.status_code != 200:
                 return []
@@ -673,11 +708,11 @@ class WebSearchService:
             "srsearch": query,
             "utf8": 1,
             "format": "json",
-            "srlimit": max(1, min(8, max_results)),
+            "srlimit": max(1, min(15, max_results)),
         }
         headers = {"User-Agent": _USER_AGENT}
         try:
-            with httpx.Client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
+            with self._new_http_client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
                 resp = client.get(base, params=params)
             if resp.status_code != 200:
                 return []
@@ -699,4 +734,105 @@ class WebSearchService:
                 else f"https://en.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}"
             )
             rows.append(WebSearchResult(title=title, url=page_url, snippet=snippet, provider="wikipedia"))
+        return rows
+
+    def _search_google_news_rss(self, query: str, *, max_results: int) -> list[WebSearchResult]:
+        url = "https://news.google.com/rss/search"
+        params = {"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"}
+        headers = {"User-Agent": _USER_AGENT}
+        try:
+            with self._new_http_client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
+                resp = client.get(url, params=params)
+            if resp.status_code != 200:
+                return []
+            xml_text = resp.text or ""
+        except Exception:
+            return []
+
+        rows: list[WebSearchResult] = []
+        items = re.findall(r"<item>([\s\S]*?)</item>", xml_text, flags=re.I)
+        for raw in items[: max_results * 2]:
+            title_match = re.search(r"<title>([\s\S]*?)</title>", raw, flags=re.I)
+            link_match = re.search(r"<link>([\s\S]*?)</link>", raw, flags=re.I)
+            desc_match = re.search(r"<description>([\s\S]*?)</description>", raw, flags=re.I)
+            title = _clean(unescape(re.sub(r"<!\[CDATA\[|\]\]>", "", str(title_match.group(1) if title_match else ""))), limit=180)
+            href = _normalize_url(unescape(str(link_match.group(1) if link_match else "")).strip())
+            desc = str(desc_match.group(1) if desc_match else "")
+            snippet = _clean(unescape(re.sub(r"<!\[CDATA\[|\]\]>", "", re.sub(r"<[^>]+>", " ", desc))), limit=320)
+            if not title or not href:
+                continue
+            rows.append(WebSearchResult(title=title, url=href, snippet=snippet, provider="google_news_rss"))
+            if len(rows) >= max_results:
+                break
+        return rows
+
+    def _search_reddit_json(self, query: str, *, max_results: int) -> list[WebSearchResult]:
+        url = "https://www.reddit.com/search.json"
+        params = {"q": query, "sort": "new", "limit": max(3, min(25, max_results * 2))}
+        headers = {"User-Agent": _USER_AGENT}
+        try:
+            with self._new_http_client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
+                resp = client.get(url, params=params)
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+        except Exception:
+            return []
+
+        children = list((((data.get("data") or {}).get("children")) or []))
+        rows: list[WebSearchResult] = []
+        for child in children:
+            node = child.get("data") if isinstance(child, dict) else None
+            if not isinstance(node, dict):
+                continue
+            title = _clean(str(node.get("title") or ""), limit=180)
+            permalink = str(node.get("permalink") or "").strip()
+            outbound = _normalize_url(str(node.get("url") or "").strip())
+            post_url = _normalize_url(f"https://www.reddit.com{permalink}") if permalink else ""
+            href = outbound or post_url
+            snippet = _clean(str(node.get("selftext") or ""), limit=320)
+            if not snippet:
+                snippet = f"subreddit: r/{str(node.get('subreddit') or '').strip()}".strip()
+            if not title or not href:
+                continue
+            rows.append(WebSearchResult(title=title, url=href, snippet=snippet, provider="reddit_json"))
+            if len(rows) >= max_results:
+                break
+        return rows
+
+    def _search_hn_algolia(self, query: str, *, max_results: int) -> list[WebSearchResult]:
+        url = "https://hn.algolia.com/api/v1/search_by_date"
+        params = {
+            "query": query,
+            "tags": "story",
+            "hitsPerPage": max(3, min(20, max_results * 2)),
+        }
+        headers = {"User-Agent": _USER_AGENT}
+        try:
+            with self._new_http_client(timeout=self.timeout_seconds, follow_redirects=True, headers=headers) as client:
+                resp = client.get(url, params=params)
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+        except Exception:
+            return []
+
+        rows: list[WebSearchResult] = []
+        for hit in list(data.get("hits") or []):
+            if not isinstance(hit, dict):
+                continue
+            title = _clean(str(hit.get("title") or hit.get("story_title") or ""), limit=180)
+            href = _normalize_url(str(hit.get("url") or hit.get("story_url") or "").strip())
+            if not href:
+                object_id = str(hit.get("objectID") or "").strip()
+                if object_id:
+                    href = f"https://news.ycombinator.com/item?id={object_id}"
+            snippet = _clean(str(hit.get("story_text") or ""), limit=320)
+            if not snippet:
+                snippet = f"author: {str(hit.get('author') or '').strip()}".strip()
+            if not title or not href:
+                continue
+            rows.append(WebSearchResult(title=title, url=href, snippet=snippet, provider="hn_algolia"))
+            if len(rows) >= max_results:
+                break
         return rows

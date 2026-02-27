@@ -160,6 +160,8 @@ _TRACKABLE_SOURCES = {
 _MAX_WEB_SUBAGENTS = 5
 _MAX_LOCAL_SUBAGENTS = 5
 _MAX_CONTEXT_BOUNDARIES = 10
+_WEB_SEARCH_MAX_RESULTS = 15
+_WEB_SEARCH_FETCH_TOP_K = 5
 _PROACTIVE_STATE_SOURCE_PREFIX = "proactive_state"
 _PROACTIVE_SEEN_LIMIT = 180
 _DEVICE_MODE_SOURCE = "device_mode_state"
@@ -220,6 +222,7 @@ def _default_config() -> AgentConfigOut:
         model="gpt-4o-mini",
         temperature=0.2,
         has_api_key=False,
+        web_search_proxy_url="",
     )
 
 
@@ -235,6 +238,7 @@ def _config_out(db: Session, user_id: int) -> AgentConfigOut:
         model=config.model or "gpt-4o-mini",
         temperature=float(config.temperature or 0.2),
         has_api_key=bool(api_key),
+        web_search_proxy_url=str(config.web_search_proxy_url or ""),
     )
 
 
@@ -251,6 +255,17 @@ def _resolve_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
         # instead of silently falling back to rule-based templated replies.
         return LLMService(config, None), "openai"
     return LLMService(config, api_key), "openai"
+
+
+def _scoped_web_search_service(proxy_url: str = "") -> WebSearchService:
+    return WebSearchService(
+        timeout_seconds=float(getattr(_web_search, "timeout_seconds", 10.0) or 10.0),
+        max_parallel_providers=int(getattr(_web_search, "max_parallel_providers", 4) or 4),
+        max_parallel_fetch=int(getattr(_web_search, "max_parallel_fetch", 4) or 4),
+        enable_reader_fallback=bool(getattr(_web_search, "enable_reader_fallback", True)),
+        enable_browser_fallback=bool(getattr(_web_search, "enable_browser_fallback", True)),
+        proxy_url=str(proxy_url or "").strip(),
+    )
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -3444,7 +3459,7 @@ def _persist_web_search_results(
     contact = crud.upsert_contact(db, user_id=user_id, handle="web:search", display_name="Web Search")
     now = datetime.now(timezone.utc)
     citations: list[AelinCitation] = []
-    for idx, item in enumerate(results[:10]):
+    for idx, item in enumerate(results[:_WEB_SEARCH_MAX_RESULTS]):
         title = (item.title or "").strip()[:220]
         url = (item.url or "").strip()
         snippet = (item.snippet or "").strip()
@@ -4403,7 +4418,11 @@ def _aelin_chat_impl(
             return {"sub_results": []}
 
         def _fetch_web_rows(raw_query: str) -> list[WebSearchResult]:
-            return _web_search.search_and_fetch(raw_query, max_results=6, fetch_top_k=3)
+            return _web_search.search_and_fetch(
+                raw_query,
+                max_results=_WEB_SEARCH_MAX_RESULTS,
+                fetch_top_k=_WEB_SEARCH_FETCH_TOP_K,
+            )
 
         sub_results: list[dict[str, Any]] = []
         futures: dict[Any, tuple[int, dict[str, str], str]] = {}
@@ -4503,7 +4522,7 @@ def _aelin_chat_impl(
                     add_trace(sub_stage, status="failed", detail=detail[:200])
                     continue
 
-                web_results_for_answer.extend(rows[:5])
+                web_results_for_answer.extend(rows[:_WEB_SEARCH_MAX_RESULTS])
                 provider_counts = Counter({str(k): int(v) for k, v in (item.get("provider_counts") or {}).items()})
                 fetch_counts = Counter({str(k): int(v) for k, v in (item.get("fetch_counts") or {}).items()})
                 web_provider_totals.update(provider_counts)
@@ -4520,7 +4539,7 @@ def _aelin_chat_impl(
                 except Exception:
                     persisted = []
                 web_citations.extend(persisted)
-                for row in rows[:5]:
+                for row in rows[:_WEB_SEARCH_MAX_RESULTS]:
                     host = _domain_from_url(row.url)
                     snippet = ((getattr(row, "fetched_excerpt", "") or "").strip() or (row.snippet or "").strip())
                     provider_name = str(getattr(row, "provider", "") or "unknown")
@@ -4728,6 +4747,7 @@ def _aelin_chat_impl(
             memory_service=_memory,
             tracking_service=_tracking,
             file_memory_bridge=_tracking_file_memory,
+            web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
         )
         runs, tool_err = run_aelin_structured_tools(
             service=service,
@@ -5054,7 +5074,11 @@ def _aelin_chat_impl(
                 sub_stage = f"web_search_subagent_{base_idx + idx}"
                 add_trace(sub_stage, status="running", detail=rq)
                 try:
-                    rows = _web_search.search_and_fetch(rq, max_results=6, fetch_top_k=3)
+                    rows = _web_search.search_and_fetch(
+                        rq,
+                        max_results=_WEB_SEARCH_MAX_RESULTS,
+                        fetch_top_k=_WEB_SEARCH_FETCH_TOP_K,
+                    )
                 except Exception as e:
                     add_trace(sub_stage, status="failed", detail=f"{rq}: {str(e)[:140]}")
                     continue
@@ -5274,7 +5298,11 @@ def _aelin_chat_impl(
             )
 
         def _trace_web_lookup(raw_query: str) -> list[WebSearchResult]:
-            return _web_search.search_and_fetch(raw_query, max_results=5, fetch_top_k=2)
+            return _web_search.search_and_fetch(
+                raw_query,
+                max_results=_WEB_SEARCH_MAX_RESULTS,
+                fetch_top_k=_WEB_SEARCH_FETCH_TOP_K,
+            )
 
         futures: dict[Any, dict[str, Any]] = {}
         if trace_jobs:
@@ -5315,9 +5343,15 @@ def _aelin_chat_impl(
                     if not rows:
                         add_trace(sub_stage, status="failed", detail=f"{scope_text or query_text}: no result")
                         continue
-                    trace_web_results.extend(rows[:5])
-                    provider_counts = Counter(str(getattr(it, "provider", "") or "unknown") for it in rows[:8])
-                    fetch_counts = Counter(str(getattr(it, "fetch_mode", "") or "none") for it in rows[:8])
+                    trace_web_results.extend(rows[:_WEB_SEARCH_MAX_RESULTS])
+                    provider_counts = Counter(
+                        str(getattr(it, "provider", "") or "unknown")
+                        for it in rows[:_WEB_SEARCH_MAX_RESULTS]
+                    )
+                    fetch_counts = Counter(
+                        str(getattr(it, "fetch_mode", "") or "none")
+                        for it in rows[:_WEB_SEARCH_MAX_RESULTS]
+                    )
                     provider_note = ",".join(f"{name}:{count}" for name, count in provider_counts.most_common(3))
                     fetch_note = ",".join(f"{name}:{count}" for name, count in fetch_counts.most_common(3))
                     try:
@@ -5348,7 +5382,7 @@ def _aelin_chat_impl(
                 detail=f"trace merge local={len(trace_local_citations)} web={len(trace_web_citations)}",
                 count=len(citations),
             )
-            web_results_for_answer.extend(trace_web_results[:5])
+            web_results_for_answer.extend(trace_web_results[:_WEB_SEARCH_MAX_RESULTS])
 
         suggestion, trace_reason = _trace_agent_suggestion(
             query=payload.query,
@@ -6189,6 +6223,7 @@ def _try_agent_loop_chat(
         memory_service=_memory,
         tracking_service=_tracking,
         file_memory_bridge=_tracking_file_memory,
+        web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
     )
 
     prefixed_traces: list[AelinToolStep] = []

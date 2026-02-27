@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -20,6 +19,7 @@ from app.services.device_center import (
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.tracking_autonomy import TrackingAutonomyService
 from app.services.llm import LLMService
+from app.services.web_search import WebSearchResult, WebSearchService
 
 _TOOL_KEYWORDS = (
     "日记",
@@ -38,6 +38,12 @@ _TOOL_KEYWORDS = (
     "context",
     "检索",
     "查一下",
+    "搜索",
+    "上网",
+    "联网",
+    "新闻",
+    "最新",
+    "web",
 )
 
 
@@ -52,6 +58,18 @@ def _safe_int(value: Any, default: int, *, low: int, high: int) -> int:
     except Exception:
         out = default
     return max(low, min(high, out))
+
+
+def _result_ok(**fields: Any) -> dict[str, Any]:
+    return {"ok": True, **fields}
+
+
+def _result_error(message: str) -> dict[str, Any]:
+    return {"ok": False, "error": str(message or "unknown_error")[:180]}
+
+
+def _result_items(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+    return _result_ok(items=items, total=len(items), **extra)
 
 
 def should_attempt_aelin_tools(query: str) -> bool:
@@ -71,6 +89,7 @@ class AelinToolHub:
         memory_service: AgentMemoryService,
         tracking_service: TrackingAutonomyService,
         file_memory_bridge: TrackingFileMemoryBridge,
+        web_search_service: WebSearchService | None = None,
     ) -> None:
         self.db = db
         self.user_id = int(user_id)
@@ -78,6 +97,7 @@ class AelinToolHub:
         self._memory = memory_service
         self._tracking = tracking_service
         self._file_memory = file_memory_bridge
+        self._web_search = web_search_service or WebSearchService()
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         return [
@@ -165,6 +185,23 @@ class AelinToolHub:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "执行联网搜索，返回标题、链接、摘要，并可抓取正文片段。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": ["search", "search_and_fetch"]},
+                            "query": {"type": "string"},
+                            "max_results": {"type": "integer", "minimum": 1, "maximum": 15},
+                            "fetch_top_k": {"type": "integer", "minimum": 0, "maximum": 6},
+                        },
+                        "required": ["action", "query"],
+                    },
+                },
+            },
         ]
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -179,7 +216,9 @@ class AelinToolHub:
             return self._tool_tracking(args)
         if tool == "device":
             return self._tool_device(args)
-        return {"ok": False, "error": f"unsupported tool: {tool}"}
+        if tool == "web_search":
+            return self._tool_web_search(args)
+        return _result_error(f"unsupported tool: {tool}")
 
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()[:400]
@@ -187,34 +226,32 @@ class AelinToolHub:
         snapshot = self._memory.snapshot(self.db, self.user_id, query=query)
         focus_items = list(snapshot.get("focus_items") or [])[:limit]
         todos = self._memory.list_todos(self.db, self.user_id, include_done=False, limit=limit)
-        return {
-            "ok": True,
-            "workspace": self.workspace,
-            "summary": str(snapshot.get("summary") or ""),
-            "focus_items": focus_items,
-            "todos": todos,
-        }
+        return _result_ok(
+            workspace=self.workspace,
+            summary=str(snapshot.get("summary") or ""),
+            focus_items=focus_items,
+            todos=todos,
+        )
 
     def _tool_diary(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "search").strip().lower()
         if action == "read":
             path = str(args.get("path") or "").strip()
             if not path:
-                return {"ok": False, "error": "missing path"}
+                return _result_error("missing path")
             row = self._file_memory.read_memory_markdown(
                 user_id=self.user_id,
                 workspace=self.workspace,
                 path=path,
             )
             if not row:
-                return {"ok": False, "error": "not found"}
-            return {
-                "ok": True,
-                "title": str(row.get("title") or ""),
-                "path": str(row.get("path") or ""),
-                "content": str(row.get("content") or "")[:4000],
-                "entry_kind": str(row.get("entry_kind") or ""),
-            }
+                return _result_error("not found")
+            return _result_ok(
+                title=str(row.get("title") or ""),
+                path=str(row.get("path") or ""),
+                content=str(row.get("content") or "")[:4000],
+                entry_kind=str(row.get("entry_kind") or ""),
+            )
 
         query = str(args.get("query") or "").strip()[:240]
         limit = _safe_int(args.get("limit"), 8, low=1, high=20)
@@ -236,14 +273,14 @@ class AelinToolHub:
             }
             for it in hits[:limit]
         ]
-        return {"ok": True, "items": items, "total": len(items)}
+        return _result_items(items)
 
     def _tool_profile(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "get").strip().lower()
         if action == "append_note":
             note = re.sub(r"\s+", " ", str(args.get("note") or "")).strip()[:500]
             if not note:
-                return {"ok": False, "error": "empty note"}
+                return _result_error("empty note")
             row = self._memory.add_note(
                 self.db,
                 self.user_id,
@@ -251,7 +288,7 @@ class AelinToolHub:
                 kind="profile",
                 source=f"profile:{self.workspace}",
             )
-            return {"ok": True, "note_id": int(getattr(row, "id", 0) or 0), "note": note}
+            return _result_ok(note_id=int(getattr(row, "id", 0) or 0), note=note)
 
         max_items = _safe_int(args.get("max_items"), 12, low=1, high=24)
         notes = list(
@@ -275,14 +312,14 @@ class AelinToolHub:
             }
             for it in notes
         ]
-        return {"ok": True, "items": items, "total": len(items)}
+        return _result_items(items)
 
     def _tool_tracking(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "list").strip().lower()
         if action == "create":
             target = str(args.get("target") or "").strip()[:240]
             if not target:
-                return {"ok": False, "error": "missing target"}
+                return _result_error("missing target")
             source = str(args.get("source") or "web").strip().lower() or "web"
             query = str(args.get("query") or "").strip()[:500]
             row = self._tracking.upsert_target(
@@ -302,24 +339,23 @@ class AelinToolHub:
                 config_ready=True,
                 merge_existing=True,
             )
-            return {
-                "ok": True,
-                "target_id": int(row.id),
-                "target": str(row.display_name or target),
-                "source": str(row.source_type or source),
-            }
+            return _result_ok(
+                target_id=int(row.id),
+                target=str(row.display_name or target),
+                source=str(row.source_type or source),
+            )
 
         if action == "run_once":
             target_id = _safe_int(args.get("target_id"), 0, low=0, high=1_000_000_000)
             if target_id <= 0:
-                return {"ok": False, "error": "missing target_id"}
+                return _result_error("missing target_id")
             result = self._tracking.run_target_now(user_id=self.user_id, target_id=target_id)
-            return {"ok": bool(result.get("ok")), "message": str(result.get("message") or "")}
+            return {"ok": bool(result.get("ok")), "message": str(result.get("message") or "")[:220]}
 
         if action == "changes":
             target_id = _safe_int(args.get("target_id"), 0, low=0, high=1_000_000_000)
             if target_id <= 0:
-                return {"ok": False, "error": "missing target_id"}
+                return _result_error("missing target_id")
             limit = _safe_int(args.get("limit"), 10, low=1, high=50)
             rows = self._tracking.list_changes(self.db, user_id=self.user_id, target_id=target_id, limit=limit)
             items = [
@@ -334,7 +370,7 @@ class AelinToolHub:
                 }
                 for it in rows
             ]
-            return {"ok": True, "items": items, "total": len(items)}
+            return _result_items(items)
 
         limit = _safe_int(args.get("limit"), 10, low=1, high=50)
         rows = self._tracking.list_targets(
@@ -353,7 +389,7 @@ class AelinToolHub:
             }
             for it in rows
         ]
-        return {"ok": True, "items": items, "total": len(items)}
+        return _result_items(items)
 
     def _tool_device(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "capabilities").strip().lower()
@@ -371,20 +407,77 @@ class AelinToolHub:
                 }
                 for it in rows
             ]
-            return {"ok": True, "items": items, "total": len(items)}
+            return _result_items(items)
         if action == "mode_apply":
             mode = str(args.get("mode") or "").strip().lower()
             if not mode:
-                return {"ok": False, "error": "missing mode"}
+                return _result_error("missing mode")
             result = device_apply_mode(mode=mode)
-            return {
-                "ok": True,
-                "mode": str(result.get("mode") or mode),
-                "status": str(result.get("status") or ""),
-                "summary": str(result.get("summary") or ""),
-                "warnings": list(result.get("warnings") or []),
-            }
-        return {"ok": True, **device_capabilities_info()}
+            return _result_ok(
+                mode=str(result.get("mode") or mode),
+                status=str(result.get("status") or ""),
+                summary=str(result.get("summary") or ""),
+                warnings=list(result.get("warnings") or []),
+            )
+        return _result_ok(**device_capabilities_info())
+
+    def _tool_web_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "search_and_fetch").strip().lower()
+        if action not in {"search", "search_and_fetch"}:
+            return _result_error("unsupported action")
+        query = str(args.get("query") or "").strip()[:400]
+        if not query:
+            return _result_error("missing query")
+
+        max_results = _safe_int(args.get("max_results"), 15, low=1, high=15)
+        fetch_top_k = _safe_int(args.get("fetch_top_k"), 3, low=0, high=6)
+        fetch_top_k = min(fetch_top_k, max_results)
+
+        rows: list[WebSearchResult] = []
+        if action == "search":
+            rows = list(self._web_search.search(query, max_results=max_results) or [])
+        else:
+            rows = list(
+                self._web_search.search_and_fetch(
+                    query,
+                    max_results=max_results,
+                    fetch_top_k=fetch_top_k,
+                )
+                or []
+            )
+
+        providers: set[str] = set()
+        items: list[dict[str, Any]] = []
+        for idx, row in enumerate(rows[:max_results], start=1):
+            title = str(getattr(row, "title", "") or "").strip()
+            url = str(getattr(row, "url", "") or "").strip()
+            snippet = str(getattr(row, "snippet", "") or "").strip()
+            provider = str(getattr(row, "provider", "") or "").strip() or "unknown"
+            source = str(getattr(row, "source", "") or "").strip() or "web"
+            fetched_excerpt = str(getattr(row, "fetched_excerpt", "") or "").strip()
+            fetch_mode = str(getattr(row, "fetch_mode", "") or "").strip() or "none"
+            rank = _safe_int(getattr(row, "rank", idx), idx, low=1, high=9999)
+            providers.add(provider)
+            items.append(
+                {
+                    "title": title[:220],
+                    "url": url[:600],
+                    "snippet": snippet[:320],
+                    "provider": provider[:32],
+                    "source": source[:24],
+                    "fetch_mode": fetch_mode[:24],
+                    "rank": rank,
+                    "fetched_excerpt": fetched_excerpt[:1200],
+                }
+            )
+
+        return _result_items(
+            items,
+            query=query,
+            action=action,
+            providers=sorted(providers),
+            fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
+        )
 
 
 def _safe_load_json(raw: str) -> dict[str, Any]:
@@ -396,6 +489,24 @@ def _safe_load_json(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _execute_tool_call(tool_hub: AelinToolHub, *, name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any], str, int]:
+    status = "completed"
+    result: dict[str, Any] = {}
+    error = ""
+    started = time.perf_counter()
+    try:
+        result = tool_hub.execute(name, args)
+        if not bool(result.get("ok", True)):
+            status = "failed"
+            error = str(result.get("error") or "tool returned not ok")[:180]
+    except Exception as exc:
+        status = "failed"
+        error = str(exc)[:180]
+        result = _result_error(error)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    return status, result, error, latency_ms
 
 
 def run_aelin_structured_tools(
@@ -455,20 +566,7 @@ def run_aelin_structured_tools(
         fn = getattr(tc, "function", None)
         name = str(getattr(fn, "name", "") or "").strip()
         args = _safe_load_json(str(getattr(fn, "arguments", "{}") or "{}"))
-        started = time.perf_counter()
-        status = "completed"
-        result: dict[str, Any] = {}
-        error = ""
-        try:
-            result = tool_hub.execute(name, args)
-            if not bool(result.get("ok", True)):
-                status = "failed"
-                error = str(result.get("error") or "tool returned not ok")[:180]
-        except Exception as exc:
-            status = "failed"
-            result = {}
-            error = str(exc)[:180]
-        latency_ms = int((time.perf_counter() - started) * 1000)
+        status, result, error, latency_ms = _execute_tool_call(tool_hub, name=name, args=args)
         out.append(
             {
                 "name": name,
@@ -497,6 +595,8 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
                 note = f"target_id={result.get('target_id')}, target={result.get('target')}"
             else:
                 note = f"total={result.get('total')}"
+        elif name == "web_search":
+            note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
         elif name in {"diary", "profile", "context_get", "device"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
@@ -508,4 +608,3 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
             note = json.dumps(result, ensure_ascii=False)[:140]
         lines.append(f"- [{name}/{status}] {note}".strip())
     return lines
-

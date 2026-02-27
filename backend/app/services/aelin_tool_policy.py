@@ -34,7 +34,15 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return action in {"create", "run_once"}
     if tool == "device":
         return action == "mode_apply"
+    if tool == "web_search":
+        return False
     return False
+
+
+def _deny_if_over_limit(*, current: int, limit: int, reason: str, is_write: bool = False) -> ToolPolicyDecision | None:
+    if int(current) >= int(limit):
+        return ToolPolicyDecision(allowed=False, is_write=is_write, reason=reason)
+    return None
 
 
 class AelinToolPolicy:
@@ -53,19 +61,35 @@ class AelinToolPolicy:
 
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
-        if tool not in {"context_get", "diary", "profile", "tracking", "device"}:
+        if tool not in {"context_get", "diary", "profile", "tracking", "device", "web_search"}:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
-        if usage.round_calls >= self.max_calls_per_round:
-            return ToolPolicyDecision(allowed=False, is_write=False, reason="round_call_limit")
-        if usage.total_calls >= self.max_tool_calls:
-            return ToolPolicyDecision(allowed=False, is_write=False, reason="total_call_limit")
+        round_limit_deny = _deny_if_over_limit(
+            current=usage.round_calls,
+            limit=self.max_calls_per_round,
+            reason="round_call_limit",
+        )
+        if round_limit_deny is not None:
+            return round_limit_deny
+        total_limit_deny = _deny_if_over_limit(
+            current=usage.total_calls,
+            limit=self.max_tool_calls,
+            reason="total_call_limit",
+        )
+        if total_limit_deny is not None:
+            return total_limit_deny
 
         is_write = classify_tool_call(tool, args)
         if is_write and not self.allow_write_tools:
             return ToolPolicyDecision(allowed=False, is_write=True, reason="write_tools_disabled")
-        if is_write and usage.write_calls >= self.max_write_calls:
-            return ToolPolicyDecision(allowed=False, is_write=True, reason="write_call_limit")
+        if is_write:
+            write_limit_deny = _deny_if_over_limit(
+                current=usage.write_calls,
+                limit=self.max_write_calls,
+                reason="write_call_limit",
+                is_write=True,
+            )
+            if write_limit_deny is not None:
+                return write_limit_deny
 
         return ToolPolicyDecision(allowed=True, is_write=is_write, reason="ok")
-
