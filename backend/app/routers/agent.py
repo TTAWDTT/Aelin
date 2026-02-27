@@ -56,6 +56,7 @@ def _default_config() -> AgentConfigOut:
         model="gpt-4o-mini",
         temperature=0.2,
         has_api_key=False,
+        web_search_proxy_url="",
     )
 
 
@@ -71,6 +72,7 @@ def _config_out(db: Session, user_id: int) -> AgentConfigOut:
         model=config.model or "gpt-4o-mini",
         temperature=float(config.temperature or 0.2),
         has_api_key=bool(api_key),
+        web_search_proxy_url=str(config.web_search_proxy_url or ""),
     )
 
 
@@ -307,6 +309,7 @@ def update_agent_config(
         model=payload.model,
         temperature=payload.temperature,
         api_key=payload.api_key,
+        web_search_proxy_url=payload.web_search_proxy_url,
     )
     api_key = decrypt_optional(config.api_key)
     return AgentConfigOut(
@@ -315,6 +318,7 @@ def update_agent_config(
         model=config.model,
         temperature=float(config.temperature),
         has_api_key=bool(api_key),
+        web_search_proxy_url=str(config.web_search_proxy_url or ""),
     )
 
 

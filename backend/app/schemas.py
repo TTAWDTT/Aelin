@@ -813,6 +813,7 @@ class AgentConfigOut(BaseModel):
     model: str
     temperature: float
     has_api_key: bool = False
+    web_search_proxy_url: str = ""
 
 
 class AgentConfigUpdate(BaseModel):
@@ -821,6 +822,7 @@ class AgentConfigUpdate(BaseModel):
     model: Optional[str] = Field(None, min_length=1, max_length=255)
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
     api_key: Optional[str] = Field(None, min_length=1, max_length=4096)
+    web_search_proxy_url: Optional[str] = Field(None, max_length=2048)
 
 
 class AgentTestResponse(BaseModel):

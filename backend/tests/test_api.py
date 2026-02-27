@@ -226,6 +226,7 @@ def test_register_login_sync_and_list():
         assert cfg.status_code == 200, cfg.text
         assert cfg.json()["provider"] == "rule_based"
         assert cfg.json()["has_api_key"] is False
+        assert cfg.json()["web_search_proxy_url"] == ""
 
         catalog = client.get("/api/v1/agent/catalog", headers=headers)
         assert catalog.status_code == 200, catalog.text
@@ -263,9 +264,11 @@ def test_register_login_sync_and_list():
                 "api_key": "sk-test",
                 "model": "openai/gpt-4o-mini",
                 "temperature": 0.2,
+                "web_search_proxy_url": "http://127.0.0.1:7890",
             },
             headers=headers,
         )
         assert upd.status_code == 200, upd.text
         assert upd.json()["provider"] == "openrouter"
         assert upd.json()["has_api_key"] is True
+        assert upd.json()["web_search_proxy_url"] == "http://127.0.0.1:7890"

@@ -8,6 +8,7 @@ type AgentFormState = {
   providerChoice: string
   customProviderId: string
   base_url: string
+  web_search_proxy_url: string
   model: string
   temperature: string
   api_key: string
@@ -66,6 +67,7 @@ export function AIConfigTab() {
     providerChoice: '',
     customProviderId: '',
     base_url: '',
+    web_search_proxy_url: '',
     model: '',
     temperature: '0.5',
     api_key: '',
@@ -87,6 +89,7 @@ export function AIConfigTab() {
       providerChoice: shouldUseCustom ? CUSTOM_PROVIDER_OPTION : normalizedConfigProvider,
       customProviderId: shouldUseCustom ? normalizedConfigProvider : '',
       base_url: config.base_url || '',
+      web_search_proxy_url: config.web_search_proxy_url || '',
       model: config.model || '',
       temperature: String(config.temperature ?? 0.5),
       api_key: '',
@@ -116,6 +119,7 @@ export function AIConfigTab() {
       const body: Record<string, unknown> = {
         provider: resolvedProvider,
         base_url: form.base_url || undefined,
+        web_search_proxy_url: form.web_search_proxy_url.trim() || '',
         model: form.model || undefined,
         temperature: Number(form.temperature),
       }
@@ -221,6 +225,16 @@ export function AIConfigTab() {
           placeholder="留空则使用默认地址"
           className="aelin-input"
           disabled={isRuleBased}
+        />
+      </label>
+
+      <label className="block text-xs space-y-1">
+        <span className="text-[var(--color-text-muted)]">联网搜索代理（可选）</span>
+        <input
+          value={form.web_search_proxy_url}
+          onChange={(event) => setForm((prev) => ({ ...prev, web_search_proxy_url: event.target.value }))}
+          placeholder="例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+          className="aelin-input"
         />
       </label>
 

@@ -24,6 +24,7 @@ def _add_missing_columns(engine: Engine) -> None:
     migrations: list[tuple[str, str, str]] = [
         # (table, column, DDL type)
         ("x_api_configs", "auth_cookies", "TEXT"),
+        ("agent_configs", "web_search_proxy_url", "TEXT"),
     ]
     for table, column, ddl_type in migrations:
         if not inspector.has_table(table):
@@ -90,4 +91,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-

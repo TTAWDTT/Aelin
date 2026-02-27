@@ -438,6 +438,7 @@ def upsert_agent_config(
     model: str | None = None,
     temperature: float | None = None,
     api_key: str | None = None,
+    web_search_proxy_url: str | None = None,
 ) -> AgentConfig:
     config = db.get(AgentConfig, user_id)
     if config is None:
@@ -454,6 +455,9 @@ def upsert_agent_config(
         config.temperature = float(temperature)
     if api_key is not None:
         config.api_key = encrypt_optional(api_key.strip())
+    if web_search_proxy_url is not None:
+        clean_proxy = web_search_proxy_url.strip()
+        config.web_search_proxy_url = clean_proxy or None
 
     db.commit()
     db.refresh(config)

@@ -203,10 +203,12 @@ export interface AelinDeviceOptimizeResponse {
 export interface AgentConfigOut {
   provider: string; base_url: string; model: string
   temperature: number; has_api_key: boolean
+  web_search_proxy_url: string
 }
 export interface AgentConfigUpdate {
   provider?: string; base_url?: string; model?: string
   temperature?: number; api_key?: string
+  web_search_proxy_url?: string
 }
 export interface AgentTestResponse { ok: boolean; provider: string; message: string }
 export interface ModelInfo { id: string; name: string; family?: string; reasoning?: boolean; tool_call?: boolean }

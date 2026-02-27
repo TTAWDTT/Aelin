@@ -168,6 +168,7 @@ class AgentConfig(Base):
     model: Mapped[str] = mapped_column(String(255), default="gpt-4o-mini")
     temperature: Mapped[float] = mapped_column(Float, default=0.2)
     api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # stored encrypted if FERNET_KEY is configured
+    web_search_proxy_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -416,4 +417,3 @@ class UserFollowedTag(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship(back_populates="followed_tags")
-
