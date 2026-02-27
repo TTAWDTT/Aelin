@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BellOff, CirclePower, Focus } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -10,7 +10,7 @@ import { useNotifStore } from '@/shared/stores/notifStore'
 export function FocusView() {
   const queryClient = useQueryClient()
   const { focusModeEnabled, setFocusModeEnabled } = useLayoutStore()
-  const { notificationsMuted, setNotificationsMuted, setUnreadCount } = useNotifStore()
+  const { notificationsMuted, setNotificationsMuted } = useNotifStore()
 
   const { data: modeState } = useQuery({
     queryKey: ['device-mode'],
@@ -18,19 +18,32 @@ export function FocusView() {
   })
 
   const { data: notifications } = useQuery({
-    queryKey: ['notifications', 'focus-page'],
+    queryKey: ['notifications', 'global', 'default'],
     queryFn: aelinApi.notifications,
     enabled: !notificationsMuted,
     refetchInterval: notificationsMuted ? false : 20_000,
   })
 
-  useEffect(() => {
-    if (notificationsMuted) {
-      setUnreadCount(0)
-      return
+  const { data: proactive } = useQuery({
+    queryKey: ['proactive', 'global', 'default'],
+    queryFn: () => aelinApi.proactivePoll('default'),
+    enabled: !notificationsMuted,
+    refetchInterval: notificationsMuted ? false : 12_000,
+  })
+
+  const liveTotal = useMemo(() => {
+    if (notificationsMuted) return 0
+    const ids = new Set<string>()
+    for (const row of notifications?.items || []) {
+      const id = String(row.id || '').trim()
+      if (id) ids.add(id)
     }
-    setUnreadCount(notifications?.total ?? 0)
-  }, [notifications?.total, notificationsMuted, setUnreadCount])
+    for (const row of proactive?.items || []) {
+      const id = [String(row.id || '').trim(), String(row.ts || '').trim()].join('|')
+      if (id) ids.add(id)
+    }
+    return ids.size
+  }, [notificationsMuted, notifications?.items, proactive?.items])
 
   useEffect(() => {
     if (!modeState?.mode) return
@@ -43,7 +56,6 @@ export function FocusView() {
       const isFocus = mode === 'focus'
       setFocusModeEnabled(isFocus)
       setNotificationsMuted(isFocus)
-      if (isFocus) setUnreadCount(0)
       toast.success(result.summary)
       queryClient.invalidateQueries({ queryKey: ['device-mode'] })
     },
@@ -86,7 +98,37 @@ export function FocusView() {
         <div className="aelin-card p-4">
           <p className="text-xs text-[var(--color-text-muted)]">通知状态</p>
           <div className="mt-2 text-sm">
-            {notificationsMuted ? '已静默（0 通知）' : `实时通知开启（${notifications?.total ?? 0} 条）`}
+            {notificationsMuted ? '已静默（0 通知）' : `实时通知开启（${liveTotal} 条）`}
+          </div>
+          <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+            常规通知 {notifications?.total ?? 0} · 主动提醒 {proactive?.total ?? 0}
+          </p>
+          {!notificationsMuted && (proactive?.items?.length || 0) > 0 ? (
+            <div className="mt-3 space-y-1.5">
+              {(proactive?.items || []).slice(0, 4).map((row) => (
+                <div key={`${row.id}-${row.ts || ''}`} className="rounded-lg border border-[var(--color-border)] px-2 py-1.5">
+                  <div className="text-xs font-medium">{row.title}</div>
+                  {row.detail ? <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)] line-clamp-2">{row.detail}</div> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {!notificationsMuted && (proactive?.items?.length || 0) <= 0 ? (
+            <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">当前暂无主动提醒</div>
+          ) : null}
+          {notificationsMuted ? (
+            <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">专注模式下已暂停主动提醒轮询</div>
+          ) : null}
+          <div className="mt-3">
+            <button
+              className="aelin-btn h-8 px-3 text-xs"
+              onClick={() => {
+                queryClient.invalidateQueries({ queryKey: ['notifications', 'global', 'default'] })
+                queryClient.invalidateQueries({ queryKey: ['proactive', 'global', 'default'] })
+              }}
+            >
+              立即刷新提醒
+            </button>
           </div>
         </div>
       </div>
