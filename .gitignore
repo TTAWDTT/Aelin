@@ -47,3 +47,7 @@ nul
 .tmp_youwee_*/
 
 .tmp/
+
+# Local PPT draft artifacts
+/aelin-ppt/
+/aelin-ppt.html
