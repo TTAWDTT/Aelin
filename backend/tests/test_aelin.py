@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.routers.aelin as aelin_router
+import app.routers.aelin_device as aelin_device_router
 import app.services.device_center as device_center
 from app.db import init_engine
 from app.main import create_app
@@ -1814,7 +1815,7 @@ def test_device_screen_capture_proxy_success(monkeypatch):
             assert headers.get("x-aelin-token") == "plugin-token"
             return _FakeResponse()
 
-    monkeypatch.setattr(aelin_router.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(aelin_device_router.httpx, "Client", _FakeClient)
 
     resp = client.post("/api/v1/aelin/device/screen/capture", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -1848,7 +1849,7 @@ def test_device_screen_capture_proxy_unreachable_returns_503(monkeypatch):
             _ = url, json, headers
             raise RuntimeError("connect_refused")
 
-    monkeypatch.setattr(aelin_router.httpx, "Client", _FailingClient)
+    monkeypatch.setattr(aelin_device_router.httpx, "Client", _FailingClient)
 
     resp = client.post("/api/v1/aelin/device/screen/capture", headers=headers)
     assert resp.status_code == 503, resp.text
