@@ -1,9 +1,11 @@
-import { useState, useRef, type ChangeEvent, type KeyboardEvent } from 'react'
-import { Send, Square, ImagePlus } from 'lucide-react'
+﻿import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { Send, Square, Camera, Loader2, Paperclip } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 
 interface Props {
-  onSend: (text: string, images?: { dataUrl: string; name: string }[]) => void
+  onSend: (text: string) => void
+  onCaptureAndSend: (textHint: string) => Promise<void>
+  onAttachAndSend: (files: File[], textHint: string) => Promise<void>
   onStop: () => void
   isStreaming: boolean
   compact?: boolean
@@ -12,21 +14,23 @@ interface Props {
 
 export function ComposerBar({
   onSend,
+  onCaptureAndSend,
+  onAttachAndSend,
   onStop,
   isStreaming,
   compact = false,
   placeholder = '输入消息…',
 }: Props) {
   const [text, setText] = useState('')
-  const [images, setImages] = useState<{ dataUrl: string; name: string }[]>([])
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [isCapturing, setIsCapturing] = useState(false)
+  const [isAttaching, setIsAttaching] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleSubmit = () => {
     if (isStreaming) { onStop(); return }
-    if (!text.trim() && images.length === 0) return
-    onSend(text.trim(), images.length > 0 ? images : undefined)
+    if (!text.trim()) return
+    onSend(text.trim())
     setText('')
-    setImages([])
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -36,48 +40,69 @@ export function ComposerBar({
     }
   }
 
-  const handleImage = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []).slice(0, 4 - images.length)
-    files.forEach(f => {
-      const reader = new FileReader()
-      reader.onload = () => setImages(prev => [...prev, { dataUrl: reader.result as string, name: f.name }].slice(0, 4))
-      reader.readAsDataURL(f)
-    })
-    e.target.value = ''
+  const handleCapture = async () => {
+    if (isStreaming || isCapturing) return
+    setIsCapturing(true)
+    try {
+      await onCaptureAndSend(text.trim())
+      setText('')
+    } finally {
+      setIsCapturing(false)
+    }
   }
 
-  const canSend = !!text.trim() || images.length > 0
+  const handleAttachmentChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (files.length === 0 || isStreaming || isAttaching) return
+    setIsAttaching(true)
+    try {
+      await onAttachAndSend(files, text.trim())
+      setText('')
+    } finally {
+      setIsAttaching(false)
+    }
+  }
+
+  const openAttachmentPicker = () => {
+    if (isStreaming || isAttaching) return
+    fileInputRef.current?.click()
+  }
+
+  const canSend = !!text.trim()
 
   return (
     <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
       <div className="mx-auto min-w-0 w-full max-w-[880px]">
         <div className={`aelin-card min-w-0 rounded-[16px] bg-[var(--color-panel)] transition-shadow duration-200 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_12%,transparent)] ${compact ? 'p-2 max-[500px]:p-1.5' : 'p-2.5'}`}>
-          {images.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {images.map((img, i) => (
-                <div key={img.dataUrl} className="relative">
-                  <img src={img.dataUrl} className="h-14 w-14 rounded-xl object-cover" />
-                  <button
-                    onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
-                    className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--color-accent)] text-[10px] text-[var(--color-bg)]"
-                    aria-label="移除图片"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+            onChange={(e) => { void handleAttachmentChange(e) }}
+          />
 
           <div className="flex min-w-0 items-center gap-2 max-[500px]:gap-1">
-            <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleImage} className="hidden" />
             <button
-              onClick={() => fileRef.current?.click()}
-              title="添加图片"
+              onClick={openAttachmentPicker}
+              title={isAttaching ? '正在处理附件' : '上传附件'}
+              disabled={isStreaming || isAttaching}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
-              aria-label="添加图片"
+              aria-label={isAttaching ? '正在处理附件' : '上传附件'}
             >
-              <ImagePlus size={compact ? 16 : 17} />
+              {isAttaching ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Paperclip size={compact ? 16 : 17} />}
+            </button>
+
+            <button
+              onClick={() => void handleCapture()}
+              title={isCapturing ? '正在截图' : '截图并发送'}
+              disabled={isStreaming || isCapturing}
+              className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
+              aria-label={isCapturing ? '正在截图' : '截图并发送'}
+            >
+              {isCapturing ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Camera size={compact ? 16 : 17} />}
             </button>
 
             <input
@@ -92,7 +117,7 @@ export function ComposerBar({
 
             <button
               onClick={handleSubmit}
-              disabled={!isStreaming && !canSend}
+              disabled={!isStreaming && (!canSend || isCapturing || isAttaching)}
               className={cn(
                 `flex shrink-0 items-center justify-center rounded-[10px] transition-all active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`,
                 isStreaming

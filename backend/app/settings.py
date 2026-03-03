@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     aelin_agent_loop_workspace_whitelist_csv: str = ""
     aelin_agent_loop_round_timeout_seconds: float = 40.0
     aelin_agent_loop_total_timeout_seconds: float = 120.0
+    desktop_plugin_base_url: str = "http://127.0.0.1:21914"
+    desktop_plugin_token: str = ""
+    desktop_plugin_timeout_seconds: float = 12.0
+    desktop_plugin_capture_max_data_url_length: int = 3_000_000
 
     # LLM client runtime tuning.
     llm_request_timeout_seconds: float = 90.0

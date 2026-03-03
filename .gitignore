@@ -37,6 +37,7 @@ tmpclaude-*-cwd
 
 # Claude Code
 .claude/
+AGENTS.md
 
 # Temp files
 video/
