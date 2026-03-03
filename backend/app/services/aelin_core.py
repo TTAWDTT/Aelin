@@ -5423,6 +5423,7 @@ def _try_agent_loop_chat(
     )
     memory_summary = str(base_bundle.get("summary") or "")
     history_turns = _normalize_history(payload.history)
+    images = _normalize_images(payload.images)
 
     tool_hub = AelinToolHub(
         db=db,
@@ -5514,6 +5515,7 @@ def _try_agent_loop_chat(
         query=payload.query,
         memory_summary=memory_summary,
         history_turns=history_turns,
+        images=images,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
     )
