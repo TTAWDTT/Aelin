@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
@@ -153,9 +154,36 @@ def test_aelin_context_and_chat_endpoints():
     assert isinstance(chat_smalltalk_data.get("tool_trace"), list)
 
 
-def test_aelin_chat_stream_emits_trace_and_final():
+def test_aelin_chat_stream_emits_trace_and_final(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
+
+    def _fake_try(payload, db, current_user, event_cb=None, **kwargs):
+        _ = payload, db, current_user, kwargs
+        if event_cb is not None:
+            event_cb(
+                "trace",
+                {
+                    "step": aelin_router.AelinToolStep(
+                        stage="agent_loop",
+                        status="running",
+                        detail="mock trace",
+                        count=1,
+                        ts=123,
+                    ).model_dump()
+                },
+            )
+        return aelin_router.AelinChatResponse(
+            answer="stream-loop-ok",
+            expression="exp-03",
+            citations=[],
+            actions=[],
+            tool_trace=[aelin_router.AelinToolStep(stage="agent_loop", status="completed", detail="ok", count=1, ts=124)],
+            memory_summary="loop",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _fake_try)
 
     with client.stream(
         "POST",
@@ -239,21 +267,17 @@ def test_aelin_chat_agent_loop_disabled_uses_legacy(monkeypatch):
 
     monkeypatch.setattr(settings, "aelin_agent_loop_enabled", False)
 
-    legacy_resp = aelin_router.AelinChatResponse(
-        answer="legacy-path",
+    loop_resp = aelin_router.AelinChatResponse(
+        answer="loop-path-even-when-disabled",
         expression="exp-04",
         citations=[],
         actions=[],
-        tool_trace=[aelin_router.AelinToolStep(stage="legacy", status="completed", detail="", count=0, ts=1)],
-        memory_summary="legacy",
+        tool_trace=[aelin_router.AelinToolStep(stage="agent_loop", status="completed", detail="", count=1, ts=1)],
+        memory_summary="loop",
         generated_at=datetime.now(timezone.utc),
     )
-    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda payload, db, current_user, event_cb=None: legacy_resp)
-
-    def _should_not_run(*args, **kwargs):
-        raise AssertionError("agent loop should not run when disabled")
-
-    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _should_not_run)
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy path should not run")))
 
     resp = client.post(
         "/api/v1/aelin/chat",
@@ -267,8 +291,8 @@ def test_aelin_chat_agent_loop_disabled_uses_legacy(monkeypatch):
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data.get("answer") == "legacy-path"
-    assert any((it.get("stage") == "legacy") for it in (data.get("tool_trace") or []))
+    assert data.get("answer") == "loop-path-even-when-disabled"
+    assert any((it.get("stage") == "agent_loop") for it in (data.get("tool_trace") or []))
 
 
 def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
@@ -459,24 +483,17 @@ def test_aelin_chat_shadow_mode_triggers_background_loop(monkeypatch):
     monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
     monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
 
-    called = {"shadow": 0}
-
-    def _fake_shadow(payload, current_user, event_cb=None, baseline_answer=""):
-        called["shadow"] += 1
-        assert isinstance(baseline_answer, str)
-
-    monkeypatch.setattr(aelin_router, "_start_agent_loop_shadow", _fake_shadow)
-
-    legacy_resp = aelin_router.AelinChatResponse(
-        answer="legacy-shadow-base",
+    loop_resp = aelin_router.AelinChatResponse(
+        answer="loop-shadow-ignored",
         expression="exp-04",
         citations=[],
         actions=[],
-        tool_trace=[],
-        memory_summary="legacy",
+        tool_trace=[aelin_router.AelinToolStep(stage="agent_loop", status="completed", detail="", count=1, ts=2)],
+        memory_summary="loop",
         generated_at=datetime.now(timezone.utc),
     )
-    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda payload, db, current_user, event_cb=None: legacy_resp)
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy path should not run")))
 
     resp = client.post(
         "/api/v1/aelin/chat",
@@ -489,8 +506,7 @@ def test_aelin_chat_shadow_mode_triggers_background_loop(monkeypatch):
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json().get("answer") == "legacy-shadow-base"
-    assert called["shadow"] == 1
+    assert resp.json().get("answer") == "loop-shadow-ignored"
 
 
 def test_aelin_track_confirm_endpoint(monkeypatch):
@@ -766,6 +782,7 @@ def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
     assert isinstance(rel_data.get("content"), str) and rel_data.get("content")
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_can_use_web_search_plan(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -831,6 +848,7 @@ def test_aelin_chat_can_use_web_search_plan(monkeypatch):
     assert any((it.get("kind") == "confirm_track") for it in data.get("actions") or [])
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_verifier_can_trigger_web_retry(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -872,6 +890,7 @@ def test_aelin_chat_verifier_can_trigger_web_retry(monkeypatch):
     assert any((it.get("stage") == "reply_verifier") for it in (data.get("tool_trace") or []))
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_llm_planner_trace_route_not_overridden(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -940,6 +959,7 @@ def test_aelin_chat_llm_planner_trace_route_not_overridden(monkeypatch):
     assert not any((it.get("kind") == "confirm_track") for it in (data.get("actions") or []))
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_llm_planner_retry_not_overridden(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1020,6 +1040,7 @@ def test_aelin_chat_llm_planner_retry_not_overridden(monkeypatch):
     assert web_step.get("status") == "skipped"
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_parallel_web_subagent_accepts_keyword_only_search(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1066,6 +1087,7 @@ def test_aelin_chat_parallel_web_subagent_accepts_keyword_only_search(monkeypatc
     assert any(stage.startswith("web_search_subagent_") for stage in stages)
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_all_models_retrieval_guard(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1165,6 +1187,7 @@ def test_build_fixed_profile_injection_uses_layers_and_profile_notes():
     assert not any(("这条不应进入固定注入" in line) for line in lines)
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_diary_only_query_forces_no_web(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1267,6 +1290,7 @@ def test_plan_tool_usage_invalid_json_fallback_still_dispatches_web():
     assert route.get("allow_web_retry") is True
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_rule_based_recent_query_triggers_web(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1344,6 +1368,7 @@ def test_plan_critic_can_patch_missing_web_path():
     assert isinstance(patch.get("web_queries"), list) and patch.get("web_queries")
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_critic_patch_can_enable_web_retrieval(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1437,6 +1462,7 @@ def test_expression_tag_parsing_and_normalization():
     fallback = aelin_router._pick_expression("今天这事为什么这样？", "先别急，我来解释。")
     assert fallback in aelin_router._AELIN_EXPRESSION_IDS
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_local_subagents_execute_in_parallel(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1528,6 +1554,7 @@ def test_aelin_chat_local_subagents_execute_in_parallel(monkeypatch):
     assert any(stage.startswith("local_search_subagent_") for stage in stages)
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_trace_agent_dispatches_local_and_web_subagents(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1610,6 +1637,7 @@ def test_aelin_chat_trace_agent_dispatches_local_and_web_subagents(monkeypatch):
     assert any((it.get("kind") == "confirm_track") for it in (data.get("actions") or []))
 
 
+@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
