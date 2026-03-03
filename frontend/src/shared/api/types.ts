@@ -190,6 +190,15 @@ export interface AelinDeviceCapabilitiesResponse {
   platform: string; capabilities: Record<string, boolean>
   notes: string[]; generated_at: string
 }
+export interface AelinDeviceScreenCaptureResponse {
+  data_url: string
+  name: string
+  width: number
+  height: number
+  source_display: string
+  captured_at: string
+  generated_at: string
+}
 export interface AelinDeviceModeApplyResponse {
   mode: string; status: string; summary: string
   steps: string[]; warnings: string[]; generated_at: string

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer } = require("electron");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const fs = require("fs");
@@ -455,6 +455,86 @@ function buildPetPluginStateSnapshot(forceRefresh = false) {
   };
 }
 
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  const base = Number.isFinite(parsed) ? parsed : Number(fallback);
+  const floor = Number.isFinite(Number(min)) ? Number(min) : Number.NEGATIVE_INFINITY;
+  const ceil = Number.isFinite(Number(max)) ? Number(max) : Number.POSITIVE_INFINITY;
+  return Math.max(floor, Math.min(ceil, base));
+}
+
+function resolveCaptureDisplay(payload = {}) {
+  const displays = screen.getAllDisplays();
+  if (!Array.isArray(displays) || displays.length === 0) {
+    return screen.getPrimaryDisplay() || null;
+  }
+  const requestedId = String(payload?.display_id || payload?.displayId || "").trim();
+  if (requestedId) {
+    const matched = displays.find((item) => String(item?.id || "") === requestedId);
+    if (matched) return matched;
+  }
+  return screen.getPrimaryDisplay() || displays[0] || null;
+}
+
+async function captureScreenSnapshot(payload = {}) {
+  if (!desktopCapturer || typeof desktopCapturer.getSources !== "function") {
+    throw new Error("desktop_capturer_unavailable");
+  }
+  const display = resolveCaptureDisplay(payload);
+  if (!display) {
+    throw new Error("display_not_found");
+  }
+
+  const scaleFactor = Number.isFinite(Number(display.scaleFactor)) ? Number(display.scaleFactor) : 1;
+  const displayWidth = Math.max(320, Math.floor(Number(display.size?.width || 1280) * scaleFactor));
+  const displayHeight = Math.max(240, Math.floor(Number(display.size?.height || 720) * scaleFactor));
+  const maxEdge = Math.floor(clampNumber(payload?.max_edge || payload?.maxEdge, 1920, 640, 4096));
+  const ratio = Math.min(1, maxEdge / Math.max(displayWidth, displayHeight));
+  const thumbWidth = Math.max(320, Math.floor(displayWidth * ratio));
+  const thumbHeight = Math.max(240, Math.floor(displayHeight * ratio));
+
+  const sources = await desktopCapturer.getSources({
+    types: ["screen"],
+    thumbnailSize: { width: thumbWidth, height: thumbHeight },
+    fetchWindowIcons: false,
+  });
+  if (!Array.isArray(sources) || sources.length === 0) {
+    throw new Error("screen_source_not_found");
+  }
+
+  const targetDisplayId = String(display.id || "").trim();
+  let source = sources.find((item) => String(item?.display_id || "").trim() === targetDisplayId);
+  if (!source) {
+    source = sources[0];
+  }
+  if (!source || !source.thumbnail || source.thumbnail.isEmpty()) {
+    throw new Error("screen_thumbnail_empty");
+  }
+
+  const format = String(payload?.format || "jpeg").trim().toLowerCase() === "png" ? "png" : "jpeg";
+  const quality = Math.floor(clampNumber(payload?.quality, 78, 35, 95));
+  const imageBuffer = format === "png"
+    ? source.thumbnail.toPNG()
+    : source.thumbnail.toJPEG(quality);
+  if (!imageBuffer || !imageBuffer.length) {
+    throw new Error("screen_image_empty");
+  }
+  const mimeType = format === "png" ? "image/png" : "image/jpeg";
+  const size = source.thumbnail.getSize();
+  const capturedAt = new Date().toISOString();
+  const ext = format === "png" ? "png" : "jpg";
+  const safeStamp = capturedAt.replace(/[:.]/g, "-");
+  return {
+    data_url: `data:${mimeType};base64,${imageBuffer.toString("base64")}`,
+    name: `screen-${safeStamp}.${ext}`,
+    width: Number(size?.width || thumbWidth),
+    height: Number(size?.height || thumbHeight),
+    source_display: String(source.display_id || targetDisplayId || "unknown"),
+    captured_at: capturedAt,
+    mime_type: mimeType,
+  };
+}
+
 function createPetPluginApiApp() {
   const api = express();
   api.disable("x-powered-by");
@@ -475,6 +555,23 @@ function createPetPluginApiApp() {
       state: buildPetPluginStateSnapshot(true),
       ts: Date.now(),
     });
+  });
+
+  api.post("/v1/device/screen/capture", async (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const snapshot = await captureScreenSnapshot(body);
+      res.json({
+        ok: true,
+        ...snapshot,
+        ts: Date.now(),
+      });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error || "screen_capture_failed"),
+      });
+    }
   });
 
   api.get("/v1/pet/behavior", (_req, res) => {
@@ -2132,6 +2229,13 @@ function startBackend() {
       "http://localhost:5173",
     ].join(","),
   };
+  const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
+  if (pluginBaseUrl) {
+    env.MERCURYDESK_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
+  }
+  if (PET_PLUGIN_API_TOKEN) {
+    env.MERCURYDESK_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
+  }
 
   if (app.isPackaged) {
     const runtimeRoot = backendRuntimeDir();
@@ -3055,6 +3159,7 @@ function createPetWindow() {
 
 async function boot() {
   reloadPetBehaviorConfig();
+  await startPetPluginApiServer();
   startBackend();
   const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/healthz`, 60000);
   if (!backendReady) {
@@ -3075,8 +3180,6 @@ async function boot() {
   if (!frontendReady) {
     throw new Error("Frontend startup timed out.");
   }
-
-  await startPetPluginApiServer();
 }
 
 function cleanup() {

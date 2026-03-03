@@ -649,6 +649,16 @@ class AelinDeviceCapabilitiesResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinDeviceScreenCaptureResponse(BaseModel):
+    data_url: str
+    name: str = ""
+    width: int = 0
+    height: int = 0
+    source_display: str = ""
+    captured_at: str = ""
+    generated_at: datetime
+
+
 class AgentCardLayoutItem(BaseModel):
     contact_id: int
     display_name: str = Field(min_length=1, max_length=255)

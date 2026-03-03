@@ -1,6 +1,7 @@
 import { useRef, useCallback } from 'react'
 import { useChatStore, type ChatMessage } from '../stores/chatStore'
 import { streamChat } from '@/shared/api/sse'
+import { aelinApi } from '@/shared/api/aelin'
 import type { AelinChatRequest, AelinToolStep } from '@/shared/api/types'
 
 function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep): AelinToolStep[] {
@@ -55,13 +56,14 @@ export function useChatStream() {
 
     // Auto-title from first message
     if ((session?.messages.length ?? 0) === 0) {
-      const title = text.length > 20 ? text.slice(0, 20) + '…' : text
+      const seed = String(text || '').trim() || (images?.length ? '屏幕分析' : '新对话')
+      const title = seed.length > 20 ? seed.slice(0, 20) + '…' : seed
       store.renameSession(sessionId!, title)
     }
 
     const normalizedQuery = String(text || '').trim()
     const body: AelinChatRequest = {
-      query: normalizedQuery || (images?.length ? '请结合图片内容分析一下。' : ''),
+      query: normalizedQuery || (images?.length ? '请先读屏并说明你看到了什么，再推断我最可能需要你帮我做的事。' : ''),
       workspace: session?.workspace || 'default',
       history,
       images: images?.map(i => ({ data_url: i.dataUrl, name: i.name })),
@@ -95,11 +97,24 @@ export function useChatStream() {
     abortRef.current = cancel
   }, [store])
 
+  const captureAndSend = useCallback(async (textHint = '') => {
+    if (store.isStreaming) return
+    store.setStatusText('正在截图…')
+    try {
+      const capture = await aelinApi.deviceScreenCapture()
+      const prompt = String(textHint || '').trim()
+      send(prompt, [{ dataUrl: capture.data_url, name: capture.name || `screen-${Date.now()}.jpg` }])
+    } catch (error) {
+      store.setStatusText('')
+      throw error
+    }
+  }, [send, store])
+
   const stop = useCallback(() => {
     abortRef.current?.()
     store.setStreaming(false)
     store.setStatusText('')
   }, [store])
 
-  return { send, stop }
+  return { send, captureAndSend, stop }
 }

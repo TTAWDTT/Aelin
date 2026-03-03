@@ -1771,3 +1771,86 @@ def test_device_processes_windows_fallback_without_psutil(monkeypatch):
     assert str(first.get("name") or "").lower().startswith("code")
     assert float(first.get("memory_mb") or 0.0) > 0
 
+
+def test_device_screen_capture_proxy_success(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "desktop_plugin_base_url", "http://127.0.0.1:21914")
+    monkeypatch.setattr(settings, "desktop_plugin_token", "plugin-token")
+    monkeypatch.setattr(settings, "desktop_plugin_timeout_seconds", 8.0)
+    monkeypatch.setattr(settings, "desktop_plugin_capture_max_data_url_length", 3_000_000)
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.text = ""
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "data_url": "data:image/jpeg;base64,QUJDRA==",
+                "name": "screen-demo.jpg",
+                "width": 1280,
+                "height": 720,
+                "source_display": "1",
+                "captured_at": "2026-03-03T09:00:00Z",
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args, kwargs
+
+        def __enter__(self) -> "_FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type, exc, tb
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            assert url == "http://127.0.0.1:21914/v1/device/screen/capture"
+            assert json == {}
+            assert headers.get("x-aelin-token") == "plugin-token"
+            return _FakeResponse()
+
+    monkeypatch.setattr(aelin_router.httpx, "Client", _FakeClient)
+
+    resp = client.post("/api/v1/aelin/device/screen/capture", headers=headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("data_url", "").startswith("data:image/jpeg;base64,")
+    assert data.get("name") == "screen-demo.jpg"
+    assert data.get("width") == 1280
+    assert data.get("height") == 720
+    assert data.get("source_display") == "1"
+
+
+def test_device_screen_capture_proxy_unreachable_returns_503(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "desktop_plugin_base_url", "http://127.0.0.1:21914")
+    monkeypatch.setattr(settings, "desktop_plugin_token", "")
+
+    class _FailingClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args, kwargs
+
+        def __enter__(self) -> "_FailingClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type, exc, tb
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            _ = url, json, headers
+            raise RuntimeError("connect_refused")
+
+    monkeypatch.setattr(aelin_router.httpx, "Client", _FailingClient)
+
+    resp = client.post("/api/v1/aelin/device/screen/capture", headers=headers)
+    assert resp.status_code == 503, resp.text
+    assert "desktop_plugin_unreachable" in str(resp.json().get("detail") or "")
+

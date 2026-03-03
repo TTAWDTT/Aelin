@@ -1,4 +1,5 @@
 import { useRef, useEffect } from 'react'
+import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
 import { ComposerBar } from './components/ComposerBar'
@@ -14,7 +15,7 @@ export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
   const session = sessions.find((s) => s.id === activeSessionId)
   const messages = session?.messages ?? []
-  const { send, stop } = useChatStream()
+  const { send, captureAndSend, stop } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
@@ -25,9 +26,18 @@ export function ChatView() {
     isStreaming,
   ])
 
-  const handleSend = (text: string, images?: { dataUrl: string; name: string }[]) => {
-    if (!text.trim() && !images?.length) return
-    send(text, images)
+  const handleSend = (text: string) => {
+    if (!text.trim()) return
+    send(text)
+  }
+
+  const handleCaptureAndSend = async (textHint: string) => {
+    try {
+      await captureAndSend(textHint)
+    } catch (error: any) {
+      const message = String(error?.message || '截图失败，请稍后重试')
+      toast.error(message)
+    }
   }
 
   useEffect(() => {
@@ -53,6 +63,7 @@ export function ChatView() {
       />
       <ComposerBar
         onSend={handleSend}
+        onCaptureAndSend={handleCaptureAndSend}
         onStop={stop}
         isStreaming={isStreaming}
         compact={compact}

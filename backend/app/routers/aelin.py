@@ -10,6 +10,7 @@ import re
 import subprocess
 import threading
 import time
+import httpx
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from collections.abc import Callable
@@ -44,6 +45,7 @@ from app.schemas import (
     AelinDeviceModeApplyResponse,
     AelinDeviceOptimizeResponse,
     AelinDeviceCapabilitiesResponse,
+    AelinDeviceScreenCaptureResponse,
     AelinDeviceProcessActionRequest,
     AelinDeviceProcessActionResponse,
     AelinDeviceProcessItem,
@@ -5839,6 +5841,93 @@ def poll_aelin_proactive_events(
         total=len(items),
         items=items,
         generated_at=now,
+    )
+
+
+def _desktop_plugin_headers() -> dict[str, str]:
+    token = str(getattr(settings, "desktop_plugin_token", "") or "").strip()
+    if not token:
+        return {}
+    return {"x-aelin-token": token}
+
+
+def _desktop_plugin_error_detail(resp: httpx.Response) -> str:
+    text = ""
+    try:
+        payload = resp.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        text = str(payload.get("detail") or payload.get("message") or "").strip()
+    if not text:
+        text = str(resp.text or "").strip()
+    if not text:
+        text = f"status={resp.status_code}"
+    return text[:180]
+
+
+@router.post("/device/screen/capture", response_model=AelinDeviceScreenCaptureResponse)
+def capture_device_screen(
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user  # Auth guard for local device APIs.
+    base_url = str(getattr(settings, "desktop_plugin_base_url", "") or "").strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=503, detail="desktop_plugin_unconfigured")
+    timeout_s = max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0))
+    url = f"{base_url}/v1/device/screen/capture"
+    try:
+        with httpx.Client(timeout=timeout_s, follow_redirects=False) as client:
+            resp = client.post(url, json={}, headers=_desktop_plugin_headers())
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"desktop_plugin_unreachable: {str(exc)[:180]}",
+        ) from exc
+
+    if int(resp.status_code) >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"desktop_plugin_capture_failed: {_desktop_plugin_error_detail(resp)}",
+        )
+
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="desktop_plugin_invalid_json") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="desktop_plugin_invalid_payload")
+
+    data_url = str(payload.get("data_url") or "").strip()
+    if not data_url.startswith("data:image/") or ";base64," not in data_url:
+        raise HTTPException(status_code=502, detail="desktop_plugin_invalid_image_payload")
+    max_data_len = max(
+        200_000,
+        int(getattr(settings, "desktop_plugin_capture_max_data_url_length", 3_000_000) or 3_000_000),
+    )
+    if len(data_url) > max_data_len:
+        raise HTTPException(
+            status_code=502,
+            detail=f"desktop_plugin_image_too_large: {len(data_url)}",
+        )
+
+    try:
+        width = max(0, int(payload.get("width") or 0))
+    except Exception:
+        width = 0
+    try:
+        height = max(0, int(payload.get("height") or 0))
+    except Exception:
+        height = 0
+
+    return AelinDeviceScreenCaptureResponse(
+        data_url=data_url,
+        name=str(payload.get("name") or "").strip()[:120],
+        width=width,
+        height=height,
+        source_display=str(payload.get("source_display") or "").strip()[:64],
+        captured_at=str(payload.get("captured_at") or datetime.now(timezone.utc).isoformat())[:64],
+        generated_at=datetime.now(timezone.utc),
     )
 
 
