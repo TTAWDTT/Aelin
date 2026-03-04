@@ -1,5 +1,5 @@
 ﻿import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import { Send, Square, Camera, Loader2, Paperclip } from 'lucide-react'
+import { Send, Square, Camera, Loader2, Paperclip, X } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 
 interface Props {
@@ -22,21 +22,37 @@ export function ComposerBar({
   placeholder = '输入消息…',
 }: Props) {
   const [text, setText] = useState('')
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [isCapturing, setIsCapturing] = useState(false)
   const [isAttaching, setIsAttaching] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (isStreaming) { onStop(); return }
-    if (!text.trim()) return
-    onSend(text.trim())
+    const textHint = text.trim()
+    if (!textHint && pendingFiles.length === 0) return
+
+    if (pendingFiles.length > 0) {
+      if (isAttaching || isCapturing) return
+      setIsAttaching(true)
+      try {
+        await onAttachAndSend(pendingFiles, textHint)
+        setPendingFiles([])
+        setText('')
+      } finally {
+        setIsAttaching(false)
+      }
+      return
+    }
+
+    onSend(textHint)
     setText('')
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      handleSubmit()
+      void handleSubmit()
     }
   }
 
@@ -51,17 +67,11 @@ export function ComposerBar({
     }
   }
 
-  const handleAttachmentChange = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleAttachmentChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     e.target.value = ''
     if (files.length === 0 || isStreaming || isAttaching) return
-    setIsAttaching(true)
-    try {
-      await onAttachAndSend(files, text.trim())
-      setText('')
-    } finally {
-      setIsAttaching(false)
-    }
+    setPendingFiles((prev) => [...prev, ...files].slice(0, 10))
   }
 
   const openAttachmentPicker = () => {
@@ -69,7 +79,11 @@ export function ComposerBar({
     fileInputRef.current?.click()
   }
 
-  const canSend = !!text.trim()
+  const removePendingFile = (indexToRemove: number) => {
+    setPendingFiles((prev) => prev.filter((_, index) => index !== indexToRemove))
+  }
+
+  const canSend = !!text.trim() || pendingFiles.length > 0
 
   return (
     <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
@@ -81,11 +95,36 @@ export function ComposerBar({
             multiple
             className="hidden"
             accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
-            onChange={(e) => { void handleAttachmentChange(e) }}
+            onChange={handleAttachmentChange}
           />
+
+          {pendingFiles.length > 0 && (
+            <div className="mb-2.5 flex flex-wrap items-center gap-1.5 max-[500px]:mb-2">
+              {pendingFiles.map((file, index) => (
+                <span
+                  key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1 text-[11px] text-[var(--color-text)]"
+                  title={file.name}
+                >
+                  <Paperclip size={11} className="shrink-0 text-[var(--color-text-muted)]" />
+                  <span className="max-w-[220px] truncate">{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => removePendingFile(index)}
+                    className="rounded-full p-0.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
+                    aria-label={`移除附件 ${file.name}`}
+                    title="移除附件"
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           <div className="flex min-w-0 items-center gap-2 max-[500px]:gap-1">
             <button
+              type="button"
               onClick={openAttachmentPicker}
               title={isAttaching ? '正在处理附件' : '上传附件'}
               disabled={isStreaming || isAttaching}
@@ -96,6 +135,7 @@ export function ComposerBar({
             </button>
 
             <button
+              type="button"
               onClick={() => void handleCapture()}
               title={isCapturing ? '正在截图' : '截图并发送'}
               disabled={isStreaming || isCapturing}
@@ -116,7 +156,8 @@ export function ComposerBar({
             />
 
             <button
-              onClick={handleSubmit}
+              type="button"
+              onClick={() => void handleSubmit()}
               disabled={!isStreaming && (!canSend || isCapturing || isAttaching)}
               className={cn(
                 `flex shrink-0 items-center justify-center rounded-[10px] transition-all active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`,
