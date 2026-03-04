@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any
 
 from sqlalchemy import select
@@ -89,6 +91,26 @@ def _result_error(message: str) -> dict[str, Any]:
 
 def _result_items(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
     return _result_ok(items=items, total=len(items), **extra)
+
+
+def _has_running_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+        return True
+    except Exception:
+        return False
+
+
+def _run_sync_playwright_call(callable_obj, *args, **kwargs):
+    """Avoid Playwright Sync API usage on threads that already run an asyncio loop."""
+    if not _has_running_event_loop():
+        return callable_obj(*args, **kwargs)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="aelin-browser-tool") as pool:
+        future = pool.submit(callable_obj, *args, **kwargs)
+        try:
+            return future.result(timeout=45)
+        except FutureTimeoutError as exc:
+            raise RuntimeError("browser_tool_timeout") from exc
 
 
 def should_attempt_aelin_tools(query: str) -> bool:
@@ -277,7 +299,7 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_use",
-                    "description": "执行浏览器动作（navigate/click/type/scroll/wait），高风险动作需 confirm=true。scope=external 仅支持 navigate（继承系统浏览器登录态）。",
+                    "description": "执行浏览器动作（navigate/click/type/scroll/wait）。scope=auto 下 navigate 优先 external；复杂动作在系统浏览器已打开时会先要求 confirm，并可能需要 CDP。scope=external 仅支持 navigate（继承系统浏览器登录态）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -615,7 +637,8 @@ class AelinToolHub:
         max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = browser_automation_service.list_sessions(
+            result = _run_sync_playwright_call(
+                browser_automation_service.list_sessions,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -634,7 +657,8 @@ class AelinToolHub:
         max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = browser_automation_service.state_get(
+            result = _run_sync_playwright_call(
+                browser_automation_service.state_get,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -667,7 +691,8 @@ class AelinToolHub:
             "confirm": bool(args.get("confirm", False)),
         }
         try:
-            result = browser_automation_service.use(
+            result = _run_sync_playwright_call(
+                browser_automation_service.use,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 action=action,

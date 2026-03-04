@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import app.services.aelin_tools as aelin_tools
 from app.services.aelin_tools import AelinToolHub
 from app.services.web_search import WebSearchResult
@@ -208,6 +210,28 @@ def test_browser_use_tool_supports_external_scope(monkeypatch):
     assert captured["scope"] == "external"
 
 
+def test_browser_use_tool_passes_confirm_flag(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    captured: dict[str, object] = {}
+
+    def _fake_use(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+
+    result = hub.execute(
+        "browser_use",
+        {"action": "navigate", "scope": "managed", "url": "https://example.com", "confirm": False},
+    )
+    assert result["ok"] is True
+    inner_args = captured.get("args")
+    assert isinstance(inner_args, dict)
+    assert inner_args.get("confirm") is False
+
+
 def test_tool_definitions_include_external_browser_scope():
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -217,3 +241,27 @@ def test_tool_definitions_include_external_browser_scope():
     )
     scope_enum = list(browser_use["parameters"]["properties"]["scope"]["enum"])
     assert "external" in scope_enum
+
+
+def test_browser_use_tool_offloads_when_running_event_loop(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    main_thread_id = threading.get_ident()
+    captured: dict[str, object] = {}
+
+    def _fake_use(**kwargs):
+        captured["thread_id"] = threading.get_ident()
+        captured["scope"] = kwargs.get("scope")
+        return {"ok": True, "scope": kwargs.get("scope"), "action": kwargs.get("action")}
+
+    monkeypatch.setattr(aelin_tools, "_has_running_event_loop", lambda: True)
+    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+
+    result = hub.execute(
+        "browser_use",
+        {"action": "navigate", "scope": "managed", "url": "https://example.com", "confirm": True},
+    )
+    assert result["ok"] is True
+    assert captured.get("scope") == "managed"
+    assert int(captured.get("thread_id") or 0) != main_thread_id
