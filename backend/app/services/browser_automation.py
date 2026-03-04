@@ -445,6 +445,13 @@ class BrowserAutomationService:
         rows.sort(key=lambda it: (float(it.get("memory_mb") or 0.0), int(it.get("pid") or 0)), reverse=True)
         return rows[:max(1, min(200, int(max_items or 20)))]
 
+    def _has_system_browser_process(self, *, pid: int = 0) -> bool:
+        return bool(self._list_system_browser_processes(max_items=1, pid=int(pid or 0)))
+
+    @staticmethod
+    def _is_complex_auto_action(action: str) -> bool:
+        return str(action or "").strip().lower() in {"click", "type", "scroll", "wait"}
+
     def list_sessions(
         self,
         *,
@@ -683,6 +690,14 @@ class BrowserAutomationService:
             if self._cdp_enabled and self._cdp_endpoint:
                 selected_scope = "cdp"
             else:
+                system_processes = self._list_system_browser_processes(max_items=proc_limit, pid=int(pid or 0))
+                if system_processes:
+                    return {
+                        "ok": True,
+                        "scope": "external",
+                        "system_processes": system_processes,
+                        "scope_note": "检测到用户浏览器正在运行；当前为进程级状态读取，若需 DOM 级读取请启用 CDP。",
+                    }
                 selected_scope = "managed"
         if selected_scope == "cdp":
             try:
@@ -753,6 +768,37 @@ class BrowserAutomationService:
         value = str(args.get("value") or "").strip()
         url = str(args.get("url") or "").strip()
         requested_scope = self._normalize_scope(scope)
+
+        if requested_scope == "auto":
+            if act == "navigate":
+                requested_scope = "external"
+            elif self._is_complex_auto_action(act):
+                has_system_browser = self._has_system_browser_process()
+                if has_system_browser and not bool(args.get("confirm")):
+                    return {
+                        "ok": False,
+                        "error": "browser_restart_confirmation_required",
+                        "requires_confirmation": True,
+                        "risk_level": "medium",
+                        "action": act,
+                        "user_prompt": "该任务较为复杂，需要重启浏览器后才能执行，是否确认？",
+                        "hint": "请在下一次 browser_use 调用中设置 confirm=true 以继续。",
+                    }
+                if has_system_browser:
+                    if self._cdp_enabled and self._cdp_endpoint:
+                        requested_scope = "cdp"
+                    else:
+                        return {
+                            "ok": False,
+                            "error": "cdp_required_for_complex_task",
+                            "requires_confirmation": False,
+                            "risk_level": "medium",
+                            "action": act,
+                            "hint": "当前检测到系统浏览器正在运行。复杂操作需要 CDP 受控会话，请先启用 CDP 后重试。",
+                        }
+                else:
+                    requested_scope = "cdp" if (self._cdp_enabled and self._cdp_endpoint) else "managed"
+
         if requested_scope in {"system", "all"}:
             return {"ok": False, "error": "unsupported_scope_for_use", "action": act, "scope": requested_scope}
         if requested_scope == "external":

@@ -40,6 +40,9 @@ class _FakePage:
         self.url = str(url)
         self.goto_calls.append(str(url))
 
+    def wait_for_timeout(self, _wait_ms: int) -> None:
+        return None
+
 
 class _FakeSessionWithPage(_FakeSession):
     def __init__(self, *, owner_thread_id: int, page: _FakePage) -> None:
@@ -184,11 +187,30 @@ def test_use_navigate_can_open_external_browser(monkeypatch):
         workspace="default",
         action="navigate",
         args={"url": "https://github.com", "confirm": True},
+        scope="managed",
     )
     assert out["ok"] is True
     assert out["external_opened"] is True
     assert page.goto_calls == ["https://github.com"]
     assert opened == ["https://github.com"]
+
+
+def test_use_auto_navigate_prefers_external_scope(monkeypatch):
+    service = BrowserAutomationService()
+    opened: list[str] = []
+    monkeypatch.setattr(service, "_open_external_url", lambda url: opened.append(str(url)) or True)
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://example.com", "confirm": False},
+        scope="auto",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "external"
+    assert out["external_opened"] is True
+    assert opened == ["https://example.com"]
 
 
 def test_state_get_auto_fallbacks_from_cdp_to_managed(monkeypatch):
@@ -217,6 +239,92 @@ def test_state_get_auto_fallbacks_from_cdp_to_managed(monkeypatch):
     assert out["ok"] is True
     assert out["scope"] == "managed"
     assert str(out.get("scope_fallback") or "").startswith("cdp_unavailable:")
+
+
+def test_state_get_auto_returns_system_view_when_browser_running_and_cdp_disabled(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = False
+    service._cdp_endpoint = ""
+    monkeypatch.setattr(
+        service,
+        "_list_system_browser_processes",
+        lambda **kwargs: [{"pid": 1234, "name": "chrome.exe", "browser_family": "chrome"}],
+    )
+
+    out = service.state_get(
+        user_id=1,
+        workspace="default",
+        scope="auto",
+        include_dom=True,
+        include_a11y=False,
+        max_targets=10,
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "external"
+    assert len(list(out.get("system_processes") or [])) == 1
+
+
+def test_use_auto_complex_requires_restart_confirmation_when_browser_running(monkeypatch):
+    service = BrowserAutomationService()
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="click",
+        args={"target": "登录", "confirm": False},
+        scope="auto",
+    )
+    assert out["ok"] is False
+    assert out["error"] == "browser_restart_confirmation_required"
+    assert out["requires_confirmation"] is True
+    assert "该任务较为复杂" in str(out.get("user_prompt") or "")
+
+
+def test_use_auto_complex_with_browser_running_requires_cdp_after_confirm(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = False
+    service._cdp_endpoint = ""
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="click",
+        args={"target": "登录", "confirm": True},
+        scope="auto",
+    )
+    assert out["ok"] is False
+    assert out["error"] == "cdp_required_for_complex_task"
+
+
+def test_use_auto_complex_without_browser_uses_cdp_when_enabled(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    page = _FakePage()
+    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
+    cdp_session.mode = "cdp"
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: False)
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
+
+    states = iter(
+        [
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+        ]
+    )
+    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="wait",
+        args={"wait_ms": 200, "confirm": True},
+        scope="auto",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
 
 
 def test_use_navigate_requires_domain_confirmation():
