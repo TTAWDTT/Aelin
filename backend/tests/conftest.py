@@ -113,6 +113,7 @@ def _force_local_temp_runtime():
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.fixture
@@ -123,6 +124,18 @@ def tmp_path(tmp_path_factory):
     # Override pytest's built-in tmp_path fixture on Windows in this repo.
     # Default fixture creates 0o700 directories that are inaccessible here.
     path = _make_runtime_dir(_PYTEST_RUNTIME_ROOT / "tmp_path", "case-")
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _test_media_dir(monkeypatch):
+    from app.settings import settings
+
+    path = _make_runtime_dir(_PYTEST_RUNTIME_ROOT / "media", "aelin-test-media-")
+    monkeypatch.setattr(settings, "media_dir", str(path))
     try:
         yield path
     finally:

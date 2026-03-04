@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,18 +15,6 @@ from app.main import create_app
 from app.models import Base
 from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
 from app.settings import settings
-
-
-def _make_media_dir() -> str:
-    root = Path(__file__).resolve().parents[1] / "_pytest_runtime" / "media"
-    root.mkdir(parents=True, exist_ok=True)
-    while True:
-        candidate = root / f"aelin-test-media-{uuid4().hex[:10]}"
-        try:
-            candidate.mkdir(parents=False, exist_ok=False)
-            return str(candidate)
-        except FileExistsError:
-            continue
 
 
 def _create_test_client() -> TestClient:
@@ -45,7 +32,6 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    settings.media_dir = _make_media_dir()
     settings.aelin_agent_loop_enabled = False
     settings.aelin_agent_loop_shadow_enabled = False
     app = create_app()
@@ -315,6 +301,12 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     client = _create_test_client()
     headers = _auth_headers(client)
 
+    def _legacy_try(payload, db, current_user, event_cb=None, **kwargs):
+        _ = kwargs
+        return aelin_router._aelin_chat_impl(payload, db, current_user, event_cb=event_cb)
+
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _legacy_try)
+
     monkeypatch.setattr(
         aelin_router._media_ingest,
         "ingest",
@@ -335,6 +327,8 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
             limitations=["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"],
         ),
     )
+    monkeypatch.setattr(aelin_router._memory, "update_after_turn", lambda *args, **kwargs: None)
+    monkeypatch.setattr(aelin_router, "_pick_expression", lambda *_args, **_kwargs: "exp-03")
     diary_path = tmp_path / "users" / "1" / "insight-chat.md"
     monkeypatch.setattr(
         aelin_router._tracking_file_memory,
@@ -350,12 +344,10 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     trace = data.get("tool_trace") or []
-    has_media_ingest = any((it.get("stage") == "media_ingest") for it in trace)
-    if has_media_ingest:
-        assert "Aelinの日记" in str(data.get("answer") or "")
-        assert any((it.get("kind") == "open_tracking") for it in (data.get("actions") or []))
-    else:
-        assert "Agent Loop" in str(data.get("answer") or "")
+    has_media_ingest = any((it.get("stage") == "media_ingest" and it.get("status") == "completed") for it in trace)
+    assert has_media_ingest, f"Expected media_ingest stage in tool_trace, got: {trace!r}"
+    assert "Aelinの日记" in str(data.get("answer") or "")
+    assert any((it.get("kind") == "open_tracking") for it in (data.get("actions") or []))
 
 
 def test_tracking_file_memory_tree_endpoint(monkeypatch):

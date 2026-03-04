@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import patch
-from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -13,20 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import create_session, init_engine
 from app.main import create_app
 from app.models import Base, Contact, Message, MessageTopicTag
-from app.settings import settings
 from app.services import content_tagging
-
-
-def _make_media_dir() -> str:
-    root = Path(__file__).resolve().parents[1] / "_pytest_runtime" / "media"
-    root.mkdir(parents=True, exist_ok=True)
-    while True:
-        candidate = root / f"aelin-test-media-{uuid4().hex[:10]}"
-        try:
-            candidate.mkdir(parents=False, exist_ok=False)
-            return str(candidate)
-        except FileExistsError:
-            continue
 
 
 def _create_test_client() -> TestClient:
@@ -44,7 +29,6 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    settings.media_dir = _make_media_dir()
     app = create_app()
     return TestClient(app)
 

@@ -15,6 +15,21 @@ from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin_tools import AelinToolHub
 
 
+def _serialize_tool_message_content(payload: dict[str, Any], *, max_len: int = 8000) -> str:
+    raw = json.dumps(payload, ensure_ascii=False)
+    if len(raw) <= max_len:
+        return raw
+    preview = raw[:2048]
+    compact: dict[str, Any] = {
+        "truncated": True,
+        "original_length": len(raw),
+        "preview": preview,
+    }
+    if "ok" in payload:
+        compact["ok"] = bool(payload.get("ok"))
+    return json.dumps(compact, ensure_ascii=False)
+
+
 def build_tool_calls_payload(raw_tool_calls: list[Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for tc in raw_tool_calls:
@@ -127,7 +142,7 @@ def append_tool_result(
         {
             "role": "tool",
             "tool_call_id": tc_id,
-            "content": json.dumps(tool_result_for_message, ensure_ascii=False)[:8000],
+            "content": _serialize_tool_message_content(tool_result_for_message),
         }
     )
     if image_data_url:

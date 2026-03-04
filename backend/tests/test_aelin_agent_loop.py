@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import json
 import threading
 import time
 from types import SimpleNamespace
 from typing import Any
 
 from app.services.aelin_agent_loop import AelinAgentLoop
+from app.services.aelin_loop_tools import _serialize_tool_message_content
 from app.services.aelin_tool_policy import AelinToolPolicy
 
 
@@ -313,3 +315,12 @@ def test_agent_loop_injects_tool_screen_image_for_next_round():
         and any(str(item.get("type") or "") == "image_url" for item in row.get("content") if isinstance(item, dict))
     ]
     assert screen_msgs
+
+
+def test_serialize_tool_message_content_keeps_valid_json_when_truncated():
+    payload = {"ok": True, "data": "x" * 20000}
+    content = _serialize_tool_message_content(payload, max_len=8000)
+    parsed = json.loads(content)
+    assert isinstance(parsed, dict)
+    assert parsed.get("truncated") is True
+    assert int(parsed.get("original_length") or 0) > 8000
