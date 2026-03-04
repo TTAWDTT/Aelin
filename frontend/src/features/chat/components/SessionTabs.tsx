@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
@@ -44,15 +44,18 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
         >
           <span className={cn(truncateTitle ? 'max-w-[120px] truncate' : 'max-w-none')}>{session.title}</span>
           {sessions.length > 1 && (
-            <span
+            <button
+              type="button"
               onClick={(event) => {
                 event.stopPropagation()
                 deleteSession(session.id)
               }}
               className="opacity-0 transition-opacity group-hover:opacity-60 hover:opacity-100"
+              aria-label={`删除会话：${session.title}`}
+              title="删除会话"
             >
               <X size={12} />
-            </span>
+            </button>
           )}
         </button>
       ))}
@@ -68,9 +71,11 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
           </div>
         </div>
         <button
+          type="button"
           onClick={() => createSession()}
           className="shrink-0 rounded-full border border-[var(--color-border)] p-1.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
           title="新建会话"
+          aria-label="新建会话"
         >
           <Plus size={16} />
         </button>
@@ -112,9 +117,11 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
       </button>
 
       <button
+        type="button"
         onClick={() => createSession()}
         className="h-8 w-8 shrink-0 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
         title="新建会话"
+        aria-label="新建会话"
       >
         <Plus size={16} className="mx-auto" />
       </button>
