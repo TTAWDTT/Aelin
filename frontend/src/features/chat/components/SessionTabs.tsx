@@ -10,7 +10,7 @@ interface SessionTabsProps {
 
 export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
   const { sessions, activeSessionId, switchSession, createSession, deleteSession } = useChatStore()
-  const activeTabRef = useRef<HTMLButtonElement | null>(null)
+  const activeTabRef = useRef<HTMLDivElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -32,22 +32,26 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
       {sessions.map((session) => (
         <div
           key={session.id}
+          ref={session.id === activeSessionId ? activeTabRef : null}
+          role="button"
+          tabIndex={0}
+          onClick={() => switchSession(session.id)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              switchSession(session.id)
+            }
+          }}
           className={cn(
-            'group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
+            'group flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
             session.id === activeSessionId
               ? 'bg-[var(--color-panel-alt)] text-[var(--color-text)]'
               : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
           )}
+          aria-label={`切换会话：${session.title}`}
+          title={session.title}
         >
-          <button
-            type="button"
-            ref={session.id === activeSessionId ? activeTabRef : null}
-            onClick={() => switchSession(session.id)}
-            className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}
-            title={session.title}
-          >
-            {session.title}
-          </button>
+          <span className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}>{session.title}</span>
           {sessions.length > 1 && (
             <button
               type="button"
