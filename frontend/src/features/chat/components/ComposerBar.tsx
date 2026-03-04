@@ -57,7 +57,7 @@ export function ComposerBar({
   }
 
   const handleCapture = async () => {
-    if (isStreaming || isCapturing) return
+    if (isStreaming || isCapturing || isAttaching || pendingFiles.length > 0) return
     setIsCapturing(true)
     try {
       await onCaptureAndSend(text.trim())
@@ -70,12 +70,12 @@ export function ComposerBar({
   const handleAttachmentChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (files.length === 0 || isStreaming || isAttaching) return
+    if (files.length === 0 || isStreaming || isAttaching || isCapturing) return
     setPendingFiles((prev) => [...prev, ...files].slice(0, 10))
   }
 
   const openAttachmentPicker = () => {
-    if (isStreaming || isAttaching) return
+    if (isStreaming || isAttaching || isCapturing) return
     fileInputRef.current?.click()
   }
 
@@ -99,7 +99,7 @@ export function ComposerBar({
           />
 
           {pendingFiles.length > 0 && (
-            <div className="mb-2.5 flex flex-wrap items-center gap-1.5 max-[500px]:mb-2">
+            <div className={cn('mb-2.5 flex flex-wrap items-center gap-1.5 max-[500px]:mb-2', isAttaching && 'pointer-events-none opacity-70')}>
               {pendingFiles.map((file, index) => (
                 <span
                   key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
@@ -111,6 +111,7 @@ export function ComposerBar({
                   <button
                     type="button"
                     onClick={() => removePendingFile(index)}
+                    disabled={isAttaching}
                     className="rounded-full p-0.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
                     aria-label={`移除附件 ${file.name}`}
                     title="移除附件"
@@ -127,7 +128,7 @@ export function ComposerBar({
               type="button"
               onClick={openAttachmentPicker}
               title={isAttaching ? '正在处理附件' : '上传附件'}
-              disabled={isStreaming || isAttaching}
+              disabled={isStreaming || isAttaching || isCapturing}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
               aria-label={isAttaching ? '正在处理附件' : '上传附件'}
             >
@@ -137,10 +138,10 @@ export function ComposerBar({
             <button
               type="button"
               onClick={() => void handleCapture()}
-              title={isCapturing ? '正在截图' : '截图并发送'}
-              disabled={isStreaming || isCapturing}
+              title={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
+              disabled={isStreaming || isCapturing || isAttaching || pendingFiles.length > 0}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
-              aria-label={isCapturing ? '正在截图' : '截图并发送'}
+              aria-label={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
             >
               {isCapturing ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Camera size={compact ? 16 : 17} />}
             </button>
@@ -150,6 +151,7 @@ export function ComposerBar({
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={handleKeyDown}
+              disabled={isAttaching}
               placeholder={placeholder}
               className={`min-w-0 flex-1 border-none bg-transparent px-1 outline-none placeholder:text-[var(--color-text-muted)] ${compact ? 'h-8 text-[13px] max-[500px]:text-[12px]' : 'h-9 text-[14px]'}`}
               style={{ fontFamily: 'var(--font-body)' }}
