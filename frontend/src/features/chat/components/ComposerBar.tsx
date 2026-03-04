@@ -73,17 +73,15 @@ export function ComposerBar({
     const files = Array.from(e.target.files || [])
     e.target.value = ''
     if (files.length === 0 || isStreaming || isAttaching || isCapturing) return
-    setPendingFiles((prev) => {
-      const availableSlots = MAX_PENDING_ATTACHMENTS - prev.length
-      if (availableSlots <= 0) {
-        toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`)
-        return prev
-      }
-      if (files.length > availableSlots) {
-        toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件，已忽略 ${files.length - availableSlots} 个`)
-      }
-      return [...prev, ...files.slice(0, availableSlots)]
-    })
+    const availableSlots = MAX_PENDING_ATTACHMENTS - pendingFiles.length
+    if (availableSlots <= 0) {
+      toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`)
+      return
+    }
+    if (files.length > availableSlots) {
+      toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件，已忽略 ${files.length - availableSlots} 个`)
+    }
+    setPendingFiles([...pendingFiles, ...files.slice(0, availableSlots)])
   }
 
   const openAttachmentPicker = () => {
