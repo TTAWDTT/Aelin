@@ -41,6 +41,8 @@ export function ComposerBar({
         await onAttachAndSend(pendingFiles, textHint)
         setPendingFiles([])
         setText('')
+      } catch {
+        return
       } finally {
         setIsAttaching(false)
       }
