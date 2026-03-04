@@ -568,10 +568,12 @@ function saveCaptureImage(buffer, name) {
   try {
     const picturesDir = app.getPath("pictures");
     const captureDir = path.join(picturesDir, "Aelin", "captures");
-    fs.mkdirSync(captureDir, { recursive: true });
     const safeName = String(name || "").trim() || `screen-${Date.now()}.jpg`;
     const savePath = path.join(captureDir, safeName);
-    fs.writeFileSync(savePath, buffer);
+    void fs.promises
+      .mkdir(captureDir, { recursive: true })
+      .then(() => fs.promises.writeFile(savePath, buffer))
+      .catch(() => {});
     return savePath;
   } catch {
     return "";

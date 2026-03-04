@@ -1,6 +1,5 @@
-﻿import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { Send, Square, Camera, Loader2, Paperclip, X, Crop, Monitor } from 'lucide-react'
-import { useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
