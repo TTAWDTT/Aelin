@@ -13,7 +13,9 @@ from app.models import AgentMemoryNote, TrackingChange, TrackingTarget
 from app.services.agent_memory import AgentMemoryService
 from app.services.device_center import (
     apply_device_mode as device_apply_mode,
+    capture_device_screen as device_capture_screen,
     collect_device_process_items as device_collect_process_items,
+    DeviceScreenCaptureError,
     device_capabilities as device_capabilities_info,
 )
 from app.services.openviking_bridge import TrackingFileMemoryBridge
@@ -44,6 +46,10 @@ _TOOL_KEYWORDS = (
     "新闻",
     "最新",
     "web",
+    "屏幕",
+    "截图",
+    "screen",
+    "screen_get",
 )
 
 
@@ -202,6 +208,23 @@ class AelinToolHub:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "screen_get",
+                    "description": "抓取当前屏幕截图，供后续步骤进行视觉分析。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "display_id": {"type": "string"},
+                            "max_edge": {"type": "integer", "minimum": 640, "maximum": 4096},
+                            "format": {"type": "string", "enum": ["jpeg", "png"]},
+                            "quality": {"type": "integer", "minimum": 35, "maximum": 95},
+                        },
+                        "required": [],
+                    },
+                },
+            },
         ]
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -218,6 +241,8 @@ class AelinToolHub:
             return self._tool_device(args)
         if tool == "web_search":
             return self._tool_web_search(args)
+        if tool == "screen_get":
+            return self._tool_screen_get(args)
         return _result_error(f"unsupported tool: {tool}")
 
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -479,6 +504,32 @@ class AelinToolHub:
             fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
         )
 
+    def _tool_screen_get(self, args: dict[str, Any]) -> dict[str, Any]:
+        display_id = str(args.get("display_id") or "").strip()[:64]
+        max_edge = _safe_int(args.get("max_edge"), 1280, low=640, high=4096)
+        fmt = "png" if str(args.get("format") or "").strip().lower() == "png" else "jpeg"
+        quality = _safe_int(args.get("quality"), 72, low=35, high=95)
+        try:
+            shot = device_capture_screen(
+                display_id=display_id,
+                max_edge=max_edge,
+                image_format=fmt,
+                quality=quality,
+            )
+        except DeviceScreenCaptureError as exc:
+            return _result_error(f"screen_get_failed:{exc.detail}")
+        except Exception as exc:
+            return _result_error(f"screen_get_failed:{str(exc)[:160]}")
+
+        return _result_ok(
+            data_url=str(shot.get("data_url") or ""),
+            name=str(shot.get("name") or "")[:120],
+            width=max(0, int(shot.get("width") or 0)),
+            height=max(0, int(shot.get("height") or 0)),
+            source_display=str(shot.get("source_display") or "")[:64],
+            captured_at=str(shot.get("captured_at") or "")[:64],
+        )
+
 
 def _safe_load_json(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
@@ -533,7 +584,7 @@ def run_aelin_structured_tools(
             "role": "system",
             "content": (
                 "You are a tool planner for Aelin. "
-                "Only call tools when the user query clearly needs memory/profile/diary/tracking/device operations. "
+                "Only call tools when the user query clearly needs memory/profile/diary/tracking/device/screen operations. "
                 "At most call 2 tools. If no tool is needed, respond directly without tool calls."
             ),
         },
@@ -597,7 +648,7 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
                 note = f"total={result.get('total')}"
         elif name == "web_search":
             note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
-        elif name in {"diary", "profile", "context_get", "device"}:
+        elif name in {"diary", "profile", "context_get", "device", "screen_get"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
             elif "summary" in result:

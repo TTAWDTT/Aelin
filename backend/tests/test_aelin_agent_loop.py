@@ -50,6 +50,7 @@ class _FakeToolHub:
             {"type": "function", "function": {"name": "context_get", "parameters": {"type": "object"}}},
             {"type": "function", "function": {"name": "diary", "parameters": {"type": "object"}}},
             {"type": "function", "function": {"name": "profile", "parameters": {"type": "object"}}},
+            {"type": "function", "function": {"name": "screen_get", "parameters": {"type": "object"}}},
         ]
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -62,6 +63,8 @@ class _FakeToolHub:
             self.events.append(("end", str(name), end))
         if str(name) == "profile":
             return {"ok": True, "note_id": 1}
+        if str(name) == "screen_get":
+            return {"ok": True, "data_url": "data:image/png;base64,AAA", "width": 800, "height": 600}
         return {"ok": True, "items": []}
 
 
@@ -269,3 +272,44 @@ def test_agent_loop_retries_with_text_only_when_multimodal_unsupported():
     assert isinstance(first_user.get("content"), list)
     assert second_user.get("role") == "user"
     assert second_user.get("content") == "请看图并继续"
+
+
+def test_agent_loop_injects_tool_screen_image_for_next_round():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "s1", "name": "screen_get", "arguments": "{}"},
+            ]
+        },
+        {"content": "看到了"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakeToolHub(sleep_seconds=0.01)
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=0,
+            allow_write_tools=False,
+        ),
+        max_rounds=2,
+    )
+
+    result = loop.run(query="看看屏幕", memory_summary="m", history_turns=[])
+
+    assert result.ok is True
+    assert result.answer == "看到了"
+    assert len(service._completions.calls) >= 2
+
+    second_messages = service._completions.calls[1]["messages"]
+    screen_msgs = [
+        row
+        for row in second_messages
+        if row.get("role") == "user"
+        and isinstance(row.get("content"), list)
+        and any(str(item.get("type") or "") == "image_url" for item in row.get("content") if isinstance(item, dict))
+    ]
+    assert screen_msgs
