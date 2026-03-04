@@ -1,5 +1,6 @@
 ﻿import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { Send, Square, Camera, Loader2, Paperclip, X } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 
@@ -72,11 +73,22 @@ export function ComposerBar({
     const files = Array.from(e.target.files || [])
     e.target.value = ''
     if (files.length === 0 || isStreaming || isAttaching || isCapturing) return
-    setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_PENDING_ATTACHMENTS))
+    setPendingFiles((prev) => {
+      const availableSlots = MAX_PENDING_ATTACHMENTS - prev.length
+      if (availableSlots <= 0) {
+        toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`)
+        return prev
+      }
+      if (files.length > availableSlots) {
+        toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件，已忽略 ${files.length - availableSlots} 个`)
+      }
+      return [...prev, ...files.slice(0, availableSlots)]
+    })
   }
 
   const openAttachmentPicker = () => {
     if (isStreaming || isAttaching || isCapturing) return
+    if (pendingFiles.length >= MAX_PENDING_ATTACHMENTS) return
     fileInputRef.current?.click()
   }
 
@@ -128,10 +140,22 @@ export function ComposerBar({
             <button
               type="button"
               onClick={openAttachmentPicker}
-              title={isAttaching ? '正在处理附件' : '上传附件'}
-              disabled={isStreaming || isAttaching || isCapturing}
+              title={
+                pendingFiles.length >= MAX_PENDING_ATTACHMENTS
+                  ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                  : isAttaching
+                    ? '正在处理附件'
+                    : '上传附件'
+              }
+              disabled={isStreaming || isAttaching || isCapturing || pendingFiles.length >= MAX_PENDING_ATTACHMENTS}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
-              aria-label={isAttaching ? '正在处理附件' : '上传附件'}
+              aria-label={
+                pendingFiles.length >= MAX_PENDING_ATTACHMENTS
+                  ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                  : isAttaching
+                    ? '正在处理附件'
+                    : '上传附件'
+              }
             >
               {isAttaching ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Paperclip size={compact ? 16 : 17} />}
             </button>
