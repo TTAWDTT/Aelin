@@ -46,6 +46,7 @@ export function ChatView() {
     } catch (error: any) {
       const message = String(error?.message || '附件处理失败，请稍后重试')
       toast.error(message)
+      throw error
     }
   }
 
@@ -58,7 +59,8 @@ export function ChatView() {
       title="Chat"
       subtitle="Aelin 在线中"
       contentClassName="flex flex-1 min-h-0 flex-col p-0"
-      headerActions={<SessionTabs className="min-w-0 max-w-full sm:max-w-[420px]" />}
+      headerActionsFullWidth
+      headerActions={<SessionTabs wrap={compact} className="w-full min-w-0 max-w-full" />}
     >
       <ChatStatusBar isStreaming={isStreaming} statusText={statusText} compact={compact} />
       <ChatTimeline

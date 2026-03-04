@@ -120,12 +120,12 @@ export function TrackingView() {
                 className="aelin-card cursor-pointer p-4 transition-colors"
               >
                 <div className="mb-1.5 flex items-start justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="font-medium text-sm truncate">{item.target}</span>
+                  <div className="flex min-w-0 flex-1 items-start gap-2">
+                    <span className="block min-w-0 text-sm font-medium leading-5 break-words">{item.target}</span>
                   </div>
                   <span
                     className={cn(
-                      'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                      'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium',
                       item.status === 'active'
                         ? 'bg-[color-mix(in_srgb,var(--color-green)_15%,transparent)] text-[var(--color-green)]'
                         : item.status === 'paused'
@@ -223,7 +223,7 @@ export function TrackingView() {
           <div
             className={cn(
               'absolute inset-y-0 right-0 w-full max-w-[430px] border-l border-[var(--color-border)] bg-[var(--color-panel)] shadow-[0_18px_42px_rgba(0,0,0,0.22)] will-change-transform transition-transform duration-420 ease-[cubic-bezier(0.175,0.885,0.32,1.12)]',
-              deskOpen ? 'translate-x-0 scale-100' : 'translate-x-full scale-[0.985]'
+              deskOpen ? 'translate-x-0' : 'translate-x-[calc(100%+24px)]'
             )}
             onClick={(e) => e.stopPropagation()}
           >
