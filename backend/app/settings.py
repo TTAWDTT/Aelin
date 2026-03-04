@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     browser_tool_mode_default: str = "auto"  # auto | managed | cdp
     browser_tool_cdp_enabled: bool = False
     browser_tool_cdp_endpoint: str = "http://127.0.0.1:9222"
+    browser_tool_cdp_auto_launch: bool = True
+    browser_tool_cdp_launch_timeout_seconds: float = 10.0
+    browser_tool_cdp_browser_path: str = ""
     browser_tool_default_timeout_ms: int = 12_000
     browser_tool_idle_ttl_seconds: int = 900
     browser_tool_profile_dir: str = "./browser_data/agent_browser"
