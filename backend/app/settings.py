@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     media_ingest_cookie_browser: str = "chrome"  # chrome | edge | firefox | safari
     media_ingest_cookie_browser_profile: str = ""  # e.g. "Default"
     media_ingest_cookie_file: str = ""  # Netscape cookie file path
+    media_ingest_temp_dir: str = ""  # optional temp workdir root; defaults to OS temp
     media_ingest_proxy_url: str = ""  # e.g. http://127.0.0.1:7890
     media_ingest_douyin_auto_login_enabled: bool = True
     media_ingest_douyin_browser_profile_dir: str = "./browser_data/douyin_media"

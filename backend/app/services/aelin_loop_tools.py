@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.services.aelin_loop_message import (
@@ -177,7 +177,8 @@ def flush_pending_reads(
             ): idx
             for idx, item in enumerate(batch)
         }
-        for future, idx in future_map.items():
+        for future in as_completed(future_map):
+            idx = future_map[future]
             try:
                 results[idx] = future.result()
             except Exception as exc:
@@ -218,4 +219,3 @@ def flush_pending_reads(
         )
     )
     return successful_calls
-

@@ -31,6 +31,10 @@ def _make_runtime_dir(root: Path, prefix: str) -> Path:
 
 @pytest.fixture(scope="session", autouse=True)
 def _patch_tempfile_for_windows_acl():
+    if os.name != "nt":
+        yield
+        return
+
     original_mkdtemp = tempfile.mkdtemp
     original_tempdir_cls = tempfile.TemporaryDirectory
 
@@ -54,9 +58,11 @@ def _patch_tempfile_for_windows_acl():
             prefix: str | None = None,
             dir: str | None = None,
             ignore_cleanup_errors: bool = False,
+            **kwargs: object,
         ) -> None:
             self.name = _safe_mkdtemp(suffix=suffix, prefix=prefix, dir=dir)
             self._ignore_cleanup_errors = bool(ignore_cleanup_errors)
+            self._delete = bool(kwargs.get("delete", True))
             self._closed = False
 
         def __enter__(self) -> str:
@@ -69,6 +75,8 @@ def _patch_tempfile_for_windows_acl():
             if self._closed:
                 return
             self._closed = True
+            if not self._delete:
+                return
             shutil.rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
 
         def __del__(self) -> None:
@@ -85,6 +93,10 @@ def _patch_tempfile_for_windows_acl():
 
 @pytest.fixture(scope="session", autouse=True)
 def _force_local_temp_runtime():
+    if os.name != "nt":
+        yield
+        return
+
     temp_root = _PYTEST_RUNTIME_ROOT / "runtime"
     temp_dir = str(_make_runtime_dir(temp_root, "session-"))
     old_tempdir = tempfile.tempdir
@@ -104,10 +116,17 @@ def _force_local_temp_runtime():
 
 
 @pytest.fixture
-def tmp_path() -> Path:
+def tmp_path(tmp_path_factory):
+    if os.name != "nt":
+        yield tmp_path_factory.mktemp("case")
+        return
     # Override pytest's built-in tmp_path fixture on Windows in this repo.
     # Default fixture creates 0o700 directories that are inaccessible here.
-    return _make_runtime_dir(_PYTEST_RUNTIME_ROOT / "tmp_path", "case-")
+    path = _make_runtime_dir(_PYTEST_RUNTIME_ROOT / "tmp_path", "case-")
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

@@ -3,10 +3,12 @@ from __future__ import annotations
 import html
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -335,12 +337,20 @@ class MediaIngestService:
         return (backend_dir / path).resolve()
 
     def _create_temp_workdir(self, prefix: str) -> Path:
-        root = self._resolve_runtime_path("./data/tmp/media_ingest")
+        configured_root = str(getattr(settings, "media_ingest_temp_dir", "") or "").strip()
+        if configured_root:
+            root = self._resolve_runtime_path(configured_root)
+        else:
+            root = Path(tempfile.gettempdir()) / "aelin-media-ingest"
         root.mkdir(parents=True, exist_ok=True)
         while True:
             candidate = root / f"{prefix}{uuid4().hex[:10]}"
             try:
-                candidate.mkdir(parents=False, exist_ok=False)
+                # Windows in this environment rejects 0o700 temp dirs; keep default there.
+                if os.name == "nt":
+                    candidate.mkdir(parents=False, exist_ok=False)
+                else:
+                    candidate.mkdir(mode=0o700, parents=False, exist_ok=False)
                 return candidate
             except FileExistsError:
                 continue
