@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-import tempfile
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +23,18 @@ from app.services.web_search import WebSearchResult
 from app.settings import settings
 
 
+def _make_media_dir() -> str:
+    root = Path(__file__).resolve().parents[1] / "_pytest_runtime" / "media"
+    root.mkdir(parents=True, exist_ok=True)
+    while True:
+        candidate = root / f"aelin-test-media-{uuid4().hex[:10]}"
+        try:
+            candidate.mkdir(parents=False, exist_ok=False)
+            return str(candidate)
+        except FileExistsError:
+            continue
+
+
 def _create_test_client() -> TestClient:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -37,14 +50,11 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    tmp_media = tempfile.TemporaryDirectory()
-    settings.media_dir = tmp_media.name
+    settings.media_dir = _make_media_dir()
     settings.aelin_agent_loop_enabled = False
     settings.aelin_agent_loop_shadow_enabled = False
     app = create_app()
-    client = TestClient(app)
-    client._tmp_media = tmp_media  # type: ignore[attr-defined]
-    return client
+    return TestClient(app)
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
