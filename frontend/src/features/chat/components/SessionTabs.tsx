@@ -59,8 +59,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
           {sessions.length > 1 && (
             <button
               type="button"
-              onClick={(event) => {
-                event.stopPropagation()
+              onClick={() => {
                 deleteSession(session.id)
               }}
               className="absolute right-1 top-1/2 z-10 -translate-y-1/2 rounded-full p-0.5 opacity-0 transition-opacity pointer-events-none group-hover:pointer-events-auto group-hover:opacity-60 group-focus-within:pointer-events-auto group-focus-within:opacity-60 hover:opacity-100"
