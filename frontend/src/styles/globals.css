@@ -140,12 +140,12 @@ code, pre, .font-mono {
 }
 
 @media (max-width: 820px) {
-  .aelin-page-header {
+  .aelin-page-header[data-header-actions-full-width='true'] {
     flex-wrap: wrap;
     align-items: flex-start;
   }
 
-  .aelin-page-header > :last-child {
+  .aelin-page-header[data-header-actions-full-width='true'] [data-header-actions-slot='true'] {
     width: 100%;
   }
 }

@@ -12,19 +12,25 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
   const { sessions, activeSessionId, switchSession, createSession, deleteSession } = useChatStore()
   const activeTabRef = useRef<HTMLDivElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const scrollBehavior: ScrollBehavior = prefersReducedMotion ? 'auto' : 'smooth'
 
   useEffect(() => {
     activeTabRef.current?.scrollIntoView({
-      behavior: 'smooth',
+      behavior: scrollBehavior,
       block: 'nearest',
       inline: 'nearest',
     })
-  }, [activeSessionId, sessions.length, wrap])
+  }, [activeSessionId, sessions.length, wrap, scrollBehavior])
 
-  const scrollByDelta = (delta: number) => {
+  const scrollByDirection = (direction: -1 | 1) => {
     const viewport = viewportRef.current
     if (!viewport) return
-    viewport.scrollBy({ left: delta, behavior: 'smooth' })
+    const delta = Math.max(160, Math.round(viewport.clientWidth * 0.75)) * direction
+    viewport.scrollBy({ left: delta, behavior: scrollBehavior })
   }
 
   const renderSessionItems = (truncateTitle: boolean) => (
@@ -74,7 +80,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
   if (wrap) {
     return (
       <div className={cn('flex min-w-0 w-full items-start gap-1.5', className)}>
-        <div ref={viewportRef} className="min-w-0 flex-1 max-h-[88px] overflow-y-auto pr-1">
+        <div ref={viewportRef} className="min-w-0 flex-1 max-h-24 overflow-y-auto pr-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             {renderSessionItems(true)}
           </div>
@@ -101,7 +107,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
     >
       <button
         type="button"
-        onClick={() => scrollByDelta(-260)}
+        onClick={() => scrollByDirection(-1)}
         className="h-7 w-7 shrink-0 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
         title="向左查看会话"
         aria-label="向左查看会话"
@@ -117,7 +123,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
 
       <button
         type="button"
-        onClick={() => scrollByDelta(260)}
+        onClick={() => scrollByDirection(1)}
         className="h-7 w-7 shrink-0 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
         title="向右查看会话"
         aria-label="向右查看会话"

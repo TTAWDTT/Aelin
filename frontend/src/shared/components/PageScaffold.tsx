@@ -22,13 +22,17 @@ export function PageScaffold({
 }: PageScaffoldProps) {
   return (
     <section className={cn('aelin-page', className)}>
-      <header className={cn('aelin-page-header min-w-0', headerActionsFullWidth && 'flex-wrap items-start')}>
+      <header
+        className={cn('aelin-page-header min-w-0', headerActionsFullWidth && 'flex-wrap items-start')}
+        data-header-actions-full-width={headerActionsFullWidth ? 'true' : 'false'}
+      >
         <div className="min-w-0">
           <h1 className="aelin-page-title truncate">{title}</h1>
           {subtitle && <p className="aelin-page-subtitle truncate">{subtitle}</p>}
         </div>
         {headerActions && (
           <div
+            data-header-actions-slot="true"
             className={cn(
               headerActionsFullWidth ? 'min-w-0 w-full overflow-visible' : 'min-w-0 w-full sm:w-auto sm:max-w-full'
             )}
