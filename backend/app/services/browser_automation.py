@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -137,6 +143,12 @@ class BrowserAutomationService:
         self._mode_default = str(getattr(settings, "browser_tool_mode_default", "auto") or "auto").strip().lower()
         self._cdp_enabled = bool(getattr(settings, "browser_tool_cdp_enabled", False))
         self._cdp_endpoint = str(getattr(settings, "browser_tool_cdp_endpoint", "http://127.0.0.1:9222") or "").strip()
+        self._cdp_auto_launch = bool(getattr(settings, "browser_tool_cdp_auto_launch", True))
+        self._cdp_launch_timeout_seconds = float(
+            getattr(settings, "browser_tool_cdp_launch_timeout_seconds", 10.0) or 10.0
+        )
+        self._cdp_browser_path = str(getattr(settings, "browser_tool_cdp_browser_path", "") or "").strip()
+        self._cdp_bootstrap_lock = threading.Lock()
         self._profile_root = self._resolve_runtime_path(
             str(getattr(settings, "browser_tool_profile_dir", "./browser_data/agent_browser") or "./browser_data/agent_browser")
         )
@@ -238,6 +250,122 @@ class BrowserAutomationService:
             last_used=now,
         )
 
+    @staticmethod
+    def _parse_cdp_port(endpoint: str) -> int:
+        matched = re.match(r"^https?://(?:127\.0\.0\.1|localhost):(\d{2,5})/?$", str(endpoint or "").strip(), flags=re.I)
+        if not matched:
+            return 0
+        try:
+            port = int(matched.group(1))
+        except Exception:
+            return 0
+        if port < 1 or port > 65535:
+            return 0
+        return port
+
+    def _probe_cdp_endpoint(self, endpoint: str, *, timeout_seconds: float = 0.8) -> bool:
+        target = str(endpoint or "").strip().rstrip("/")
+        if not target:
+            return False
+        url = f"{target}/json/version"
+        try:
+            with urllib.request.urlopen(url, timeout=max(0.2, float(timeout_seconds))) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
+            if not isinstance(payload, dict):
+                return False
+            return bool(str(payload.get("webSocketDebuggerUrl") or "").strip())
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            return False
+        except Exception:
+            return False
+
+    def _resolve_cdp_browser_executable(self) -> str:
+        configured = str(self._cdp_browser_path or "").strip()
+        if configured:
+            candidate = Path(configured).expanduser()
+            if candidate.exists():
+                return str(candidate)
+
+        candidates: list[str] = []
+        for name in ("chrome", "msedge", "chromium", "brave", "brave-browser"):
+            resolved = shutil.which(name)
+            if resolved:
+                candidates.append(str(resolved))
+
+        if os.name == "nt":
+            local_app_data = str(os.environ.get("LOCALAPPDATA") or "").strip()
+            program_files = str(os.environ.get("ProgramFiles") or "").strip()
+            program_files_x86 = str(os.environ.get("ProgramFiles(x86)") or "").strip()
+            windows_paths = [
+                (local_app_data, "Google/Chrome/Application/chrome.exe"),
+                (program_files, "Google/Chrome/Application/chrome.exe"),
+                (program_files_x86, "Google/Chrome/Application/chrome.exe"),
+                (local_app_data, "Microsoft/Edge/Application/msedge.exe"),
+                (program_files, "Microsoft/Edge/Application/msedge.exe"),
+                (program_files_x86, "Microsoft/Edge/Application/msedge.exe"),
+            ]
+            for base, suffix in windows_paths:
+                if not base:
+                    continue
+                full = Path(base) / suffix
+                candidates.append(str(full))
+
+        seen: set[str] = set()
+        for item in candidates:
+            norm = str(item or "").strip()
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            if Path(norm).exists():
+                return norm
+        return ""
+
+    def _launch_cdp_browser(self, endpoint: str) -> None:
+        exe = self._resolve_cdp_browser_executable()
+        if not exe:
+            raise RuntimeError("cdp_browser_not_found")
+        port = self._parse_cdp_port(endpoint)
+        if port <= 0:
+            raise RuntimeError("cdp_endpoint_invalid")
+
+        cmd = [
+            exe,
+            f"--remote-debugging-port={port}",
+            "--remote-debugging-address=127.0.0.1",
+            "--new-window",
+            "about:blank",
+        ]
+        try:
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"cdp_launch_failed:{str(exc)[:120]}") from exc
+
+    def _ensure_cdp_endpoint_ready(self) -> None:
+        endpoint = str(self._cdp_endpoint or "").strip()
+        if not endpoint:
+            raise RuntimeError("cdp_endpoint_unconfigured")
+        if self._probe_cdp_endpoint(endpoint):
+            return
+        if not self._cdp_auto_launch:
+            raise RuntimeError("cdp_endpoint_unavailable")
+        if self._has_system_browser_process():
+            raise RuntimeError("cdp_requires_browser_restart")
+
+        with self._cdp_bootstrap_lock:
+            if self._probe_cdp_endpoint(endpoint):
+                return
+            self._launch_cdp_browser(endpoint)
+            deadline = time.time() + max(2.0, float(self._cdp_launch_timeout_seconds or 10.0))
+            while time.time() < deadline:
+                if self._probe_cdp_endpoint(endpoint):
+                    return
+                time.sleep(0.2)
+        raise RuntimeError("cdp_launch_timeout")
+
     def _resolve_mode(self, mode: str) -> str:
         raw = str(mode or "").strip().lower()
         if raw in {"managed", "cdp", "system", "all", "auto"}:
@@ -247,10 +375,7 @@ class BrowserAutomationService:
 
     def _create_session_for_mode(self, *, user_id: int, workspace: str, mode: str) -> BrowserSession:
         if mode == "cdp":
-            if not self._cdp_enabled:
-                raise RuntimeError("cdp_disabled")
-            if not self._cdp_endpoint:
-                raise RuntimeError("cdp_endpoint_unconfigured")
+            self._ensure_cdp_endpoint_ready()
             return self._create_cdp_session(
                 user_id=user_id,
                 workspace=workspace,
@@ -785,19 +910,9 @@ class BrowserAutomationService:
                         "hint": "请在下一次 browser_use 调用中设置 confirm=true 以继续。",
                     }
                 if has_system_browser:
-                    if self._cdp_enabled and self._cdp_endpoint:
-                        requested_scope = "cdp"
-                    else:
-                        return {
-                            "ok": False,
-                            "error": "cdp_required_for_complex_task",
-                            "requires_confirmation": False,
-                            "risk_level": "medium",
-                            "action": act,
-                            "hint": "当前检测到系统浏览器正在运行。复杂操作需要 CDP 受控会话，请先启用 CDP 后重试。",
-                        }
+                    requested_scope = "cdp"
                 else:
-                    requested_scope = "cdp" if (self._cdp_enabled and self._cdp_endpoint) else "managed"
+                    requested_scope = "cdp"
 
         if requested_scope in {"system", "all"}:
             return {"ok": False, "error": "unsupported_scope_for_use", "action": act, "scope": requested_scope}
@@ -862,7 +977,17 @@ class BrowserAutomationService:
             try:
                 session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
             except Exception as exc:
-                return {"ok": False, "error": f"cdp_unavailable:{str(exc)[:160]}", "action": act}
+                reason = str(exc)[:160]
+                if "cdp_requires_browser_restart" in reason:
+                    return {
+                        "ok": False,
+                        "error": "browser_restart_required_for_cdp",
+                        "requires_confirmation": True,
+                        "risk_level": "medium",
+                        "action": act,
+                        "user_prompt": "该任务较为复杂，需要重启浏览器后才能执行，是否确认？",
+                    }
+                return {"ok": False, "error": f"cdp_unavailable:{reason}", "action": act}
         elif selected_scope == "managed":
             session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
         else:

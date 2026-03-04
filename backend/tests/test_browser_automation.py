@@ -283,9 +283,12 @@ def test_use_auto_complex_requires_restart_confirmation_when_browser_running(mon
 
 def test_use_auto_complex_with_browser_running_requires_cdp_after_confirm(monkeypatch):
     service = BrowserAutomationService()
-    service._cdp_enabled = False
-    service._cdp_endpoint = ""
     monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+
+    def _raise_restart(**kwargs):
+        raise RuntimeError("cdp_requires_browser_restart")
+
+    monkeypatch.setattr(service, "_get_session", _raise_restart)
 
     out = service.use(
         user_id=1,
@@ -295,13 +298,11 @@ def test_use_auto_complex_with_browser_running_requires_cdp_after_confirm(monkey
         scope="auto",
     )
     assert out["ok"] is False
-    assert out["error"] == "cdp_required_for_complex_task"
+    assert out["error"] == "browser_restart_required_for_cdp"
 
 
 def test_use_auto_complex_without_browser_uses_cdp_when_enabled(monkeypatch):
     service = BrowserAutomationService()
-    service._cdp_enabled = True
-    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
     cdp_session.mode = "cdp"
@@ -325,6 +326,57 @@ def test_use_auto_complex_without_browser_uses_cdp_when_enabled(monkeypatch):
     )
     assert out["ok"] is True
     assert out["scope"] == "cdp"
+
+
+def test_ensure_cdp_endpoint_ready_auto_launch_success(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    service._cdp_auto_launch = True
+    service._cdp_launch_timeout_seconds = 0.8
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: False)
+
+    probe_calls = {"count": 0}
+
+    def _fake_probe(endpoint: str, *, timeout_seconds: float = 0.8):
+        probe_calls["count"] += 1
+        return probe_calls["count"] >= 3
+
+    launched: list[str] = []
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", _fake_probe)
+    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint: launched.append(str(endpoint)))
+
+    service._ensure_cdp_endpoint_ready()
+    assert launched == ["http://127.0.0.1:9222"]
+    assert probe_calls["count"] >= 3
+
+
+def test_ensure_cdp_endpoint_ready_requires_restart_when_browser_running(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    service._cdp_auto_launch = True
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+
+    try:
+        service._ensure_cdp_endpoint_ready()
+    except RuntimeError as exc:
+        assert "cdp_requires_browser_restart" in str(exc)
+    else:
+        raise AssertionError("expected cdp_requires_browser_restart")
+
+
+def test_ensure_cdp_endpoint_ready_without_auto_launch(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    service._cdp_auto_launch = False
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
+
+    try:
+        service._ensure_cdp_endpoint_ready()
+    except RuntimeError as exc:
+        assert "cdp_endpoint_unavailable" in str(exc)
+    else:
+        raise AssertionError("expected cdp_endpoint_unavailable")
 
 
 def test_use_navigate_requires_domain_confirmation():
