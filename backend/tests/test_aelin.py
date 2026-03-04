@@ -261,7 +261,7 @@ def test_aelin_chat_stream_accepts_image_only_and_sanitizes_history():
     assert "event: final" in body
 
 
-def test_aelin_chat_agent_loop_disabled_uses_legacy(monkeypatch):
+def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -277,7 +277,11 @@ def test_aelin_chat_agent_loop_disabled_uses_legacy(monkeypatch):
         generated_at=datetime.now(timezone.utc),
     )
     monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
-    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy path should not run")))
+
+    def _legacy_should_not_run(*args, **kwargs):
+        raise AssertionError("legacy path should not run")
+
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
 
     resp = client.post(
         "/api/v1/aelin/chat",
@@ -474,7 +478,7 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
     assert any((it.get("stage") == "agent_loop_tool") for it in (data.get("tool_trace") or []))
 
 
-def test_aelin_chat_shadow_mode_triggers_background_loop(monkeypatch):
+def test_aelin_chat_loop_only_even_when_shadow_toggle_enabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -493,7 +497,11 @@ def test_aelin_chat_shadow_mode_triggers_background_loop(monkeypatch):
         generated_at=datetime.now(timezone.utc),
     )
     monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
-    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy path should not run")))
+
+    def _legacy_should_not_run(*args, **kwargs):
+        raise AssertionError("legacy path should not run")
+
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
 
     resp = client.post(
         "/api/v1/aelin/chat",
@@ -1882,4 +1890,3 @@ def test_device_screen_capture_proxy_unreachable_returns_503(monkeypatch):
     resp = client.post("/api/v1/aelin/device/screen/capture", headers=headers)
     assert resp.status_code == 503, resp.text
     assert "desktop_plugin_unreachable" in str(resp.json().get("detail") or "")
-

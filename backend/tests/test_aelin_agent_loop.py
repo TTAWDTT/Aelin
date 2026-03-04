@@ -21,6 +21,8 @@ class _FakeCompletions:
         idx = min(self._idx, len(self._rounds) - 1)
         self._idx += 1
         row = self._rounds[idx]
+        if row.get("raise"):
+            raise RuntimeError(str(row.get("raise")))
         tool_calls = []
         for tc in row.get("tool_calls", []):
             tool_calls.append(
@@ -226,3 +228,44 @@ def test_agent_loop_ignores_oversized_image_data_url():
     user_msg = first_messages[-1]
     assert user_msg.get("role") == "user"
     assert user_msg.get("content") == "只走文本"
+
+
+def test_agent_loop_retries_with_text_only_when_multimodal_unsupported():
+    rounds = [
+        {"raise": "This model does not support image_url content"},
+        {"content": "ok"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakeToolHub(sleep_seconds=0.01)
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=2,
+            max_write_calls=1,
+            allow_write_tools=False,
+        ),
+        max_rounds=2,
+    )
+
+    result = loop.run(
+        query="请看图并继续",
+        memory_summary="m",
+        history_turns=[],
+        images=[{"name": "demo.png", "data_url": "data:image/png;base64,AAA"}],
+    )
+
+    assert result.ok is True
+    assert result.answer == "ok"
+    assert len(service._completions.calls) >= 2
+
+    first_messages = service._completions.calls[0]["messages"]
+    second_messages = service._completions.calls[1]["messages"]
+    first_user = first_messages[-1]
+    second_user = second_messages[-1]
+    assert first_user.get("role") == "user"
+    assert isinstance(first_user.get("content"), list)
+    assert second_user.get("role") == "user"
+    assert second_user.get("content") == "请看图并继续"

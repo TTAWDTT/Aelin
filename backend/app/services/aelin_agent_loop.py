@@ -44,6 +44,23 @@ def _extract_message_text(content: Any) -> str:
     return ""
 
 
+def _is_multimodal_unsupported_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    hints = (
+        "image_url",
+        "image input",
+        "vision",
+        "multimodal",
+        "multi-modal",
+        "does not support image",
+        "content type",
+        "invalid type",
+    )
+    return any(h in text for h in hints)
+
+
 def _failed_loop_result(*, stop_reason: str, detail: str) -> "AelinAgentLoopResult":
     return AelinAgentLoopResult(
         ok=False,
@@ -183,6 +200,7 @@ class AelinAgentLoop:
                 if role in {"user", "assistant"} and content:
                     messages.append({"role": role, "content": content[:3000]})
         query_text = str(query or "").strip()[:1200]
+        query_fallback_text = query_text or "请先分析我上传的图片，再继续执行工具流程。"
         normalized_images: list[str] = []
         for item in list(images or [])[:4]:
             if not isinstance(item, dict):
@@ -197,7 +215,7 @@ class AelinAgentLoop:
             user_content: list[dict[str, Any]] = [
                 {
                     "type": "text",
-                    "text": query_text or "请先分析我上传的图片，再继续执行工具流程。",
+                    "text": query_fallback_text,
                 }
             ]
             for data_url in normalized_images:
@@ -205,6 +223,8 @@ class AelinAgentLoop:
             messages.append({"role": "user", "content": user_content})
         else:
             messages.append({"role": "user", "content": query_text})
+        query_message_index = len(messages) - 1
+        retried_without_images = False
         trace_steps.append(AgentLoopTraceStep(stage="agent_loop", status="running", detail="start", count=0))
 
         loop_started = time.perf_counter()
@@ -236,16 +256,57 @@ class AelinAgentLoop:
                     timeout=self._round_timeout_seconds,
                 )
             except Exception as exc:
-                stop_reason = "llm_error"
-                trace_steps.append(
-                    AgentLoopTraceStep(
-                        stage="agent_loop_round",
-                        status="failed",
-                        detail=f"round={round_index}; llm_error={str(exc)[:160]}",
-                        count=0,
-                    )
+                can_retry_without_images = bool(
+                    normalized_images
+                    and (not retried_without_images)
+                    and _is_multimodal_unsupported_error(exc)
+                    and 0 <= query_message_index < len(messages)
                 )
-                break
+                if can_retry_without_images:
+                    messages[query_message_index] = {"role": "user", "content": query_fallback_text}
+                    retried_without_images = True
+                    trace_steps.append(
+                        AgentLoopTraceStep(
+                            stage="agent_loop_round",
+                            status="running",
+                            detail=f"round={round_index}; retry_without_images",
+                            count=0,
+                        )
+                    )
+                    try:
+                        response = client.chat.completions.create(
+                            model=self._service.config.model,
+                            messages=messages,
+                            temperature=self._service.config.temperature,
+                            max_tokens=420,
+                            tools=tools,
+                            tool_choice="auto",
+                            timeout=self._round_timeout_seconds,
+                        )
+                    except Exception as retry_exc:
+                        stop_reason = "llm_error"
+                        trace_steps.append(
+                            AgentLoopTraceStep(
+                                stage="agent_loop_round",
+                                status="failed",
+                                detail=f"round={round_index}; llm_error={str(retry_exc)[:160]}",
+                                count=0,
+                            )
+                        )
+                        break
+                    else:
+                        normalized_images = []
+                else:
+                    stop_reason = "llm_error"
+                    trace_steps.append(
+                        AgentLoopTraceStep(
+                            stage="agent_loop_round",
+                            status="failed",
+                            detail=f"round={round_index}; llm_error={str(exc)[:160]}",
+                            count=0,
+                        )
+                    )
+                    break
 
             choice = response.choices[0] if getattr(response, "choices", None) else None
             message = getattr(choice, "message", None) if choice else None

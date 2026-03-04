@@ -20,7 +20,6 @@ def dispatch_aelin_chat(
     pick_expression: Callable[[str, str], str],
     now_ms: Callable[[], int],
 ) -> AelinChatResponse:
-    _ = event_cb
     forced_tracking_create = detect_forced_tracking_create(payload.query)
     agent_response = (
         try_agent_loop_chat(
