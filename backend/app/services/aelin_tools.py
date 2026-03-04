@@ -18,6 +18,7 @@ from app.services.device_center import (
     DeviceScreenCaptureError,
     device_capabilities as device_capabilities_info,
 )
+from app.services.browser_automation import browser_automation_service
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.tracking_autonomy import TrackingAutonomyService
 from app.services.llm import LLMService
@@ -50,6 +51,15 @@ _TOOL_KEYWORDS = (
     "截图",
     "screen",
     "screen_get",
+    "browser",
+    "网页",
+    "页面",
+    "点击",
+    "输入",
+    "navigate",
+    "click",
+    "type",
+    "scroll",
 )
 
 
@@ -225,6 +235,47 @@ class AelinToolHub:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_state_get",
+                    "description": "读取浏览器当前页面状态（URL、标题、可交互目标、可选 a11y 摘要）。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "include_dom": {"type": "boolean"},
+                            "include_a11y": {"type": "boolean"},
+                            "max_targets": {"type": "integer", "minimum": 1, "maximum": 60},
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_use",
+                    "description": "执行浏览器动作（navigate/click/type/scroll/wait），高风险动作需 confirm=true。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "wait"]},
+                            "url": {"type": "string"},
+                            "target": {"type": "string"},
+                            "value": {"type": "string"},
+                            "strategy": {"type": "string", "enum": ["auto", "selector", "text", "role"]},
+                            "role": {"type": "string"},
+                            "press_enter": {"type": "boolean"},
+                            "direction": {"type": "string", "enum": ["up", "down"]},
+                            "amount": {"type": "integer", "minimum": -6000, "maximum": 6000},
+                            "wait_ms": {"type": "integer", "minimum": 100, "maximum": 20000},
+                            "timeout_ms": {"type": "integer", "minimum": 500, "maximum": 120000},
+                            "confirm": {"type": "boolean"},
+                        },
+                        "required": ["action"],
+                    },
+                },
+            },
         ]
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -243,6 +294,10 @@ class AelinToolHub:
             return self._tool_web_search(args)
         if tool == "screen_get":
             return self._tool_screen_get(args)
+        if tool == "browser_state_get":
+            return self._tool_browser_state_get(args)
+        if tool == "browser_use":
+            return self._tool_browser_use(args)
         return _result_error(f"unsupported tool: {tool}")
 
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -530,6 +585,50 @@ class AelinToolHub:
             captured_at=str(shot.get("captured_at") or "")[:64],
         )
 
+    def _tool_browser_state_get(self, args: dict[str, Any]) -> dict[str, Any]:
+        include_dom = bool(args.get("include_dom", True))
+        include_a11y = bool(args.get("include_a11y", False))
+        max_targets = _safe_int(args.get("max_targets"), 30, low=1, high=60)
+        try:
+            result = browser_automation_service.state_get(
+                user_id=self.user_id,
+                workspace=self.workspace,
+                include_dom=include_dom,
+                include_a11y=include_a11y,
+                max_targets=max_targets,
+            )
+        except Exception as exc:
+            return _result_error(f"browser_state_get_failed:{str(exc)[:160]}")
+        return result if isinstance(result, dict) else _result_error("browser_state_get_invalid_payload")
+
+    def _tool_browser_use(self, args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "").strip().lower()
+        if not action:
+            return _result_error("missing action")
+        payload = {
+            "url": str(args.get("url") or "").strip()[:1000],
+            "target": str(args.get("target") or "").strip()[:240],
+            "value": str(args.get("value") or "")[:1200],
+            "strategy": str(args.get("strategy") or "auto").strip().lower()[:16],
+            "role": str(args.get("role") or "").strip().lower()[:24],
+            "press_enter": bool(args.get("press_enter", False)),
+            "direction": str(args.get("direction") or "").strip().lower()[:16],
+            "amount": _safe_int(args.get("amount"), 720, low=-6000, high=6000),
+            "wait_ms": _safe_int(args.get("wait_ms"), 900, low=100, high=20000),
+            "timeout_ms": _safe_int(args.get("timeout_ms"), 12000, low=500, high=120000),
+            "confirm": bool(args.get("confirm", False)),
+        }
+        try:
+            result = browser_automation_service.use(
+                user_id=self.user_id,
+                workspace=self.workspace,
+                action=action,
+                args=payload,
+            )
+        except Exception as exc:
+            return _result_error(f"browser_use_failed:{str(exc)[:160]}")
+        return result if isinstance(result, dict) else _result_error("browser_use_invalid_payload")
+
 
 def _safe_load_json(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
@@ -648,7 +747,7 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
                 note = f"total={result.get('total')}"
         elif name == "web_search":
             note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
-        elif name in {"diary", "profile", "context_get", "device", "screen_get"}:
+        elif name in {"diary", "profile", "context_get", "device", "screen_get", "browser_state_get", "browser_use"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
             elif "summary" in result:
