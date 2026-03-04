@@ -46,7 +46,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
             onClick={() => switchSession(session.id)}
             className={cn(
               'flex items-center whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
-              sessions.length > 1 && 'pr-7',
+              sessions.length > 1 && 'pr-9',
               session.id === activeSessionId
                 ? 'bg-[var(--color-panel-alt)] text-[var(--color-text)]'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
@@ -63,7 +63,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
                 event.stopPropagation()
                 deleteSession(session.id)
               }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 opacity-0 transition-opacity group-hover:opacity-60 group-focus-within:opacity-60 hover:opacity-100"
+              className="absolute right-1 top-1/2 z-10 -translate-y-1/2 rounded-full p-0.5 opacity-0 transition-opacity pointer-events-none group-hover:pointer-events-auto group-hover:opacity-60 group-focus-within:pointer-events-auto group-focus-within:opacity-60 hover:opacity-100"
               aria-label={`删除会话：${session.title}`}
               title="删除会话"
             >
