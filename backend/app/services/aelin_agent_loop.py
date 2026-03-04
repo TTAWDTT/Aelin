@@ -148,6 +148,84 @@ def _build_tool_calls_payload(raw_tool_calls: list[Any]) -> list[dict[str, Any]]
     return out
 
 
+def _normalize_input_image_data_urls(images: list[dict[str, str]] | None) -> list[str]:
+    out: list[str] = []
+    for item in list(images or [])[:4]:
+        if not isinstance(item, dict):
+            continue
+        data_url = str(item.get("data_url") or "").strip()
+        if not data_url.startswith("data:image/") or ";base64," not in data_url:
+            continue
+        if len(data_url) > MAX_IMAGE_DATA_URL_LENGTH:
+            continue
+        out.append(data_url)
+    return out
+
+
+def _build_initial_messages(
+    *,
+    query: str,
+    memory_summary: str,
+    history_turns: list[dict[str, str]] | None,
+    images: list[dict[str, str]] | None,
+    forced_intent: str,
+    forced_tool_runs: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": (
+                "You are Aelin's tool-using assistant. "
+                "Use tools only when needed, keep calls minimal, and provide final Chinese answer once information is enough. "
+                "Never expose hidden reasoning."
+            ),
+        },
+        {
+            "role": "system",
+            "content": f"memory_summary={str(memory_summary or '')[:1000]}",
+        },
+    ]
+    if forced_intent:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"forced_intent={str(forced_intent).strip()[:120]}",
+            }
+        )
+    for run in list(forced_tool_runs or [])[:4]:
+        name = str(run.get("name") or "").strip().lower()[:64]
+        args = run.get("args") if isinstance(run.get("args"), dict) else {}
+        result = run.get("result") if isinstance(run.get("result"), dict) else {}
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    f"forced_tool_result[{name}] "
+                    + json.dumps({"args": args, "result": result}, ensure_ascii=False)[:1800]
+                ),
+            }
+        )
+
+    if history_turns:
+        for row in history_turns[-10:]:
+            role = str(row.get("role") or "").strip().lower()
+            content = str(row.get("content") or "").strip()
+            if role in {"user", "assistant"} and content:
+                messages.append({"role": role, "content": content[:3000]})
+
+    query_text = str(query or "").strip()[:1200]
+    query_fallback_text = query_text or "请先分析我上传的图片，再继续执行工具流程。"
+    normalized_images = _normalize_input_image_data_urls(images)
+    if normalized_images:
+        user_content: list[dict[str, Any]] = [{"type": "text", "text": query_fallback_text}]
+        for data_url in normalized_images:
+            user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": query_text})
+    return messages
+
+
 def _plan_tool_calls(
     *,
     tool_calls_payload: list[dict[str, Any]],
@@ -434,70 +512,14 @@ class AelinAgentLoop:
         if not tools:
             return _failed_loop_result(stop_reason="tool_definitions_empty", detail="tool_definitions_empty")
 
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are Aelin's tool-using assistant. "
-                    "Use tools only when needed, keep calls minimal, and provide final Chinese answer once information is enough. "
-                    "Never expose hidden reasoning."
-                ),
-            },
-            {
-                "role": "system",
-                "content": f"memory_summary={str(memory_summary or '')[:1000]}",
-            },
-        ]
-        if forced_intent:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": f"forced_intent={str(forced_intent).strip()[:120]}",
-                }
-            )
-        for run in list(forced_tool_runs or [])[:4]:
-            name = str(run.get("name") or "").strip().lower()[:64]
-            args = run.get("args") if isinstance(run.get("args"), dict) else {}
-            result = run.get("result") if isinstance(run.get("result"), dict) else {}
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        f"forced_tool_result[{name}] "
-                        + json.dumps({"args": args, "result": result}, ensure_ascii=False)[:1800]
-                    ),
-                }
-            )
-        if history_turns:
-            for row in history_turns[-10:]:
-                role = str(row.get("role") or "").strip().lower()
-                content = str(row.get("content") or "").strip()
-                if role in {"user", "assistant"} and content:
-                    messages.append({"role": role, "content": content[:3000]})
-        query_text = str(query or "").strip()[:1200]
-        query_fallback_text = query_text or "请先分析我上传的图片，再继续执行工具流程。"
-        normalized_images: list[str] = []
-        for item in list(images or [])[:4]:
-            if not isinstance(item, dict):
-                continue
-            data_url = str(item.get("data_url") or "").strip()
-            if not data_url.startswith("data:image/") or ";base64," not in data_url:
-                continue
-            if len(data_url) > MAX_IMAGE_DATA_URL_LENGTH:
-                continue
-            normalized_images.append(data_url)
-        if normalized_images:
-            user_content: list[dict[str, Any]] = [
-                {
-                    "type": "text",
-                    "text": query_fallback_text,
-                }
-            ]
-            for data_url in normalized_images:
-                user_content.append({"type": "image_url", "image_url": {"url": data_url}})
-            messages.append({"role": "user", "content": user_content})
-        else:
-            messages.append({"role": "user", "content": query_text})
+        messages = _build_initial_messages(
+            query=query,
+            memory_summary=memory_summary,
+            history_turns=history_turns,
+            images=images,
+            forced_intent=forced_intent,
+            forced_tool_runs=forced_tool_runs,
+        )
         retried_without_images = False
         trace_steps.append(AgentLoopTraceStep(stage="agent_loop", status="running", detail="start", count=0))
 
