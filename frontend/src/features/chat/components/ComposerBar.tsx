@@ -124,6 +124,13 @@ export function ComposerBar({
   }
 
   const canSend = !!text.trim() || pendingFiles.length > 0
+  const captureButtonLabel = pendingFiles.length > 0
+    ? '请先发送待处理附件'
+    : isCapturing
+      ? '正在截图'
+      : captureMenuOpen
+        ? '关闭截图菜单'
+        : '打开截图菜单'
 
   return (
     <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
@@ -191,10 +198,10 @@ export function ComposerBar({
               <button
                 type="button"
                 onClick={openCaptureMenu}
-                title={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
+                title={captureButtonLabel}
                 disabled={captureDisabled}
                 className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
-                aria-label={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
+                aria-label={captureButtonLabel}
               >
                 {isCapturing ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Camera size={compact ? 16 : 17} />}
               </button>

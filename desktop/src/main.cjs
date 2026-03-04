@@ -1,5 +1,4 @@
 const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer, clipboard } = require("electron");
-const crypto = require("crypto");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const fs = require("fs");
@@ -579,11 +578,45 @@ function saveCaptureImage(buffer, name) {
   }
 }
 
-function buildImageDigest(image) {
+function buildImageSizeKey(image) {
   if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) return "";
   try {
-    const png = image.toPNG();
-    return crypto.createHash("sha1").update(png).digest("hex");
+    const size = image.getSize();
+    const width = Math.max(0, Number(size?.width || 0));
+    const height = Math.max(0, Number(size?.height || 0));
+    if (width <= 0 || height <= 0) return "";
+    return `${width}x${height}`;
+  } catch {
+    return "";
+  }
+}
+
+function buildImageClipSignal(image) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) return "";
+  try {
+    const size = image.getSize();
+    const width = Math.max(0, Number(size?.width || 0));
+    const height = Math.max(0, Number(size?.height || 0));
+    if (width <= 0 || height <= 0) return "";
+    const samplePoints = [
+      [0, 0],
+      [Math.max(0, Math.floor((width - 1) / 2)), Math.max(0, Math.floor((height - 1) / 2))],
+      [Math.max(0, width - 1), Math.max(0, height - 1)],
+    ];
+    const samples = [];
+    for (const [x, y] of samplePoints) {
+      try {
+        const pixel = image.crop({ x, y, width: 1, height: 1 }).toBitmap();
+        if (pixel && pixel.length >= 4) {
+          samples.push(`${pixel[0]}-${pixel[1]}-${pixel[2]}-${pixel[3]}`);
+        } else {
+          samples.push("empty");
+        }
+      } catch {
+        samples.push("err");
+      }
+    }
+    return `${width}x${height}:${samples.join("|")}`;
   } catch {
     return "";
   }
@@ -629,7 +662,9 @@ async function captureCustomRegionSnapshot(payload = {}) {
   const timeoutMs = Math.floor(
     clampCaptureNumber(payload?.selection_timeout_ms || payload?.selectionTimeoutMs, 45_000, 5_000, 180_000)
   );
-  const beforeDigest = buildImageDigest(clipboard.readImage());
+  const beforeImage = clipboard.readImage();
+  const beforeSize = buildImageSizeKey(beforeImage);
+  const beforeSignal = buildImageClipSignal(beforeImage);
 
   try {
     const launcher = spawn("cmd.exe", ["/d", "/s", "/c", "start", "", "ms-screenclip:"], {
@@ -643,11 +678,21 @@ async function captureCustomRegionSnapshot(payload = {}) {
   }
 
   const deadline = Date.now() + timeoutMs;
+  let pollDelayMs = 180;
+  let signalProbeCount = 0;
   while (Date.now() < deadline) {
     const image = clipboard.readImage();
     if (image && !image.isEmpty()) {
-      const digest = buildImageDigest(image);
-      if (digest && digest !== beforeDigest) {
+      const currentSize = buildImageSizeKey(image);
+      let changed = Boolean(currentSize && currentSize !== beforeSize);
+      if (!changed) {
+        signalProbeCount += 1;
+        if (signalProbeCount % 3 === 0) {
+          const signal = buildImageClipSignal(image);
+          changed = Boolean(signal && signal !== beforeSignal);
+        }
+      }
+      if (changed) {
         const resized = resizeImageToMaxEdge(image, maxEdge);
         return buildSnapshotFromImage(resized, {
           format,
@@ -658,7 +703,8 @@ async function captureCustomRegionSnapshot(payload = {}) {
         });
       }
     }
-    await waitMs(160);
+    await waitMs(pollDelayMs);
+    pollDelayMs = Math.min(420, pollDelayMs + 20);
   }
   throw new Error("custom_region_capture_timeout");
 }
