@@ -35,7 +35,6 @@ export function ComposerBar({
     if (!textHint && pendingFiles.length === 0) return
 
     if (pendingFiles.length > 0) {
-      if (isAttaching || isCapturing) return
       setIsAttaching(true)
       try {
         await onAttachAndSend(pendingFiles, textHint)
