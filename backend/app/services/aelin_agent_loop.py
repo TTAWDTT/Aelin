@@ -10,6 +10,8 @@ from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin_tools import AelinToolHub
 from app.services.llm import LLMService
 
+_MAX_IMAGE_DATA_URL_LENGTH = 3_000_000
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -188,6 +190,8 @@ class AelinAgentLoop:
                 continue
             data_url = str(item.get("data_url") or "").strip()
             if not data_url.startswith("data:image/") or ";base64," not in data_url:
+                continue
+            if len(data_url) > _MAX_IMAGE_DATA_URL_LENGTH:
                 continue
             normalized_images.append(
                 {
