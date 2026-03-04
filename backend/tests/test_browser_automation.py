@@ -185,4 +185,36 @@ def test_use_navigate_requires_domain_confirmation():
         scope="managed",
     )
     assert out["ok"] is False
-    assert out["error"] == "domain_confirmation_required"
+    assert out["error"] == "auth_permission_required"
+    assert out["fallback_scope"] == "external"
+
+
+def test_use_external_scope_navigate_opens_system_browser(monkeypatch):
+    service = BrowserAutomationService()
+    opened: list[str] = []
+    monkeypatch.setattr(service, "_open_external_url", lambda url: opened.append(str(url)) or True)
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://github.com", "confirm": True},
+        scope="external",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "external"
+    assert out["external_opened"] is True
+    assert opened == ["https://github.com"]
+
+
+def test_use_external_scope_blocks_dom_actions():
+    service = BrowserAutomationService()
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="click",
+        args={"target": "Sign in", "confirm": True},
+        scope="external",
+    )
+    assert out["ok"] is False
+    assert out["error"] == "unsupported_action_in_external_scope"

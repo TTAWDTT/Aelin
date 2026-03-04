@@ -185,3 +185,35 @@ def test_browser_use_tool_confirmation_required(monkeypatch):
     assert result["ok"] is False
     assert result["error"] == "confirmation_required"
     assert result["requires_confirmation"] is True
+
+
+def test_browser_use_tool_supports_external_scope(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    captured: dict[str, object] = {}
+
+    def _fake_use(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "scope": kwargs.get("scope"), "action": kwargs.get("action")}
+
+    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+
+    result = hub.execute(
+        "browser_use",
+        {"action": "navigate", "scope": "external", "url": "https://github.com", "confirm": True},
+    )
+    assert result["ok"] is True
+    assert result["scope"] == "external"
+    assert captured["scope"] == "external"
+
+
+def test_tool_definitions_include_external_browser_scope():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+    defs = hub.tool_definitions()
+    browser_use = next(
+        item["function"] for item in defs if str(item.get("function", {}).get("name")) == "browser_use"
+    )
+    scope_enum = list(browser_use["parameters"]["properties"]["scope"]["enum"])
+    assert "external" in scope_enum

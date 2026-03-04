@@ -324,7 +324,7 @@ class BrowserAutomationService:
     @staticmethod
     def _normalize_scope(scope: str) -> str:
         raw = str(scope or "").strip().lower()
-        if raw in {"managed", "cdp", "system", "all", "auto"}:
+        if raw in {"managed", "cdp", "system", "all", "auto", "external"}:
             return raw
         return "auto"
 
@@ -405,7 +405,7 @@ class BrowserAutomationService:
             "cdp_endpoint": str(self._cdp_endpoint or ""),
         }
         include_managed = normalized_scope in {"managed", "all", "auto", "cdp"}
-        include_system = normalized_scope in {"system", "all"}
+        include_system = normalized_scope in {"system", "all", "external"}
 
         if include_managed:
             with self._lock:
@@ -576,12 +576,16 @@ class BrowserAutomationService:
         normalized_scope = self._normalize_scope(scope)
         target_limit = _clamp_int(max_targets, 30, low=1, high=60)
         proc_limit = _clamp_int(max_items, 20, low=1, high=200)
-        if normalized_scope == "system":
+        if normalized_scope in {"system", "external"}:
             return {
                 "ok": True,
-                "scope": "system",
+                "scope": normalized_scope,
                 "system_processes": self._list_system_browser_processes(max_items=proc_limit, pid=int(pid or 0)),
-                "scope_note": "系统浏览器进程视图（不保证可获得每个标签页 URL）。",
+                "scope_note": (
+                    "系统浏览器进程视图（不保证可获得每个标签页 URL）。"
+                    if normalized_scope == "system"
+                    else "external scope 仅能读取系统浏览器进程级状态，无法直接读取 DOM。"
+                ),
             }
         if normalized_scope == "all":
             sessions = self.list_sessions(
@@ -697,11 +701,17 @@ class BrowserAutomationService:
         if act == "navigate" and self._is_sensitive_auth_domain(url) and not bool(args.get("confirm")):
             return {
                 "ok": False,
-                "error": "domain_confirmation_required",
+                "error": "auth_permission_required",
                 "requires_confirmation": True,
                 "risk_level": "auth_guard",
                 "action": act,
                 "domain": self._extract_hostname(url),
+                "fallback_scope": "external",
+                "supported_scopes": ["auto", "managed", "cdp", "external"],
+                "hint": (
+                    "使用 confirm=true 可继续受控浏览器导航；"
+                    "若需要继承用户登录态，可改用 scope=external。"
+                ),
             }
 
         timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)
@@ -710,6 +720,32 @@ class BrowserAutomationService:
         requested_scope = self._normalize_scope(scope)
         if requested_scope in {"system", "all"}:
             return {"ok": False, "error": "unsupported_scope_for_use", "action": act, "scope": requested_scope}
+        if requested_scope == "external":
+            if act != "navigate":
+                return {
+                    "ok": False,
+                    "error": "unsupported_action_in_external_scope",
+                    "action": act,
+                    "scope": "external",
+                    "supported_actions": ["navigate"],
+                }
+            if not re.match(r"^https?://", url, flags=re.I):
+                return {"ok": False, "error": "invalid_url", "action": act, "scope": "external"}
+            opened = self._open_external_url(url)
+            if not opened:
+                return {"ok": False, "error": "external_open_failed", "action": act, "scope": "external"}
+            return {
+                "ok": True,
+                "action": act,
+                "scope": "external",
+                "effect_summary": f"opened_external:{url[:120]}",
+                "requires_confirmation": False,
+                "risk_level": "low",
+                "external_opened": True,
+                "before": {"url": "", "title": ""},
+                "after": {"url": url[:800], "title": ""},
+                "session_id": "",
+            }
         selected_scope = requested_scope if requested_scope != "auto" else "auto"
         fallback_reason = ""
 

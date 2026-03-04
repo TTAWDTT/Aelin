@@ -242,11 +242,11 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_session_list",
-                    "description": "列出浏览器会话与系统浏览器进程（managed/system/all）。",
+                    "description": "列出浏览器会话与系统浏览器进程（managed/system/external/all）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "scope": {"type": "string", "enum": ["managed", "system", "all"]},
+                            "scope": {"type": "string", "enum": ["managed", "system", "external", "all"]},
                             "max_items": {"type": "integer", "minimum": 1, "maximum": 200},
                             "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
                         },
@@ -258,11 +258,11 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_state_get",
-                    "description": "读取浏览器状态。支持 scope=auto|managed|cdp|system|all。",
+                    "description": "读取浏览器状态。支持 scope=auto|managed|cdp|external|system|all。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "system", "all"]},
+                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external", "system", "all"]},
                             "include_dom": {"type": "boolean"},
                             "include_a11y": {"type": "boolean"},
                             "max_targets": {"type": "integer", "minimum": 1, "maximum": 60},
@@ -277,12 +277,12 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_use",
-                    "description": "执行浏览器动作（navigate/click/type/scroll/wait），高风险动作需 confirm=true。",
+                    "description": "执行浏览器动作（navigate/click/type/scroll/wait），高风险动作需 confirm=true。scope=external 仅支持 navigate（继承系统浏览器登录态）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "wait"]},
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp"]},
+                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external"]},
                             "url": {"type": "string"},
                             "target": {"type": "string"},
                             "value": {"type": "string"},
