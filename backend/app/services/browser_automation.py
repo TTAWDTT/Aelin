@@ -119,6 +119,7 @@ class BrowserAutomationService:
     def __init__(self) -> None:
         self._sessions: dict[str, BrowserSession] = {}
         self._lock = threading.RLock()
+        self._creation_locks: dict[str, threading.Lock] = {}
         self._default_timeout_ms = _clamp_int(
             getattr(settings, "browser_tool_default_timeout_ms", 12000),
             12000,
@@ -233,6 +234,21 @@ class BrowserAutomationService:
         default = str(self._mode_default or "auto").strip().lower()
         return default if default in {"managed", "cdp", "auto"} else "auto"
 
+    def _create_session_for_mode(self, *, user_id: int, workspace: str, mode: str) -> BrowserSession:
+        if mode == "cdp":
+            if not self._cdp_enabled:
+                raise RuntimeError("cdp_disabled")
+            if not self._cdp_endpoint:
+                raise RuntimeError("cdp_endpoint_unconfigured")
+            return self._create_cdp_session(
+                user_id=user_id,
+                workspace=workspace,
+                endpoint=self._cdp_endpoint,
+            )
+        if mode == "managed":
+            return self._create_managed_session(user_id=user_id, workspace=workspace)
+        raise RuntimeError(f"unsupported_session_mode:{mode}")
+
     def _get_session(self, *, user_id: int, workspace: str, mode: str = "auto") -> BrowserSession:
         resolved_mode = self._resolve_mode(mode)
         if resolved_mode == "auto":
@@ -247,31 +263,66 @@ class BrowserAutomationService:
 
         key = self._session_key(user_id=user_id, workspace=workspace, mode=resolved_mode)
         thread_id = threading.get_ident()
-        with self._lock:
-            self._cleanup_idle_sessions()
-            session = self._sessions.get(key)
-            if session is not None and int(getattr(session, "owner_thread_id", 0) or 0) != thread_id:
-                try:
-                    session.close()
-                finally:
-                    self._sessions.pop(key, None)
-                session = None
-            if session is None:
-                if resolved_mode == "cdp":
-                    if not self._cdp_enabled:
-                        raise RuntimeError("cdp_disabled")
-                    if not self._cdp_endpoint:
-                        raise RuntimeError("cdp_endpoint_unconfigured")
-                    session = self._create_cdp_session(
-                        user_id=user_id,
-                        workspace=workspace,
-                        endpoint=self._cdp_endpoint,
-                    )
-                else:
-                    session = self._create_managed_session(user_id=user_id, workspace=workspace)
-                self._sessions[key] = session
-            session.touch()
-            return session
+        while True:
+            with self._lock:
+                self._cleanup_idle_sessions()
+                session = self._sessions.get(key)
+                if session is not None and int(getattr(session, "owner_thread_id", 0) or 0) != thread_id:
+                    try:
+                        session.close()
+                    finally:
+                        self._sessions.pop(key, None)
+                    session = None
+                if session is not None:
+                    session.touch()
+                    return session
+                creation_lock = self._creation_locks.get(key)
+                is_creator = False
+                if creation_lock is None:
+                    creation_lock = threading.Lock()
+                    self._creation_locks[key] = creation_lock
+                    is_creator = True
+
+            if not creation_lock:
+                continue
+            if not is_creator:
+                creation_lock.acquire()
+                creation_lock.release()
+                continue
+
+            creation_lock.acquire()
+            created_session: BrowserSession | None = None
+            try:
+                created_session = self._create_session_for_mode(
+                    user_id=user_id,
+                    workspace=workspace,
+                    mode=resolved_mode,
+                )
+                with self._lock:
+                    existing = self._sessions.get(key)
+                    if existing is not None and int(getattr(existing, "owner_thread_id", 0) or 0) != thread_id:
+                        try:
+                            existing.close()
+                        finally:
+                            self._sessions.pop(key, None)
+                        existing = None
+                    if existing is None:
+                        self._sessions[key] = created_session
+                        session_to_use = created_session
+                        created_session = None
+                    else:
+                        session_to_use = existing
+                    session_to_use.touch()
+                    if self._creation_locks.get(key) is creation_lock:
+                        self._creation_locks.pop(key, None)
+                    return session_to_use
+            finally:
+                if created_session is not None:
+                    created_session.close()
+                creation_lock.release()
+                with self._lock:
+                    if self._creation_locks.get(key) is creation_lock:
+                        self._creation_locks.pop(key, None)
 
     @staticmethod
     def _is_selector_like(target: str) -> bool:
@@ -690,14 +741,6 @@ class BrowserAutomationService:
         target = str(args.get("target") or args.get("selector") or args.get("text") or "").strip()
         value = str(args.get("value") or "").strip()
         url = str(args.get("url") or "").strip()
-        if self._is_high_risk(act, target=target, value=value, url=url) and not bool(args.get("confirm")):
-            return {
-                "ok": False,
-                "error": "confirmation_required",
-                "requires_confirmation": True,
-                "risk_level": "high",
-                "action": act,
-            }
         if act == "navigate" and self._is_sensitive_auth_domain(url) and not bool(args.get("confirm")):
             return {
                 "ok": False,
@@ -712,6 +755,14 @@ class BrowserAutomationService:
                     "使用 confirm=true 可继续受控浏览器导航；"
                     "若需要继承用户登录态，可改用 scope=external。"
                 ),
+            }
+        if self._is_high_risk(act, target=target, value=value, url=url) and not bool(args.get("confirm")):
+            return {
+                "ok": False,
+                "error": "confirmation_required",
+                "requires_confirmation": True,
+                "risk_level": "high",
+                "action": act,
             }
 
         timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)

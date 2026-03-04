@@ -99,6 +99,25 @@ def test_get_session_recreates_when_thread_changed(monkeypatch):
     assert create_calls["count"] == 1
 
 
+def test_get_session_creates_outside_global_lock(monkeypatch):
+    service = BrowserAutomationService()
+    service._sessions.clear()
+    monkeypatch.setattr(service, "_cleanup_idle_sessions", lambda: None)
+
+    lock_available = {"value": False}
+
+    def _fake_create(**kwargs):
+        lock_available["value"] = bool(service._lock.acquire(blocking=False))
+        if lock_available["value"]:
+            service._lock.release()
+        return _FakeSession(owner_thread_id=threading.get_ident())
+
+    monkeypatch.setattr(service, "_create_managed_session", _fake_create)
+    out = service._get_session(user_id=1, workspace="default", mode="managed")
+    assert out is not None
+    assert lock_available["value"] is True
+
+
 def test_snapshot_page_marks_blank_scope():
     service = BrowserAutomationService()
     page = _FakePage()
@@ -182,6 +201,20 @@ def test_use_navigate_requires_domain_confirmation():
         workspace="default",
         action="navigate",
         args={"url": "https://github.com", "confirm": False},
+        scope="managed",
+    )
+    assert out["ok"] is False
+    assert out["error"] == "auth_permission_required"
+    assert out["fallback_scope"] == "external"
+
+
+def test_use_sensitive_domain_auth_guard_takes_precedence_over_high_risk_keyword():
+    service = BrowserAutomationService()
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://github.com/settings/delete_token", "confirm": False},
         scope="managed",
     )
     assert out["ok"] is False

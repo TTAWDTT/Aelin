@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from app.services.aelin_loop_actions import build_actions as _build_actions_from_runs
+from app.services.aelin_loop_logging import safe_preview
 from app.services.aelin_loop_message import build_initial_messages, extract_message_text
 from app.services.aelin_loop_round import request_round_response
 from app.services.aelin_loop_tools import (
@@ -25,13 +26,6 @@ from app.services.llm import LLMService
 
 _LOG = logging.getLogger(__name__)
 _SERIAL_READ_TOOLS = {"browser_state_get", "browser_session_list"}
-
-
-def _safe_preview(text: str, *, limit: int = 180) -> str:
-    compact = " ".join(str(text or "").split())
-    if len(compact) <= limit:
-        return compact
-    return f"{compact[:limit]}...(len={len(compact)})"
 
 
 def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResult:
@@ -102,7 +96,7 @@ class AelinAgentLoop:
             self._max_rounds,
             len(history_turns or []),
             len(images or []),
-            _safe_preview(query),
+            safe_preview(query),
         )
         messages = build_initial_messages(
             query=query,
@@ -163,7 +157,7 @@ class AelinAgentLoop:
                     "agent_loop round_final_answer round=%s stop=%s text=%s",
                     round_index,
                     stop_reason,
-                    _safe_preview(answer),
+                    safe_preview(answer),
                 )
                 trace_steps.append(
                     AgentLoopTraceStep(
@@ -336,7 +330,7 @@ class AelinAgentLoop:
             rounds,
             usage.total_calls,
             usage.write_calls,
-            _safe_preview(answer),
+            safe_preview(answer),
         )
         return AelinAgentLoopResult(
             ok=bool(answer),
@@ -372,7 +366,7 @@ class AelinAgentLoop:
             message = getattr(choice, "message", None) if choice else None
             text_out = extract_message_text(getattr(message, "content", ""))
             if text_out:
-                _LOG.info("agent_loop final_answer_response text=%s", _safe_preview(text_out))
+                _LOG.info("agent_loop final_answer_response text=%s", safe_preview(text_out))
                 return text_out
         except Exception as exc:
             _LOG.warning("agent_loop final_answer_failed error=%s", str(exc)[:200])

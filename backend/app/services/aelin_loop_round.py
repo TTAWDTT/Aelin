@@ -3,18 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.services.aelin_loop_logging import safe_preview
 from app.services.aelin_loop_message import is_multimodal_unsupported_error, strip_images_from_messages
 from app.services.aelin_loop_types import AgentLoopTraceStep
 from app.services.llm import LLMService
 
 _LOG = logging.getLogger(__name__)
-
-
-def _safe_preview(text: str, *, limit: int = 180) -> str:
-    compact = " ".join(str(text or "").split())
-    if len(compact) <= limit:
-        return compact
-    return f"{compact[:limit]}...(len={len(compact)})"
 
 
 def _extract_text_content(content: Any) -> str:
@@ -66,7 +60,7 @@ def _log_llm_response(*, round_index: int, response: Any) -> None:
         finish_reason or "-",
         len(raw_tool_calls),
         ",".join(tool_names) or "-",
-        _safe_preview(text_out),
+        safe_preview(text_out),
     )
 
 
