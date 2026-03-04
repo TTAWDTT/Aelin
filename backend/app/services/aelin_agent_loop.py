@@ -8,9 +8,8 @@ from typing import Any
 
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin_tools import AelinToolHub
+from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
 from app.services.llm import LLMService
-
-_MAX_IMAGE_DATA_URL_LENGTH = 3_000_000
 
 
 def _now_ms() -> int:
@@ -184,21 +183,16 @@ class AelinAgentLoop:
                 if role in {"user", "assistant"} and content:
                     messages.append({"role": role, "content": content[:3000]})
         query_text = str(query or "").strip()[:1200]
-        normalized_images: list[dict[str, str]] = []
+        normalized_images: list[str] = []
         for item in list(images or [])[:4]:
             if not isinstance(item, dict):
                 continue
             data_url = str(item.get("data_url") or "").strip()
             if not data_url.startswith("data:image/") or ";base64," not in data_url:
                 continue
-            if len(data_url) > _MAX_IMAGE_DATA_URL_LENGTH:
+            if len(data_url) > MAX_IMAGE_DATA_URL_LENGTH:
                 continue
-            normalized_images.append(
-                {
-                    "data_url": data_url,
-                    "name": str(item.get("name") or "").strip()[:120],
-                }
-            )
+            normalized_images.append(data_url)
         if normalized_images:
             user_content: list[dict[str, Any]] = [
                 {
@@ -206,8 +200,8 @@ class AelinAgentLoop:
                     "text": query_text or "请先分析我上传的图片，再继续执行工具流程。",
                 }
             ]
-            for img in normalized_images:
-                user_content.append({"type": "image_url", "image_url": {"url": img["data_url"]}})
+            for data_url in normalized_images:
+                user_content.append({"type": "image_url", "image_url": {"url": data_url}})
             messages.append({"role": "user", "content": user_content})
         else:
             messages.append({"role": "user", "content": query_text})
