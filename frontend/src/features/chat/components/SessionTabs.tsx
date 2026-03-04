@@ -30,19 +30,24 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
   const renderSessionItems = (truncateTitle: boolean) => (
     <>
       {sessions.map((session) => (
-        <button
+        <div
           key={session.id}
-          ref={session.id === activeSessionId ? activeTabRef : null}
-          onClick={() => switchSession(session.id)}
           className={cn(
             'group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
             session.id === activeSessionId
               ? 'bg-[var(--color-panel-alt)] text-[var(--color-text)]'
               : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
           )}
-          title={session.title}
         >
-          <span className={cn(truncateTitle ? 'max-w-[120px] truncate' : 'max-w-none')}>{session.title}</span>
+          <button
+            type="button"
+            ref={session.id === activeSessionId ? activeTabRef : null}
+            onClick={() => switchSession(session.id)}
+            className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}
+            title={session.title}
+          >
+            {session.title}
+          </button>
           {sessions.length > 1 && (
             <button
               type="button"
@@ -50,14 +55,14 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
                 event.stopPropagation()
                 deleteSession(session.id)
               }}
-              className="opacity-0 transition-opacity group-hover:opacity-60 hover:opacity-100"
+              className="shrink-0 opacity-0 transition-opacity group-hover:opacity-60 group-focus-within:opacity-60 hover:opacity-100"
               aria-label={`删除会话：${session.title}`}
               title="删除会话"
             >
               <X size={12} />
             </button>
           )}
-        </button>
+        </div>
       ))}
     </>
   )

@@ -30,7 +30,7 @@ export function PageScaffold({
         {headerActions && (
           <div
             className={cn(
-              headerActionsFullWidth ? 'min-w-0 w-full overflow-visible' : 'min-w-0 w-full overflow-hidden sm:w-auto sm:max-w-full'
+              headerActionsFullWidth ? 'min-w-0 w-full overflow-visible' : 'min-w-0 w-full sm:w-auto sm:max-w-full'
             )}
           >
             {headerActions}
