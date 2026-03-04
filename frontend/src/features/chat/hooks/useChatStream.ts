@@ -3,6 +3,7 @@ import { useChatStore, type ChatMessage } from '../stores/chatStore'
 import { streamChat } from '@/shared/api/sse'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinChatRequest, AelinToolStep } from '@/shared/api/types'
+import { MAX_PENDING_ATTACHMENTS } from '../constants'
 
 const MAX_IMAGE_ATTACHMENTS = 4
 const MAX_TEXT_ATTACHMENT_SIZE = 256 * 1024
@@ -179,7 +180,7 @@ export function useChatStream() {
 
   const attachAndSend = useCallback(async (files: File[], textHint = '') => {
     if (store.isStreaming) return
-    const picked = Array.from(files || []).slice(0, 10)
+    const picked = Array.from(files || []).slice(0, MAX_PENDING_ATTACHMENTS)
     if (picked.length === 0) return
 
     store.setStatusText('正在处理附件…')

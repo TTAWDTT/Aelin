@@ -1,6 +1,8 @@
 ﻿import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import { Send, Square, Camera, Loader2, Paperclip } from 'lucide-react'
+import { Send, Square, Camera, Loader2, Paperclip, X } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
+import { MAX_PENDING_ATTACHMENTS } from '../constants'
 
 interface Props {
   onSend: (text: string) => void
@@ -22,26 +24,44 @@ export function ComposerBar({
   placeholder = '输入消息…',
 }: Props) {
   const [text, setText] = useState('')
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [isCapturing, setIsCapturing] = useState(false)
   const [isAttaching, setIsAttaching] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    if (isAttaching || isCapturing) return
     if (isStreaming) { onStop(); return }
-    if (!text.trim()) return
-    onSend(text.trim())
+    const textHint = text.trim()
+    if (!textHint && pendingFiles.length === 0) return
+
+    if (pendingFiles.length > 0) {
+      setIsAttaching(true)
+      try {
+        await onAttachAndSend(pendingFiles, textHint)
+        setPendingFiles([])
+        setText('')
+      } catch {
+        return
+      } finally {
+        setIsAttaching(false)
+      }
+      return
+    }
+
+    onSend(textHint)
     setText('')
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      handleSubmit()
+      void handleSubmit()
     }
   }
 
   const handleCapture = async () => {
-    if (isStreaming || isCapturing) return
+    if (isStreaming || isCapturing || isAttaching || pendingFiles.length > 0) return
     setIsCapturing(true)
     try {
       await onCaptureAndSend(text.trim())
@@ -51,25 +71,32 @@ export function ComposerBar({
     }
   }
 
-  const handleAttachmentChange = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleAttachmentChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (files.length === 0 || isStreaming || isAttaching) return
-    setIsAttaching(true)
-    try {
-      await onAttachAndSend(files, text.trim())
-      setText('')
-    } finally {
-      setIsAttaching(false)
+    if (files.length === 0 || isStreaming || isAttaching || isCapturing) return
+    const availableSlots = MAX_PENDING_ATTACHMENTS - pendingFiles.length
+    if (availableSlots <= 0) {
+      toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`)
+      return
     }
+    if (files.length > availableSlots) {
+      toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件，已忽略 ${files.length - availableSlots} 个`)
+    }
+    setPendingFiles([...pendingFiles, ...files.slice(0, availableSlots)])
   }
 
   const openAttachmentPicker = () => {
-    if (isStreaming || isAttaching) return
+    if (isStreaming || isAttaching || isCapturing) return
+    if (pendingFiles.length >= MAX_PENDING_ATTACHMENTS) return
     fileInputRef.current?.click()
   }
 
-  const canSend = !!text.trim()
+  const removePendingFile = (indexToRemove: number) => {
+    setPendingFiles((prev) => prev.filter((_, index) => index !== indexToRemove))
+  }
+
+  const canSend = !!text.trim() || pendingFiles.length > 0
 
   return (
     <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
@@ -81,26 +108,65 @@ export function ComposerBar({
             multiple
             className="hidden"
             accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
-            onChange={(e) => { void handleAttachmentChange(e) }}
+            onChange={handleAttachmentChange}
           />
+
+          {pendingFiles.length > 0 && (
+            <div className={cn('mb-2.5 flex flex-wrap items-center gap-1.5 max-[500px]:mb-2', isAttaching && 'pointer-events-none opacity-70')}>
+              {pendingFiles.map((file, index) => (
+                <span
+                  key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1 text-[11px] text-[var(--color-text)]"
+                  title={file.name}
+                >
+                  <Paperclip size={11} className="shrink-0 text-[var(--color-text-muted)]" />
+                  <span className="max-w-[220px] truncate">{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => removePendingFile(index)}
+                    disabled={isAttaching}
+                    className="rounded-full p-0.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
+                    aria-label={`移除附件 ${file.name}`}
+                    title="移除附件"
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           <div className="flex min-w-0 items-center gap-2 max-[500px]:gap-1">
             <button
+              type="button"
               onClick={openAttachmentPicker}
-              title={isAttaching ? '正在处理附件' : '上传附件'}
-              disabled={isStreaming || isAttaching}
+              title={
+                pendingFiles.length >= MAX_PENDING_ATTACHMENTS
+                  ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                  : isAttaching
+                    ? '正在处理附件'
+                    : '上传附件'
+              }
+              disabled={isStreaming || isAttaching || isCapturing || pendingFiles.length >= MAX_PENDING_ATTACHMENTS}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
-              aria-label={isAttaching ? '正在处理附件' : '上传附件'}
+              aria-label={
+                pendingFiles.length >= MAX_PENDING_ATTACHMENTS
+                  ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                  : isAttaching
+                    ? '正在处理附件'
+                    : '上传附件'
+              }
             >
               {isAttaching ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Paperclip size={compact ? 16 : 17} />}
             </button>
 
             <button
+              type="button"
               onClick={() => void handleCapture()}
-              title={isCapturing ? '正在截图' : '截图并发送'}
-              disabled={isStreaming || isCapturing}
+              title={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
+              disabled={isStreaming || isCapturing || isAttaching || pendingFiles.length > 0}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
-              aria-label={isCapturing ? '正在截图' : '截图并发送'}
+              aria-label={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
             >
               {isCapturing ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Camera size={compact ? 16 : 17} />}
             </button>
@@ -110,14 +176,16 @@ export function ComposerBar({
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={handleKeyDown}
+              disabled={isAttaching}
               placeholder={placeholder}
               className={`min-w-0 flex-1 border-none bg-transparent px-1 outline-none placeholder:text-[var(--color-text-muted)] ${compact ? 'h-8 text-[13px] max-[500px]:text-[12px]' : 'h-9 text-[14px]'}`}
               style={{ fontFamily: 'var(--font-body)' }}
             />
 
             <button
-              onClick={handleSubmit}
-              disabled={!isStreaming && (!canSend || isCapturing || isAttaching)}
+              type="button"
+              onClick={() => void handleSubmit()}
+              disabled={isCapturing || isAttaching || (!isStreaming && !canSend)}
               className={cn(
                 `flex shrink-0 items-center justify-center rounded-[10px] transition-all active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`,
                 isStreaming

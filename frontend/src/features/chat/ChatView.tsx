@@ -46,6 +46,7 @@ export function ChatView() {
     } catch (error: any) {
       const message = String(error?.message || '附件处理失败，请稍后重试')
       toast.error(message)
+      throw error
     }
   }
 
