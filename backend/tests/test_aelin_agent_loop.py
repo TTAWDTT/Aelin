@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.services.aelin_agent_loop import AelinAgentLoop
-from app.services.aelin_loop_tools import _serialize_tool_message_content
+from app.services.aelin_loop_tools import _sanitize_for_log, _sanitize_tool_args_for_log, _serialize_tool_message_content
 from app.services.aelin_tool_policy import AelinToolPolicy
 
 
@@ -361,3 +361,39 @@ def test_serialize_tool_message_content_keeps_valid_json_when_truncated():
     assert isinstance(parsed, dict)
     assert parsed.get("truncated") is True
     assert int(parsed.get("original_length") or 0) > 8000
+
+
+def test_sanitize_for_log_redacts_sensitive_keys():
+    payload = {
+        "value": "super-secret-password",
+        "password": "p@ss",
+        "headers": {"Authorization": "Bearer abc", "X-Api-Key": "xyz"},
+        "normal": "hello",
+    }
+    safe = _sanitize_for_log(payload)
+    assert isinstance(safe, dict)
+    assert str(safe.get("value") or "").startswith("<redacted")
+    assert str(safe.get("password") or "").startswith("<redacted")
+    headers = safe.get("headers")
+    assert isinstance(headers, dict)
+    assert str(headers.get("Authorization") or "").startswith("<redacted")
+    assert str(headers.get("X-Api-Key") or "").startswith("<redacted")
+    assert safe.get("normal") == "hello"
+
+
+def test_sanitize_tool_args_for_log_masks_browser_type_inputs():
+    raw_args = {
+        "action": "type",
+        "scope": "managed",
+        "strategy": "selector",
+        "target": "#password",
+        "value": "my-secret",
+        "confirm": True,
+    }
+    safe = _sanitize_tool_args_for_log("browser_use", raw_args)
+    assert isinstance(safe, dict)
+    assert safe.get("action") == "type"
+    assert safe.get("scope") == "managed"
+    assert safe.get("sensitive_args") is True
+    assert "value" not in safe
+    assert "target" not in safe

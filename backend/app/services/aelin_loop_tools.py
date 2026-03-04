@@ -17,6 +17,24 @@ from app.services.aelin_tools import AelinToolHub
 
 _LOG = logging.getLogger(__name__)
 
+_SENSITIVE_KEY_TOKENS = (
+    "value",
+    "password",
+    "passwd",
+    "passphrase",
+    "token",
+    "cookie",
+    "authorization",
+    "authheader",
+    "auth_header",
+    "secret",
+    "apikey",
+    "api_key",
+    "credential",
+    "sessionid",
+    "session_id",
+)
+
 
 def _truncate_text(value: str, *, limit: int = 180) -> str:
     text = " ".join(str(value or "").split())
@@ -27,7 +45,35 @@ def _truncate_text(value: str, *, limit: int = 180) -> str:
     return f"{text[:limit]}...(len={len(text)})"
 
 
-def _sanitize_for_log(value: Any) -> Any:
+def _normalized_key(key: str) -> str:
+    return "".join(ch for ch in str(key or "").strip().lower() if ch.isalnum() or ch == "_")
+
+
+def _is_sensitive_key(key: str) -> bool:
+    norm = _normalized_key(key)
+    if not norm:
+        return False
+    if norm in _SENSITIVE_KEY_TOKENS:
+        return True
+    return any(
+        token in norm
+        for token in ("password", "token", "secret", "cookie", "auth", "credential", "apikey", "api_key")
+    )
+
+
+def _redacted_marker(value: Any) -> str:
+    if isinstance(value, str):
+        return f"<redacted len={len(value)}>"
+    if isinstance(value, list):
+        return f"<redacted list len={len(value)}>"
+    if isinstance(value, dict):
+        return f"<redacted object keys={len(value)}>"
+    return "<redacted>"
+
+
+def _sanitize_for_log(value: Any, *, key_hint: str = "") -> Any:
+    if key_hint and _is_sensitive_key(key_hint):
+        return _redacted_marker(value)
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
@@ -44,9 +90,23 @@ def _sanitize_for_log(value: Any) -> Any:
                 out["..."] = "truncated"
                 break
             key = str(raw_key or "")[:64]
-            out[key] = _sanitize_for_log(raw_val)
+            out[key] = _sanitize_for_log(raw_val, key_hint=key)
         return out
     return _truncate_text(str(value))
+
+
+def _sanitize_tool_args_for_log(tool_name: str, args: dict[str, Any]) -> Any:
+    safe_tool = str(tool_name or "").strip().lower()
+    action = str(args.get("action") or "").strip().lower()
+    if safe_tool == "browser_use" and action == "type":
+        return {
+            "action": action,
+            "scope": _sanitize_for_log(args.get("scope")),
+            "strategy": _sanitize_for_log(args.get("strategy")),
+            "confirm": bool(args.get("confirm", False)),
+            "sensitive_args": True,
+        }
+    return _sanitize_for_log(args)
 
 
 def _dump_log_json(payload: Any) -> str:
@@ -149,7 +209,7 @@ def execute_tool_call(
     _LOG.info(
         "agent_loop tool_call_start tool=%s args=%s",
         safe_tool_name,
-        _dump_log_json(_sanitize_for_log(args)),
+        _dump_log_json(_sanitize_tool_args_for_log(safe_tool_name, args)),
     )
     started = time.perf_counter()
     try:
