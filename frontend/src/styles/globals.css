@@ -139,17 +139,6 @@ code, pre, .font-mono {
   animation: aelin-page-enter 180ms ease-out both;
 }
 
-@media (max-width: 820px) {
-  .aelin-page-header[data-header-actions-full-width='true'] {
-    flex-wrap: wrap;
-    align-items: flex-start;
-  }
-
-  .aelin-page-header[data-header-actions-full-width='true'] [data-header-actions-slot='true'] {
-    width: 100%;
-  }
-}
-
 .aelin-card {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);

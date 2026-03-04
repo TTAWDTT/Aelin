@@ -10,7 +10,7 @@ interface SessionTabsProps {
 
 export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
   const { sessions, activeSessionId, switchSession, createSession, deleteSession } = useChatStore()
-  const activeTabRef = useRef<HTMLDivElement | null>(null)
+  const activeTabRef = useRef<HTMLButtonElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const prefersReducedMotion =
     typeof window !== 'undefined' &&
@@ -38,26 +38,24 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
       {sessions.map((session) => (
         <div
           key={session.id}
-          ref={session.id === activeSessionId ? activeTabRef : null}
-          role="button"
-          tabIndex={0}
-          onClick={() => switchSession(session.id)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              switchSession(session.id)
-            }
-          }}
-          className={cn(
-            'group flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
-            session.id === activeSessionId
-              ? 'bg-[var(--color-panel-alt)] text-[var(--color-text)]'
-              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
-          )}
-          aria-label={`切换会话：${session.title}`}
-          title={session.title}
+          className="group relative shrink-0"
         >
-          <span className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}>{session.title}</span>
+          <button
+            type="button"
+            ref={session.id === activeSessionId ? activeTabRef : null}
+            onClick={() => switchSession(session.id)}
+            className={cn(
+              'flex items-center whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
+              sessions.length > 1 && 'pr-7',
+              session.id === activeSessionId
+                ? 'bg-[var(--color-panel-alt)] text-[var(--color-text)]'
+                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
+            )}
+            aria-label={`切换会话：${session.title}`}
+            title={session.title}
+          >
+            <span className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}>{session.title}</span>
+          </button>
           {sessions.length > 1 && (
             <button
               type="button"
@@ -65,7 +63,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
                 event.stopPropagation()
                 deleteSession(session.id)
               }}
-              className="shrink-0 opacity-0 transition-opacity group-hover:opacity-60 group-focus-within:opacity-60 hover:opacity-100"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 opacity-0 transition-opacity group-hover:opacity-60 group-focus-within:opacity-60 hover:opacity-100"
               aria-label={`删除会话：${session.title}`}
               title="删除会话"
             >

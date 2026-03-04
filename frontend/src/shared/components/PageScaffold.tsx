@@ -34,7 +34,9 @@ export function PageScaffold({
           <div
             data-header-actions-slot="true"
             className={cn(
-              headerActionsFullWidth ? 'min-w-0 w-full overflow-visible' : 'min-w-0 w-full sm:w-auto sm:max-w-full'
+              headerActionsFullWidth
+                ? 'min-w-0 w-full overflow-visible'
+                : 'min-w-0 w-full sm:w-auto sm:max-w-full sm:shrink-0'
             )}
           >
             {headerActions}
