@@ -414,6 +414,75 @@ def _flush_pending_reads(
     return successful_calls
 
 
+def _request_round_response(
+    *,
+    client: Any,
+    service: LLMService,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    round_timeout_seconds: float,
+    round_index: int,
+    trace_steps: list["AgentLoopTraceStep"],
+    retried_without_images: bool,
+) -> tuple[Any | None, bool, str]:
+    try:
+        response = client.chat.completions.create(
+            model=service.config.model,
+            messages=messages,
+            temperature=service.config.temperature,
+            max_tokens=420,
+            tools=tools,
+            tool_choice="auto",
+            timeout=round_timeout_seconds,
+        )
+        return response, retried_without_images, ""
+    except Exception as exc:
+        can_retry_without_images = bool(
+            (not retried_without_images)
+            and _is_multimodal_unsupported_error(exc)
+            and _strip_images_from_messages(messages)
+        )
+        if can_retry_without_images:
+            trace_steps.append(
+                AgentLoopTraceStep(
+                    stage="agent_loop_round",
+                    status="running",
+                    detail=f"round={round_index}; retry_without_images",
+                    count=0,
+                )
+            )
+            try:
+                response = client.chat.completions.create(
+                    model=service.config.model,
+                    messages=messages,
+                    temperature=service.config.temperature,
+                    max_tokens=420,
+                    tools=tools,
+                    tool_choice="auto",
+                    timeout=round_timeout_seconds,
+                )
+                return response, True, ""
+            except Exception as retry_exc:
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_round",
+                        status="failed",
+                        detail=f"round={round_index}; llm_error={str(retry_exc)[:160]}",
+                        count=0,
+                    )
+                )
+                return None, True, "llm_error"
+        trace_steps.append(
+            AgentLoopTraceStep(
+                stage="agent_loop_round",
+                status="failed",
+                detail=f"round={round_index}; llm_error={str(exc)[:160]}",
+                count=0,
+            )
+        )
+        return None, retried_without_images, "llm_error"
+
+
 def _failed_loop_result(*, stop_reason: str, detail: str) -> "AelinAgentLoopResult":
     return AelinAgentLoopResult(
         ok=False,
@@ -541,64 +610,22 @@ class AelinAgentLoop:
             rounds = round_index
             usage.round_calls = 0
             trace_steps.append(AgentLoopTraceStep(stage="agent_loop_round", status="running", detail=f"round={round_index}", count=0))
-            try:
-                response = client.chat.completions.create(
-                    model=self._service.config.model,
-                    messages=messages,
-                    temperature=self._service.config.temperature,
-                    max_tokens=420,
-                    tools=tools,
-                    tool_choice="auto",
-                    timeout=self._round_timeout_seconds,
-                )
-            except Exception as exc:
-                can_retry_without_images = bool(
-                    (not retried_without_images)
-                    and _is_multimodal_unsupported_error(exc)
-                    and _strip_images_from_messages(messages)
-                )
-                if can_retry_without_images:
-                    retried_without_images = True
-                    trace_steps.append(
-                        AgentLoopTraceStep(
-                            stage="agent_loop_round",
-                            status="running",
-                            detail=f"round={round_index}; retry_without_images",
-                            count=0,
-                        )
-                    )
-                    try:
-                        response = client.chat.completions.create(
-                            model=self._service.config.model,
-                            messages=messages,
-                            temperature=self._service.config.temperature,
-                            max_tokens=420,
-                            tools=tools,
-                            tool_choice="auto",
-                            timeout=self._round_timeout_seconds,
-                        )
-                    except Exception as retry_exc:
-                        stop_reason = "llm_error"
-                        trace_steps.append(
-                            AgentLoopTraceStep(
-                                stage="agent_loop_round",
-                                status="failed",
-                                detail=f"round={round_index}; llm_error={str(retry_exc)[:160]}",
-                                count=0,
-                            )
-                        )
-                        break
-                else:
-                    stop_reason = "llm_error"
-                    trace_steps.append(
-                        AgentLoopTraceStep(
-                            stage="agent_loop_round",
-                            status="failed",
-                            detail=f"round={round_index}; llm_error={str(exc)[:160]}",
-                            count=0,
-                        )
-                    )
-                    break
+            response, retried_without_images, llm_error_reason = _request_round_response(
+                client=client,
+                service=self._service,
+                messages=messages,
+                tools=tools,
+                round_timeout_seconds=self._round_timeout_seconds,
+                round_index=round_index,
+                trace_steps=trace_steps,
+                retried_without_images=retried_without_images,
+            )
+            if llm_error_reason:
+                stop_reason = llm_error_reason
+                break
+            if response is None:
+                stop_reason = "llm_error"
+                break
 
             choice = response.choices[0] if getattr(response, "choices", None) else None
             message = getattr(choice, "message", None) if choice else None
