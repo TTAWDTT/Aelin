@@ -659,6 +659,15 @@ class AelinDeviceScreenCaptureResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinDeviceScreenCaptureRequest(BaseModel):
+    mode: str = Field(default="fullscreen", min_length=1, max_length=32)
+    display_id: str = Field(default="", max_length=64)
+    max_edge: int = Field(default=1280, ge=640, le=4096)
+    image_format: str = Field(default="jpeg", min_length=3, max_length=8)
+    quality: int = Field(default=72, ge=35, le=95)
+    selection_timeout_ms: int = Field(default=45000, ge=5000, le=180000)
+
+
 class AgentCardLayoutItem(BaseModel):
     contact_id: int
     display_name: str = Field(min_length=1, max_length=255)

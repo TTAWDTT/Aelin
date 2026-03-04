@@ -199,6 +199,9 @@ export interface AelinDeviceScreenCaptureResponse {
   captured_at: string
   generated_at: string
 }
+export interface AelinDeviceScreenCaptureRequest {
+  mode?: 'fullscreen' | 'region'
+}
 export interface AelinDeviceModeApplyResponse {
   mode: string; status: string; summary: string
   steps: string[]; warnings: string[]; generated_at: string

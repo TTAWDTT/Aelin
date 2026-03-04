@@ -1,12 +1,13 @@
 ﻿import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import { Send, Square, Camera, Loader2, Paperclip, X } from 'lucide-react'
+import { Send, Square, Camera, Loader2, Paperclip, X, Crop, Monitor } from 'lucide-react'
+import { useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 
 interface Props {
   onSend: (text: string) => void
-  onCaptureAndSend: (textHint: string) => Promise<void>
+  onCaptureAndSend: (mode: 'fullscreen' | 'region', textHint: string) => Promise<void>
   onAttachAndSend: (files: File[], textHint: string) => Promise<void>
   onStop: () => void
   isStreaming: boolean
@@ -27,7 +28,27 @@ export function ComposerBar({
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [isCapturing, setIsCapturing] = useState(false)
   const [isAttaching, setIsAttaching] = useState(false)
+  const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const captureMenuRef = useRef<HTMLDivElement | null>(null)
+  const captureDisabled = isStreaming || isCapturing || isAttaching || pendingFiles.length > 0
+
+  useEffect(() => {
+    if (!captureMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const targetNode = event.target as Node | null
+      if (targetNode && captureMenuRef.current?.contains(targetNode)) return
+      setCaptureMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [captureMenuOpen])
+
+  useEffect(() => {
+    if (captureDisabled) {
+      setCaptureMenuOpen(false)
+    }
+  }, [captureDisabled])
 
   const handleSubmit = async () => {
     if (isAttaching || isCapturing) return
@@ -60,15 +81,21 @@ export function ComposerBar({
     }
   }
 
-  const handleCapture = async () => {
-    if (isStreaming || isCapturing || isAttaching || pendingFiles.length > 0) return
+  const handleCapture = async (mode: 'fullscreen' | 'region') => {
+    if (captureDisabled) return
+    setCaptureMenuOpen(false)
     setIsCapturing(true)
     try {
-      await onCaptureAndSend(text.trim())
+      await onCaptureAndSend(mode, text.trim())
       setText('')
     } finally {
       setIsCapturing(false)
     }
+  }
+
+  const openCaptureMenu = () => {
+    if (captureDisabled) return
+    setCaptureMenuOpen((prev) => !prev)
   }
 
   const handleAttachmentChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -160,16 +187,39 @@ export function ComposerBar({
               {isAttaching ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Paperclip size={compact ? 16 : 17} />}
             </button>
 
-            <button
-              type="button"
-              onClick={() => void handleCapture()}
-              title={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
-              disabled={isStreaming || isCapturing || isAttaching || pendingFiles.length > 0}
-              className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
-              aria-label={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
-            >
-              {isCapturing ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Camera size={compact ? 16 : 17} />}
-            </button>
+            <div ref={captureMenuRef} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={openCaptureMenu}
+                title={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
+                disabled={captureDisabled}
+                className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
+                aria-label={pendingFiles.length > 0 ? '请先发送待处理附件' : isCapturing ? '正在截图' : '截图并发送'}
+              >
+                {isCapturing ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Camera size={compact ? 16 : 17} />}
+              </button>
+
+              {captureMenuOpen && (
+                <div className="absolute bottom-[calc(100%+8px)] left-0 z-30 flex min-w-[172px] flex-col gap-1 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-panel)] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.18)]">
+                  <button
+                    type="button"
+                    onClick={() => void handleCapture('fullscreen')}
+                    className="flex items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent-soft)]"
+                  >
+                    <Monitor size={14} className="shrink-0 text-[var(--color-text-muted)]" />
+                    <span>全屏截图</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCapture('region')}
+                    className="flex items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent-soft)]"
+                  >
+                    <Crop size={14} className="shrink-0 text-[var(--color-text-muted)]" />
+                    <span>自定义截图</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             <input
               type="text"

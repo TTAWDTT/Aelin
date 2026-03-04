@@ -56,16 +56,28 @@ def capture_device_screen(
     max_edge: int = 1280,
     image_format: str = "jpeg",
     quality: int = 72,
+    mode: str = "fullscreen",
+    selection_timeout_ms: int = 45_000,
 ) -> dict[str, Any]:
     base_url = str(getattr(settings, "desktop_plugin_base_url", "") or "").strip().rstrip("/")
     if not base_url:
         raise DeviceScreenCaptureError(status_code=503, detail="desktop_plugin_unconfigured")
 
     timeout_s = max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0))
+    mode_clean = str(mode or "fullscreen").strip().lower()
+    if mode_clean not in {"fullscreen", "region"}:
+        mode_clean = "fullscreen"
+    selection_timeout_clean = max(5_000, min(180_000, int(selection_timeout_ms or 45_000)))
+    if mode_clean == "region":
+        timeout_s = max(timeout_s, (selection_timeout_clean / 1000.0) + 8.0)
     payload: dict[str, Any] = {
         "max_edge": max(640, min(4096, int(max_edge or 1280))),
         "format": "png" if str(image_format or "").strip().lower() == "png" else "jpeg",
+        "mode": mode_clean,
+        "exclude_aelin_windows": mode_clean == "fullscreen",
     }
+    if mode_clean == "region":
+        payload["selection_timeout_ms"] = selection_timeout_clean
     if payload["format"] == "jpeg":
         payload["quality"] = max(35, min(95, int(quality or 72)))
     display_clean = str(display_id or "").strip()[:64]

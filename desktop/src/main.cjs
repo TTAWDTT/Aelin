@@ -1,4 +1,5 @@
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer, clipboard } = require("electron");
+const crypto = require("crypto");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const fs = require("fs");
@@ -455,12 +456,85 @@ function buildPetPluginStateSnapshot(forceRefresh = false) {
   };
 }
 
-function clampNumber(value, fallback, min, max) {
+function clampCaptureNumber(value, fallback, min, max) {
   const parsed = Number(value);
   const base = Number.isFinite(parsed) ? parsed : Number(fallback);
   const floor = Number.isFinite(Number(min)) ? Number(min) : Number.NEGATIVE_INFINITY;
   const ceil = Number.isFinite(Number(max)) ? Number(max) : Number.POSITIVE_INFINITY;
   return Math.max(floor, Math.min(ceil, base));
+}
+
+function waitMs(ms) {
+  const delay = Math.max(0, Math.floor(Number(ms || 0)));
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+function normalizeCaptureMode(raw) {
+  const mode = String(raw || "").trim().toLowerCase();
+  if (mode === "region" || mode === "custom" || mode === "custom_region") return "region";
+  return "fullscreen";
+}
+
+function shouldExcludeAelinWindows(payload = {}, mode = "fullscreen") {
+  const raw = payload?.exclude_aelin_windows ?? payload?.excludeAelinWindows;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  if (typeof raw === "string" && raw.trim()) {
+    const normalized = raw.trim().toLowerCase();
+    if (["0", "false", "off", "no"].includes(normalized)) return false;
+    if (["1", "true", "on", "yes"].includes(normalized)) return true;
+  }
+  return mode === "fullscreen";
+}
+
+function buildCaptureEncodingOptions(payload = {}) {
+  const format = String(payload?.format || payload?.image_format || "jpeg").trim().toLowerCase() === "png"
+    ? "png"
+    : "jpeg";
+  const quality = Math.floor(clampCaptureNumber(payload?.quality, 78, 35, 95));
+  const maxEdge = Math.floor(clampCaptureNumber(payload?.max_edge || payload?.maxEdge, 1920, 640, 4096));
+  return { format, quality, maxEdge };
+}
+
+function collectAelinCaptureWindows() {
+  const windows = [];
+  for (const win of [mainWindow, petWindow]) {
+    if (!win || win.isDestroyed()) continue;
+    if (!win.isVisible()) continue;
+    windows.push(win);
+  }
+  return windows;
+}
+
+function setAelinWindowsContentProtection(windows = [], enabled = false) {
+  for (const win of windows) {
+    if (!win || win.isDestroyed()) continue;
+    if (typeof win.setContentProtection !== "function") continue;
+    try {
+      win.setContentProtection(Boolean(enabled));
+    } catch {
+      // ignore unsupported content protection calls
+    }
+  }
+}
+
+async function withAelinWindowsProtected(task) {
+  const windows = collectAelinCaptureWindows();
+  let protectedApplied = false;
+  try {
+    if (windows.length > 0) {
+      setAelinWindowsContentProtection(windows, true);
+      protectedApplied = true;
+    }
+    if (protectedApplied) {
+      await waitMs(80);
+    }
+    return await task();
+  } finally {
+    if (protectedApplied) {
+      setAelinWindowsContentProtection(windows, false);
+    }
+  }
 }
 
 function resolveCaptureDisplay(payload = {}) {
@@ -476,7 +550,120 @@ function resolveCaptureDisplay(payload = {}) {
   return screen.getPrimaryDisplay() || displays[0] || null;
 }
 
-async function captureScreenSnapshot(payload = {}) {
+function resizeImageToMaxEdge(image, maxEdge) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) return image;
+  const size = image.getSize();
+  const width = Math.max(1, Number(size?.width || 0));
+  const height = Math.max(1, Number(size?.height || 0));
+  const edge = Math.max(width, height);
+  if (edge <= maxEdge) return image;
+  const ratio = maxEdge / edge;
+  return image.resize({
+    width: Math.max(1, Math.floor(width * ratio)),
+    height: Math.max(1, Math.floor(height * ratio)),
+    quality: "good",
+  });
+}
+
+function saveCaptureImage(buffer, name) {
+  try {
+    const picturesDir = app.getPath("pictures");
+    const captureDir = path.join(picturesDir, "Aelin", "captures");
+    fs.mkdirSync(captureDir, { recursive: true });
+    const safeName = String(name || "").trim() || `screen-${Date.now()}.jpg`;
+    const savePath = path.join(captureDir, safeName);
+    fs.writeFileSync(savePath, buffer);
+    return savePath;
+  } catch {
+    return "";
+  }
+}
+
+function buildImageDigest(image) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) return "";
+  try {
+    const png = image.toPNG();
+    return crypto.createHash("sha1").update(png).digest("hex");
+  } catch {
+    return "";
+  }
+}
+
+function buildSnapshotFromImage(image, options = {}) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) {
+    throw new Error("screen_image_empty");
+  }
+  const format = options.format === "png" ? "png" : "jpeg";
+  const quality = Math.floor(clampCaptureNumber(options.quality, 78, 35, 95));
+  const mimeType = format === "png" ? "image/png" : "image/jpeg";
+  const ext = format === "png" ? "png" : "jpg";
+  const capturedAt = String(options.capturedAt || new Date().toISOString());
+  const safeStamp = capturedAt.replace(/[:.]/g, "-");
+  const fileName = `${String(options.prefix || "screen")}-${safeStamp}.${ext}`;
+  const imageBuffer = format === "png" ? image.toPNG() : image.toJPEG(quality);
+  if (!imageBuffer || !imageBuffer.length) {
+    throw new Error("screen_image_empty");
+  }
+  const size = image.getSize();
+  const savedPath = saveCaptureImage(imageBuffer, fileName);
+  return {
+    data_url: `data:${mimeType};base64,${imageBuffer.toString("base64")}`,
+    name: fileName,
+    width: Number(size?.width || 0),
+    height: Number(size?.height || 0),
+    source_display: String(options.sourceDisplay || "unknown"),
+    captured_at: capturedAt,
+    mime_type: mimeType,
+    saved_path: savedPath,
+  };
+}
+
+async function captureCustomRegionSnapshot(payload = {}) {
+  if (process.platform !== "win32") {
+    throw new Error("custom_region_capture_unsupported_platform");
+  }
+  if (!clipboard || typeof clipboard.readImage !== "function") {
+    throw new Error("clipboard_unavailable");
+  }
+  const { format, quality, maxEdge } = buildCaptureEncodingOptions(payload);
+  const timeoutMs = Math.floor(
+    clampCaptureNumber(payload?.selection_timeout_ms || payload?.selectionTimeoutMs, 45_000, 5_000, 180_000)
+  );
+  const beforeDigest = buildImageDigest(clipboard.readImage());
+
+  try {
+    const launcher = spawn("cmd.exe", ["/d", "/s", "/c", "start", "", "ms-screenclip:"], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    launcher.unref();
+  } catch (error) {
+    throw new Error(`custom_region_capture_launch_failed:${error instanceof Error ? error.message : String(error || "unknown")}`);
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const image = clipboard.readImage();
+    if (image && !image.isEmpty()) {
+      const digest = buildImageDigest(image);
+      if (digest && digest !== beforeDigest) {
+        const resized = resizeImageToMaxEdge(image, maxEdge);
+        return buildSnapshotFromImage(resized, {
+          format,
+          quality,
+          sourceDisplay: "custom-region",
+          prefix: "screen-region",
+          capturedAt: new Date().toISOString(),
+        });
+      }
+    }
+    await waitMs(160);
+  }
+  throw new Error("custom_region_capture_timeout");
+}
+
+async function captureFullScreenSnapshot(payload = {}) {
   if (!desktopCapturer || typeof desktopCapturer.getSources !== "function") {
     throw new Error("desktop_capturer_unavailable");
   }
@@ -488,7 +675,7 @@ async function captureScreenSnapshot(payload = {}) {
   const scaleFactor = Number.isFinite(Number(display.scaleFactor)) ? Number(display.scaleFactor) : 1;
   const displayWidth = Math.max(320, Math.floor(Number(display.size?.width || 1280) * scaleFactor));
   const displayHeight = Math.max(240, Math.floor(Number(display.size?.height || 720) * scaleFactor));
-  const maxEdge = Math.floor(clampNumber(payload?.max_edge || payload?.maxEdge, 1920, 640, 4096));
+  const { format, quality, maxEdge } = buildCaptureEncodingOptions(payload);
   const ratio = Math.min(1, maxEdge / Math.max(displayWidth, displayHeight));
   const thumbWidth = Math.max(320, Math.floor(displayWidth * ratio));
   const thumbHeight = Math.max(240, Math.floor(displayHeight * ratio));
@@ -511,28 +698,28 @@ async function captureScreenSnapshot(payload = {}) {
     throw new Error("screen_thumbnail_empty");
   }
 
-  const format = String(payload?.format || "jpeg").trim().toLowerCase() === "png" ? "png" : "jpeg";
-  const quality = Math.floor(clampNumber(payload?.quality, 78, 35, 95));
-  const imageBuffer = format === "png"
-    ? source.thumbnail.toPNG()
-    : source.thumbnail.toJPEG(quality);
-  if (!imageBuffer || !imageBuffer.length) {
-    throw new Error("screen_image_empty");
-  }
-  const mimeType = format === "png" ? "image/png" : "image/jpeg";
-  const size = source.thumbnail.getSize();
-  const capturedAt = new Date().toISOString();
-  const ext = format === "png" ? "png" : "jpg";
-  const safeStamp = capturedAt.replace(/[:.]/g, "-");
-  return {
-    data_url: `data:${mimeType};base64,${imageBuffer.toString("base64")}`,
-    name: `screen-${safeStamp}.${ext}`,
-    width: Number(size?.width || thumbWidth),
-    height: Number(size?.height || thumbHeight),
-    source_display: String(source.display_id || targetDisplayId || "unknown"),
-    captured_at: capturedAt,
-    mime_type: mimeType,
+  return buildSnapshotFromImage(source.thumbnail, {
+    format,
+    quality,
+    sourceDisplay: String(source.display_id || targetDisplayId || "unknown"),
+    prefix: "screen-full",
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+async function captureScreenSnapshot(payload = {}) {
+  const mode = normalizeCaptureMode(payload?.mode);
+  const excludeAelinWindows = shouldExcludeAelinWindows(payload, mode);
+  const runCapture = async () => {
+    if (mode === "region") {
+      return await captureCustomRegionSnapshot(payload);
+    }
+    return await captureFullScreenSnapshot(payload);
   };
+  if (!excludeAelinWindows) {
+    return await runCapture();
+  }
+  return await withAelinWindowsProtected(runCapture);
 }
 
 function createPetPluginApiApp() {
