@@ -54,7 +54,6 @@ from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
     dispatch_aelin_chat as _dispatch_aelin_chat_service,
-    start_agent_loop_shadow as _start_agent_loop_shadow_service,
 )
 from app.services.aelin_media_pipeline import (
     build_media_ingest_answer as _build_media_ingest_answer,
@@ -5301,27 +5300,6 @@ def _aelin_chat_impl(
     return response
 
 
-def _csv_tokens(raw: str) -> set[str]:
-    out: set[str] = set()
-    for token in str(raw or "").split(","):
-        value = token.strip()
-        if value:
-            out.add(value)
-    return out
-
-
-def _csv_int_tokens(raw: str) -> set[int]:
-    out: set[int] = set()
-    for token in _csv_tokens(raw):
-        try:
-            value = int(token)
-        except Exception:
-            continue
-        if value > 0:
-            out.add(value)
-    return out
-
-
 _TRACK_CREATE_COMMAND_RE = re.compile(
     r"^(?:请|帮我|麻烦|给我)?\s*(?:创建|新建|添加|开始)?\s*(?:一个)?\s*(?:追踪|跟踪|监控|track(?:ing)?)",
     flags=re.I,
@@ -5371,35 +5349,6 @@ def _detect_forced_tracking_create(query: str) -> dict[str, str] | None:
         "source": source[:32] or "web",
         "query": text[:500],
     }
-
-
-def _agent_loop_matches_scope(user: User, workspace: str) -> bool:
-    users = _csv_int_tokens(str(getattr(settings, "aelin_agent_loop_user_whitelist_csv", "") or ""))
-    workspaces = {
-        str(_normalize_workspace(it)).lower()
-        for it in _csv_tokens(str(getattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "") or ""))
-    }
-    if not users and not workspaces:
-        return True
-
-    if int(getattr(user, "id", 0) or 0) in users:
-        return True
-    workspace_norm = str(_normalize_workspace(workspace)).lower()
-    return workspace_norm in workspaces
-
-
-def _should_use_agent_loop(user: User, workspace: str) -> bool:
-    if not bool(getattr(settings, "aelin_agent_loop_enabled", False)):
-        return False
-    return _agent_loop_matches_scope(user, workspace)
-
-
-def _should_use_agent_loop_shadow(user: User, workspace: str) -> bool:
-    if bool(getattr(settings, "aelin_agent_loop_enabled", False)):
-        return False
-    if not bool(getattr(settings, "aelin_agent_loop_shadow_enabled", False)):
-        return False
-    return _agent_loop_matches_scope(user, workspace)
 
 
 def _try_agent_loop_chat(
@@ -5594,25 +5543,6 @@ def _try_agent_loop_chat(
     )
 
 
-def _start_agent_loop_shadow(
-    payload: AelinChatRequest,
-    current_user: User,
-    *,
-    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
-    baseline_answer: str = "",
-) -> None:
-    _start_agent_loop_shadow_service(
-        payload,
-        current_user,
-        event_cb=event_cb,
-        baseline_answer=baseline_answer,
-        create_session=create_session,
-        try_agent_loop_chat=_try_agent_loop_chat,
-        logger=_log,
-        now_ms=_now_ms,
-    )
-
-
 def _dispatch_aelin_chat(
     payload: AelinChatRequest,
     db: Session,
@@ -5625,13 +5555,8 @@ def _dispatch_aelin_chat(
         db,
         current_user,
         event_cb=event_cb,
-        should_use_agent_loop=_should_use_agent_loop,
         detect_forced_tracking_create=_detect_forced_tracking_create,
         try_agent_loop_chat=_try_agent_loop_chat,
-        legacy_chat_impl=_aelin_chat_impl,
-        should_use_agent_loop_shadow=_should_use_agent_loop_shadow,
-        start_agent_loop_shadow_fn=_start_agent_loop_shadow,
-        hard_fail_enabled=bool(getattr(settings, "aelin_agent_loop_hard_fail", True)),
         pick_expression=_pick_expression,
         now_ms=_now_ms,
     )
