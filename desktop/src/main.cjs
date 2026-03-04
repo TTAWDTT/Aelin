@@ -31,7 +31,7 @@ const MAIN_ZOOM_MIN = 0.5;
 const MAIN_ZOOM_MAX = 2.0;
 const MAIN_ZOOM_STEP = 0.1;
 const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
-const PET_DEBUG_LOG_ENABLED = process.env.AELIN_PET_DEBUG !== "0";
+const PET_DEBUG_LOG_ENABLED = process.env.AELIN_PET_DEBUG === "1";
 const PET_PLUGIN_API_ENABLED = process.env.AELIN_PET_PLUGIN_API_DISABLED !== "1";
 const PET_PLUGIN_API_TOKEN = String(process.env.AELIN_PET_PLUGIN_TOKEN || "").trim();
 
@@ -2228,6 +2228,13 @@ function startBackend() {
       "http://127.0.0.1:5173",
       "http://localhost:5173",
     ].join(","),
+    MERCURYDESK_BROWSER_TOOL_HEADLESS: process.env.MERCURYDESK_BROWSER_TOOL_HEADLESS || "0",
+    MERCURYDESK_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
+      process.env.MERCURYDESK_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE || "1",
+    MERCURYDESK_BROWSER_TOOL_MODE_DEFAULT: process.env.MERCURYDESK_BROWSER_TOOL_MODE_DEFAULT || "auto",
+    MERCURYDESK_BROWSER_TOOL_CDP_ENABLED: process.env.MERCURYDESK_BROWSER_TOOL_CDP_ENABLED || "1",
+    MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT:
+      process.env.MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
   };
   const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
   if (pluginBaseUrl) {

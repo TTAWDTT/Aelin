@@ -28,9 +28,6 @@ contextBridge.exposeInMainWorld("petBridge", {
   applyLayoutSync(payload) {
     return ipcRenderer.sendSync("pet:apply-layout-sync", payload || {});
   },
-  debugLog(payload) {
-    ipcRenderer.send("pet:debug-log", payload || {});
-  },
   mediaControl(action, payload) {
     return ipcRenderer.invoke("pet:media-control", {
       action: String(action || ""),
