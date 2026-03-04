@@ -138,6 +138,30 @@ def test_browser_state_get_tool_success(monkeypatch):
     assert result["dom_digest"]["interactive_count"] == 1
 
 
+def test_browser_session_list_tool_success(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    monkeypatch.setattr(
+        aelin_tools.browser_automation_service,
+        "list_sessions",
+        lambda **kwargs: {
+            "ok": True,
+            "scope": "all",
+            "managed_sessions": [{"session_id": "bs1", "mode": "managed"}],
+            "system_processes": [{"pid": 1234, "name": "chrome.exe"}],
+            "cdp_enabled": True,
+            "cdp_endpoint": "http://127.0.0.1:9222",
+        },
+    )
+
+    result = hub.execute("browser_session_list", {"scope": "all", "max_items": 30})
+    assert result["ok"] is True
+    assert result["scope"] == "all"
+    assert len(result["managed_sessions"]) == 1
+    assert len(result["system_processes"]) == 1
+
+
 def test_browser_use_tool_confirmation_required(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)

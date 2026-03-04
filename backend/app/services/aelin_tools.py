@@ -60,6 +60,9 @@ _TOOL_KEYWORDS = (
     "click",
     "type",
     "scroll",
+    "session",
+    "标签页",
+    "浏览器进程",
 )
 
 
@@ -238,14 +241,33 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
-                    "name": "browser_state_get",
-                    "description": "读取浏览器当前页面状态（URL、标题、可交互目标、可选 a11y 摘要）。",
+                    "name": "browser_session_list",
+                    "description": "列出浏览器会话与系统浏览器进程（managed/system/all）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "scope": {"type": "string", "enum": ["managed", "system", "all"]},
+                            "max_items": {"type": "integer", "minimum": 1, "maximum": 200},
+                            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "browser_state_get",
+                    "description": "读取浏览器状态。支持 scope=auto|managed|cdp|system|all。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "system", "all"]},
                             "include_dom": {"type": "boolean"},
                             "include_a11y": {"type": "boolean"},
                             "max_targets": {"type": "integer", "minimum": 1, "maximum": 60},
+                            "max_items": {"type": "integer", "minimum": 1, "maximum": 200},
+                            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
                         },
                         "required": [],
                     },
@@ -260,6 +282,7 @@ class AelinToolHub:
                         "type": "object",
                         "properties": {
                             "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "wait"]},
+                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp"]},
                             "url": {"type": "string"},
                             "target": {"type": "string"},
                             "value": {"type": "string"},
@@ -294,6 +317,8 @@ class AelinToolHub:
             return self._tool_web_search(args)
         if tool == "screen_get":
             return self._tool_screen_get(args)
+        if tool == "browser_session_list":
+            return self._tool_browser_session_list(args)
         if tool == "browser_state_get":
             return self._tool_browser_state_get(args)
         if tool == "browser_use":
@@ -585,17 +610,39 @@ class AelinToolHub:
             captured_at=str(shot.get("captured_at") or "")[:64],
         )
 
+    def _tool_browser_session_list(self, args: dict[str, Any]) -> dict[str, Any]:
+        scope = str(args.get("scope") or "all").strip().lower()[:16]
+        max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
+        pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
+        try:
+            result = browser_automation_service.list_sessions(
+                user_id=self.user_id,
+                workspace=self.workspace,
+                scope=scope,
+                max_items=max_items,
+                pid=pid,
+            )
+        except Exception as exc:
+            return _result_error(f"browser_session_list_failed:{str(exc)[:160]}")
+        return result if isinstance(result, dict) else _result_error("browser_session_list_invalid_payload")
+
     def _tool_browser_state_get(self, args: dict[str, Any]) -> dict[str, Any]:
+        scope = str(args.get("scope") or "auto").strip().lower()[:16]
         include_dom = bool(args.get("include_dom", True))
         include_a11y = bool(args.get("include_a11y", False))
         max_targets = _safe_int(args.get("max_targets"), 30, low=1, high=60)
+        max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
+        pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
             result = browser_automation_service.state_get(
                 user_id=self.user_id,
                 workspace=self.workspace,
+                scope=scope,
                 include_dom=include_dom,
                 include_a11y=include_a11y,
                 max_targets=max_targets,
+                max_items=max_items,
+                pid=pid,
             )
         except Exception as exc:
             return _result_error(f"browser_state_get_failed:{str(exc)[:160]}")
@@ -605,6 +652,7 @@ class AelinToolHub:
         action = str(args.get("action") or "").strip().lower()
         if not action:
             return _result_error("missing action")
+        scope = str(args.get("scope") or "auto").strip().lower()[:16]
         payload = {
             "url": str(args.get("url") or "").strip()[:1000],
             "target": str(args.get("target") or "").strip()[:240],
@@ -624,6 +672,7 @@ class AelinToolHub:
                 workspace=self.workspace,
                 action=action,
                 args=payload,
+                scope=scope,
             )
         except Exception as exc:
             return _result_error(f"browser_use_failed:{str(exc)[:160]}")
@@ -683,7 +732,7 @@ def run_aelin_structured_tools(
             "role": "system",
             "content": (
                 "You are a tool planner for Aelin. "
-                "Only call tools when the user query clearly needs memory/profile/diary/tracking/device/screen operations. "
+                "Only call tools when the user query clearly needs memory/profile/diary/tracking/device/screen/browser operations. "
                 "At most call 2 tools. If no tool is needed, respond directly without tool calls."
             ),
         },
@@ -747,7 +796,7 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
                 note = f"total={result.get('total')}"
         elif name == "web_search":
             note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
-        elif name in {"diary", "profile", "context_get", "device", "screen_get", "browser_state_get", "browser_use"}:
+        elif name in {"diary", "profile", "context_get", "device", "screen_get", "browser_session_list", "browser_state_get", "browser_use"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
             elif "summary" in result:

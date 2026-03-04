@@ -224,7 +224,7 @@
     <script>
       const params = new URLSearchParams(location.search);
       let fallbackIcon = params.get("icon") || "";
-      const debugEnabled = params.get("debug") !== "0";
+      const debugEnabled = params.get("debug") === "1";
       let debugSeq = 0;
 
       const wrap = document.getElementById("petWrap");
@@ -306,11 +306,6 @@
           window.petBridge?.debugLog?.(payload);
         } catch {
           // ignore debug bridge failures
-        }
-        try {
-          console.debug(`[pet-debug][${payload.seq}] ${payload.tag}`, payload.data);
-        } catch {
-          // ignore console failures
         }
       }
 

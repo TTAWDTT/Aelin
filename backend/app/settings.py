@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     media_ingest_douyin_asr_max_audio_seconds: int = 120
     media_ingest_douyin_asr_timeout_seconds: int = 80
     browser_tool_headless: bool = True
+    browser_tool_open_external_on_navigate: bool = False
+    browser_tool_mode_default: str = "auto"  # auto | managed | cdp
+    browser_tool_cdp_enabled: bool = False
+    browser_tool_cdp_endpoint: str = "http://127.0.0.1:9222"
     browser_tool_default_timeout_ms: int = 12_000
     browser_tool_idle_ttl_seconds: int = 900
     browser_tool_profile_dir: str = "./browser_data/agent_browser"

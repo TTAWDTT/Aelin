@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -21,6 +22,16 @@ from app.services.aelin_loop_types import (
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin_tools import AelinToolHub
 from app.services.llm import LLMService
+
+_LOG = logging.getLogger(__name__)
+_SERIAL_READ_TOOLS = {"browser_state_get", "browser_session_list"}
+
+
+def _safe_preview(text: str, *, limit: int = 180) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[:limit]}...(len={len(compact)})"
 
 
 def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResult:
@@ -85,6 +96,14 @@ class AelinAgentLoop:
         if not tools:
             return _failed_loop_result(stop_reason="tool_definitions_empty", detail="tool_definitions_empty")
 
+        _LOG.info(
+            "agent_loop start provider=%s max_rounds=%s history_turns=%s images=%s query=%s",
+            self._provider,
+            self._max_rounds,
+            len(history_turns or []),
+            len(images or []),
+            _safe_preview(query),
+        )
         messages = build_initial_messages(
             query=query,
             memory_summary=memory_summary,
@@ -140,6 +159,12 @@ class AelinAgentLoop:
             if not raw_tool_calls:
                 answer = text_out
                 stop_reason = "final_answer" if answer else "empty_answer"
+                _LOG.info(
+                    "agent_loop round_final_answer round=%s stop=%s text=%s",
+                    round_index,
+                    stop_reason,
+                    _safe_preview(answer),
+                )
                 trace_steps.append(
                     AgentLoopTraceStep(
                         stage="agent_loop_round",
@@ -177,6 +202,36 @@ class AelinAgentLoop:
                 reason = str(getattr(policy, "reason", "") or "")
 
                 if allowed and (not is_write):
+                    if tool_name in _SERIAL_READ_TOOLS:
+                        successful_calls += flush_pending_reads(
+                            pending_reads=pending_reads,
+                            tool_hub=self._tool_hub,
+                            round_index=round_index,
+                            messages=messages,
+                            tool_runs=tool_runs,
+                            trace_steps=trace_steps,
+                        )
+                        status, result, error, latency_ms = execute_tool_call(
+                            tool_hub=self._tool_hub,
+                            tool_name=tool_name,
+                            args=args,
+                        )
+                        if append_tool_result(
+                            round_index=round_index,
+                            tool_name=tool_name,
+                            args=args,
+                            tc_id=tc_id,
+                            is_write=False,
+                            status=status,
+                            result=result,
+                            error=error,
+                            latency_ms=latency_ms,
+                            messages=messages,
+                            tool_runs=tool_runs,
+                            trace_steps=trace_steps,
+                        ):
+                            successful_calls += 1
+                        continue
                     pending_reads.append(planned)
                     continue
 
@@ -275,6 +330,14 @@ class AelinAgentLoop:
                 count=usage.total_calls,
             )
         )
+        _LOG.info(
+            "agent_loop end stop=%s rounds=%s total_calls=%s write_calls=%s answer=%s",
+            stop_reason,
+            rounds,
+            usage.total_calls,
+            usage.write_calls,
+            _safe_preview(answer),
+        )
         return AelinAgentLoopResult(
             ok=bool(answer),
             answer=answer,
@@ -297,6 +360,7 @@ class AelinAgentLoop:
                     "content": "请基于已完成的工具结果，直接给出最终中文回答。不要继续调用工具。",
                 }
             )
+            _LOG.info("agent_loop final_answer_request messages=%s", len(final_messages))
             response = self._service.client.chat.completions.create(
                 model=self._service.config.model,
                 messages=final_messages,
@@ -308,9 +372,10 @@ class AelinAgentLoop:
             message = getattr(choice, "message", None) if choice else None
             text_out = extract_message_text(getattr(message, "content", ""))
             if text_out:
+                _LOG.info("agent_loop final_answer_response text=%s", _safe_preview(text_out))
                 return text_out
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOG.warning("agent_loop final_answer_failed error=%s", str(exc)[:200])
         return self._fallback_answer(query=query)
 
     def _fallback_answer(self, *, query: str) -> str:

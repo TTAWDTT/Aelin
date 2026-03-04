@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,11 @@ try:
 except Exception:  # pragma: no cover - optional runtime dependency
     PlaywrightTimeoutError = RuntimeError
     sync_playwright = None
+
+try:
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - optional runtime dependency
+    psutil = None
 
 _RISK_KEYWORDS = (
     "delete",
@@ -33,6 +39,32 @@ _RISK_KEYWORDS = (
     "删除",
     "确认",
 )
+
+_SENSITIVE_AUTH_DOMAINS = (
+    "github.com",
+    "x.com",
+    "twitter.com",
+    "accounts.google.com",
+    "google.com",
+    "facebook.com",
+    "discord.com",
+    "slack.com",
+)
+
+_BROWSER_FAMILY_NAMES = {
+    "chrome",
+    "chrome.exe",
+    "msedge",
+    "msedge.exe",
+    "firefox",
+    "firefox.exe",
+    "chromium",
+    "chromium.exe",
+    "opera",
+    "opera.exe",
+    "brave",
+    "brave.exe",
+}
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -53,6 +85,8 @@ class BrowserSession:
     session_id: str
     user_id: int
     workspace: str
+    mode: str
+    owner_thread_id: int
     playwright: Any
     browser: Any
     context: Any
@@ -70,7 +104,13 @@ class BrowserSession:
             if item is None:
                 continue
             try:
-                item.close()
+                closer = None
+                if attr == "playwright":
+                    closer = getattr(item, "stop", None) or getattr(item, "close", None)
+                else:
+                    closer = getattr(item, "close", None)
+                if callable(closer):
+                    closer()
             except Exception:
                 pass
 
@@ -92,6 +132,10 @@ class BrowserAutomationService:
             high=7200,
         )
         self._headless = bool(getattr(settings, "browser_tool_headless", True))
+        self._open_external_on_navigate = bool(getattr(settings, "browser_tool_open_external_on_navigate", False))
+        self._mode_default = str(getattr(settings, "browser_tool_mode_default", "auto") or "auto").strip().lower()
+        self._cdp_enabled = bool(getattr(settings, "browser_tool_cdp_enabled", False))
+        self._cdp_endpoint = str(getattr(settings, "browser_tool_cdp_endpoint", "http://127.0.0.1:9222") or "").strip()
         self._profile_root = self._resolve_runtime_path(
             str(getattr(settings, "browser_tool_profile_dir", "./browser_data/agent_browser") or "./browser_data/agent_browser")
         )
@@ -106,8 +150,9 @@ class BrowserAutomationService:
         return (backend_dir / path).resolve()
 
     @staticmethod
-    def _session_key(*, user_id: int, workspace: str) -> str:
-        return f"{int(user_id)}::{_normalize_workspace(workspace)}"
+    def _session_key(*, user_id: int, workspace: str, mode: str) -> str:
+        safe_mode = str(mode or "managed").strip().lower() or "managed"
+        return f"{safe_mode}::{int(user_id)}::{_normalize_workspace(workspace)}"
 
     def _cleanup_idle_sessions(self) -> None:
         now = time.time()
@@ -120,7 +165,7 @@ class BrowserAutomationService:
             if session is not None:
                 session.close()
 
-    def _create_session(self, *, user_id: int, workspace: str) -> BrowserSession:
+    def _create_managed_session(self, *, user_id: int, workspace: str) -> BrowserSession:
         if sync_playwright is None:
             raise RuntimeError("playwright_unavailable")
 
@@ -140,6 +185,8 @@ class BrowserAutomationService:
             session_id=f"bs-{uuid4().hex[:12]}",
             user_id=int(user_id),
             workspace=_normalize_workspace(workspace),
+            mode="managed",
+            owner_thread_id=threading.get_ident(),
             playwright=pw,
             browser=browser,
             context=context,
@@ -148,13 +195,80 @@ class BrowserAutomationService:
             last_used=now,
         )
 
-    def _get_session(self, *, user_id: int, workspace: str) -> BrowserSession:
-        key = self._session_key(user_id=user_id, workspace=workspace)
+    def _create_cdp_session(self, *, user_id: int, workspace: str, endpoint: str) -> BrowserSession:
+        if sync_playwright is None:
+            raise RuntimeError("playwright_unavailable")
+        target = str(endpoint or "").strip()
+        if not re.match(r"^https?://", target, flags=re.I):
+            raise RuntimeError("cdp_endpoint_invalid")
+
+        pw = sync_playwright().start()
+        browser = pw.chromium.connect_over_cdp(
+            target,
+            timeout=self._default_timeout_ms,
+        )
+        context = browser.contexts[0] if list(getattr(browser, "contexts", []) or []) else browser.new_context()
+        pages = list(getattr(context, "pages", []) or [])
+        page = pages[-1] if pages else context.new_page()
+        page.set_default_timeout(self._default_timeout_ms)
+        now = time.time()
+        return BrowserSession(
+            session_id=f"bs-{uuid4().hex[:12]}",
+            user_id=int(user_id),
+            workspace=_normalize_workspace(workspace),
+            mode="cdp",
+            owner_thread_id=threading.get_ident(),
+            playwright=pw,
+            browser=browser,
+            context=context,
+            page=page,
+            created_at=now,
+            last_used=now,
+        )
+
+    def _resolve_mode(self, mode: str) -> str:
+        raw = str(mode or "").strip().lower()
+        if raw in {"managed", "cdp", "system", "all", "auto"}:
+            return raw
+        default = str(self._mode_default or "auto").strip().lower()
+        return default if default in {"managed", "cdp", "auto"} else "auto"
+
+    def _get_session(self, *, user_id: int, workspace: str, mode: str = "auto") -> BrowserSession:
+        resolved_mode = self._resolve_mode(mode)
+        if resolved_mode == "auto":
+            if self._cdp_enabled and self._cdp_endpoint:
+                try:
+                    return self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+                except Exception:
+                    pass
+            return self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+        if resolved_mode not in {"managed", "cdp"}:
+            raise RuntimeError(f"unsupported_session_mode:{resolved_mode}")
+
+        key = self._session_key(user_id=user_id, workspace=workspace, mode=resolved_mode)
+        thread_id = threading.get_ident()
         with self._lock:
             self._cleanup_idle_sessions()
             session = self._sessions.get(key)
+            if session is not None and int(getattr(session, "owner_thread_id", 0) or 0) != thread_id:
+                try:
+                    session.close()
+                finally:
+                    self._sessions.pop(key, None)
+                session = None
             if session is None:
-                session = self._create_session(user_id=user_id, workspace=workspace)
+                if resolved_mode == "cdp":
+                    if not self._cdp_enabled:
+                        raise RuntimeError("cdp_disabled")
+                    if not self._cdp_endpoint:
+                        raise RuntimeError("cdp_endpoint_unconfigured")
+                    session = self._create_cdp_session(
+                        user_id=user_id,
+                        workspace=workspace,
+                        endpoint=self._cdp_endpoint,
+                    )
+                else:
+                    session = self._create_managed_session(user_id=user_id, workspace=workspace)
                 self._sessions[key] = session
             session.touch()
             return session
@@ -180,10 +294,151 @@ class BrowserAutomationService:
         ).lower()
         return any(token in corpus for token in _RISK_KEYWORDS)
 
+    @staticmethod
+    def _open_external_url(url: str) -> bool:
+        target = str(url or "").strip()
+        if not re.match(r"^https?://", target, flags=re.I):
+            return False
+        try:
+            return bool(webbrowser.open_new_tab(target))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _extract_hostname(url: str) -> str:
+        text = str(url or "").strip()
+        if not text:
+            return ""
+        matched = re.match(r"^https?://([^/:?#]+)", text, flags=re.I)
+        if not matched:
+            return ""
+        return str(matched.group(1) or "").strip().lower()
+
+    @classmethod
+    def _is_sensitive_auth_domain(cls, url: str) -> bool:
+        host = cls._extract_hostname(url)
+        if not host:
+            return False
+        return any(host == d or host.endswith(f".{d}") for d in _SENSITIVE_AUTH_DOMAINS)
+
+    @staticmethod
+    def _normalize_scope(scope: str) -> str:
+        raw = str(scope or "").strip().lower()
+        if raw in {"managed", "cdp", "system", "all", "auto"}:
+            return raw
+        return "auto"
+
+    @staticmethod
+    def _guess_browser_family(name: str, exe: str, cmdline: str) -> str:
+        blob = " ".join([str(name or "").lower(), str(exe or "").lower(), str(cmdline or "").lower()])
+        if "msedge" in blob or "edge" in blob:
+            return "edge"
+        if "firefox" in blob:
+            return "firefox"
+        if "brave" in blob:
+            return "brave"
+        if "opera" in blob:
+            return "opera"
+        if "chromium" in blob:
+            return "chromium"
+        if "chrome" in blob:
+            return "chrome"
+        return "unknown"
+
+    def _list_system_browser_processes(self, *, max_items: int, pid: int = 0) -> list[dict[str, Any]]:
+        if psutil is None:
+            return []
+        rows: list[dict[str, Any]] = []
+        attrs = ["pid", "name", "exe", "cmdline", "status", "create_time", "memory_info"]
+        for proc in psutil.process_iter(attrs=attrs):
+            try:
+                info = proc.info if isinstance(getattr(proc, "info", None), dict) else {}
+                proc_pid = int(info.get("pid") or 0)
+                if pid > 0 and proc_pid != pid:
+                    continue
+                name = str(info.get("name") or "").strip()
+                exe = str(info.get("exe") or "").strip()
+                cmd = info.get("cmdline")
+                cmdline = " ".join([str(part) for part in (cmd or []) if str(part or "").strip()]).strip()
+                low_name = name.lower()
+                low_exe = exe.lower()
+                if low_name not in _BROWSER_FAMILY_NAMES and (not any(k in low_exe for k in ("chrome", "edge", "firefox", "opera", "brave"))):
+                    continue
+                mem_obj = info.get("memory_info")
+                rss = int(getattr(mem_obj, "rss", 0) or 0)
+                rows.append(
+                    {
+                        "pid": proc_pid,
+                        "name": name[:80],
+                        "browser_family": self._guess_browser_family(name, exe, cmdline),
+                        "status": str(info.get("status") or "")[:32],
+                        "memory_mb": round(rss / (1024 * 1024), 2) if rss > 0 else 0.0,
+                        "started_at": float(info.get("create_time") or 0.0),
+                        "exe": exe[:260],
+                        "cmdline": cmdline[:600],
+                    }
+                )
+            except Exception:
+                continue
+        rows.sort(key=lambda it: (float(it.get("memory_mb") or 0.0), int(it.get("pid") or 0)), reverse=True)
+        return rows[:max(1, min(200, int(max_items or 20)))]
+
+    def list_sessions(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        scope: str = "all",
+        max_items: int = 20,
+        pid: int = 0,
+    ) -> dict[str, Any]:
+        normalized_scope = self._normalize_scope(scope)
+        limit = max(1, min(200, int(max_items or 20)))
+        normalized_workspace = _normalize_workspace(workspace)
+        out: dict[str, Any] = {
+            "ok": True,
+            "scope": normalized_scope,
+            "workspace": normalized_workspace,
+            "managed_sessions": [],
+            "system_processes": [],
+            "cdp_enabled": bool(self._cdp_enabled),
+            "cdp_endpoint": str(self._cdp_endpoint or ""),
+        }
+        include_managed = normalized_scope in {"managed", "all", "auto", "cdp"}
+        include_system = normalized_scope in {"system", "all"}
+
+        if include_managed:
+            with self._lock:
+                self._cleanup_idle_sessions()
+                for session in self._sessions.values():
+                    if int(getattr(session, "user_id", 0) or 0) != int(user_id):
+                        continue
+                    if str(getattr(session, "workspace", "") or "") != normalized_workspace:
+                        continue
+                    out["managed_sessions"].append(
+                        {
+                            "session_id": str(getattr(session, "session_id", "") or ""),
+                            "mode": str(getattr(session, "mode", "managed") or "managed"),
+                            "last_used": float(getattr(session, "last_used", 0.0) or 0.0),
+                            "created_at": float(getattr(session, "created_at", 0.0) or 0.0),
+                            "owner_thread_id": int(getattr(session, "owner_thread_id", 0) or 0),
+                        }
+                    )
+            out["managed_sessions"] = sorted(
+                list(out["managed_sessions"]),
+                key=lambda it: float(it.get("last_used") or 0.0),
+                reverse=True,
+            )[:limit]
+
+        if include_system:
+            out["system_processes"] = self._list_system_browser_processes(max_items=limit, pid=int(pid or 0))
+        return out
+
     def _snapshot_page(
         self,
         *,
         page: Any,
+        mode: str,
         include_dom: bool,
         include_a11y: bool,
         max_targets: int,
@@ -284,7 +539,20 @@ class BrowserAutomationService:
             "a11y_count": len(a11y_nodes),
             "ready_state": ready_state,
         }
+        is_blank_page = bool(url.lower().startswith("about:blank"))
+        mode_tag = str(mode or "managed").strip().lower() or "managed"
+        visibility = "headless" if (mode_tag == "managed" and self._headless) else "visible_window"
+        if mode_tag == "cdp":
+            scope_note = "这是通过 CDP 接入的用户浏览器会话状态。"
+        elif is_blank_page:
+            scope_note = "这是 Aelin agent 的浏览器会话，不是系统当前前台浏览器标签页。"
+        else:
+            scope_note = "这是 Aelin agent 的浏览器会话状态。"
         return {
+            "session_scope": mode_tag,
+            "is_blank_page": is_blank_page,
+            "visibility": visibility,
+            "scope_note": scope_note,
             "url": url,
             "title": title,
             "ready_state": ready_state,
@@ -298,20 +566,86 @@ class BrowserAutomationService:
         *,
         user_id: int,
         workspace: str,
+        scope: str = "auto",
         include_dom: bool = True,
         include_a11y: bool = False,
         max_targets: int = 30,
+        max_items: int = 20,
+        pid: int = 0,
     ) -> dict[str, Any]:
-        session = self._get_session(user_id=user_id, workspace=workspace)
+        normalized_scope = self._normalize_scope(scope)
+        target_limit = _clamp_int(max_targets, 30, low=1, high=60)
+        proc_limit = _clamp_int(max_items, 20, low=1, high=200)
+        if normalized_scope == "system":
+            return {
+                "ok": True,
+                "scope": "system",
+                "system_processes": self._list_system_browser_processes(max_items=proc_limit, pid=int(pid or 0)),
+                "scope_note": "系统浏览器进程视图（不保证可获得每个标签页 URL）。",
+            }
+        if normalized_scope == "all":
+            sessions = self.list_sessions(
+                user_id=user_id,
+                workspace=workspace,
+                scope="all",
+                max_items=proc_limit,
+                pid=int(pid or 0),
+            )
+            active_state = self.state_get(
+                user_id=user_id,
+                workspace=workspace,
+                scope="auto",
+                include_dom=include_dom,
+                include_a11y=include_a11y,
+                max_targets=target_limit,
+                max_items=proc_limit,
+                pid=int(pid or 0),
+            )
+            return {
+                "ok": True,
+                "scope": "all",
+                "active_state": active_state,
+                "managed_sessions": list(sessions.get("managed_sessions") or []),
+                "system_processes": list(sessions.get("system_processes") or []),
+                "cdp_enabled": bool(sessions.get("cdp_enabled")),
+                "cdp_endpoint": str(sessions.get("cdp_endpoint") or ""),
+            }
+
+        selected_scope = normalized_scope
+        fallback_reason = ""
+        if selected_scope == "auto":
+            if self._cdp_enabled and self._cdp_endpoint:
+                selected_scope = "cdp"
+            else:
+                selected_scope = "managed"
+        if selected_scope == "cdp":
+            try:
+                session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+            except Exception as exc:
+                fallback_reason = str(exc)[:160]
+                session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+                selected_scope = "managed"
+        else:
+            session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+
         with session.lock:
             session.touch()
             snap = self._snapshot_page(
                 page=session.page,
+                mode=str(getattr(session, "mode", selected_scope) or selected_scope),
                 include_dom=bool(include_dom),
                 include_a11y=bool(include_a11y),
-                max_targets=_clamp_int(max_targets, 30, low=1, high=60),
+                max_targets=target_limit,
             )
-            return {"ok": True, "session_id": session.session_id, **snap}
+            payload: dict[str, Any] = {
+                "ok": True,
+                "scope": selected_scope,
+                "session_id": session.session_id,
+                **snap,
+            }
+            if fallback_reason:
+                payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+            return payload
 
     @staticmethod
     def _resolve_locator(*, page: Any, target: str, strategy: str, role: str = "") -> Any:
@@ -343,8 +677,8 @@ class BrowserAutomationService:
         workspace: str,
         action: str,
         args: dict[str, Any],
+        scope: str = "auto",
     ) -> dict[str, Any]:
-        session = self._get_session(user_id=user_id, workspace=workspace)
         act = str(action or "").strip().lower()
         if act not in {"navigate", "click", "type", "scroll", "wait"}:
             return {"ok": False, "error": "unsupported_action", "action": act}
@@ -360,13 +694,49 @@ class BrowserAutomationService:
                 "risk_level": "high",
                 "action": act,
             }
+        if act == "navigate" and self._is_sensitive_auth_domain(url) and not bool(args.get("confirm")):
+            return {
+                "ok": False,
+                "error": "domain_confirmation_required",
+                "requires_confirmation": True,
+                "risk_level": "auth_guard",
+                "action": act,
+                "domain": self._extract_hostname(url),
+            }
 
         timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)
         strategy = str(args.get("strategy") or "auto").strip().lower()
         role = str(args.get("role") or "").strip().lower()
+        requested_scope = self._normalize_scope(scope)
+        if requested_scope in {"system", "all"}:
+            return {"ok": False, "error": "unsupported_scope_for_use", "action": act, "scope": requested_scope}
+        selected_scope = requested_scope if requested_scope != "auto" else "auto"
+        fallback_reason = ""
+
+        if selected_scope == "cdp":
+            try:
+                session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+            except Exception as exc:
+                return {"ok": False, "error": f"cdp_unavailable:{str(exc)[:160]}", "action": act}
+        elif selected_scope == "managed":
+            session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+        else:
+            if self._cdp_enabled and self._cdp_endpoint:
+                try:
+                    session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+                    selected_scope = "cdp"
+                except Exception as exc:
+                    fallback_reason = str(exc)[:160]
+                    session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+                    selected_scope = "managed"
+            else:
+                session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+                selected_scope = "managed"
+
         before = self.state_get(
             user_id=user_id,
             workspace=workspace,
+            scope=selected_scope,
             include_dom=False,
             include_a11y=False,
             max_targets=1,
@@ -382,6 +752,9 @@ class BrowserAutomationService:
                     if not re.match(r"^https?://", url, flags=re.I):
                         return {"ok": False, "error": "invalid_url", "action": act}
                     page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                    external_opened = False
+                    if self._open_external_on_navigate and (not self._headless):
+                        external_opened = self._open_external_url(url)
                     effect = f"navigated:{url[:120]}"
                 elif act == "click":
                     if not target:
@@ -420,21 +793,26 @@ class BrowserAutomationService:
         after = self.state_get(
             user_id=user_id,
             workspace=workspace,
+            scope=selected_scope,
             include_dom=False,
             include_a11y=False,
             max_targets=1,
         )
-        return {
+        payload = {
             "ok": True,
             "action": act,
+            "scope": selected_scope,
             "effect_summary": effect,
             "requires_confirmation": False,
             "risk_level": "low",
+            "external_opened": bool(external_opened) if act == "navigate" else False,
             "before": {"url": str(before.get("url") or ""), "title": str(before.get("title") or "")},
             "after": {"url": str(after.get("url") or ""), "title": str(after.get("title") or "")},
             "session_id": str(after.get("session_id") or ""),
         }
+        if fallback_reason:
+            payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+        return payload
 
 
 browser_automation_service = BrowserAutomationService()
-

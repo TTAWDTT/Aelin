@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -13,6 +14,58 @@ from app.services.aelin_loop_message import (
 from app.services.aelin_loop_types import AgentLoopToolRun, AgentLoopTraceStep
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin_tools import AelinToolHub
+
+_LOG = logging.getLogger(__name__)
+
+
+def _truncate_text(value: str, *, limit: int = 180) -> str:
+    text = " ".join(str(value or "").split())
+    if text.lower().startswith("data:image/"):
+        return f"<data_url len={len(value)}>"
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...(len={len(text)})"
+
+
+def _sanitize_for_log(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _truncate_text(value)
+    if isinstance(value, list):
+        items = [_sanitize_for_log(item) for item in value[:6]]
+        if len(value) > 6:
+            items.append("...truncated")
+        return items
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for idx, (raw_key, raw_val) in enumerate(value.items()):
+            if idx >= 8:
+                out["..."] = "truncated"
+                break
+            key = str(raw_key or "")[:64]
+            out[key] = _sanitize_for_log(raw_val)
+        return out
+    return _truncate_text(str(value))
+
+
+def _dump_log_json(payload: Any) -> str:
+    try:
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        return "<json_encode_failed>"
+
+
+def _summarize_result_for_log(result: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "ok": bool(result.get("ok", True)),
+        "keys": [str(key)[:48] for key in list(result.keys())[:8]],
+    }
+    if result.get("error"):
+        summary["error"] = _sanitize_for_log(result.get("error"))
+    if result.get("message"):
+        summary["message"] = _sanitize_for_log(result.get("message"))
+    return summary
 
 
 def _serialize_tool_message_content(payload: dict[str, Any], *, max_len: int = 8000) -> str:
@@ -92,9 +145,15 @@ def execute_tool_call(
     status = "completed"
     result: dict[str, Any] = {}
     error = ""
+    safe_tool_name = str(tool_name or "").strip().lower()
+    _LOG.info(
+        "agent_loop tool_call_start tool=%s args=%s",
+        safe_tool_name,
+        _dump_log_json(_sanitize_for_log(args)),
+    )
     started = time.perf_counter()
     try:
-        result = tool_hub.execute(tool_name, args)
+        result = tool_hub.execute(safe_tool_name, args)
         if not bool(result.get("ok", True)):
             status = "failed"
             error = str(result.get("error") or "tool_not_ok")[:180]
@@ -103,6 +162,13 @@ def execute_tool_call(
         error = str(exc)[:180]
         result = {"ok": False, "error": error}
     latency_ms = int((time.perf_counter() - started) * 1000)
+    _LOG.info(
+        "agent_loop tool_call_end tool=%s status=%s latency_ms=%s result=%s",
+        safe_tool_name,
+        status,
+        latency_ms,
+        _dump_log_json(_summarize_result_for_log(result)),
+    )
     return status, result, error, latency_ms
 
 

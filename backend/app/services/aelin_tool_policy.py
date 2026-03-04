@@ -40,6 +40,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "browser_state_get":
         return False
+    if tool == "browser_session_list":
+        return False
     if tool == "browser_use":
         # Browser actions can mutate external state; treat as write for safety budgeting.
         return True
@@ -76,6 +78,7 @@ class AelinToolPolicy:
             "device",
             "web_search",
             "screen_get",
+            "browser_session_list",
             "browser_state_get",
             "browser_use",
         }:
