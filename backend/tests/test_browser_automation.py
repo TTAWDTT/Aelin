@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from app.services.browser_automation import BrowserAutomationService
 
@@ -116,6 +117,30 @@ def test_get_session_creates_outside_global_lock(monkeypatch):
     out = service._get_session(user_id=1, workspace="default", mode="managed")
     assert out is not None
     assert lock_available["value"] is True
+
+
+def test_cleanup_idle_sessions_closes_outside_lock():
+    service = BrowserAutomationService()
+    key = service._session_key(user_id=1, workspace="default", mode="managed")
+
+    class _ProbeSession(_FakeSession):
+        def __init__(self, *, owner_thread_id: int) -> None:
+            super().__init__(owner_thread_id=owner_thread_id)
+            self.last_used = time.time() - 9_999
+            self.close_outside_lock = False
+
+        def close(self) -> None:
+            acquired = service._lock.acquire(blocking=False)
+            self.close_outside_lock = bool(acquired)
+            if acquired:
+                service._lock.release()
+            super().close()
+
+    probe = _ProbeSession(owner_thread_id=threading.get_ident())
+    service._sessions[key] = probe  # type: ignore[assignment]
+    service._cleanup_idle_sessions()
+    assert probe.closed is True
+    assert probe.close_outside_lock is True
 
 
 def test_snapshot_page_marks_blank_scope():
@@ -237,6 +262,23 @@ def test_use_external_scope_navigate_opens_system_browser(monkeypatch):
     assert out["ok"] is True
     assert out["scope"] == "external"
     assert out["external_opened"] is True
+    assert opened == ["https://github.com"]
+
+
+def test_use_external_scope_navigate_skips_auth_guard_without_confirm(monkeypatch):
+    service = BrowserAutomationService()
+    opened: list[str] = []
+    monkeypatch.setattr(service, "_open_external_url", lambda url: opened.append(str(url)) or True)
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://github.com", "confirm": False},
+        scope="external",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "external"
     assert opened == ["https://github.com"]
 
 

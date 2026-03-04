@@ -155,16 +155,27 @@ class BrowserAutomationService:
         safe_mode = str(mode or "managed").strip().lower() or "managed"
         return f"{safe_mode}::{int(user_id)}::{_normalize_workspace(workspace)}"
 
-    def _cleanup_idle_sessions(self) -> None:
-        now = time.time()
-        expired: list[str] = []
+    def _pop_expired_sessions_locked(self, *, now: float | None = None) -> list[BrowserSession]:
+        ts = float(now or time.time())
+        expired_sessions: list[BrowserSession] = []
+        expired_keys: list[str] = []
         for key, session in self._sessions.items():
-            if (now - float(session.last_used or now)) > self._idle_ttl_seconds:
-                expired.append(key)
-        for key in expired:
+            if (ts - float(session.last_used or ts)) > self._idle_ttl_seconds:
+                expired_keys.append(key)
+        for key in expired_keys:
             session = self._sessions.pop(key, None)
             if session is not None:
+                expired_sessions.append(session)
+        return expired_sessions
+
+    def _cleanup_idle_sessions(self) -> None:
+        with self._lock:
+            expired_sessions = self._pop_expired_sessions_locked()
+        for session in expired_sessions:
+            try:
                 session.close()
+            except Exception:
+                pass
 
     def _create_managed_session(self, *, user_id: int, workspace: str) -> BrowserSession:
         if sync_playwright is None:
@@ -264,8 +275,8 @@ class BrowserAutomationService:
         key = self._session_key(user_id=user_id, workspace=workspace, mode=resolved_mode)
         thread_id = threading.get_ident()
         while True:
+            self._cleanup_idle_sessions()
             with self._lock:
-                self._cleanup_idle_sessions()
                 session = self._sessions.get(key)
                 if session is not None and int(getattr(session, "owner_thread_id", 0) or 0) != thread_id:
                     try:
@@ -459,8 +470,8 @@ class BrowserAutomationService:
         include_system = normalized_scope in {"system", "all", "external"}
 
         if include_managed:
+            self._cleanup_idle_sessions()
             with self._lock:
-                self._cleanup_idle_sessions()
                 for session in self._sessions.values():
                     if int(getattr(session, "user_id", 0) or 0) != int(user_id):
                         continue
@@ -741,33 +752,6 @@ class BrowserAutomationService:
         target = str(args.get("target") or args.get("selector") or args.get("text") or "").strip()
         value = str(args.get("value") or "").strip()
         url = str(args.get("url") or "").strip()
-        if act == "navigate" and self._is_sensitive_auth_domain(url) and not bool(args.get("confirm")):
-            return {
-                "ok": False,
-                "error": "auth_permission_required",
-                "requires_confirmation": True,
-                "risk_level": "auth_guard",
-                "action": act,
-                "domain": self._extract_hostname(url),
-                "fallback_scope": "external",
-                "supported_scopes": ["auto", "managed", "cdp", "external"],
-                "hint": (
-                    "使用 confirm=true 可继续受控浏览器导航；"
-                    "若需要继承用户登录态，可改用 scope=external。"
-                ),
-            }
-        if self._is_high_risk(act, target=target, value=value, url=url) and not bool(args.get("confirm")):
-            return {
-                "ok": False,
-                "error": "confirmation_required",
-                "requires_confirmation": True,
-                "risk_level": "high",
-                "action": act,
-            }
-
-        timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)
-        strategy = str(args.get("strategy") or "auto").strip().lower()
-        role = str(args.get("role") or "").strip().lower()
         requested_scope = self._normalize_scope(scope)
         if requested_scope in {"system", "all"}:
             return {"ok": False, "error": "unsupported_scope_for_use", "action": act, "scope": requested_scope}
@@ -797,6 +781,34 @@ class BrowserAutomationService:
                 "after": {"url": url[:800], "title": ""},
                 "session_id": "",
             }
+
+        if act == "navigate" and self._is_sensitive_auth_domain(url) and not bool(args.get("confirm")):
+            return {
+                "ok": False,
+                "error": "auth_permission_required",
+                "requires_confirmation": True,
+                "risk_level": "auth_guard",
+                "action": act,
+                "domain": self._extract_hostname(url),
+                "fallback_scope": "external",
+                "supported_scopes": ["auto", "managed", "cdp", "external"],
+                "hint": (
+                    "使用 confirm=true 可继续受控浏览器导航；"
+                    "若需要继承用户登录态，可改用 scope=external。"
+                ),
+            }
+        if self._is_high_risk(act, target=target, value=value, url=url) and not bool(args.get("confirm")):
+            return {
+                "ok": False,
+                "error": "confirmation_required",
+                "requires_confirmation": True,
+                "risk_level": "high",
+                "action": act,
+            }
+
+        timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)
+        strategy = str(args.get("strategy") or "auto").strip().lower()
+        role = str(args.get("role") or "").strip().lower()
         selected_scope = requested_scope if requested_scope != "auto" else "auto"
         fallback_reason = ""
 

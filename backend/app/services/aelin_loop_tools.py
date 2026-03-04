@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from app.services.aelin_loop_logging import truncate_text
 from app.services.aelin_loop_message import (
     build_screen_observation_message,
     prepare_tool_result_payload,
@@ -34,15 +35,6 @@ _SENSITIVE_KEY_TOKENS = (
     "sessionid",
     "session_id",
 )
-
-
-def _truncate_text(value: str, *, limit: int = 180) -> str:
-    text = " ".join(str(value or "").split())
-    if text.lower().startswith("data:image/"):
-        return f"<data_url len={len(value)}>"
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit]}...(len={len(text)})"
 
 
 def _normalized_key(key: str) -> str:
@@ -77,7 +69,7 @@ def _sanitize_for_log(value: Any, *, key_hint: str = "") -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
-        return _truncate_text(value)
+        return truncate_text(value, mask_data_image_url=True)
     if isinstance(value, list):
         items = [_sanitize_for_log(item) for item in value[:6]]
         if len(value) > 6:
@@ -92,7 +84,7 @@ def _sanitize_for_log(value: Any, *, key_hint: str = "") -> Any:
             key = str(raw_key or "")[:64]
             out[key] = _sanitize_for_log(raw_val, key_hint=key)
         return out
-    return _truncate_text(str(value))
+    return truncate_text(str(value), mask_data_image_url=True)
 
 
 def _sanitize_tool_args_for_log(tool_name: str, args: dict[str, Any]) -> Any:
