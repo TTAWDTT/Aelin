@@ -8,6 +8,7 @@ from typing import Any
 
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin_tools import AelinToolHub
+from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
 from app.services.llm import LLMService
 
 
@@ -24,6 +25,23 @@ def _safe_json_loads(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _extract_message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip() != "text":
+                continue
+            text = str(item.get("text") or "").strip()
+            if text:
+                parts.append(text)
+        return "\n".join(parts).strip()
+    return ""
 
 
 def _failed_loop_result(*, stop_reason: str, detail: str) -> "AelinAgentLoopResult":
@@ -102,6 +120,7 @@ class AelinAgentLoop:
         query: str,
         memory_summary: str,
         history_turns: list[dict[str, str]] | None = None,
+        images: list[dict[str, str]] | None = None,
         forced_intent: str = "",
         forced_tool_runs: list[dict[str, Any]] | None = None,
     ) -> AelinAgentLoopResult:
@@ -163,7 +182,29 @@ class AelinAgentLoop:
                 content = str(row.get("content") or "").strip()
                 if role in {"user", "assistant"} and content:
                     messages.append({"role": role, "content": content[:3000]})
-        messages.append({"role": "user", "content": str(query or "").strip()[:1200]})
+        query_text = str(query or "").strip()[:1200]
+        normalized_images: list[str] = []
+        for item in list(images or [])[:4]:
+            if not isinstance(item, dict):
+                continue
+            data_url = str(item.get("data_url") or "").strip()
+            if not data_url.startswith("data:image/") or ";base64," not in data_url:
+                continue
+            if len(data_url) > MAX_IMAGE_DATA_URL_LENGTH:
+                continue
+            normalized_images.append(data_url)
+        if normalized_images:
+            user_content: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": query_text or "请先分析我上传的图片，再继续执行工具流程。",
+                }
+            ]
+            for data_url in normalized_images:
+                user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+            messages.append({"role": "user", "content": user_content})
+        else:
+            messages.append({"role": "user", "content": query_text})
         trace_steps.append(AgentLoopTraceStep(stage="agent_loop", status="running", detail="start", count=0))
 
         loop_started = time.perf_counter()
@@ -208,7 +249,7 @@ class AelinAgentLoop:
 
             choice = response.choices[0] if getattr(response, "choices", None) else None
             message = getattr(choice, "message", None) if choice else None
-            text_out = str(getattr(message, "content", "") or "").strip()
+            text_out = _extract_message_text(getattr(message, "content", ""))
             raw_tool_calls = list(getattr(message, "tool_calls", []) or [])
 
             if not raw_tool_calls:
@@ -496,7 +537,7 @@ class AelinAgentLoop:
             )
             choice = response.choices[0] if getattr(response, "choices", None) else None
             message = getattr(choice, "message", None) if choice else None
-            text_out = str(getattr(message, "content", "") or "").strip()
+            text_out = _extract_message_text(getattr(message, "content", ""))
             if text_out:
                 return text_out
         except Exception:

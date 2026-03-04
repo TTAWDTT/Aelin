@@ -61,6 +61,7 @@ from app.services.aelin_media_pipeline import (
     media_ingest_service as _media_ingest,
     save_media_ingest_diary as _save_media_ingest_diary,
 )
+from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
 from app.services.aelin_runtime import (
     json_from_text as _json_from_text,
     normalize_workspace as _normalize_workspace,
@@ -665,7 +666,7 @@ def _normalize_images(raw_images: list[Any]) -> list[dict[str, str]]:
             continue
         if ";base64," not in data_url:
             continue
-        if len(data_url) > 3_000_000:
+        if len(data_url) > MAX_IMAGE_DATA_URL_LENGTH:
             continue
         out.append({"data_url": data_url, "name": name})
     return out
@@ -5423,6 +5424,7 @@ def _try_agent_loop_chat(
     )
     memory_summary = str(base_bundle.get("summary") or "")
     history_turns = _normalize_history(payload.history)
+    images = _normalize_images(payload.images)
 
     tool_hub = AelinToolHub(
         db=db,
@@ -5514,6 +5516,7 @@ def _try_agent_loop_chat(
         query=payload.query,
         memory_summary=memory_summary,
         history_turns=history_turns,
+        images=images,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
     )
