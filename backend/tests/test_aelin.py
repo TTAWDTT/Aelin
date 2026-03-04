@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -14,7 +13,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.routers.aelin as aelin_router
-import app.routers.aelin_device as aelin_device_router
 import app.services.device_center as device_center
 from app.db import init_engine
 from app.main import create_app
@@ -38,14 +36,10 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    tmp_media = tempfile.TemporaryDirectory()
-    settings.media_dir = tmp_media.name
     settings.aelin_agent_loop_enabled = False
     settings.aelin_agent_loop_shadow_enabled = False
     app = create_app()
-    client = TestClient(app)
-    client._tmp_media = tmp_media  # type: ignore[attr-defined]
-    return client
+    return TestClient(app)
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
@@ -1847,11 +1841,13 @@ def test_device_screen_capture_proxy_success(monkeypatch):
 
         def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
             assert url == "http://127.0.0.1:21914/v1/device/screen/capture"
-            assert json == {}
+            assert int(json.get("max_edge") or 0) == 1280
+            assert str(json.get("format") or "") == "jpeg"
+            assert int(json.get("quality") or 0) == 72
             assert headers.get("x-aelin-token") == "plugin-token"
             return _FakeResponse()
 
-    monkeypatch.setattr(aelin_device_router.httpx, "Client", _FakeClient)
+    monkeypatch.setattr(device_center.httpx, "Client", _FakeClient)
 
     resp = client.post("/api/v1/aelin/device/screen/capture", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -1885,7 +1881,7 @@ def test_device_screen_capture_proxy_unreachable_returns_503(monkeypatch):
             _ = url, json, headers
             raise RuntimeError("connect_refused")
 
-    monkeypatch.setattr(aelin_device_router.httpx, "Client", _FailingClient)
+    monkeypatch.setattr(device_center.httpx, "Client", _FailingClient)
 
     resp = client.post("/api/v1/aelin/device/screen/capture", headers=headers)
     assert resp.status_code == 503, resp.text

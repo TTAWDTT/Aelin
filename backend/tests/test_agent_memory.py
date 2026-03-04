@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 import time
 
 from fastapi.testclient import TestClient
@@ -11,7 +10,6 @@ from sqlalchemy.pool import StaticPool
 from app.db import init_engine
 from app.main import create_app
 from app.models import Base
-from app.settings import settings
 
 
 def _create_test_client() -> TestClient:
@@ -29,14 +27,8 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    tmp_media = tempfile.TemporaryDirectory()
-    settings.media_dir = tmp_media.name
     app = create_app()
-    client = TestClient(app)
-
-    # Keep directory alive for the whole test process.
-    client._tmp_media = tmp_media  # type: ignore[attr-defined]
-    return client
+    return TestClient(app)
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:

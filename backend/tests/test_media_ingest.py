@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,12 +32,10 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    tmp_media = tempfile.TemporaryDirectory()
-    settings.media_dir = tmp_media.name
+    settings.aelin_agent_loop_enabled = False
+    settings.aelin_agent_loop_shadow_enabled = False
     app = create_app()
-    client = TestClient(app)
-    client._tmp_media = tmp_media  # type: ignore[attr-defined]
-    return client
+    return TestClient(app)
 
 
 def _auth_headers(client: TestClient) -> dict[str, str]:
@@ -304,6 +301,12 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     client = _create_test_client()
     headers = _auth_headers(client)
 
+    def _legacy_try(payload, db, current_user, event_cb=None, **kwargs):
+        _ = kwargs
+        return aelin_router._aelin_chat_impl(payload, db, current_user, event_cb=event_cb)
+
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _legacy_try)
+
     monkeypatch.setattr(
         aelin_router._media_ingest,
         "ingest",
@@ -324,6 +327,8 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
             limitations=["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"],
         ),
     )
+    monkeypatch.setattr(aelin_router._memory, "update_after_turn", lambda *args, **kwargs: None)
+    monkeypatch.setattr(aelin_router, "_pick_expression", lambda *_args, **_kwargs: "exp-03")
     diary_path = tmp_path / "users" / "1" / "insight-chat.md"
     monkeypatch.setattr(
         aelin_router._tracking_file_memory,
@@ -338,8 +343,10 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()
+    trace = data.get("tool_trace") or []
+    has_media_ingest = any((it.get("stage") == "media_ingest" and it.get("status") == "completed") for it in trace)
+    assert has_media_ingest, f"Expected media_ingest stage in tool_trace, got: {trace!r}"
     assert "Aelinの日记" in str(data.get("answer") or "")
-    assert any((it.get("stage") == "media_ingest") for it in (data.get("tool_trace") or []))
     assert any((it.get("kind") == "open_tracking") for it in (data.get("actions") or []))
 
 

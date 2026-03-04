@@ -8,7 +8,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from app.schemas import AelinDeviceProcessItem
+from app.settings import settings
 
 try:
     import psutil  # type: ignore
@@ -16,6 +19,112 @@ except Exception:  # pragma: no cover - optional runtime dependency
     psutil = None
 
 PSUTIL_AVAILABLE = psutil is not None
+
+
+class DeviceScreenCaptureError(RuntimeError):
+    def __init__(self, *, status_code: int, detail: str) -> None:
+        super().__init__(str(detail or "device_screen_capture_error"))
+        self.status_code = max(400, int(status_code or 500))
+        self.detail = str(detail or "device_screen_capture_error")[:220]
+
+
+def _desktop_plugin_headers() -> dict[str, str]:
+    token = str(getattr(settings, "desktop_plugin_token", "") or "").strip()
+    if not token:
+        return {}
+    return {"x-aelin-token": token}
+
+
+def _desktop_plugin_error_detail(resp: httpx.Response) -> str:
+    text = ""
+    try:
+        payload = resp.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        text = str(payload.get("detail") or payload.get("message") or "").strip()
+    if not text:
+        text = str(resp.text or "").strip()
+    if not text:
+        text = f"status={resp.status_code}"
+    return text[:180]
+
+
+def capture_device_screen(
+    *,
+    display_id: str = "",
+    max_edge: int = 1280,
+    image_format: str = "jpeg",
+    quality: int = 72,
+) -> dict[str, Any]:
+    base_url = str(getattr(settings, "desktop_plugin_base_url", "") or "").strip().rstrip("/")
+    if not base_url:
+        raise DeviceScreenCaptureError(status_code=503, detail="desktop_plugin_unconfigured")
+
+    timeout_s = max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0))
+    payload: dict[str, Any] = {
+        "max_edge": max(640, min(4096, int(max_edge or 1280))),
+        "format": "png" if str(image_format or "").strip().lower() == "png" else "jpeg",
+    }
+    if payload["format"] == "jpeg":
+        payload["quality"] = max(35, min(95, int(quality or 72)))
+    display_clean = str(display_id or "").strip()[:64]
+    if display_clean:
+        payload["display_id"] = display_clean
+
+    url = f"{base_url}/v1/device/screen/capture"
+    try:
+        with httpx.Client(timeout=timeout_s, follow_redirects=False) as client:
+            resp = client.post(url, json=payload, headers=_desktop_plugin_headers())
+    except Exception as exc:
+        raise DeviceScreenCaptureError(
+            status_code=503,
+            detail=f"desktop_plugin_unreachable: {str(exc)[:180]}",
+        ) from exc
+
+    if int(resp.status_code) >= 400:
+        raise DeviceScreenCaptureError(
+            status_code=502,
+            detail=f"desktop_plugin_capture_failed: {_desktop_plugin_error_detail(resp)}",
+        )
+
+    try:
+        raw = resp.json()
+    except Exception as exc:
+        raise DeviceScreenCaptureError(status_code=502, detail="desktop_plugin_invalid_json") from exc
+    if not isinstance(raw, dict):
+        raise DeviceScreenCaptureError(status_code=502, detail="desktop_plugin_invalid_payload")
+
+    data_url = str(raw.get("data_url") or "").strip()
+    if not data_url.startswith("data:image/") or ";base64," not in data_url:
+        raise DeviceScreenCaptureError(status_code=502, detail="desktop_plugin_invalid_image_payload")
+    max_data_len = max(
+        200_000,
+        int(getattr(settings, "desktop_plugin_capture_max_data_url_length", 3_000_000) or 3_000_000),
+    )
+    if len(data_url) > max_data_len:
+        raise DeviceScreenCaptureError(
+            status_code=502,
+            detail=f"desktop_plugin_image_too_large: {len(data_url)}",
+        )
+
+    try:
+        width = max(0, int(raw.get("width") or 0))
+    except Exception:
+        width = 0
+    try:
+        height = max(0, int(raw.get("height") or 0))
+    except Exception:
+        height = 0
+
+    return {
+        "data_url": data_url,
+        "name": str(raw.get("name") or "").strip()[:120],
+        "width": width,
+        "height": height,
+        "source_display": str(raw.get("source_display") or "").strip()[:64],
+        "captured_at": str(raw.get("captured_at") or datetime.now(timezone.utc).isoformat())[:64],
+    }
 
 
 def device_is_windows() -> bool:

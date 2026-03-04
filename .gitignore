@@ -49,6 +49,19 @@ nul
 
 .tmp/
 
+# Pytest temp/runtime artifacts (Windows ACL edge cases)
+/.pytest_tmp/
+/.tmp_pytest_local/
+/.tmp_pytest_run/
+/.tmp_pytest_work/
+/_tmp_pytest_local/
+/backend/_pytest_runtime/
+/backend/_pytest_temproot/
+/backend/_tmp_pytest_runtime/
+/backend/.tmp_pytest_runtime/
+/backend/_pytest_runtime_plain*/
+/backend/_pytest_runtime_mode_test/
+
 # Local PPT draft artifacts
 /aelin-ppt/
 /aelin-ppt.html

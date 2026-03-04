@@ -36,6 +36,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return action == "mode_apply"
     if tool == "web_search":
         return False
+    if tool == "screen_get":
+        return False
     return False
 
 
@@ -61,7 +63,7 @@ class AelinToolPolicy:
 
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
-        if tool not in {"context_get", "diary", "profile", "tracking", "device", "web_search"}:
+        if tool not in {"context_get", "diary", "profile", "tracking", "device", "web_search", "screen_get"}:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
         round_limit_deny = _deny_if_over_limit(

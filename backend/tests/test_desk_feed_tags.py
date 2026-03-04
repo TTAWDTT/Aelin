@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -12,7 +11,6 @@ from sqlalchemy.pool import StaticPool
 from app.db import create_session, init_engine
 from app.main import create_app
 from app.models import Base, Contact, Message, MessageTopicTag
-from app.settings import settings
 from app.services import content_tagging
 
 
@@ -31,12 +29,8 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    tmp_media = tempfile.TemporaryDirectory()
-    settings.media_dir = tmp_media.name
     app = create_app()
-    client = TestClient(app)
-    client._tmp_media = tmp_media  # type: ignore[attr-defined]
-    return client
+    return TestClient(app)
 
 
 def _auth_headers(client: TestClient) -> tuple[dict[str, str], int]:

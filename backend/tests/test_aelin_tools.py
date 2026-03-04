@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import app.services.aelin_tools as aelin_tools
 from app.services.aelin_tools import AelinToolHub
 from app.services.web_search import WebSearchResult
 
@@ -87,3 +88,26 @@ def test_web_search_tool_missing_query():
     assert result["ok"] is False
     assert "missing query" in str(result.get("error") or "")
     assert fake_web.calls == []
+
+
+def test_screen_get_tool_success(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    monkeypatch.setattr(
+        aelin_tools,
+        "device_capture_screen",
+        lambda **kwargs: {
+            "data_url": "data:image/jpeg;base64,QUJDRA==",
+            "name": "screen-demo.jpg",
+            "width": 1280,
+            "height": 720,
+            "source_display": "1",
+            "captured_at": "2026-03-04T01:00:00Z",
+        },
+    )
+
+    result = hub.execute("screen_get", {"max_edge": 1024, "format": "jpeg"})
+    assert result["ok"] is True
+    assert str(result.get("data_url") or "").startswith("data:image/jpeg;base64,")
+    assert result["width"] == 1280

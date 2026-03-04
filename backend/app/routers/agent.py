@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Iterator, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -391,7 +391,7 @@ def get_pin_recommendations(
 ):
     rows = _memory.recommend_pins(db, current_user.id, limit=limit)
     return AgentPinRecommendationResponse(
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(timezone.utc),
         items=[AgentPinRecommendationItem(**row) for row in rows],
     )
 
