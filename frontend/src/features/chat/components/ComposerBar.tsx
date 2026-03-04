@@ -1,6 +1,7 @@
 ﻿import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { Send, Square, Camera, Loader2, Paperclip, X } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
+import { MAX_PENDING_ATTACHMENTS } from '../constants'
 
 interface Props {
   onSend: (text: string) => void
@@ -28,6 +29,7 @@ export function ComposerBar({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleSubmit = async () => {
+    if (isAttaching || isCapturing) return
     if (isStreaming) { onStop(); return }
     const textHint = text.trim()
     if (!textHint && pendingFiles.length === 0) return
@@ -71,7 +73,7 @@ export function ComposerBar({
     const files = Array.from(e.target.files || [])
     e.target.value = ''
     if (files.length === 0 || isStreaming || isAttaching || isCapturing) return
-    setPendingFiles((prev) => [...prev, ...files].slice(0, 10))
+    setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_PENDING_ATTACHMENTS))
   }
 
   const openAttachmentPicker = () => {
@@ -160,7 +162,7 @@ export function ComposerBar({
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={!isStreaming && (!canSend || isCapturing || isAttaching)}
+              disabled={isCapturing || isAttaching || (!isStreaming && !canSend)}
               className={cn(
                 `flex shrink-0 items-center justify-center rounded-[10px] transition-all active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`,
                 isStreaming
