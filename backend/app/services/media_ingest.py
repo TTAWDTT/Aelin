@@ -7,12 +7,12 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse, urlunparse
+from uuid import uuid4
 
 from app.services.asr_text import ASRTextProcessor
 from app.services.media_ingest_constants import (
@@ -334,6 +334,17 @@ class MediaIngestService:
         backend_dir = Path(__file__).resolve().parents[2]
         return (backend_dir / path).resolve()
 
+    def _create_temp_workdir(self, prefix: str) -> Path:
+        root = self._resolve_runtime_path("./data/tmp/media_ingest")
+        root.mkdir(parents=True, exist_ok=True)
+        while True:
+            candidate = root / f"{prefix}{uuid4().hex[:10]}"
+            try:
+                candidate.mkdir(parents=False, exist_ok=False)
+                return candidate
+            except FileExistsError:
+                continue
+
     def _normalize_url(self, url: str) -> str:
         raw = str(url or "").strip()
         if not raw:
@@ -626,7 +637,8 @@ class MediaIngestService:
                 return fallback_metadata
 
         network_args = self._build_network_args(platform=platform)
-        with tempfile.TemporaryDirectory(prefix="aelin-media-meta-") as tmpdir:
+        tmpdir = self._create_temp_workdir("aelin-media-meta-")
+        try:
             proc = self._run_ytdlp(
                 ytdlp_cmd=ytdlp_cmd,
                 args=[
@@ -636,7 +648,7 @@ class MediaIngestService:
                     "--dump-single-json",
                 ],
                 url=url,
-                cwd=Path(tmpdir),
+                cwd=tmpdir,
                 network_args=network_args,
             )
 
@@ -651,9 +663,11 @@ class MediaIngestService:
                         "--dump-single-json",
                     ],
                     url=url,
-                    cwd=Path(tmpdir),
+                    cwd=tmpdir,
                     network_args=[],
                 )
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
         if proc.returncode != 0:
             code, msg = self._classify_ytdlp_error(stderr=(proc.stderr or ""), stdout=(proc.stdout or ""))
             if platform == "douyin":
@@ -1107,8 +1121,9 @@ class MediaIngestService:
             return ""
         self._ffmpeg_command = ffmpeg_cmd
 
-        with tempfile.TemporaryDirectory(prefix="aelin-douyin-asr-") as tmpdir:
-            audio_path = Path(tmpdir) / "douyin_audio.mp3"
+        tmpdir = self._create_temp_workdir("aelin-douyin-asr-")
+        try:
+            audio_path = tmpdir / "douyin_audio.mp3"
             extracted = False
             if source_url.startswith("http"):
                 extracted = self._extract_audio_for_asr(
@@ -1121,7 +1136,7 @@ class MediaIngestService:
                 downloaded_video = self._download_douyin_video_for_asr(
                     ytdlp_cmd=ytdlp_cmd,
                     page_url=page_url,
-                    workdir=Path(tmpdir),
+                    workdir=tmpdir,
                 )
                 if downloaded_video is not None:
                     extracted = self._extract_audio_for_asr(
@@ -1144,6 +1159,8 @@ class MediaIngestService:
                     )
                 if text:
                     return text[: self._max_model_input_chars]
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
         return ""
 
     def _resolve_douyin_asr_backend_order(self) -> list[str]:
@@ -1359,8 +1376,8 @@ class MediaIngestService:
         platform: str,
     ) -> tuple[str, str]:
         network_args = self._build_network_args(platform=platform)
-        with tempfile.TemporaryDirectory(prefix="aelin-media-sub-") as tmpdir:
-            workdir = Path(tmpdir)
+        workdir = self._create_temp_workdir("aelin-media-sub-")
+        try:
             args = [
                 "--skip-download",
                 "--no-playlist",
@@ -1401,6 +1418,8 @@ class MediaIngestService:
                 return "", ""
             language = self._guess_language_from_filename(best_path.name, language_preferences)
             return text, language
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
     def _pick_best_subtitle_file(self, *, subtitle_paths: list[Path], language_preferences: list[str]) -> Path | None:
         if not subtitle_paths:
