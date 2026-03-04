@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { Send, Square, Camera, Loader2, Paperclip, X, Crop, Monitor } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
@@ -29,7 +29,10 @@ export function ComposerBar({
   const [isAttaching, setIsAttaching] = useState(false)
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const captureTriggerRef = useRef<HTMLButtonElement | null>(null)
   const captureMenuRef = useRef<HTMLDivElement | null>(null)
+  const captureMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const captureMenuId = useId()
   const captureDisabled = isStreaming || isCapturing || isAttaching || pendingFiles.length > 0
 
   useEffect(() => {
@@ -48,6 +51,14 @@ export function ComposerBar({
       setCaptureMenuOpen(false)
     }
   }, [captureDisabled])
+
+  useEffect(() => {
+    if (!captureMenuOpen) return
+    const rafId = window.requestAnimationFrame(() => {
+      captureMenuItemRefs.current[0]?.focus()
+    })
+    return () => window.cancelAnimationFrame(rafId)
+  }, [captureMenuOpen])
 
   const handleSubmit = async () => {
     if (isAttaching || isCapturing) return
@@ -89,12 +100,62 @@ export function ComposerBar({
       setText('')
     } finally {
       setIsCapturing(false)
+      window.requestAnimationFrame(() => {
+        captureTriggerRef.current?.focus()
+      })
     }
   }
 
   const openCaptureMenu = () => {
     if (captureDisabled) return
     setCaptureMenuOpen((prev) => !prev)
+  }
+
+  const handleCaptureTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (captureDisabled) return
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !captureMenuOpen) {
+      event.preventDefault()
+      setCaptureMenuOpen(true)
+      return
+    }
+    if (event.key === 'Escape' && captureMenuOpen) {
+      event.preventDefault()
+      setCaptureMenuOpen(false)
+    }
+  }
+
+  const handleCaptureMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const menuItems = captureMenuItemRefs.current.filter((item): item is HTMLButtonElement => Boolean(item))
+    if (menuItems.length === 0) return
+
+    const currentIndex = menuItems.findIndex((item) => item === document.activeElement)
+
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setCaptureMenuOpen(false)
+      captureTriggerRef.current?.focus()
+      return
+    }
+
+    if (event.key === 'Home') {
+      event.preventDefault()
+      menuItems[0]?.focus()
+      return
+    }
+
+    if (event.key === 'End') {
+      event.preventDefault()
+      menuItems[menuItems.length - 1]?.focus()
+      return
+    }
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Tab') {
+      event.preventDefault()
+      const step = event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey) ? -1 : 1
+      const baseIndex = currentIndex >= 0 ? currentIndex : 0
+      const nextIndex = (baseIndex + step + menuItems.length) % menuItems.length
+      menuItems[nextIndex]?.focus()
+    }
   }
 
   const handleAttachmentChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -195,30 +256,51 @@ export function ComposerBar({
 
             <div ref={captureMenuRef} className="relative shrink-0">
               <button
+                ref={captureTriggerRef}
                 type="button"
                 onClick={openCaptureMenu}
+                onKeyDown={handleCaptureTriggerKeyDown}
                 title={captureButtonLabel}
                 disabled={captureDisabled}
                 className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
                 aria-label={captureButtonLabel}
+                aria-haspopup="menu"
+                aria-expanded={captureMenuOpen}
+                aria-controls={captureMenuId}
               >
                 {isCapturing ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Camera size={compact ? 16 : 17} />}
               </button>
 
               {captureMenuOpen && (
-                <div className="absolute bottom-[calc(100%+8px)] left-0 z-30 flex min-w-[172px] flex-col gap-1 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-panel)] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.18)]">
+                <div
+                  id={captureMenuId}
+                  role="menu"
+                  aria-label="截图菜单"
+                  onKeyDown={handleCaptureMenuKeyDown}
+                  className="absolute bottom-[calc(100%+8px)] left-0 z-30 flex min-w-[172px] flex-col gap-1 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-panel)] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.18)]"
+                >
                   <button
+                    ref={(node) => {
+                      captureMenuItemRefs.current[0] = node
+                    }}
                     type="button"
                     onClick={() => void handleCapture('fullscreen')}
                     className="flex items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent-soft)]"
+                    role="menuitem"
+                    aria-label="全屏截图"
                   >
                     <Monitor size={14} className="shrink-0 text-[var(--color-text-muted)]" />
                     <span>全屏截图</span>
                   </button>
                   <button
+                    ref={(node) => {
+                      captureMenuItemRefs.current[1] = node
+                    }}
                     type="button"
                     onClick={() => void handleCapture('region')}
                     className="flex items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent-soft)]"
+                    role="menuitem"
+                    aria-label="自定义截图"
                   >
                     <Crop size={14} className="shrink-0 text-[var(--color-text-muted)]" />
                     <span>自定义截图</span>

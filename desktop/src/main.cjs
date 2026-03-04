@@ -564,16 +564,14 @@ function resizeImageToMaxEdge(image, maxEdge) {
   });
 }
 
-function saveCaptureImage(buffer, name) {
+async function saveCaptureImage(buffer, name) {
   try {
     const picturesDir = app.getPath("pictures");
     const captureDir = path.join(picturesDir, "Aelin", "captures");
     const safeName = String(name || "").trim() || `screen-${Date.now()}.jpg`;
     const savePath = path.join(captureDir, safeName);
-    void fs.promises
-      .mkdir(captureDir, { recursive: true })
-      .then(() => fs.promises.writeFile(savePath, buffer))
-      .catch(() => {});
+    await fs.promises.mkdir(captureDir, { recursive: true });
+    await fs.promises.writeFile(savePath, buffer);
     return savePath;
   } catch {
     return "";
@@ -624,7 +622,7 @@ function buildImageClipSignal(image) {
   }
 }
 
-function buildSnapshotFromImage(image, options = {}) {
+async function buildSnapshotFromImage(image, options = {}) {
   if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) {
     throw new Error("screen_image_empty");
   }
@@ -640,7 +638,7 @@ function buildSnapshotFromImage(image, options = {}) {
     throw new Error("screen_image_empty");
   }
   const size = image.getSize();
-  const savedPath = saveCaptureImage(imageBuffer, fileName);
+  const savedPath = await saveCaptureImage(imageBuffer, fileName);
   return {
     data_url: `data:${mimeType};base64,${imageBuffer.toString("base64")}`,
     name: fileName,
@@ -696,7 +694,7 @@ async function captureCustomRegionSnapshot(payload = {}) {
       }
       if (changed) {
         const resized = resizeImageToMaxEdge(image, maxEdge);
-        return buildSnapshotFromImage(resized, {
+        return await buildSnapshotFromImage(resized, {
           format,
           quality,
           sourceDisplay: "custom-region",
@@ -746,7 +744,7 @@ async function captureFullScreenSnapshot(payload = {}) {
     throw new Error("screen_thumbnail_empty");
   }
 
-  return buildSnapshotFromImage(source.thumbnail, {
+  return await buildSnapshotFromImage(source.thumbnail, {
     format,
     quality,
     sourceDisplay: String(source.display_id || targetDisplayId || "unknown"),
