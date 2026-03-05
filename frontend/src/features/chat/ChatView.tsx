@@ -31,12 +31,13 @@ export function ChatView() {
     send(text)
   }
 
-  const handleCaptureAndSend = async (textHint: string) => {
+  const handleCaptureAndSend = async (mode: 'fullscreen' | 'region', textHint: string) => {
     try {
-      await captureAndSend(textHint)
+      await captureAndSend(mode, textHint)
     } catch (error: any) {
       const message = String(error?.message || '截图失败，请稍后重试')
       toast.error(message)
+      throw error
     }
   }
 

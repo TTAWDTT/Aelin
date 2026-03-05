@@ -165,11 +165,11 @@ export function useChatStream() {
     abortRef.current = cancel
   }, [store])
 
-  const captureAndSend = useCallback(async (textHint = '') => {
+  const captureAndSend = useCallback(async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
     if (store.isStreaming) return
-    store.setStatusText('正在截图…')
+    store.setStatusText(mode === 'region' ? '等待框选截图…' : '正在全屏截图…')
     try {
-      const capture = await aelinApi.deviceScreenCapture()
+      const capture = await aelinApi.deviceScreenCapture({ mode })
       const prompt = String(textHint || '').trim()
       send(prompt, [{ dataUrl: capture.data_url, name: capture.name || `screen-${Date.now()}.jpg` }])
     } catch (error) {

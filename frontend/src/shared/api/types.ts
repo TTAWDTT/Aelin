@@ -199,6 +199,14 @@ export interface AelinDeviceScreenCaptureResponse {
   captured_at: string
   generated_at: string
 }
+export interface AelinDeviceScreenCaptureRequest {
+  mode?: 'fullscreen' | 'region'
+  display_id?: string
+  max_edge?: number
+  image_format?: 'jpeg' | 'png'
+  quality?: number
+  selection_timeout_ms?: number
+}
 export interface AelinDeviceModeApplyResponse {
   mode: string; status: string; summary: string
   steps: string[]; warnings: string[]; generated_at: string

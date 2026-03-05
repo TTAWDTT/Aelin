@@ -9,7 +9,7 @@ import type {
   AelinTrackingFileMemorySearchResponse, AelinTrackingFileMemoryContentResponse, AelinDiaryTreeResponse,
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
-  AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureResponse,
+  AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
 } from './types'
 
 export const aelinApi = {
@@ -75,8 +75,11 @@ export const aelinApi = {
   deviceModeApply: (mode: string) =>
     fetchJson<AelinDeviceModeApplyResponse>('/api/v1/aelin/device/mode/apply', { method: 'POST', body: JSON.stringify({ mode }) }),
 
-  deviceScreenCapture: () =>
-    fetchJson<AelinDeviceScreenCaptureResponse>('/api/v1/aelin/device/screen/capture', { method: 'POST' }),
+  deviceScreenCapture: (body?: AelinDeviceScreenCaptureRequest) =>
+    fetchJson<AelinDeviceScreenCaptureResponse>('/api/v1/aelin/device/screen/capture', {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
 
   deskFeed: (params?: {
     tag?: string
