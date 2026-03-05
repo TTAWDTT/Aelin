@@ -10,12 +10,13 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
+import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
   const session = sessions.find((s) => s.id === activeSessionId)
   const messages = session?.messages ?? []
-  const { send, captureAndSend, attachAndSend, stop } = useChatStream()
+  const { send, captureAndSend, uploadAttachments, sendWithAttachments, stop } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
@@ -41,11 +42,21 @@ export function ChatView() {
     }
   }
 
-  const handleAttachAndSend = async (files: File[], textHint: string) => {
+  const handleUploadAttachments = async (files: File[]) => {
     try {
-      await attachAndSend(files, textHint)
+      return await uploadAttachments(files)
     } catch (error: any) {
       const message = String(error?.message || '附件处理失败，请稍后重试')
+      toast.error(message)
+      throw error
+    }
+  }
+
+  const handleSendWithAttachments = async (attachments: AelinAttachmentUploadResponse[], textHint: string) => {
+    try {
+      await sendWithAttachments(attachments, textHint)
+    } catch (error: any) {
+      const message = String(error?.message || '附件发送失败，请稍后重试')
       toast.error(message)
       throw error
     }
@@ -76,7 +87,8 @@ export function ChatView() {
       <ComposerBar
         onSend={handleSend}
         onCaptureAndSend={handleCaptureAndSend}
-        onAttachAndSend={handleAttachAndSend}
+        onUploadAttachments={handleUploadAttachments}
+        onSendWithAttachments={handleSendWithAttachments}
         onStop={stop}
         isStreaming={isStreaming}
         compact={compact}

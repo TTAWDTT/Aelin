@@ -70,6 +70,7 @@ class AelinAgentLoop:
         memory_summary: str,
         history_turns: list[dict[str, str]] | None = None,
         images: list[dict[str, str]] | None = None,
+        attachment_ids: list[int] | None = None,
         forced_intent: str = "",
         forced_tool_runs: list[dict[str, Any]] | None = None,
     ) -> AelinAgentLoopResult:
@@ -103,6 +104,7 @@ class AelinAgentLoop:
             memory_summary=memory_summary,
             history_turns=history_turns,
             images=images,
+            attachment_ids=attachment_ids,
             forced_intent=forced_intent,
             forced_tool_runs=forced_tool_runs,
         )

@@ -4,7 +4,7 @@ import queue
 import threading
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -13,10 +13,45 @@ from app.models import User
 from app.routers.aelin import _dispatch_aelin_chat, _normalize_search_mode
 from app.routers.aelin_text_helpers import _now_ms, _sse_event
 from app.routers.auth import get_current_user
-from app.schemas import AelinChatRequest, AelinChatResponse
+from app.schemas import AelinAttachmentUploadResponse, AelinChatRequest, AelinChatResponse
+from app.services.aelin_attachment_service import AttachmentIngestError, aelin_attachment_service
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
+
+
+@router.post("/attachments/upload", response_model=AelinAttachmentUploadResponse)
+async def aelin_attachment_upload(
+    file: UploadFile = File(...),
+    workspace: str = Form(default="default"),
+    session_id: str = Form(default=""),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    content = await file.read()
+    try:
+        result = aelin_attachment_service.ingest_bytes(
+            db,
+            user_id=int(current_user.id),
+            workspace=workspace,
+            session_id=session_id,
+            file_name=str(file.filename or "attachment"),
+            mime_type=str(file.content_type or ""),
+            content=content,
+        )
+        db.commit()
+    except AttachmentIngestError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=exc.message) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"附件处理失败: {str(exc)[:160]}") from exc
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
+    return AelinAttachmentUploadResponse(**result)
 
 
 @router.post("/chat", response_model=AelinChatResponse)

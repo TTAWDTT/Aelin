@@ -36,9 +36,22 @@ export interface SyncJobStatusResponse {
 export interface AelinChatRequest {
   query: string; use_memory?: boolean; max_citations?: number
   workspace?: string; images?: AelinImageInput[]
+  attachment_ids?: number[]
   history?: { role: string; content: string }[]
 }
 export interface AelinImageInput { data_url: string; name?: string }
+export interface AelinAttachmentUploadResponse {
+  attachment_id: number
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  workspace: string
+  session_id?: string
+  status: string
+  chunk_count: number
+  summary?: string
+  deduplicated?: boolean
+}
 export interface AelinCitation {
   message_id: number; source: string; source_label: string; sender: string
   sender_avatar_url?: string; title: string; received_at: string; score: number

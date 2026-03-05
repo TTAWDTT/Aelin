@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
+    aelin_attachment_storage_dir: str = "./data/aelin_attachments"
+    aelin_attachment_max_size_bytes: int = 30 * 1024 * 1024
+    aelin_attachment_chunk_size: int = 700
+    aelin_attachment_chunk_overlap: int = 120
+    aelin_attachment_soffice_bin: str = "soffice"
 
     # LLM client runtime tuning.
     llm_request_timeout_seconds: float = 90.0

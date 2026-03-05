@@ -169,6 +169,7 @@ class AelinChatRequest(BaseModel):
     max_citations: int = Field(default=6, ge=1, le=20)
     workspace: str = Field(default="default", min_length=1, max_length=64)
     images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=20)
     history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
     search_mode: str = Field(default="auto", min_length=1, max_length=16)
 
@@ -204,12 +205,30 @@ class AelinChatRequest(BaseModel):
             normalized.append({"role": role[:16], "content": content[:3000]})
         return normalized
 
+    @field_validator("attachment_ids", mode="before")
+    @classmethod
+    def _normalize_attachment_ids(cls, value: Any) -> list[int]:
+        if not isinstance(value, list):
+            return []
+        out: list[int] = []
+        for item in value[:20]:
+            try:
+                val = int(item)
+            except Exception:
+                continue
+            if val > 0:
+                out.append(val)
+        return out
+
     @model_validator(mode="after")
     def _finalize_query(self) -> "AelinChatRequest":
         if self.query:
             return self
         if self.images:
             self.query = "请结合这些图片给我一个简短说明。"
+            return self
+        if self.attachment_ids:
+            self.query = "请先基于我上传的附件内容给出结论和建议。"
             return self
         raise ValueError("query is empty")
 
@@ -222,6 +241,19 @@ class AelinChatHistoryTurn(BaseModel):
 class AelinImageInput(BaseModel):
     data_url: str = Field(min_length=20, max_length=3_000_000)
     name: str = Field(default="", max_length=120)
+
+
+class AelinAttachmentUploadResponse(BaseModel):
+    attachment_id: int
+    file_name: str
+    mime_type: str
+    size_bytes: int
+    workspace: str
+    session_id: str = ""
+    status: str = "ready"
+    chunk_count: int = 0
+    summary: str = ""
+    deduplicated: bool = False
 
 
 class AelinCitation(BaseModel):

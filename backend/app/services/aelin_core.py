@@ -705,6 +705,18 @@ def _normalize_history(raw_turns: list[Any]) -> list[dict[str, str]]:
     return out
 
 
+def _normalize_attachment_ids(raw_ids: list[Any]) -> list[int]:
+    out: list[int] = []
+    for item in raw_ids[:20]:
+        try:
+            value = int(item)
+        except Exception:
+            continue
+        if value > 0:
+            out.append(value)
+    return sorted(set(out))
+
+
 def _extract_first_supported_media_url(query: str) -> tuple[str, str] | None:
     text = str(query or "")
     if not text:
@@ -1747,6 +1759,7 @@ def _aelin_chat_impl(
             tracking_service=_tracking,
             file_memory_bridge=_tracking_file_memory,
             web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
+            available_attachment_ids=_normalize_attachment_ids(getattr(payload, "attachment_ids", [])),
         )
         runs, tool_err = run_aelin_structured_tools(
             service=service,
@@ -2684,6 +2697,7 @@ def _try_agent_loop_chat(
     memory_summary = str(base_bundle.get("summary") or "")
     history_turns = _normalize_history(payload.history)
     images = _normalize_images(payload.images)
+    attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
 
     tool_hub = AelinToolHub(
         db=db,
@@ -2693,6 +2707,7 @@ def _try_agent_loop_chat(
         tracking_service=_tracking,
         file_memory_bridge=_tracking_file_memory,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
+        available_attachment_ids=attachment_ids,
     )
 
     prefixed_traces: list[AelinToolStep] = []
@@ -2747,6 +2762,38 @@ def _try_agent_loop_chat(
                 count=0,
             )
 
+    if attachment_ids:
+        attachment_prefetch_args = {
+            "query": str(payload.query or "请总结附件主要内容")[:500],
+            "attachment_ids": attachment_ids[:20],
+            "top_k": 10,
+            "mode": "hybrid",
+        }
+        prefetch_started = time.perf_counter()
+        attachment_prefetch_result = tool_hub.execute("attachment_search", attachment_prefetch_args)
+        prefetch_latency_ms = int((time.perf_counter() - prefetch_started) * 1000)
+        forced_tool_runs.append(
+            {
+                "name": "attachment_search",
+                "args": attachment_prefetch_args,
+                "result": attachment_prefetch_result,
+            }
+        )
+        if bool(attachment_prefetch_result.get("ok")):
+            _emit_prefixed(
+                "attachment_prefetch",
+                status="completed",
+                detail=f"hits={int(attachment_prefetch_result.get('total') or 0)}; latency_ms={prefetch_latency_ms}",
+                count=int(attachment_prefetch_result.get("total") or 0),
+            )
+        else:
+            _emit_prefixed(
+                "attachment_prefetch",
+                status="failed",
+                detail=f"{str(attachment_prefetch_result.get('error') or 'unknown')[:140]}; latency_ms={prefetch_latency_ms}",
+                count=0,
+            )
+
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
     if forced_tracking_create and not force_disable_writes:
         # Temporarily allow writes for this request scope only.
@@ -2776,6 +2823,7 @@ def _try_agent_loop_chat(
         memory_summary=memory_summary,
         history_turns=history_turns,
         images=images,
+        attachment_ids=attachment_ids,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
     )
