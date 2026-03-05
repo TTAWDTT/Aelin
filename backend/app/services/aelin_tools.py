@@ -280,16 +280,16 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_state_get",
-                    "description": "读取浏览器状态。支持 scope=auto|managed|cdp|external|system|all。",
+                    "description": "读取浏览器状态。支持 scope=auto|cdp|external|system|all（managed 已软下线，不再建议使用）。默认轻量模式（include_dom=false, include_a11y=false）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external", "system", "all"]},
+                            "scope": {"type": "string", "enum": ["auto", "cdp", "external", "system", "all"]},
                             "include_dom": {"type": "boolean"},
                             "include_a11y": {"type": "boolean"},
                             "max_targets": {"type": "integer", "minimum": 1, "maximum": 60},
-                            "max_items": {"type": "integer", "minimum": 1, "maximum": 200},
-                            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                            "max_items": {"type": "integer", "minimum": 0, "maximum": 200},
+                            "pid": {"type": "integer", "minimum": 0, "maximum": 2147483647},
                         },
                         "required": [],
                     },
@@ -299,12 +299,12 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_use",
-                    "description": "执行浏览器动作（navigate/click/type/scroll/wait）。scope=auto 下 navigate 优先 external；复杂动作在系统浏览器已打开时会先要求 confirm，并可能需要 CDP。scope=external 仅支持 navigate（继承系统浏览器登录态）。",
+                    "description": "执行浏览器动作（navigate/click/type/scroll/wait）。scope=auto 下 navigate 优先 external；复杂动作在系统浏览器已打开时会先要求 confirm，并可能需要 CDP。scope=external 仅支持 navigate（继承系统浏览器登录态）。managed 已软下线，不再建议使用。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "wait"]},
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external"]},
+                            "scope": {"type": "string", "enum": ["auto", "cdp", "external"]},
                             "url": {"type": "string"},
                             "target": {"type": "string"},
                             "value": {"type": "string"},
@@ -651,10 +651,10 @@ class AelinToolHub:
 
     def _tool_browser_state_get(self, args: dict[str, Any]) -> dict[str, Any]:
         scope = str(args.get("scope") or "auto").strip().lower()[:16]
-        include_dom = bool(args.get("include_dom", True))
+        include_dom = bool(args.get("include_dom", False))
         include_a11y = bool(args.get("include_a11y", False))
         max_targets = _safe_int(args.get("max_targets"), 30, low=1, high=60)
-        max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
+        max_items = _safe_int(args.get("max_items"), 0, low=0, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
             result = _run_sync_playwright_call(
