@@ -98,6 +98,8 @@ export function ComposerBar({
     try {
       await onCaptureAndSend(mode, text.trim())
       setText('')
+    } catch {
+      return
     } finally {
       setIsCapturing(false)
       window.requestAnimationFrame(() => {

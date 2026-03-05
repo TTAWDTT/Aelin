@@ -746,7 +746,7 @@ async function captureCustomRegionSnapshot(payload = {}) {
   const shouldRestoreClipboard = Boolean(clipboardSnapshot);
   let clipboardCleared = false;
   try {
-    if (typeof clipboard.clear === "function") {
+    if (shouldRestoreClipboard && typeof clipboard.clear === "function") {
       clipboard.clear();
       clipboardCleared = true;
     }

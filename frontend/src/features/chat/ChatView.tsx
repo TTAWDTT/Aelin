@@ -37,6 +37,7 @@ export function ChatView() {
     } catch (error: any) {
       const message = String(error?.message || '截图失败，请稍后重试')
       toast.error(message)
+      throw error
     }
   }
 
