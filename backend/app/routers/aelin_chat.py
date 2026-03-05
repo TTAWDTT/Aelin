@@ -14,23 +14,23 @@ from app.routers.aelin import _dispatch_aelin_chat, _normalize_search_mode
 from app.routers.aelin_text_helpers import _now_ms, _sse_event
 from app.routers.auth import get_current_user
 from app.schemas import AelinAttachmentUploadResponse, AelinChatRequest, AelinChatResponse
-from app.services.aelin_attachment_service import AttachmentIngestError, aelin_attachment_service
+from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 
 
 @router.post("/attachments/upload", response_model=AelinAttachmentUploadResponse)
-async def aelin_attachment_upload(
+def aelin_attachment_upload(
     file: UploadFile = File(...),
     workspace: str = Form(default="default"),
     session_id: str = Form(default=""),
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    content = await file.read()
+    content = file.file.read()
     try:
-        result = aelin_attachment_service.ingest_bytes(
+        result = get_aelin_attachment_service().ingest_bytes(
             db,
             user_id=int(current_user.id),
             workspace=workspace,
@@ -48,7 +48,7 @@ async def aelin_attachment_upload(
         raise HTTPException(status_code=500, detail=f"附件处理失败: {str(exc)[:160]}") from exc
     finally:
         try:
-            await file.close()
+            file.file.close()
         except Exception:
             pass
     return AelinAttachmentUploadResponse(**result)

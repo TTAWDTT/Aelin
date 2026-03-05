@@ -174,7 +174,7 @@ export function useChatStream() {
     }).join('\n')}`
     const finalPrompt = trimQueryForApi([String(textHint || '').trim(), attachmentBlock].filter(Boolean).join('\n\n').trim())
     send(finalPrompt || '我上传了附件，请先基于附件内容回答。', undefined, attachmentIds)
-  }, [send, store.isStreaming])
+  }, [send, store])
 
   const stop = useCallback(() => {
     abortRef.current?.()

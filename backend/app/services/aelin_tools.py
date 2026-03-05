@@ -20,7 +20,7 @@ from app.services.device_center import (
 )
 from app.services.browser_automation import browser_automation_service
 from app.services.openviking_bridge import TrackingFileMemoryBridge
-from app.services.aelin_attachment_service import AelinAttachmentService, aelin_attachment_service
+from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.tracking_autonomy import TrackingAutonomyService
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
@@ -86,6 +86,19 @@ def _safe_int(value: Any, default: int, *, low: int, high: int) -> int:
     return max(low, min(high, out))
 
 
+def _normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: int = 20) -> list[int]:
+    out: list[int] = []
+    for item in list(values or []):
+        try:
+            value = int(item)
+        except Exception:
+            continue
+        if value <= 0:
+            continue
+        out.append(value)
+    return sorted(set(out))[: max(1, int(cap or 20))]
+
+
 def _result_ok(**fields: Any) -> dict[str, Any]:
     return {"ok": True, **fields}
 
@@ -126,8 +139,8 @@ class AelinToolHub:
         self._tracking = tracking_service
         self._file_memory = file_memory_bridge
         self._web_search = web_search_service or WebSearchService()
-        self._attachments = attachment_service or aelin_attachment_service
-        self._available_attachment_ids = sorted({int(x) for x in list(available_attachment_ids or []) if int(x) > 0})[:20]
+        self._attachments = attachment_service or get_aelin_attachment_service()
+        self._available_attachment_ids = _normalize_positive_ints(available_attachment_ids, cap=20)
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         return [
@@ -236,7 +249,7 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "attachment_search",
-                    "description": "在已上传附件中检索与问题最相关的片段，并返回可引用来源信息。",
+                    "description": "在已上传附件中检索与问题最相关的片段，并返回可引用来源信息。若不传 attachment_ids，将默认使用 available_attachment_ids。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -245,6 +258,7 @@ class AelinToolHub:
                                 "type": "array",
                                 "items": {"type": "integer"},
                                 "maxItems": 20,
+                                "description": "可选。默认使用 available_attachment_ids。",
                             },
                             "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
                             "mode": {"type": "string", "enum": ["keyword", "hybrid"]},

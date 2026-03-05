@@ -43,6 +43,7 @@ export function ComposerBar({
   const captureMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([])
   const captureMenuId = useId()
   const hasProcessingAttachments = uploadingAttachments.length > 0
+  const usedAttachmentSlots = pendingAttachments.length + uploadingAttachments.length
   const captureDisabled = isStreaming || isCapturing || isAttaching || hasProcessingAttachments || pendingAttachments.length > 0
 
   useEffect(() => {
@@ -180,7 +181,7 @@ export function ComposerBar({
     const files = Array.from(e.target.files || [])
     e.target.value = ''
     if (files.length === 0 || isStreaming || isAttaching || isCapturing) return
-    const availableSlots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length
+    const availableSlots = MAX_PENDING_ATTACHMENTS - usedAttachmentSlots
     if (availableSlots <= 0) {
       toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`)
       return
@@ -206,7 +207,7 @@ export function ComposerBar({
 
   const openAttachmentPicker = () => {
     if (isStreaming || isAttaching || isCapturing) return
-    if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) return
+    if (usedAttachmentSlots >= MAX_PENDING_ATTACHMENTS) return
     fileInputRef.current?.click()
   }
 
@@ -277,16 +278,16 @@ export function ComposerBar({
               type="button"
               onClick={openAttachmentPicker}
               title={
-                pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+                usedAttachmentSlots >= MAX_PENDING_ATTACHMENTS
                   ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
                   : isAttaching
                     ? '正在处理附件'
                     : '上传附件'
               }
-              disabled={isStreaming || isAttaching || isCapturing || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS}
+              disabled={isStreaming || isAttaching || isCapturing || usedAttachmentSlots >= MAX_PENDING_ATTACHMENTS}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
               aria-label={
-                pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+                usedAttachmentSlots >= MAX_PENDING_ATTACHMENTS
                   ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
                   : isAttaching
                     ? '正在处理附件'

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AttachmentChunk, AttachmentDocument
@@ -106,6 +106,19 @@ class AelinAttachmentService:
     @staticmethod
     def _norm_text(text: str) -> str:
         return _WS_RE.sub(" ", str(text or "")).strip()
+
+    @staticmethod
+    def _normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: int = 20) -> list[int]:
+        out: list[int] = []
+        for item in list(values or []):
+            try:
+                value = int(item)
+            except Exception:
+                continue
+            if value <= 0:
+                continue
+            out.append(value)
+        return sorted(set(out))[: max(1, int(cap or 20))]
 
     def _tokenize(self, text: str) -> list[str]:
         lowered = str(text or "").lower()
@@ -266,15 +279,21 @@ class AelinAttachmentService:
         except Exception as exc:
             raise AttachmentIngestError("pptx_invalid_zip", f"PPTX 文件损坏或无法读取: {exc}") from exc
 
-        slide_paths = [name for name in zf.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")]
-        if not slide_paths:
+        slide_entries: list[tuple[int, str]] = []
+        for path in zf.namelist():
+            if not (path.startswith("ppt/slides/slide") and path.endswith(".xml")):
+                continue
+            match = re.search(r"slide(\d+)\.xml$", path)
+            if not match:
+                continue
+            slide_entries.append((int(match.group(1)), path))
+
+        if not slide_entries:
             raise AttachmentIngestError("pptx_missing_slides", f"PPTX 未找到 slides 结构: {file_name}")
-        slide_paths = sorted(slide_paths, key=lambda item: int(re.findall(r"slide(\d+)\.xml$", item)[0]))
+        slide_entries.sort(key=lambda item: item[0])
 
         blocks: list[ParsedBlock] = []
-        for slide_path in slide_paths:
-            slide_no_match = re.search(r"slide(\d+)\.xml$", slide_path)
-            slide_no = int(slide_no_match.group(1)) if slide_no_match else 0
+        for slide_no, slide_path in slide_entries:
             try:
                 raw = zf.read(slide_path)
                 root = ET.fromstring(raw)
@@ -307,7 +326,7 @@ class AelinAttachmentService:
 
         metadata = {
             "parser": "pptx_ooxml",
-            "slide_count": len(slide_paths),
+            "slide_count": len(slide_entries),
             "image_count": len(media_names),
         }
         return full_text, blocks, metadata
@@ -578,10 +597,10 @@ class AelinAttachmentService:
         shard_dir.mkdir(parents=True, exist_ok=True)
         storage_name = f"{file_sha}.{ext}"
         storage_path = shard_dir / storage_name
-        if not storage_path.exists():
-            storage_path.write_bytes(content)
-
         try:
+            if not storage_path.exists():
+                storage_path.write_bytes(content)
+
             parsed_text, blocks, metadata = self._parse_content(
                 content=content,
                 file_name=safe_name,
@@ -622,7 +641,6 @@ class AelinAttachmentService:
                         loc_json=str(chunk["loc_json"]),
                     )
                 )
-            db.flush()
 
             return {
                 "attachment_id": int(row.id),
@@ -670,7 +688,7 @@ class AelinAttachmentService:
         q = self._norm_text(query)
         if not q:
             return {"ok": False, "error": "missing query"}
-        ids = sorted({int(x) for x in list(attachment_ids or []) if int(x) > 0})[:20]
+        ids = self._normalize_positive_ints(attachment_ids, cap=20)
         if not ids:
             return {"ok": False, "error": "missing attachment_ids"}
         k = max(1, min(20, int(top_k or 5)))
@@ -693,7 +711,36 @@ class AelinAttachmentService:
 
         allowed_ids = {int(row.id) for row in docs}
         doc_map = {int(row.id): row for row in docs}
-        chunks = list(db.scalars(select(AttachmentChunk).where(AttachmentChunk.attachment_id.in_(allowed_ids))))
+        candidate_limit = max(240, k * 80)
+        query_lower = q.lower()[:200]
+        token_terms: list[str] = []
+        for token in self._tokenize(q):
+            if not token:
+                continue
+            if token in token_terms:
+                continue
+            token_terms.append(token)
+            if len(token_terms) >= 8:
+                break
+
+        lexical_filters = [AttachmentChunk.text.ilike(f"%{term}%") for term in token_terms]
+        if query_lower:
+            lexical_filters.append(AttachmentChunk.text.ilike(f"%{query_lower}%"))
+
+        chunk_stmt = select(AttachmentChunk).where(AttachmentChunk.attachment_id.in_(allowed_ids))
+        if lexical_filters:
+            chunk_stmt = chunk_stmt.where(or_(*lexical_filters))
+        chunk_stmt = chunk_stmt.order_by(AttachmentChunk.id.desc()).limit(candidate_limit)
+        chunks = list(db.scalars(chunk_stmt))
+        if not chunks:
+            chunks = list(
+                db.scalars(
+                    select(AttachmentChunk)
+                    .where(AttachmentChunk.attachment_id.in_(allowed_ids))
+                    .order_by(AttachmentChunk.id.desc())
+                    .limit(candidate_limit)
+                )
+            )
         if not chunks:
             return {"ok": True, "content": "", "hits": [], "total": 0, "attachment_ids": sorted(allowed_ids)}
 
@@ -785,5 +832,11 @@ class AelinAttachmentService:
             "attachment_ids": sorted(allowed_ids),
         }
 
+_ATTACHMENT_SERVICE_SINGLETON: AelinAttachmentService | None = None
 
-aelin_attachment_service = AelinAttachmentService()
+
+def get_aelin_attachment_service() -> AelinAttachmentService:
+    global _ATTACHMENT_SERVICE_SINGLETON
+    if _ATTACHMENT_SERVICE_SINGLETON is None:
+        _ATTACHMENT_SERVICE_SINGLETON = AelinAttachmentService()
+    return _ATTACHMENT_SERVICE_SINGLETON

@@ -6,6 +6,19 @@ from typing import Any
 from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
 
 
+def _normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: int = 20) -> list[int]:
+    out: list[int] = []
+    for item in list(values or []):
+        try:
+            value = int(item)
+        except Exception:
+            continue
+        if value <= 0:
+            continue
+        out.append(value)
+    return sorted(set(out))[: max(1, int(cap or 20))]
+
+
 def safe_json_loads(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
     if not text:
@@ -166,7 +179,7 @@ def build_initial_messages(
                 "content": f"forced_intent={str(forced_intent).strip()[:120]}",
             }
         )
-    normalized_attachment_ids = sorted({int(x) for x in list(attachment_ids or []) if int(x) > 0})[:20]
+    normalized_attachment_ids = _normalize_positive_ints(attachment_ids, cap=20)
     if normalized_attachment_ids:
         messages.append(
             {
