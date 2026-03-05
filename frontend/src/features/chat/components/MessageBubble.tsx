@@ -77,6 +77,17 @@ function buildTrackConfirmBody(action: AelinAction, fallbackText: string): Aelin
   }
 }
 
+function formatBrowserConfirmFeedback(res: { message?: string; tool_result?: Record<string, unknown> }) {
+  const base = String(res.message || '确认后执行失败').trim()
+  const toolResult = (res.tool_result || {}) as Record<string, unknown>
+  const restart = (toolResult.restart || {}) as Record<string, unknown>
+  const probeReason = String(restart.probe_reason || '').trim()
+  const listenerCount = Number(restart.probe_listener_count || 0)
+  if (!probeReason) return base
+  const suffix = listenerCount > 0 ? `，probe=${probeReason}，listeners=${listenerCount}` : `，probe=${probeReason}`
+  return `${base}${suffix}`
+}
+
 export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth, onQuickPrompt }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
@@ -167,7 +178,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           onQuickPrompt('我已确认，请继续完成刚才的浏览器任务并直接给我结果。')
         }
       } else {
-        toast.error(String(res.message || '确认后执行失败'))
+        toast.error(formatBrowserConfirmFeedback(res))
       }
     },
     onError: (error: any) => {

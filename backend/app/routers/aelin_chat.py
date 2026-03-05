@@ -75,6 +75,105 @@ def _build_browser_restart_meta(restart_meta: dict[str, Any] | None) -> dict[str
     }
 
 
+def _normalize_confirm_browser_use(
+    *, action: str, raw_args: dict[str, Any]
+) -> tuple[str, str, dict[str, Any]]:
+    allowed_keys = {
+        "url",
+        "target",
+        "selector",
+        "text",
+        "value",
+        "strategy",
+        "role",
+        "press_enter",
+        "direction",
+        "amount",
+        "wait_ms",
+        "timeout_ms",
+        "scope",
+        "confirm",
+    }
+    clean_args = {str(k): v for k, v in raw_args.items() if str(k) in allowed_keys}
+    clean_args["confirm"] = True
+    scope = str(clean_args.get("scope") or "cdp").strip().lower()
+    if scope not in {"auto", "cdp", "external"}:
+        scope = "cdp"
+    if action != "navigate" and scope == "external":
+        scope = "cdp"
+    clean_args["scope"] = scope
+    return action, scope, clean_args
+
+
+def _normalize_confirm_browser_state_get(raw_args: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    allowed_keys = {
+        "scope",
+        "include_dom",
+        "include_a11y",
+        "max_targets",
+        "max_items",
+        "pid",
+    }
+    clean_args = {str(k): v for k, v in raw_args.items() if str(k) in allowed_keys}
+    scope = str(clean_args.get("scope") or "cdp").strip().lower()
+    if scope not in {"auto", "cdp", "external", "system", "all"}:
+        scope = "cdp"
+    clean_args["scope"] = "cdp" if scope != "system" else scope
+    return "state_get", str(clean_args.get("scope") or "cdp"), clean_args
+
+
+def _execute_confirmed_browser_call(
+    *,
+    tool_name: str,
+    action: str,
+    scope: str,
+    clean_args: dict[str, Any],
+    user_id: int,
+    workspace: str,
+) -> dict[str, Any]:
+    if tool_name == "browser_use":
+        return browser_automation_service.use(
+            user_id=user_id,
+            workspace=workspace,
+            action=action,
+            args=clean_args,
+            scope=scope,
+        )
+    return browser_automation_service.state_get(
+        user_id=user_id,
+        workspace=workspace,
+        scope=scope,
+        include_dom=bool(clean_args.get("include_dom", False)),
+        include_a11y=bool(clean_args.get("include_a11y", False)),
+        max_targets=int(clean_args.get("max_targets") or 30),
+        max_items=int(clean_args.get("max_items") or 20),
+        pid=int(clean_args.get("pid") or 0),
+    )
+
+
+def _build_followup_request(
+    *, payload: AelinBrowserConfirmRequest, workspace: str
+) -> AelinChatRequest:
+    resume_query = str(payload.resume_query or "").strip()
+    resume_request = payload.resume_request if isinstance(payload.resume_request, dict) else {}
+    if resume_request:
+        followup_request_payload = dict(resume_request)
+        followup_request_payload["workspace"] = workspace
+        followup_request_payload["use_memory"] = bool(followup_request_payload.get("use_memory", True))
+        if not str(followup_request_payload.get("query") or "").strip():
+            followup_request_payload["query"] = resume_query or "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
+        return AelinChatRequest(**followup_request_payload)
+    if not resume_query:
+        resume_query = "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
+    return AelinChatRequest(
+        query=resume_query[:500],
+        workspace=workspace,
+        use_memory=True,
+        history=[],
+        images=[],
+    )
+
+
 @router.post("/chat", response_model=AelinChatResponse)
 def aelin_chat(
     payload: AelinChatRequest,
@@ -227,90 +326,32 @@ def confirm_browser_action(
 
     raw_args = next_call.get("args")
     args = raw_args if isinstance(raw_args, dict) else {}
-    clean_args: dict[str, Any]
-    scope = "cdp"
     if tool_name == "browser_use":
-        allowed_keys = {
-            "url",
-            "target",
-            "selector",
-            "text",
-            "value",
-            "strategy",
-            "role",
-            "press_enter",
-            "direction",
-            "amount",
-            "wait_ms",
-            "timeout_ms",
-            "scope",
-            "confirm",
-        }
-        clean_args = {str(k): v for k, v in args.items() if str(k) in allowed_keys}
-        clean_args["confirm"] = True
-        scope = str(clean_args.get("scope") or "cdp").strip().lower()
-        if scope not in {"auto", "cdp", "external"}:
-            scope = "cdp"
-        if action != "navigate" and scope == "external":
-            scope = "cdp"
-        clean_args["scope"] = scope
-        result = browser_automation_service.use(
-            user_id=int(current_user.id),
-            workspace=workspace,
-            action=action,
-            args=clean_args,
-            scope=scope,
-        )
+        action, scope, clean_args = _normalize_confirm_browser_use(action=action, raw_args=args)
     else:
-        allowed_keys = {
-            "scope",
-            "include_dom",
-            "include_a11y",
-            "max_targets",
-            "max_items",
-            "pid",
-        }
-        clean_args = {str(k): v for k, v in args.items() if str(k) in allowed_keys}
-        scope = str(clean_args.get("scope") or "cdp").strip().lower()
-        if scope not in {"auto", "cdp", "external", "system", "all"}:
-            scope = "cdp"
-        clean_args["scope"] = "cdp" if scope != "system" else scope
-        scope = str(clean_args.get("scope") or "cdp")
-        result = browser_automation_service.state_get(
-            user_id=int(current_user.id),
-            workspace=workspace,
-            scope=scope,
-            include_dom=bool(clean_args.get("include_dom", False)),
-            include_a11y=bool(clean_args.get("include_a11y", False)),
-            max_targets=int(clean_args.get("max_targets") or 30),
-            max_items=int(clean_args.get("max_items") or 20),
-            pid=int(clean_args.get("pid") or 0),
-        )
+        action, scope, clean_args = _normalize_confirm_browser_state_get(args)
+    result = _execute_confirmed_browser_call(
+        tool_name=tool_name,
+        action=action,
+        scope=scope,
+        clean_args=clean_args,
+        user_id=int(current_user.id),
+        workspace=workspace,
+    )
 
     restart_meta: dict[str, Any] | None = None
     pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
     if (not bool(result.get("ok"))) and _is_cdp_restart_error(str(result.get("error") or "")):
         restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=24.0)
         if bool(restart_meta.get("ok")):
-            if tool_name == "browser_use":
-                retry = browser_automation_service.use(
-                    user_id=int(current_user.id),
-                    workspace=workspace,
-                    action=action,
-                    args=clean_args,
-                    scope="cdp",
-                )
-            else:
-                retry = browser_automation_service.state_get(
-                    user_id=int(current_user.id),
-                    workspace=workspace,
-                    scope="cdp",
-                    include_dom=bool(clean_args.get("include_dom", False)),
-                    include_a11y=bool(clean_args.get("include_a11y", False)),
-                    max_targets=int(clean_args.get("max_targets") or 30),
-                    max_items=int(clean_args.get("max_items") or 20),
-                    pid=int(clean_args.get("pid") or 0),
-                )
+            retry = _execute_confirmed_browser_call(
+                tool_name=tool_name,
+                action=action,
+                scope="cdp",
+                clean_args=clean_args,
+                user_id=int(current_user.id),
+                workspace=workspace,
+            )
             if isinstance(retry, dict):
                 result = dict(retry)
             else:
@@ -334,27 +375,9 @@ def confirm_browser_action(
     continued = False
     continuation_error = ""
     followup_result: dict[str, Any] = {}
-    resume_query = str(payload.resume_query or "").strip()
-    resume_request = payload.resume_request if isinstance(payload.resume_request, dict) else {}
     if ok and bool(payload.continue_after_confirm):
         try:
-            if resume_request:
-                followup_request_payload = dict(resume_request)
-                followup_request_payload["workspace"] = workspace
-                followup_request_payload["use_memory"] = bool(followup_request_payload.get("use_memory", True))
-                if not str(followup_request_payload.get("query") or "").strip():
-                    followup_request_payload["query"] = resume_query or "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
-                followup_request = AelinChatRequest(**followup_request_payload)
-            else:
-                if not resume_query:
-                    resume_query = "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
-                followup_request = AelinChatRequest(
-                    query=resume_query[:500],
-                    workspace=workspace,
-                    use_memory=True,
-                    history=[],
-                    images=[],
-                )
+            followup_request = _build_followup_request(payload=payload, workspace=workspace)
             followup = _dispatch_aelin_chat(
                 followup_request,
                 db,

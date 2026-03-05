@@ -1581,13 +1581,19 @@ class BrowserAutomationService:
                 pid=int(pid or 0),
             )
             return {
-                "ok": True,
+                "ok": bool(active_state.get("ok", False)),
                 "scope": "all",
                 "active_state": active_state,
                 "managed_sessions": list(sessions.get("managed_sessions") or []),
                 "system_processes": list(sessions.get("system_processes") or []),
                 "cdp_enabled": bool(sessions.get("cdp_enabled")),
                 "cdp_endpoint": str(sessions.get("cdp_endpoint") or ""),
+                "error": str(active_state.get("error") or "")[:180] if not bool(active_state.get("ok", False)) else "",
+                "requires_confirmation": bool(active_state.get("requires_confirmation", False)),
+                "confirm_kind": str(active_state.get("confirm_kind") or "")[:48],
+                "user_prompt": str(active_state.get("user_prompt") or "")[:220],
+                "next_call": active_state.get("next_call") if isinstance(active_state.get("next_call"), dict) else {},
+                "requires_cdp": bool(active_state.get("requires_cdp", False)),
             }
 
         runtime_scope, fallback_reason, early_payload = self._resolve_state_runtime_scope(

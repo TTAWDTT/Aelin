@@ -307,6 +307,45 @@ def test_state_get_auto_dom_returns_confirmation_when_cdp_restart_needed(monkeyp
     assert bool(next_args.get("include_a11y")) is False
 
 
+def test_state_get_all_propagates_confirmation_from_active_state(monkeypatch):
+    service = BrowserAutomationService()
+    monkeypatch.setattr(
+        service,
+        "list_sessions",
+        lambda **kwargs: {
+            "ok": True,
+            "scope": "all",
+            "managed_sessions": [],
+            "system_processes": [],
+            "cdp_enabled": True,
+            "cdp_endpoint": "http://127.0.0.1:9222",
+        },
+    )
+    original_state_get = service.state_get
+
+    def _fake_state_get(**kwargs):
+        if str(kwargs.get("scope") or "") == "auto":
+            return {
+                "ok": False,
+                "error": "browser_restart_confirmation_required",
+                "requires_confirmation": True,
+                "confirm_kind": "restart_to_cdp",
+                "user_prompt": "需要确认",
+                "next_call": {"tool": "browser_state_get", "action": "state_get", "args": {"scope": "cdp"}},
+            }
+        return original_state_get(**kwargs)
+
+    monkeypatch.setattr(service, "state_get", _fake_state_get)
+
+    out = service.state_get(user_id=1, workspace="default", scope="all", include_dom=True)
+    assert out["ok"] is False
+    assert out["requires_confirmation"] is True
+    assert out["confirm_kind"] == "restart_to_cdp"
+    next_call = out.get("next_call")
+    assert isinstance(next_call, dict)
+    assert str(next_call.get("tool") or "") == "browser_state_get"
+
+
 def test_use_auto_complex_requires_restart_confirmation_when_browser_running(monkeypatch):
     service = BrowserAutomationService()
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: False)
