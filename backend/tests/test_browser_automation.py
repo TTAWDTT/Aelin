@@ -651,3 +651,48 @@ def test_force_restart_to_cdp_returns_error_when_conflicts_remain(monkeypatch):
     out = service.force_restart_to_cdp(timeout_seconds=1.0)
     assert out["ok"] is False
     assert out["error"] == "cdp_conflict_process_still_running"
+
+
+def test_force_restart_to_cdp_fallback_full_restart_can_recover(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    service._cdp_auto_launch = True
+    service._cdp_launch_timeout_seconds = 0.8
+
+    state = {"launch_calls": 0}
+
+    def _fake_probe(endpoint: str, **kwargs):
+        _ = endpoint, kwargs
+        return state["launch_calls"] >= 2
+
+    def _fake_launch(endpoint: str):
+        _ = endpoint
+        state["launch_calls"] += 1
+
+    terminated_calls: list[list[int]] = []
+
+    def _fake_terminate(pids, wait_timeout_seconds=4.0):
+        _ = wait_timeout_seconds
+        normalized = [int(pid) for pid in list(pids or []) if int(pid) > 0]
+        terminated_calls.append(normalized)
+        return {"terminated_pids": normalized, "killed_pids": [], "failed_pids": []}
+
+    clock = {"t": 0.0}
+
+    def _fake_time():
+        clock["t"] += 1.0
+        return clock["t"]
+
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", _fake_probe)
+    monkeypatch.setattr(service, "_launch_cdp_browser", _fake_launch)
+    monkeypatch.setattr(service, "_list_cdp_conflict_processes", lambda **kwargs: [])
+    monkeypatch.setattr(service, "_list_chromium_family_pids", lambda max_items=200: [1234] if state["launch_calls"] == 1 else [])
+    monkeypatch.setattr(service, "_terminate_processes", _fake_terminate)
+    monkeypatch.setattr("app.services.browser_automation.time.time", _fake_time)
+    monkeypatch.setattr("app.services.browser_automation.time.sleep", lambda _seconds: None)
+
+    out = service.force_restart_to_cdp(timeout_seconds=1.0)
+    assert out["ok"] is True
+    assert out.get("fallback_full_restart") is True
+    assert state["launch_calls"] == 2
+    assert [1234] in terminated_calls

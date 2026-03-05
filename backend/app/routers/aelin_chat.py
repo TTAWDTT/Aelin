@@ -243,7 +243,7 @@ def confirm_browser_action(
     restart_meta: dict[str, Any] | None = None
     pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
     if (not bool(result.get("ok"))) and _is_cdp_restart_error(str(result.get("error") or "")):
-        restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=12.0)
+        restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=24.0)
         if bool(restart_meta.get("ok")):
             retry = browser_automation_service.use(
                 user_id=int(current_user.id),

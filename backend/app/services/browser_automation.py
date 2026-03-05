@@ -352,6 +352,31 @@ class BrowserAutomationService:
         except Exception as exc:
             raise RuntimeError(f"cdp_launch_failed:{str(exc)[:120]}") from exc
 
+    def _list_chromium_family_pids(self, *, max_items: int = 200) -> list[int]:
+        if psutil is None:
+            return []
+        raw_limit = 20 if max_items is None else int(max_items)
+        limit = max(0, min(400, raw_limit))
+        if limit <= 0:
+            return []
+        out: list[int] = []
+        for proc in psutil.process_iter(attrs=["pid", "name"]):
+            try:
+                info = proc.info if isinstance(getattr(proc, "info", None), dict) else {}
+                pid = int(info.get("pid") or 0)
+                if pid <= 0:
+                    continue
+                if self._is_chromium_name(str(info.get("name") or "")):
+                    out.append(pid)
+            except Exception:
+                continue
+        deduped = sorted({int(pid) for pid in out if int(pid) > 0 and int(pid) != os.getpid()})
+        return deduped[:limit]
+
+    def _recommended_restart_timeout_seconds(self) -> float:
+        launch_budget = max(8.0, float(self._cdp_launch_timeout_seconds or 10.0))
+        return max(18.0, launch_budget + 10.0)
+
     def _ensure_cdp_endpoint_ready(self) -> None:
         endpoint = str(self._cdp_endpoint or "").strip()
         if not endpoint:
@@ -859,7 +884,14 @@ class BrowserAutomationService:
             )
             return {"ok": True, "endpoint": endpoint, "already_ready": True}
 
-        _LOG.info("force_restart_to_cdp start endpoint=%s timeout_s=%.2f", endpoint, float(timeout_seconds or 12.0))
+        requested_timeout = max(2.0, float(timeout_seconds or 12.0))
+        effective_timeout = max(requested_timeout, self._recommended_restart_timeout_seconds())
+        _LOG.info(
+            "force_restart_to_cdp start endpoint=%s timeout_s=%.2f effective_timeout_s=%.2f",
+            endpoint,
+            requested_timeout,
+            effective_timeout,
+        )
         self._close_sessions_by_mode("cdp")
         conflicts = self._list_cdp_conflict_processes(max_items=200, endpoint=endpoint)
         pids = [int(row.get("pid") or 0) for row in conflicts if int(row.get("pid") or 0) > 0]
@@ -872,7 +904,7 @@ class BrowserAutomationService:
             len(list(terminate_report.get("failed_pids") or [])),
         )
 
-        deadline = time.time() + max(2.0, float(timeout_seconds or 12.0))
+        deadline = time.time() + effective_timeout
         while time.time() < deadline:
             if not self._list_cdp_conflict_processes(max_items=1, endpoint=endpoint):
                 break
@@ -934,6 +966,65 @@ class BrowserAutomationService:
                         int((time.perf_counter() - started) * 1000),
                     )
                     return {"ok": True, "endpoint": endpoint, **terminate_report}
+                time.sleep(0.2)
+        # Fallback: if launch timed out without explicit port conflicts,
+        # Chromium family processes may still be reusing an existing browser instance
+        # and swallowing --remote-debugging-port flags.
+        chromium_pids = self._list_chromium_family_pids(max_items=200)
+        if chromium_pids:
+            _LOG.warning(
+                "force_restart_to_cdp fallback_full_restart attempted=%s endpoint=%s",
+                len(chromium_pids),
+                endpoint,
+            )
+            fallback_report = self._terminate_processes(chromium_pids, wait_timeout_seconds=5.0)
+            merged_terminated = sorted(
+                {
+                    *list(terminate_report.get("terminated_pids") or []),
+                    *list(fallback_report.get("terminated_pids") or []),
+                }
+            )
+            merged_killed = sorted(
+                {
+                    *list(terminate_report.get("killed_pids") or []),
+                    *list(fallback_report.get("killed_pids") or []),
+                }
+            )
+            merged_failed = sorted(
+                {
+                    *list(terminate_report.get("failed_pids") or []),
+                    *list(fallback_report.get("failed_pids") or []),
+                }
+            )
+            terminate_report = {
+                "terminated_pids": merged_terminated,
+                "killed_pids": merged_killed,
+                "failed_pids": merged_failed,
+            }
+            try:
+                self._launch_cdp_browser(endpoint)
+            except Exception as exc:
+                _LOG.warning(
+                    "force_restart_to_cdp fallback_launch_failed endpoint=%s error=%s latency_ms=%s",
+                    endpoint,
+                    str(exc)[:180],
+                    int((time.perf_counter() - started) * 1000),
+                )
+                return {
+                    "ok": False,
+                    "error": str(exc)[:180] or "cdp_launch_failed",
+                    "endpoint": endpoint,
+                    **terminate_report,
+                }
+            second_deadline = time.time() + max(8.0, min(25.0, effective_timeout))
+            while time.time() < second_deadline:
+                if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.35):
+                    _LOG.info(
+                        "force_restart_to_cdp success_after_fallback endpoint=%s latency_ms=%s",
+                        endpoint,
+                        int((time.perf_counter() - started) * 1000),
+                    )
+                    return {"ok": True, "endpoint": endpoint, "fallback_full_restart": True, **terminate_report}
                 time.sleep(0.2)
         remaining_after_launch = self._list_cdp_conflict_processes(max_items=20, endpoint=endpoint)
         if remaining_after_launch:
@@ -1294,7 +1385,7 @@ class BrowserAutomationService:
             reason = str(exc)[:160]
             if allow_restart_confirmation and "cdp_requires_browser_restart" in reason:
                 if confirmed:
-                    restart_meta = self.force_restart_to_cdp(timeout_seconds=12.0)
+                    restart_meta = self.force_restart_to_cdp(timeout_seconds=self._recommended_restart_timeout_seconds())
                     if bool(restart_meta.get("ok")):
                         try:
                             session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
