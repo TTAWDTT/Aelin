@@ -71,6 +71,8 @@ _BROWSER_FAMILY_NAMES = {
     "brave",
     "brave.exe",
 }
+_CHROMIUM_FAMILIES = {"chrome", "chromium", "edge", "brave", "opera"}
+_BROWSER_NAME_TOKENS = ("chrome", "edge", "firefox", "opera", "brave", "chromium")
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -153,6 +155,10 @@ class BrowserAutomationService:
             str(getattr(settings, "browser_tool_profile_dir", "./browser_data/agent_browser") or "./browser_data/agent_browser")
         )
         self._profile_root.mkdir(parents=True, exist_ok=True)
+        self._system_process_cache_ttl_seconds = float(
+            getattr(settings, "browser_tool_system_process_cache_ttl_seconds", 2.0) or 2.0
+        )
+        self._system_process_cache: dict[tuple[int, bool], tuple[float, list[dict[str, Any]]]] = {}
 
     @staticmethod
     def _resolve_runtime_path(raw: str) -> Path:
@@ -263,7 +269,7 @@ class BrowserAutomationService:
             return 0
         return port
 
-    def _probe_cdp_endpoint(self, endpoint: str, *, timeout_seconds: float = 0.8) -> bool:
+    def _probe_cdp_endpoint(self, endpoint: str, *, timeout_seconds: float = 0.35) -> bool:
         target = str(endpoint or "").strip().rstrip("/")
         if not target:
             return False
@@ -348,15 +354,15 @@ class BrowserAutomationService:
         endpoint = str(self._cdp_endpoint or "").strip()
         if not endpoint:
             raise RuntimeError("cdp_endpoint_unconfigured")
-        if self._probe_cdp_endpoint(endpoint):
+        if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
             return
         if not self._cdp_auto_launch:
             raise RuntimeError("cdp_endpoint_unavailable")
-        if self._has_system_browser_process():
+        if self._has_cdp_conflict_process():
             raise RuntimeError("cdp_requires_browser_restart")
 
         with self._cdp_bootstrap_lock:
-            if self._probe_cdp_endpoint(endpoint):
+            if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
                 return
             self._launch_cdp_browser(endpoint)
             deadline = time.time() + max(2.0, float(self._cdp_launch_timeout_seconds or 10.0))
@@ -532,46 +538,273 @@ class BrowserAutomationService:
             return "chrome"
         return "unknown"
 
-    def _list_system_browser_processes(self, *, max_items: int, pid: int = 0) -> list[dict[str, Any]]:
+    @staticmethod
+    def _is_browser_name(name: str) -> bool:
+        low_name = str(name or "").strip().lower()
+        if not low_name:
+            return False
+        if low_name in _BROWSER_FAMILY_NAMES:
+            return True
+        return any(token in low_name for token in _BROWSER_NAME_TOKENS)
+
+    @staticmethod
+    def _is_chromium_name(name: str) -> bool:
+        low_name = str(name or "").strip().lower()
+        if not low_name:
+            return False
+        if "msedge" in low_name or "edge" in low_name:
+            return True
+        return any(token in low_name for token in ("chrome", "chromium", "brave", "opera"))
+
+    def _collect_browser_pids(self, *, pid: int = 0) -> list[dict[str, Any]]:
         if psutil is None:
             return []
-        rows: list[dict[str, Any]] = []
-        attrs = ["pid", "name", "exe", "cmdline", "status", "create_time", "memory_info"]
-        for proc in psutil.process_iter(attrs=attrs):
+        out: list[dict[str, Any]] = []
+        for proc in psutil.process_iter(attrs=["pid", "name"]):
             try:
                 info = proc.info if isinstance(getattr(proc, "info", None), dict) else {}
                 proc_pid = int(info.get("pid") or 0)
-                if pid > 0 and proc_pid != pid:
+                if proc_pid <= 0:
+                    continue
+                if pid > 0 and proc_pid != int(pid):
                     continue
                 name = str(info.get("name") or "").strip()
-                exe = str(info.get("exe") or "").strip()
-                cmd = info.get("cmdline")
-                cmdline = " ".join([str(part) for part in (cmd or []) if str(part or "").strip()]).strip()
-                low_name = name.lower()
-                low_exe = exe.lower()
-                if low_name not in _BROWSER_FAMILY_NAMES and (not any(k in low_exe for k in ("chrome", "edge", "firefox", "opera", "brave"))):
+                if not self._is_browser_name(name):
                     continue
-                mem_obj = info.get("memory_info")
-                rss = int(getattr(mem_obj, "rss", 0) or 0)
-                rows.append(
+                out.append(
                     {
                         "pid": proc_pid,
                         "name": name[:80],
-                        "browser_family": self._guess_browser_family(name, exe, cmdline),
-                        "status": str(info.get("status") or "")[:32],
-                        "memory_mb": round(rss / (1024 * 1024), 2) if rss > 0 else 0.0,
-                        "started_at": float(info.get("create_time") or 0.0),
-                        "exe": exe[:260],
-                        "cmdline": cmdline[:600],
+                        "browser_family": self._guess_browser_family(name, "", ""),
+                        "status": "",
+                        "started_at": 0.0,
+                        "memory_mb": 0.0,
+                        "exe": "",
+                        "cmdline": "",
                     }
                 )
             except Exception:
                 continue
+        return out
+
+    def _fill_process_details(self, rows: list[dict[str, Any]], *, max_probe: int) -> None:
+        if psutil is None or not rows:
+            return
+        probe_limit = max(0, int(max_probe or 0))
+        if probe_limit <= 0:
+            return
+        for row in rows[:probe_limit]:
+            try:
+                proc = psutil.Process(int(row.get("pid") or 0))
+            except Exception:
+                continue
+            try:
+                exe = str(proc.exe() or "").strip()
+            except Exception:
+                exe = ""
+            try:
+                cmdline = " ".join([str(part) for part in (proc.cmdline() or []) if str(part or "").strip()]).strip()
+            except Exception:
+                cmdline = ""
+            try:
+                rss = int(getattr(proc.memory_info(), "rss", 0) or 0)
+            except Exception:
+                rss = 0
+            if exe:
+                row["exe"] = exe[:260]
+            if cmdline:
+                row["cmdline"] = cmdline[:600]
+            row["memory_mb"] = round(rss / (1024 * 1024), 2) if rss > 0 else 0.0
+            if str(row.get("browser_family") or "") in {"", "unknown"}:
+                row["browser_family"] = self._guess_browser_family(str(row.get("name") or ""), exe, cmdline)
+
+    def _list_system_browser_processes(
+        self,
+        *,
+        max_items: int,
+        pid: int = 0,
+        include_details: bool = False,
+    ) -> list[dict[str, Any]]:
+        if psutil is None:
+            return []
+        raw_limit = 20 if max_items is None else int(max_items)
+        limit = max(0, min(200, raw_limit))
+        if limit <= 0:
+            return []
+        cache_key = (int(pid or 0), bool(include_details))
+        now = time.time()
+        cached = self._system_process_cache.get(cache_key)
+        if cached:
+            ts, payload = cached
+            if (now - float(ts)) <= max(0.2, float(self._system_process_cache_ttl_seconds)):
+                return list(payload)[:limit]
+
+        rows = self._collect_browser_pids(pid=int(pid or 0))
+        if include_details:
+            self._fill_process_details(rows, max_probe=min(limit, 8))
         rows.sort(key=lambda it: (float(it.get("memory_mb") or 0.0), int(it.get("pid") or 0)), reverse=True)
-        return rows[:max(1, min(200, int(max_items or 20)))]
+        trimmed = rows[:limit]
+        self._system_process_cache[cache_key] = (now, list(trimmed))
+        return trimmed
 
     def _has_system_browser_process(self, *, pid: int = 0) -> bool:
-        return bool(self._list_system_browser_processes(max_items=1, pid=int(pid or 0)))
+        if psutil is None:
+            return False
+        target_pid = int(pid or 0)
+        for proc in psutil.process_iter(attrs=["pid", "name"]):
+            try:
+                info = proc.info if isinstance(getattr(proc, "info", None), dict) else {}
+                proc_pid = int(info.get("pid") or 0)
+                if proc_pid <= 0:
+                    continue
+                if target_pid > 0 and proc_pid != target_pid:
+                    continue
+                if self._is_browser_name(str(info.get("name") or "")):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _is_cdp_conflict_row(row: dict[str, Any]) -> bool:
+        family = str(row.get("browser_family") or "").strip().lower()
+        if family in _CHROMIUM_FAMILIES:
+            return True
+        blob = " ".join(
+            [
+                str(row.get("name") or "").lower(),
+                str(row.get("exe") or "").lower(),
+                str(row.get("cmdline") or "").lower(),
+            ]
+        )
+        return any(token in blob for token in ("chrome", "chromium", "msedge", "edge", "brave", "opera"))
+
+    def _list_cdp_conflict_processes(self, *, max_items: int = 200) -> list[dict[str, Any]]:
+        rows = self._list_system_browser_processes(max_items=max_items, include_details=False)
+        return [row for row in rows if isinstance(row, dict) and self._is_cdp_conflict_row(row)]
+
+    def _has_cdp_conflict_process(self) -> bool:
+        if psutil is None:
+            return False
+        for proc in psutil.process_iter(attrs=["name"]):
+            try:
+                info = proc.info if isinstance(getattr(proc, "info", None), dict) else {}
+                if self._is_chromium_name(str(info.get("name") or "")):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _collect_sessions_by_mode(self, mode: str) -> list[BrowserSession]:
+        target = str(mode or "").strip().lower()
+        out: list[BrowserSession] = []
+        with self._lock:
+            remove_keys: list[str] = []
+            for key, session in self._sessions.items():
+                if str(getattr(session, "mode", "") or "").strip().lower() != target:
+                    continue
+                remove_keys.append(key)
+            for key in remove_keys:
+                session = self._sessions.pop(key, None)
+                if session is not None:
+                    out.append(session)
+        return out
+
+    def _close_sessions_by_mode(self, mode: str) -> None:
+        sessions = self._collect_sessions_by_mode(mode)
+        for session in sessions:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    def _terminate_processes(self, pids: list[int], *, wait_timeout_seconds: float = 4.0) -> dict[str, Any]:
+        safe_pids = sorted({int(pid) for pid in pids if int(pid) > 0 and int(pid) != os.getpid()})
+        if not safe_pids:
+            return {"terminated_pids": [], "killed_pids": [], "failed_pids": []}
+        if psutil is None:
+            return {"terminated_pids": [], "killed_pids": [], "failed_pids": safe_pids}
+
+        terminated: list[int] = []
+        killed: list[int] = []
+        failed: list[int] = []
+        processes: list[Any] = []
+
+        for pid in safe_pids:
+            try:
+                proc = psutil.Process(pid)
+            except Exception:
+                continue
+            try:
+                proc.terminate()
+                processes.append(proc)
+                terminated.append(pid)
+            except Exception:
+                failed.append(pid)
+
+        if processes:
+            try:
+                _, alive = psutil.wait_procs(processes, timeout=max(0.5, float(wait_timeout_seconds)))
+            except Exception:
+                alive = processes
+            for proc in alive:
+                try:
+                    proc.kill()
+                    killed.append(int(getattr(proc, "pid", 0) or 0))
+                except Exception:
+                    failed.append(int(getattr(proc, "pid", 0) or 0))
+
+        return {
+            "terminated_pids": sorted({pid for pid in terminated if pid > 0}),
+            "killed_pids": sorted({pid for pid in killed if pid > 0}),
+            "failed_pids": sorted({pid for pid in failed if pid > 0}),
+        }
+
+    def force_restart_to_cdp(self, *, timeout_seconds: float = 12.0) -> dict[str, Any]:
+        endpoint = str(self._cdp_endpoint or "").strip()
+        if not endpoint:
+            return {"ok": False, "error": "cdp_endpoint_unconfigured"}
+        if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.4):
+            return {"ok": True, "endpoint": endpoint, "already_ready": True}
+
+        self._close_sessions_by_mode("cdp")
+        conflicts = self._list_cdp_conflict_processes(max_items=200)
+        pids = [int(row.get("pid") or 0) for row in conflicts if int(row.get("pid") or 0) > 0]
+        terminate_report = self._terminate_processes(pids, wait_timeout_seconds=4.0)
+
+        deadline = time.time() + max(2.0, float(timeout_seconds or 12.0))
+        while time.time() < deadline:
+            if not self._list_cdp_conflict_processes(max_items=1):
+                break
+            time.sleep(0.15)
+
+        remaining = self._list_cdp_conflict_processes(max_items=20)
+        if remaining:
+            return {
+                "ok": False,
+                "error": "cdp_conflict_process_still_running",
+                "endpoint": endpoint,
+                "remaining_pids": [int(row.get("pid") or 0) for row in remaining if int(row.get("pid") or 0) > 0],
+                **terminate_report,
+            }
+
+        with self._cdp_bootstrap_lock:
+            if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.35):
+                return {"ok": True, "endpoint": endpoint, "already_ready": True, **terminate_report}
+            try:
+                self._launch_cdp_browser(endpoint)
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "error": str(exc)[:180] or "cdp_launch_failed",
+                    "endpoint": endpoint,
+                    **terminate_report,
+                }
+            while time.time() < deadline:
+                if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.35):
+                    return {"ok": True, "endpoint": endpoint, **terminate_report}
+                time.sleep(0.2)
+        return {"ok": False, "error": "cdp_launch_timeout", "endpoint": endpoint, **terminate_report}
 
     @staticmethod
     def _is_complex_auto_action(action: str) -> bool:
@@ -587,7 +820,8 @@ class BrowserAutomationService:
         pid: int = 0,
     ) -> dict[str, Any]:
         normalized_scope = self._normalize_scope(scope)
-        limit = max(1, min(200, int(max_items or 20)))
+        raw_limit = 20 if max_items is None else int(max_items)
+        limit = max(0, min(200, raw_limit))
         normalized_workspace = _normalize_workspace(workspace)
         out: dict[str, Any] = {
             "ok": True,
@@ -618,14 +852,19 @@ class BrowserAutomationService:
                             "owner_thread_id": int(getattr(session, "owner_thread_id", 0) or 0),
                         }
                     )
-            out["managed_sessions"] = sorted(
+            managed_sorted = sorted(
                 list(out["managed_sessions"]),
                 key=lambda it: float(it.get("last_used") or 0.0),
                 reverse=True,
-            )[:limit]
+            )
+            out["managed_sessions"] = managed_sorted[:limit] if limit > 0 else []
 
-        if include_system:
-            out["system_processes"] = self._list_system_browser_processes(max_items=limit, pid=int(pid or 0))
+        if include_system and limit > 0:
+            out["system_processes"] = self._list_system_browser_processes(
+                max_items=limit,
+                pid=int(pid or 0),
+                include_details=False,
+            )
         return out
 
     def _snapshot_page(
@@ -769,12 +1008,27 @@ class BrowserAutomationService:
     ) -> dict[str, Any]:
         normalized_scope = self._normalize_scope(scope)
         target_limit = _clamp_int(max_targets, 30, low=1, high=60)
-        proc_limit = _clamp_int(max_items, 20, low=1, high=200)
+        proc_limit = _clamp_int(max_items, 20, low=0, high=200)
         if normalized_scope in {"system", "external"}:
+            if proc_limit <= 0:
+                return {
+                    "ok": True,
+                    "scope": normalized_scope,
+                    "system_processes": [],
+                    "scope_note": (
+                        "系统浏览器进程视图（fast path，未枚举进程详情）。"
+                        if normalized_scope == "system"
+                        else "external scope fast path：未枚举系统进程详情。"
+                    ),
+                }
             return {
                 "ok": True,
                 "scope": normalized_scope,
-                "system_processes": self._list_system_browser_processes(max_items=proc_limit, pid=int(pid or 0)),
+                "system_processes": self._list_system_browser_processes(
+                    max_items=proc_limit,
+                    pid=int(pid or 0),
+                    include_details=False,
+                ),
                 "scope_note": (
                     "系统浏览器进程视图（不保证可获得每个标签页 URL）。"
                     if normalized_scope == "system"
@@ -812,27 +1066,83 @@ class BrowserAutomationService:
         selected_scope = normalized_scope
         fallback_reason = ""
         if selected_scope == "auto":
-            if self._cdp_enabled and self._cdp_endpoint:
+            cdp_reachable = bool(
+                self._cdp_endpoint
+                and self._probe_cdp_endpoint(self._cdp_endpoint, timeout_seconds=0.25)
+            )
+            if cdp_reachable:
                 selected_scope = "cdp"
             else:
-                system_processes = self._list_system_browser_processes(max_items=proc_limit, pid=int(pid or 0))
+                fallback_reason = "cdp_probe_failed" if self._cdp_endpoint else "cdp_endpoint_unconfigured"
+                if not include_dom and not include_a11y and proc_limit <= 0:
+                    payload = {
+                        "ok": True,
+                        "scope": "external",
+                        "system_processes": [],
+                        "scope_note": "CDP 暂不可用，fast path 已返回 external 轻量状态。",
+                    }
+                    if self._cdp_endpoint:
+                        payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+                    return payload
+                system_processes = self._list_system_browser_processes(
+                    max_items=proc_limit,
+                    pid=int(pid or 0),
+                    include_details=False,
+                )
                 if system_processes:
-                    return {
+                    payload = {
                         "ok": True,
                         "scope": "external",
                         "system_processes": system_processes,
                         "scope_note": "检测到用户浏览器正在运行；当前为进程级状态读取，若需 DOM 级读取请启用 CDP。",
                     }
-                selected_scope = "managed"
+                    if self._cdp_endpoint:
+                        payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+                    return payload
+                return {
+                    "ok": False,
+                    "error": "cdp_endpoint_unconfigured" if not self._cdp_endpoint else f"cdp_unavailable:{fallback_reason}",
+                    "scope": "auto",
+                    "requires_cdp": True,
+                    "hint": "当前已软下线 managed；请配置 CDP 端点后重试。",
+                }
+        if selected_scope == "managed":
+            return {
+                "ok": False,
+                "error": "managed_scope_soft_deleted",
+                "scope": "managed",
+                "hint": "managed 已软下线，请改用 scope=cdp 或 scope=external。",
+            }
         if selected_scope == "cdp":
             try:
                 session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
             except Exception as exc:
                 fallback_reason = str(exc)[:160]
-                session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
-                selected_scope = "managed"
+                system_processes = self._list_system_browser_processes(
+                    max_items=proc_limit,
+                    pid=int(pid or 0),
+                    include_details=False,
+                )
+                if system_processes:
+                    return {
+                        "ok": True,
+                        "scope": "external",
+                        "system_processes": system_processes,
+                        "scope_fallback": f"cdp_unavailable:{fallback_reason}",
+                        "scope_note": "CDP 暂不可用，已退回到系统浏览器进程级状态读取。",
+                    }
+                return {
+                    "ok": False,
+                    "error": f"cdp_unavailable:{fallback_reason}",
+                    "scope": "cdp",
+                    "requires_cdp": True,
+                }
         else:
-            session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+            return {
+                "ok": False,
+                "error": f"unsupported_scope:{selected_scope}",
+                "scope": selected_scope,
+            }
 
         with session.lock:
             session.touch()
@@ -899,15 +1209,28 @@ class BrowserAutomationService:
                 requested_scope = "external"
             elif self._is_complex_auto_action(act):
                 has_system_browser = self._has_system_browser_process()
-                if has_system_browser and not bool(args.get("confirm")):
+                cdp_ready = bool(
+                    self._cdp_endpoint
+                    and self._probe_cdp_endpoint(self._cdp_endpoint, timeout_seconds=0.35)
+                )
+                if has_system_browser and (not cdp_ready) and not bool(args.get("confirm")):
+                    next_args = dict(args or {})
+                    next_args["scope"] = "cdp"
+                    next_args["confirm"] = True
                     return {
                         "ok": False,
                         "error": "browser_restart_confirmation_required",
                         "requires_confirmation": True,
+                        "confirm_kind": "restart_to_cdp",
                         "risk_level": "medium",
                         "action": act,
                         "user_prompt": "该任务较为复杂，需要重启浏览器后才能执行，是否确认？",
                         "hint": "请在下一次 browser_use 调用中设置 confirm=true 以继续。",
+                        "next_call": {
+                            "tool": "browser_use",
+                            "action": act,
+                            "args": next_args,
+                        },
                     }
                 if has_system_browser:
                     requested_scope = "cdp"
@@ -918,53 +1241,85 @@ class BrowserAutomationService:
             return {"ok": False, "error": "unsupported_scope_for_use", "action": act, "scope": requested_scope}
         if requested_scope == "external":
             if act != "navigate":
+                if bool(args.get("confirm")):
+                    requested_scope = "cdp"
+                else:
+                    next_args = dict(args or {})
+                    next_args["scope"] = "cdp"
+                    next_args["confirm"] = True
+                    return {
+                        "ok": False,
+                        "error": "external_scope_requires_cdp_for_dom",
+                        "requires_confirmation": True,
+                        "confirm_kind": "restart_to_cdp",
+                        "risk_level": "medium",
+                        "action": act,
+                        "scope": "external",
+                        "user_prompt": "当前外部浏览器模式仅支持打开链接。该任务需要切换到受控浏览器（CDP）继续执行，是否确认？",
+                        "hint": "确认后将自动切换到 CDP 继续执行当前步骤。",
+                        "next_call": {
+                            "tool": "browser_use",
+                            "action": act,
+                            "args": next_args,
+                        },
+                    }
+            else:
+                if not re.match(r"^https?://", url, flags=re.I):
+                    return {"ok": False, "error": "invalid_url", "action": act, "scope": "external"}
+                opened = self._open_external_url(url)
+                if not opened:
+                    return {"ok": False, "error": "external_open_failed", "action": act, "scope": "external"}
                 return {
-                    "ok": False,
-                    "error": "unsupported_action_in_external_scope",
+                    "ok": True,
                     "action": act,
                     "scope": "external",
-                    "supported_actions": ["navigate"],
+                    "effect_summary": f"opened_external:{url[:120]}",
+                    "requires_confirmation": False,
+                    "risk_level": "low",
+                    "external_opened": True,
+                    "before": {"url": "", "title": ""},
+                    "after": {"url": url[:800], "title": ""},
+                    "session_id": "",
                 }
-            if not re.match(r"^https?://", url, flags=re.I):
-                return {"ok": False, "error": "invalid_url", "action": act, "scope": "external"}
-            opened = self._open_external_url(url)
-            if not opened:
-                return {"ok": False, "error": "external_open_failed", "action": act, "scope": "external"}
-            return {
-                "ok": True,
-                "action": act,
-                "scope": "external",
-                "effect_summary": f"opened_external:{url[:120]}",
-                "requires_confirmation": False,
-                "risk_level": "low",
-                "external_opened": True,
-                "before": {"url": "", "title": ""},
-                "after": {"url": url[:800], "title": ""},
-                "session_id": "",
-            }
 
         if act == "navigate" and self._is_sensitive_auth_domain(url) and not bool(args.get("confirm")):
+            next_args = dict(args or {})
+            next_args["confirm"] = True
             return {
                 "ok": False,
                 "error": "auth_permission_required",
                 "requires_confirmation": True,
+                "confirm_kind": "auth_guard",
                 "risk_level": "auth_guard",
                 "action": act,
                 "domain": self._extract_hostname(url),
                 "fallback_scope": "external",
-                "supported_scopes": ["auto", "managed", "cdp", "external"],
+                "supported_scopes": ["auto", "cdp", "external"],
                 "hint": (
                     "使用 confirm=true 可继续受控浏览器导航；"
                     "若需要继承用户登录态，可改用 scope=external。"
                 ),
+                "next_call": {
+                    "tool": "browser_use",
+                    "action": act,
+                    "args": next_args,
+                },
             }
         if self._is_high_risk(act, target=target, value=value, url=url) and not bool(args.get("confirm")):
+            next_args = dict(args or {})
+            next_args["confirm"] = True
             return {
                 "ok": False,
                 "error": "confirmation_required",
                 "requires_confirmation": True,
+                "confirm_kind": "high_risk_action",
                 "risk_level": "high",
                 "action": act,
+                "next_call": {
+                    "tool": "browser_use",
+                    "action": act,
+                    "args": next_args,
+                },
             }
 
         timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)
@@ -979,29 +1334,42 @@ class BrowserAutomationService:
             except Exception as exc:
                 reason = str(exc)[:160]
                 if "cdp_requires_browser_restart" in reason:
+                    next_args = dict(args or {})
+                    next_args["scope"] = "cdp"
+                    next_args["confirm"] = True
                     return {
                         "ok": False,
                         "error": "browser_restart_required_for_cdp",
                         "requires_confirmation": True,
+                        "confirm_kind": "restart_to_cdp",
                         "risk_level": "medium",
                         "action": act,
                         "user_prompt": "该任务较为复杂，需要重启浏览器后才能执行，是否确认？",
+                        "next_call": {
+                            "tool": "browser_use",
+                            "action": act,
+                            "args": next_args,
+                        },
                     }
                 return {"ok": False, "error": f"cdp_unavailable:{reason}", "action": act}
         elif selected_scope == "managed":
-            session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+            return {
+                "ok": False,
+                "error": "managed_scope_soft_deleted",
+                "action": act,
+                "scope": "managed",
+                "hint": "managed 已软下线，请改用 scope=cdp 或 scope=external。",
+            }
         else:
-            if self._cdp_enabled and self._cdp_endpoint:
+            if self._cdp_endpoint:
                 try:
                     session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
                     selected_scope = "cdp"
                 except Exception as exc:
                     fallback_reason = str(exc)[:160]
-                    session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
-                    selected_scope = "managed"
+                    return {"ok": False, "error": f"cdp_unavailable:{fallback_reason}", "action": act}
             else:
-                session = self._get_session(user_id=user_id, workspace=workspace, mode="managed")
-                selected_scope = "managed"
+                return {"ok": False, "error": "cdp_endpoint_unconfigured", "action": act}
 
         before = self.state_get(
             user_id=user_id,
