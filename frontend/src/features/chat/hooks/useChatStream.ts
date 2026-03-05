@@ -148,11 +148,9 @@ export function useChatStream() {
 
     store.setStatusText('附件处理中…')
     try {
-      const uploaded: AelinAttachmentUploadResponse[] = []
-      for (const file of picked) {
-        const row = await aelinApi.uploadAttachment(file, { workspace, session_id: sessionId })
-        uploaded.push(row)
-      }
+      const uploaded: AelinAttachmentUploadResponse[] = await Promise.all(
+        picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: sessionId }))
+      )
       store.setStatusText('')
       return uploaded
     } catch (error) {

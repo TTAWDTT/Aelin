@@ -28,9 +28,33 @@ def aelin_attachment_upload(
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    content = file.file.read()
+    service = get_aelin_attachment_service()
+    max_size = int(service.max_size_bytes)
+    if int(getattr(file, "size", 0) or 0) > max_size:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=422, detail=f"附件过大（>{max_size} 字节）")
+
+    content_chunks: list[bytes] = []
+    read_size = 0
+    while True:
+        piece = file.file.read(1024 * 1024)
+        if not piece:
+            break
+        read_size += len(piece)
+        if read_size > max_size:
+            try:
+                file.file.close()
+            except Exception:
+                pass
+            raise HTTPException(status_code=422, detail=f"附件过大（>{max_size} 字节）")
+        content_chunks.append(piece)
+    content = b"".join(content_chunks)
+
     try:
-        result = get_aelin_attachment_service().ingest_bytes(
+        result = service.ingest_bytes(
             db,
             user_id=int(current_user.id),
             workspace=workspace,
@@ -39,7 +63,12 @@ def aelin_attachment_upload(
             mime_type=str(file.content_type or ""),
             content=content,
         )
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            service.cleanup_storage_path(result.get("_storage_path"))
+            raise
     except AttachmentIngestError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=exc.message) from exc
@@ -51,7 +80,8 @@ def aelin_attachment_upload(
             file.file.close()
         except Exception:
             pass
-    return AelinAttachmentUploadResponse(**result)
+    response_payload = {key: value for key, value in result.items() if not str(key).startswith("_")}
+    return AelinAttachmentUploadResponse(**response_payload)
 
 
 @router.post("/chat", response_model=AelinChatResponse)

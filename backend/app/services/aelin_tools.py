@@ -22,6 +22,7 @@ from app.services.browser_automation import browser_automation_service
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.tracking_autonomy import TrackingAutonomyService
+from app.services.aelin_utils import normalize_positive_ints
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 
@@ -86,19 +87,6 @@ def _safe_int(value: Any, default: int, *, low: int, high: int) -> int:
     return max(low, min(high, out))
 
 
-def _normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: int = 20) -> list[int]:
-    out: list[int] = []
-    for item in list(values or []):
-        try:
-            value = int(item)
-        except Exception:
-            continue
-        if value <= 0:
-            continue
-        out.append(value)
-    return sorted(set(out))[: max(1, int(cap or 20))]
-
-
 def _result_ok(**fields: Any) -> dict[str, Any]:
     return {"ok": True, **fields}
 
@@ -140,7 +128,7 @@ class AelinToolHub:
         self._file_memory = file_memory_bridge
         self._web_search = web_search_service or WebSearchService()
         self._attachments = attachment_service or get_aelin_attachment_service()
-        self._available_attachment_ids = _normalize_positive_ints(available_attachment_ids, cap=20)
+        self._available_attachment_ids = normalize_positive_ints(available_attachment_ids, cap=20)
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         return [

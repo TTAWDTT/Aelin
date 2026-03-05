@@ -59,6 +59,7 @@ from app.services.aelin_media_pipeline import (
     save_media_ingest_diary as _save_media_ingest_diary,
 )
 from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
+from app.services.aelin_utils import normalize_positive_ints
 from app.services.aelin_runtime import (
     json_from_text as _json_from_text,
     normalize_workspace as _normalize_workspace,
@@ -706,15 +707,7 @@ def _normalize_history(raw_turns: list[Any]) -> list[dict[str, str]]:
 
 
 def _normalize_attachment_ids(raw_ids: list[Any]) -> list[int]:
-    out: list[int] = []
-    for item in raw_ids[:20]:
-        try:
-            value = int(item)
-        except Exception:
-            continue
-        if value > 0:
-            out.append(value)
-    return sorted(set(out))
+    return normalize_positive_ints(raw_ids, cap=20)
 
 
 def _extract_first_supported_media_url(query: str) -> tuple[str, str] | None:

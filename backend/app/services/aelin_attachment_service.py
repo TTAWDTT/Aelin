@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AttachmentChunk, AttachmentDocument
 from app.settings import settings
+from app.services.aelin_utils import escape_sql_like, normalize_positive_ints
 
 _TEXT_FILE_EXTENSIONS = {
     "txt",
@@ -107,18 +108,9 @@ class AelinAttachmentService:
     def _norm_text(text: str) -> str:
         return _WS_RE.sub(" ", str(text or "")).strip()
 
-    @staticmethod
-    def _normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: int = 20) -> list[int]:
-        out: list[int] = []
-        for item in list(values or []):
-            try:
-                value = int(item)
-            except Exception:
-                continue
-            if value <= 0:
-                continue
-            out.append(value)
-        return sorted(set(out))[: max(1, int(cap or 20))]
+    @property
+    def max_size_bytes(self) -> int:
+        return int(self._max_size)
 
     def _tokenize(self, text: str) -> list[str]:
         lowered = str(text or "").lower()
@@ -653,6 +645,7 @@ class AelinAttachmentService:
                 "chunk_count": len(chunk_rows),
                 "summary": summary,
                 "deduplicated": False,
+                "_storage_path": str(storage_path),
             }
         except Exception:
             if storage_path.exists():
@@ -661,6 +654,17 @@ class AelinAttachmentService:
                 except Exception:
                     pass
             raise
+
+    @staticmethod
+    def cleanup_storage_path(storage_path: str | Path | None) -> None:
+        raw = str(storage_path or "").strip()
+        if not raw:
+            return
+        path = Path(raw)
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     @staticmethod
     def _safe_load_json(raw: str) -> dict[str, Any]:
@@ -688,7 +692,7 @@ class AelinAttachmentService:
         q = self._norm_text(query)
         if not q:
             return {"ok": False, "error": "missing query"}
-        ids = self._normalize_positive_ints(attachment_ids, cap=20)
+        ids = normalize_positive_ints(attachment_ids, cap=20)
         if not ids:
             return {"ok": False, "error": "missing attachment_ids"}
         k = max(1, min(20, int(top_k or 5)))
@@ -711,7 +715,7 @@ class AelinAttachmentService:
 
         allowed_ids = {int(row.id) for row in docs}
         doc_map = {int(row.id): row for row in docs}
-        candidate_limit = max(240, k * 80)
+        candidate_limit = max(120, min(400, k * 40))
         query_lower = q.lower()[:200]
         token_terms: list[str] = []
         for token in self._tokenize(q):
@@ -723,9 +727,12 @@ class AelinAttachmentService:
             if len(token_terms) >= 8:
                 break
 
-        lexical_filters = [AttachmentChunk.text.ilike(f"%{term}%") for term in token_terms]
+        lexical_filters = [
+            AttachmentChunk.text.ilike(f"%{escape_sql_like(term)}%", escape="\\")
+            for term in token_terms
+        ]
         if query_lower:
-            lexical_filters.append(AttachmentChunk.text.ilike(f"%{query_lower}%"))
+            lexical_filters.append(AttachmentChunk.text.ilike(f"%{escape_sql_like(query_lower)}%", escape="\\"))
 
         chunk_stmt = select(AttachmentChunk).where(AttachmentChunk.attachment_id.in_(allowed_ids))
         if lexical_filters:
