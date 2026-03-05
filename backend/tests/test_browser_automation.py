@@ -187,7 +187,7 @@ def test_use_navigate_can_open_external_browser(monkeypatch):
         workspace="default",
         action="navigate",
         args={"url": "https://github.com", "confirm": True},
-        scope="managed",
+        scope="cdp",
     )
     assert out["ok"] is True
     assert out["external_opened"] is True
@@ -213,7 +213,7 @@ def test_use_auto_navigate_prefers_external_scope(monkeypatch):
     assert opened == ["https://example.com"]
 
 
-def test_state_get_auto_fallbacks_from_cdp_to_managed(monkeypatch):
+def test_state_get_auto_fallbacks_from_cdp_to_external(monkeypatch):
     service = BrowserAutomationService()
     page = _FakePage()
     managed = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
@@ -237,7 +237,7 @@ def test_state_get_auto_fallbacks_from_cdp_to_managed(monkeypatch):
         max_targets=5,
     )
     assert out["ok"] is True
-    assert out["scope"] == "managed"
+    assert out["scope"] == "external"
     assert str(out.get("scope_fallback") or "").startswith("cdp_unavailable:")
 
 
@@ -266,6 +266,7 @@ def test_state_get_auto_returns_system_view_when_browser_running_and_cdp_disable
 
 def test_use_auto_complex_requires_restart_confirmation_when_browser_running(monkeypatch):
     service = BrowserAutomationService()
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: False)
     monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
 
     out = service.use(
@@ -279,16 +280,65 @@ def test_use_auto_complex_requires_restart_confirmation_when_browser_running(mon
     assert out["error"] == "browser_restart_confirmation_required"
     assert out["requires_confirmation"] is True
     assert "该任务较为复杂" in str(out.get("user_prompt") or "")
+    next_call = out.get("next_call")
+    assert isinstance(next_call, dict)
+    assert next_call.get("tool") == "browser_use"
+    assert next_call.get("action") == "click"
+    next_args = next_call.get("args")
+    assert isinstance(next_args, dict)
+    assert next_args.get("scope") == "cdp"
+    assert next_args.get("confirm") is True
+    assert next_args.get("target") == "登录"
 
 
-def test_use_auto_complex_with_browser_running_requires_cdp_after_confirm(monkeypatch):
+def test_use_auto_complex_with_browser_running_restarts_to_cdp_after_confirm(monkeypatch):
     service = BrowserAutomationService()
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: False)
     monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
 
-    def _raise_restart(**kwargs):
-        raise RuntimeError("cdp_requires_browser_restart")
+    page = _FakePage()
+    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
+    cdp_session.mode = "cdp"
+    calls = {"count": 0}
 
-    monkeypatch.setattr(service, "_get_session", _raise_restart)
+    def _fake_get_session(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("cdp_requires_browser_restart")
+        return cdp_session
+
+    monkeypatch.setattr(service, "_get_session", _fake_get_session)
+    monkeypatch.setattr(service, "force_restart_to_cdp", lambda timeout_seconds=12.0: {"ok": True, "endpoint": "http://127.0.0.1:9222"})
+
+    states = iter(
+        [
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+        ]
+    )
+    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="wait",
+        args={"wait_ms": 100, "confirm": True},
+        scope="auto",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
+
+
+def test_use_auto_complex_with_browser_running_returns_restart_failed_when_confirmed(monkeypatch):
+    service = BrowserAutomationService()
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: False)
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("cdp_requires_browser_restart")))
+    monkeypatch.setattr(
+        service,
+        "force_restart_to_cdp",
+        lambda timeout_seconds=12.0: {"ok": False, "error": "cdp_conflict_process_still_running", "remaining_pids": [1, 2]},
+    )
 
     out = service.use(
         user_id=1,
@@ -298,7 +348,9 @@ def test_use_auto_complex_with_browser_running_requires_cdp_after_confirm(monkey
         scope="auto",
     )
     assert out["ok"] is False
-    assert out["error"] == "browser_restart_required_for_cdp"
+    assert out["error"] == "browser_restart_failed_for_cdp"
+    assert isinstance(out.get("restart"), dict)
+    assert bool((out.get("restart") or {}).get("attempted")) is True
 
 
 def test_use_auto_complex_without_browser_uses_cdp_when_enabled(monkeypatch):
@@ -328,12 +380,40 @@ def test_use_auto_complex_without_browser_uses_cdp_when_enabled(monkeypatch):
     assert out["scope"] == "cdp"
 
 
+def test_use_auto_complex_skips_restart_confirmation_when_cdp_already_ready(monkeypatch):
+    service = BrowserAutomationService()
+    page = _FakePage()
+    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
+    cdp_session.mode = "cdp"
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: True)
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
+
+    states = iter(
+        [
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+        ]
+    )
+    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="wait",
+        args={"wait_ms": 200, "confirm": False},
+        scope="auto",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
+
+
 def test_ensure_cdp_endpoint_ready_auto_launch_success(monkeypatch):
     service = BrowserAutomationService()
     service._cdp_endpoint = "http://127.0.0.1:9222"
     service._cdp_auto_launch = True
     service._cdp_launch_timeout_seconds = 0.8
-    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: False)
+    monkeypatch.setattr(service, "_has_cdp_conflict_process", lambda: False)
 
     probe_calls = {"count": 0}
 
@@ -355,7 +435,7 @@ def test_ensure_cdp_endpoint_ready_requires_restart_when_browser_running(monkeyp
     service._cdp_endpoint = "http://127.0.0.1:9222"
     service._cdp_auto_launch = True
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
-    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+    monkeypatch.setattr(service, "_has_cdp_conflict_process", lambda: True)
 
     try:
         service._ensure_cdp_endpoint_ready()
@@ -370,6 +450,7 @@ def test_ensure_cdp_endpoint_ready_without_auto_launch(monkeypatch):
     service._cdp_endpoint = "http://127.0.0.1:9222"
     service._cdp_auto_launch = False
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
+    monkeypatch.setattr(service, "_has_cdp_conflict_process", lambda: False)
 
     try:
         service._ensure_cdp_endpoint_ready()
@@ -391,6 +472,12 @@ def test_use_navigate_requires_domain_confirmation():
     assert out["ok"] is False
     assert out["error"] == "auth_permission_required"
     assert out["fallback_scope"] == "external"
+    next_call = out.get("next_call")
+    assert isinstance(next_call, dict)
+    assert next_call.get("action") == "navigate"
+    next_args = next_call.get("args")
+    assert isinstance(next_args, dict)
+    assert next_args.get("confirm") is True
 
 
 def test_use_sensitive_domain_auth_guard_takes_precedence_over_high_risk_keyword():
@@ -442,14 +529,113 @@ def test_use_external_scope_navigate_skips_auth_guard_without_confirm(monkeypatc
     assert opened == ["https://github.com"]
 
 
-def test_use_external_scope_blocks_dom_actions():
+def test_use_external_scope_requests_confirmation_for_dom_actions():
     service = BrowserAutomationService()
     out = service.use(
         user_id=1,
         workspace="default",
         action="click",
-        args={"target": "Sign in", "confirm": True},
+        args={"target": "Sign in", "confirm": False},
         scope="external",
     )
     assert out["ok"] is False
-    assert out["error"] == "unsupported_action_in_external_scope"
+    assert out["error"] == "external_scope_requires_cdp_for_dom"
+    assert out["requires_confirmation"] is True
+    assert out["confirm_kind"] == "restart_to_cdp"
+    next_call = out.get("next_call")
+    assert isinstance(next_call, dict)
+    assert next_call.get("tool") == "browser_use"
+    assert next_call.get("action") == "click"
+    next_args = next_call.get("args")
+    assert isinstance(next_args, dict)
+    assert next_args.get("scope") == "cdp"
+    assert next_args.get("confirm") is True
+
+
+def test_use_external_scope_dom_action_with_confirm_switches_to_cdp(monkeypatch):
+    service = BrowserAutomationService()
+    page = _FakePage()
+    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
+    cdp_session.mode = "cdp"
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
+    states = iter(
+        [
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "s1"},
+        ]
+    )
+    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="wait",
+        args={"wait_ms": 200, "confirm": True},
+        scope="external",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
+
+
+def test_force_restart_to_cdp_launches_after_terminating_conflicts(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    service._cdp_auto_launch = True
+    service._cdp_launch_timeout_seconds = 1.0
+
+    state = {"probe_calls": 0, "conflict_calls": 0}
+
+    def _fake_probe(endpoint: str, **kwargs):
+        _ = endpoint, kwargs
+        state["probe_calls"] += 1
+        return state["probe_calls"] >= 3
+
+    def _fake_conflicts(**kwargs):
+        _ = kwargs
+        state["conflict_calls"] += 1
+        if state["conflict_calls"] == 1:
+            return [{"pid": 111, "browser_family": "chrome", "name": "chrome.exe", "exe": "", "cmdline": ""}]
+        return []
+
+    launched: list[str] = []
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", _fake_probe)
+    monkeypatch.setattr(service, "_list_cdp_conflict_processes", _fake_conflicts)
+    monkeypatch.setattr(
+        service,
+        "_terminate_processes",
+        lambda pids, wait_timeout_seconds=4.0: {
+            "terminated_pids": list(pids),
+            "killed_pids": [],
+            "failed_pids": [],
+        },
+    )
+    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint: launched.append(str(endpoint)))
+
+    out = service.force_restart_to_cdp(timeout_seconds=2.0)
+    assert out["ok"] is True
+    assert launched == ["http://127.0.0.1:9222"]
+    assert out.get("terminated_pids") == [111]
+
+
+def test_force_restart_to_cdp_returns_error_when_conflicts_remain(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
+    monkeypatch.setattr(
+        service,
+        "_list_cdp_conflict_processes",
+        lambda **kwargs: [{"pid": 222, "browser_family": "chrome", "name": "chrome.exe", "exe": "", "cmdline": ""}],
+    )
+    monkeypatch.setattr(
+        service,
+        "_terminate_processes",
+        lambda pids, wait_timeout_seconds=4.0: {
+            "terminated_pids": list(pids),
+            "killed_pids": [],
+            "failed_pids": list(pids),
+        },
+    )
+
+    out = service.force_restart_to_cdp(timeout_seconds=1.0)
+    assert out["ok"] is False
+    assert out["error"] == "cdp_conflict_process_still_running"

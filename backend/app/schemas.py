@@ -395,6 +395,21 @@ class AelinTrackConfirmResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinBrowserConfirmRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    action_kind: str = Field(default="confirm_browser_action", max_length=64)
+    action: str = Field(default="", max_length=32)
+    next_call: dict[str, Any] = Field(default_factory=dict)
+
+
+class AelinBrowserConfirmResponse(BaseModel):
+    ok: bool
+    message: str = ""
+    requires_followup: bool = False
+    tool_result: dict[str, Any] = Field(default_factory=dict)
+    generated_at: datetime
+
+
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None

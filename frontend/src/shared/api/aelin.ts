@@ -3,6 +3,7 @@ import type {
   AelinChatRequest, AelinChatResponse, AelinContextResponse,
   AelinNotificationResponse, AelinProactivePollResponse,
   AelinTrackConfirmRequest, AelinTrackConfirmResponse,
+  AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
   AelinTrackingItem, AelinTrackingRunResponse,
   AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
@@ -27,6 +28,9 @@ export const aelinApi = {
 
   trackConfirm: (body: AelinTrackConfirmRequest) =>
     fetchJson<AelinTrackConfirmResponse>('/api/v1/aelin/track/confirm', { method: 'POST', body: JSON.stringify(body) }),
+
+  confirmBrowserAction: (body: AelinBrowserConfirmRequest) =>
+    fetchJson<AelinBrowserConfirmResponse>('/api/v1/aelin/agent/browser/confirm', { method: 'POST', body: JSON.stringify(body) }),
 
   trackingList: (params?: Record<string, string>) =>
     fetchJson<AelinTrackingListResponse>(`/api/v1/aelin/tracking${params ? '?' + new URLSearchParams(params) : ''}`),

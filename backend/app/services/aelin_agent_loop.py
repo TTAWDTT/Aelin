@@ -43,6 +43,26 @@ def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResul
     )
 
 
+def _extract_confirmation_request(*, tool_name: str, args: dict[str, Any], result: dict[str, Any]) -> dict[str, Any] | None:
+    if str(tool_name or "").strip().lower() != "browser_use":
+        return None
+    if not isinstance(result, dict):
+        return None
+    if not bool(result.get("requires_confirmation")):
+        return None
+    prompt = str(result.get("user_prompt") or "").strip()
+    if not prompt:
+        prompt = "该任务需要你的确认才能继续执行，是否确认？"
+    return {
+        "tool": "browser_use",
+        "user_prompt": prompt[:220],
+        "error": str(result.get("error") or "")[:120],
+        "confirm_kind": str(result.get("confirm_kind") or "")[:48],
+        "action": str(result.get("action") or str(args.get("action") or ""))[:48],
+        "next_call": result.get("next_call") if isinstance(result.get("next_call"), dict) else {},
+    }
+
+
 class AelinAgentLoop:
     def __init__(
         self,
@@ -79,6 +99,7 @@ class AelinAgentLoop:
         rounds = 0
         stop_reason = "unknown"
         answer = ""
+        pending_confirmation: dict[str, Any] | None = None
 
         if self._provider == "rule_based":
             return _failed_loop_result(stop_reason="provider_rule_based", detail="provider_rule_based")
@@ -187,6 +208,8 @@ class AelinAgentLoop:
             pending_reads: list[dict[str, Any]] = []
 
             for planned in planned_calls:
+                if pending_confirmation is not None:
+                    break
                 tool_name = str(planned.get("tool_name") or "")
                 args = planned.get("args") if isinstance(planned.get("args"), dict) else {}
                 tc_id = str(planned.get("tc_id") or "")
@@ -225,6 +248,12 @@ class AelinAgentLoop:
                             trace_steps=trace_steps,
                         ):
                             successful_calls += 1
+                        if pending_confirmation is None:
+                            pending_confirmation = _extract_confirmation_request(
+                                tool_name=tool_name,
+                                args=args,
+                                result=result,
+                            )
                         continue
                     pending_reads.append(planned)
                     continue
@@ -275,7 +304,24 @@ class AelinAgentLoop:
                     trace_steps=trace_steps,
                 ):
                     successful_calls += 1
+                if pending_confirmation is None:
+                    pending_confirmation = _extract_confirmation_request(
+                        tool_name=tool_name,
+                        args=args,
+                        result=result,
+                    )
 
+            if pending_confirmation is not None:
+                stop_reason = "requires_confirmation"
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_confirm",
+                        status="completed",
+                        detail=f"tool={pending_confirmation.get('tool')}; kind={pending_confirmation.get('confirm_kind') or '-'}",
+                        count=1,
+                    )
+                )
+                break
             successful_calls += flush_pending_reads(
                 pending_reads=pending_reads,
                 tool_hub=self._tool_hub,
@@ -308,8 +354,14 @@ class AelinAgentLoop:
             stop_reason = "max_rounds"
 
         if not answer:
-            if stop_reason == "total_timeout":
+            if pending_confirmation is not None:
+                answer = str(pending_confirmation.get("user_prompt") or "").strip()
+                stop_reason = "requires_confirmation"
+            elif stop_reason == "total_timeout":
                 answer = "我已达到本轮时限，先返回阶段性结论。你可以缩小问题范围后我继续执行。"
+            elif usage.total_calls > 0 and stop_reason in {"total_call_limit", "no_progress", "max_rounds"}:
+                answer = self._partial_answer_from_runs(tool_runs=tool_runs, query=query)
+                stop_reason = "partial_result"
             else:
                 answer = self._final_answer(messages, query=query)
                 if answer and stop_reason == "empty_answer":
@@ -359,7 +411,7 @@ class AelinAgentLoop:
                 model=self._service.config.model,
                 messages=final_messages,
                 temperature=self._service.config.temperature,
-                max_tokens=420,
+                max_tokens=320,
                 timeout=self._round_timeout_seconds,
             )
             choice = response.choices[0] if getattr(response, "choices", None) else None
@@ -377,6 +429,28 @@ class AelinAgentLoop:
         if safe_q:
             return f"我已经执行了受控工具流程，但当前无法稳定产出结果。请重试一次：{safe_q[:120]}"
         return "我已经执行了受控工具流程，但当前无法稳定产出结果。请重试一次。"
+
+    def _partial_answer_from_runs(self, *, tool_runs: list[AgentLoopToolRun], query: str) -> str:
+        if not tool_runs:
+            return self._fallback_answer(query=query)
+        lines: list[str] = []
+        for run in list(reversed(tool_runs)):
+            if run.status != "completed":
+                continue
+            result = run.result if isinstance(run.result, dict) else {}
+            summary = str(
+                result.get("effect_summary")
+                or result.get("summary")
+                or result.get("message")
+                or result.get("error")
+                or ""
+            ).strip()
+            lines.append(f"- {run.name}: {(summary or 'completed')[:120]}")
+            if len(lines) >= 3:
+                break
+        if not lines:
+            return self._fallback_answer(query=query)
+        return "我已完成部分步骤，当前阶段结果：\n" + "\n".join(lines) + "\n如需我继续，我会基于这一步接着执行。"
 
     def _build_actions(self, runs: list[AgentLoopToolRun]) -> list[dict[str, str]]:
         return _build_actions_from_runs(runs=runs, workspace=str(self._tool_hub.workspace))

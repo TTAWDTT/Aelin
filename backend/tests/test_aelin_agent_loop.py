@@ -54,6 +54,7 @@ class _FakeToolHub:
             {"type": "function", "function": {"name": "profile", "parameters": {"type": "object"}}},
             {"type": "function", "function": {"name": "screen_get", "parameters": {"type": "object"}}},
             {"type": "function", "function": {"name": "browser_state_get", "parameters": {"type": "object"}}},
+            {"type": "function", "function": {"name": "browser_use", "parameters": {"type": "object"}}},
         ]
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -70,7 +71,28 @@ class _FakeToolHub:
             return {"ok": True, "data_url": "data:image/png;base64,AAA", "width": 800, "height": 600}
         if str(name) == "browser_state_get":
             return {"ok": True, "url": "about:blank", "title": "", "session_scope": "agent_browser", "is_blank_page": True}
+        if str(name) == "browser_use":
+            return {"ok": True, "action": str(args.get("action") or ""), "scope": "cdp"}
         return {"ok": True, "items": []}
+
+
+class _ConfirmToolHub(_FakeToolHub):
+    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if str(name) == "browser_use":
+            return {
+                "ok": False,
+                "error": "browser_restart_confirmation_required",
+                "requires_confirmation": True,
+                "confirm_kind": "restart_to_cdp",
+                "action": str(args.get("action") or "click"),
+                "user_prompt": "该任务较为复杂，需要重启浏览器后才能执行，是否确认？",
+                "next_call": {
+                    "tool": "browser_use",
+                    "action": "click",
+                    "args": {"target": "关注", "scope": "cdp", "confirm": True},
+                },
+            }
+        return super().execute(name, args)
 
 
 def _fake_service(rounds: list[dict[str, Any]]):
@@ -352,6 +374,44 @@ def test_agent_loop_injects_tool_screen_image_for_next_round():
         and any(str(item.get("type") or "") == "image_url" for item in row.get("content") if isinstance(item, dict))
     ]
     assert screen_msgs
+
+
+def test_agent_loop_stops_with_confirmation_when_browser_use_requires_it():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "b1", "name": "browser_use", "arguments": '{"action":"click","target":"关注","scope":"auto"}'},
+            ]
+        },
+        {"content": "不应到达"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _ConfirmToolHub(sleep_seconds=0.01)
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=2,
+    )
+
+    result = loop.run(query="帮我打开并读取关注列表", memory_summary="m", history_turns=[])
+    assert result.ok is True
+    assert result.stop_reason == "requires_confirmation"
+    assert "是否确认" in result.answer
+    assert len(service._completions.calls) == 1
+    confirm_actions = [action for action in result.actions if str(action.get("kind") or "") == "confirm_browser_action"]
+    assert confirm_actions
+    next_call = json.loads(str(confirm_actions[0].get("next_call") or "{}"))
+    assert str(next_call.get("tool") or "") == "browser_use"
+    next_args = next_call.get("args") if isinstance(next_call.get("args"), dict) else {}
+    assert str(next_args.get("scope") or "") == "cdp"
+    assert bool(next_args.get("confirm")) is True
 
 
 def test_serialize_tool_message_content_keeps_valid_json_when_truncated():

@@ -1124,6 +1124,8 @@ class BrowserAutomationService:
         workspace: str,
         action: str = "",
         allow_restart_confirmation: bool = False,
+        confirmed: bool = False,
+        next_args: dict[str, Any] | None = None,
     ) -> tuple[BrowserSession | None, dict[str, Any] | None]:
         try:
             session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
@@ -1131,6 +1133,37 @@ class BrowserAutomationService:
         except Exception as exc:
             reason = str(exc)[:160]
             if allow_restart_confirmation and "cdp_requires_browser_restart" in reason:
+                if confirmed:
+                    restart_meta = self.force_restart_to_cdp(timeout_seconds=12.0)
+                    if bool(restart_meta.get("ok")):
+                        try:
+                            session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+                            return session, None
+                        except Exception as retry_exc:
+                            retry_reason = str(retry_exc)[:160]
+                            return None, self._error_payload(
+                                error=f"cdp_unavailable:{retry_reason}",
+                                action=action,
+                                scope="cdp",
+                            )
+                    fail_payload = self._error_payload(
+                        error="browser_restart_failed_for_cdp",
+                        action=action,
+                        scope="cdp",
+                    )
+                    fail_payload["restart"] = {
+                        "attempted": True,
+                        "ok": False,
+                        "error": str(restart_meta.get("error") or "")[:180],
+                        "terminated_pids": list(restart_meta.get("terminated_pids") or []),
+                        "killed_pids": list(restart_meta.get("killed_pids") or []),
+                        "failed_pids": list(restart_meta.get("failed_pids") or []),
+                        "remaining_pids": list(restart_meta.get("remaining_pids") or []),
+                    }
+                    return None, fail_payload
+                confirm_args = dict(next_args or {})
+                confirm_args["scope"] = "cdp"
+                confirm_args["confirm"] = True
                 return None, {
                     "ok": False,
                     "error": "browser_restart_required_for_cdp",
@@ -1142,7 +1175,7 @@ class BrowserAutomationService:
                     "next_call": {
                         "tool": "browser_use",
                         "action": action,
-                        "args": {"scope": "cdp", "confirm": True},
+                        "args": confirm_args,
                     },
                 }
             return None, self._error_payload(error=f"cdp_unavailable:{reason}", action=action)
@@ -1414,6 +1447,20 @@ class BrowserAutomationService:
         strategy = str(args.get("strategy") or "auto").strip().lower()
         role = str(args.get("role") or "").strip().lower()
         fallback_reason = ""
+        confirm_retry_args = {
+            "url": url,
+            "target": target,
+            "value": value,
+            "strategy": strategy,
+            "role": role,
+            "press_enter": bool(args.get("press_enter")),
+            "direction": str(args.get("direction") or "").strip().lower(),
+            "amount": _clamp_int(args.get("amount"), 720, low=-6000, high=6000),
+            "wait_ms": _clamp_int(args.get("wait_ms"), 900, low=100, high=20000),
+            "timeout_ms": _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000),
+            "scope": "cdp",
+            "confirm": True,
+        }
         if runtime_scope == "managed":
             return self._error_payload(
                 error="managed_scope_soft_deleted",
@@ -1429,6 +1476,8 @@ class BrowserAutomationService:
                     workspace=workspace,
                     action=act,
                     allow_restart_confirmation=True,
+                    confirmed=bool(args.get("confirm")),
+                    next_args=confirm_retry_args,
                 )
                 if session_error:
                     return session_error
@@ -1441,6 +1490,8 @@ class BrowserAutomationService:
                 workspace=workspace,
                 action=act,
                 allow_restart_confirmation=True,
+                confirmed=bool(args.get("confirm")),
+                next_args=confirm_retry_args,
             )
             if session_error:
                 return session_error

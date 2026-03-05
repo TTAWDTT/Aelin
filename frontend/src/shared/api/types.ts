@@ -117,6 +117,19 @@ export interface AelinTrackConfirmResponse {
   target_id?: number; next_run_at?: string
   actions: AelinAction[]; generated_at: string
 }
+export interface AelinBrowserConfirmRequest {
+  workspace?: string
+  action_kind?: string
+  action?: string
+  next_call: Record<string, unknown>
+}
+export interface AelinBrowserConfirmResponse {
+  ok: boolean
+  message: string
+  requires_followup: boolean
+  tool_result: Record<string, unknown>
+  generated_at: string
+}
 export interface AelinTrackingItem {
   target_id?: number; target: string; source: string; query?: string
   workspace?: string; track_type?: string; description?: string

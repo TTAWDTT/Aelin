@@ -28,6 +28,7 @@ interface MessageBubbleProps {
   thinkingText?: string
   compact?: boolean
   viewportWidth: number
+  onQuickPrompt?: (text: string) => void
 }
 
 function calculateCompactMaxWidth(viewportWidth: number) {
@@ -76,7 +77,7 @@ function buildTrackConfirmBody(action: AelinAction, fallbackText: string): Aelin
   }
 }
 
-export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth }: MessageBubbleProps) {
+export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth, onQuickPrompt }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
@@ -104,6 +105,40 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
     const kind = String(action.kind || '').trim().toLowerCase()
     return kind === 'confirm_track' || kind === 'track_topic'
   }
+  const isBrowserConfirmAction = (action: AelinAction) => String(action.kind || '').trim().toLowerCase() === 'confirm_browser_action'
+
+  const confirmBrowser = useMutation({
+    mutationFn: async (action: AelinAction) => {
+      const payload = action.payload || {}
+      const rawNextCall = String(payload.next_call || '').trim()
+      if (!rawNextCall) throw new Error('缺少 next_call 参数')
+      let nextCall: Record<string, unknown> = {}
+      try {
+        const parsed = JSON.parse(rawNextCall)
+        if (!parsed || typeof parsed !== 'object') throw new Error('invalid_next_call')
+        nextCall = parsed as Record<string, unknown>
+      } catch {
+        throw new Error('next_call 解析失败')
+      }
+      return aelinApi.confirmBrowserAction({
+        workspace: String(payload.workspace || 'default').trim() || 'default',
+        action_kind: String(action.kind || '').trim() || 'confirm_browser_action',
+        action: String(payload.action || '').trim(),
+        next_call: nextCall,
+      })
+    },
+    onSuccess: (res) => {
+      if (res.ok) {
+        toast.success(String(res.message || '已确认并继续执行'))
+        onQuickPrompt?.('我已确认，请继续完成刚才的浏览器任务并直接给我结果。')
+      } else {
+        toast.error(String(res.message || '确认后执行失败'))
+      }
+    },
+    onError: (error: any) => {
+      toast.error(String(error?.message || '确认后执行失败'))
+    },
+  })
 
   return (
     <article className={cn(
@@ -226,6 +261,21 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
                             disabled={confirmTrack.isPending}
                           >
                             {confirmTrack.isPending ? '处理中…' : '执行'}
+                          </button>
+                        </div>
+                      )
+                    }
+                    if (isBrowserConfirmAction(action)) {
+                      return (
+                        <div key={key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-2">
+                          <div className="text-[11px] font-medium text-[var(--color-text)]">{action.title}</div>
+                          {detail ? <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{detail}</div> : null}
+                          <button
+                            className="aelin-btn mt-2 h-7 px-2 text-[11px]"
+                            onClick={() => confirmBrowser.mutate(action)}
+                            disabled={confirmBrowser.isPending}
+                          >
+                            {confirmBrowser.isPending ? '处理中…' : '确认并继续'}
                           </button>
                         </div>
                       )
