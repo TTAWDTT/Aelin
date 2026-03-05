@@ -625,15 +625,7 @@ class AelinToolHub:
         if not query:
             return _result_error("missing query")
         raw_ids = args.get("attachment_ids")
-        attachment_ids: list[int] = []
-        if isinstance(raw_ids, list):
-            for item in raw_ids[:20]:
-                try:
-                    val = int(item)
-                except Exception:
-                    continue
-                if val > 0:
-                    attachment_ids.append(val)
+        attachment_ids: list[int] = normalize_positive_ints(raw_ids if isinstance(raw_ids, list) else [], cap=20)
         if not attachment_ids:
             attachment_ids = list(self._available_attachment_ids)
         if not attachment_ids:

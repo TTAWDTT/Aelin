@@ -92,7 +92,7 @@ Standard pipeline:
   "content": "[hit1] ...\n[hit2] ...",
   "hits": [
     {
-      "chunk_id": "c_102",
+      "chunk_id": 102,
       "text": "...",
       "score": 0.87,
       "citation": {
@@ -104,7 +104,7 @@ Standard pipeline:
       "metadata": {"doc_id":"sha256:...","block_type":"paragraph"}
     }
   ],
-  "artifact": {"total_hits": 23}
+  "total": 23
 }
 ```
 

@@ -198,7 +198,10 @@ export function ComposerBar({
       .then((uploaded) => {
         setPendingAttachments((prev) => [...prev, ...uploaded].slice(0, MAX_PENDING_ATTACHMENTS))
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error('Attachment upload failed:', error)
+        toast('附件上传失败，请重试')
+      })
       .finally(() => {
         setUploadingAttachments((prev) => prev.filter((row) => !uploadingItems.some((item) => item.id === row.id)))
         setIsAttaching(false)

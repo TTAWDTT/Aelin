@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     aelin_attachment_chunk_size: int = 700
     aelin_attachment_chunk_overlap: int = 120
     aelin_attachment_soffice_bin: str = "soffice"
+    aelin_attachment_legacy_convert_timeout_seconds: int = 30
 
     # LLM client runtime tuning.
     llm_request_timeout_seconds: float = 90.0

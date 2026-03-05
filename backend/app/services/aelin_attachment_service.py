@@ -76,6 +76,10 @@ class AelinAttachmentService:
         self._chunk_overlap = max(20, min(self._chunk_size - 40, int(getattr(settings, "aelin_attachment_chunk_overlap", 120) or 120)))
         self._max_size = max(256 * 1024, int(getattr(settings, "aelin_attachment_max_size_bytes", 30 * 1024 * 1024) or (30 * 1024 * 1024)))
         self._soffice_bin = str(getattr(settings, "aelin_attachment_soffice_bin", "soffice") or "soffice").strip() or "soffice"
+        self._legacy_convert_timeout_seconds = max(
+            10,
+            int(getattr(settings, "aelin_attachment_legacy_convert_timeout_seconds", 30) or 30),
+        )
 
     @staticmethod
     def _normalize_workspace(raw: str) -> str:
@@ -484,7 +488,13 @@ class AelinAttachmentService:
                 str(input_path),
             ]
             try:
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=self._legacy_convert_timeout_seconds,
+                )
             except Exception as exc:
                 raise AttachmentIngestError(
                     "legacy_convert_failed",
