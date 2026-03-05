@@ -2671,20 +2671,48 @@ def _try_agent_loop_chat(
     force_disable_writes: bool = False,
     forced_tracking_create: dict[str, str] | None = None,
 ) -> AelinChatResponse | None:
+    pre_loop_started = time.perf_counter()
+    query_preview = " ".join(str(payload.query or "").split())[:120]
+
     service, provider = _resolve_llm_service(db, current_user)
+    _log.info(
+        "agent_loop preflight phase=resolve_service user_id=%s workspace=%s provider=%s latency_ms=%s query=%s",
+        int(current_user.id),
+        _normalize_workspace(payload.workspace),
+        str(provider or ""),
+        int((time.perf_counter() - pre_loop_started) * 1000),
+        query_preview,
+    )
     if provider == "rule_based" or not service.is_configured():
         return None
 
     workspace = _normalize_workspace(payload.workspace)
+    base_context_started = time.perf_counter()
     base_bundle = _build_cached_base_context_bundle(
         db,
         current_user.id,
         workspace=workspace,
     )
+    _log.info(
+        "agent_loop preflight phase=base_context user_id=%s workspace=%s latency_ms=%s",
+        int(current_user.id),
+        workspace,
+        int((time.perf_counter() - base_context_started) * 1000),
+    )
     memory_summary = str(base_bundle.get("summary") or "")
+    normalize_started = time.perf_counter()
     history_turns = _normalize_history(payload.history)
     images = _normalize_images(payload.images)
+    _log.info(
+        "agent_loop preflight phase=normalize_inputs user_id=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
+        int(current_user.id),
+        workspace,
+        len(history_turns),
+        len(images),
+        int((time.perf_counter() - normalize_started) * 1000),
+    )
 
+    tool_hub_started = time.perf_counter()
     tool_hub = AelinToolHub(
         db=db,
         user_id=current_user.id,
@@ -2693,6 +2721,12 @@ def _try_agent_loop_chat(
         tracking_service=_tracking,
         file_memory_bridge=_tracking_file_memory,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
+    )
+    _log.info(
+        "agent_loop preflight phase=tool_hub_ready user_id=%s workspace=%s latency_ms=%s",
+        int(current_user.id),
+        workspace,
+        int((time.perf_counter() - tool_hub_started) * 1000),
     )
 
     prefixed_traces: list[AelinToolStep] = []
@@ -2770,6 +2804,12 @@ def _try_agent_loop_chat(
         max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 3) or 3),
         round_timeout_seconds=float(getattr(settings, "aelin_agent_loop_round_timeout_seconds", 10.0) or 10.0),
         total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
+    )
+    _log.info(
+        "agent_loop preflight phase=runner_ready user_id=%s workspace=%s total_preflight_ms=%s",
+        int(current_user.id),
+        workspace,
+        int((time.perf_counter() - pre_loop_started) * 1000),
     )
     result = runner.run(
         query=payload.query,

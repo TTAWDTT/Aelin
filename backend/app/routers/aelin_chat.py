@@ -43,6 +43,9 @@ def _is_cdp_restart_error(error: str) -> bool:
     return clean in {
         "browser_restart_required_for_cdp",
         "browser_restart_confirmation_required",
+        "browser_restart_failed_for_cdp",
+        "cdp_conflict_process_still_running",
+        "cdp_launch_timeout",
     } or "cdp_requires_browser_restart" in clean
 
 
@@ -228,6 +231,7 @@ def confirm_browser_action(
         scope=scope,
     )
     restart_meta: dict[str, Any] | None = None
+    pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
     if (not bool(result.get("ok"))) and _is_cdp_restart_error(str(result.get("error") or "")):
         restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=12.0)
         if bool(restart_meta.get("ok")):
@@ -253,7 +257,7 @@ def confirm_browser_action(
             "remaining_pids": list(restart_meta.get("remaining_pids") or []),
         }
     _LOG.info(
-        "aelin_browser_confirm uid=%s workspace=%s action=%s scope=%s ok=%s error=%s restart=%s",
+        "aelin_browser_confirm uid=%s workspace=%s action=%s scope=%s ok=%s error=%s restart=%s pre_restart=%s restart_error=%s remaining_pids=%s",
         int(current_user.id),
         workspace,
         action,
@@ -261,6 +265,9 @@ def confirm_browser_action(
         bool(result.get("ok")),
         str(result.get("error") or "")[:160],
         "1" if restart_meta is not None else "0",
+        "1" if pre_restart_meta is not None else "0",
+        str((restart_meta or pre_restart_meta or {}).get("error") or "")[:160],
+        len(list((restart_meta or pre_restart_meta or {}).get("remaining_pids") or [])),
     )
     ok = bool(result.get("ok"))
     if ok:

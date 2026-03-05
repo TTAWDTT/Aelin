@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -73,6 +74,7 @@ _BROWSER_FAMILY_NAMES = {
 }
 _CHROMIUM_FAMILIES = {"chrome", "chromium", "edge", "brave", "opera"}
 _BROWSER_NAME_TOKENS = ("chrome", "edge", "firefox", "opera", "brave", "chromium")
+_LOG = logging.getLogger(__name__)
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -761,16 +763,31 @@ class BrowserAutomationService:
         }
 
     def force_restart_to_cdp(self, *, timeout_seconds: float = 12.0) -> dict[str, Any]:
+        started = time.perf_counter()
         endpoint = str(self._cdp_endpoint or "").strip()
         if not endpoint:
+            _LOG.warning("force_restart_to_cdp failed: endpoint_unconfigured")
             return {"ok": False, "error": "cdp_endpoint_unconfigured"}
         if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.4):
+            _LOG.info(
+                "force_restart_to_cdp skipped: already_ready endpoint=%s latency_ms=%s",
+                endpoint,
+                int((time.perf_counter() - started) * 1000),
+            )
             return {"ok": True, "endpoint": endpoint, "already_ready": True}
 
+        _LOG.info("force_restart_to_cdp start endpoint=%s timeout_s=%.2f", endpoint, float(timeout_seconds or 12.0))
         self._close_sessions_by_mode("cdp")
         conflicts = self._list_cdp_conflict_processes(max_items=200)
         pids = [int(row.get("pid") or 0) for row in conflicts if int(row.get("pid") or 0) > 0]
         terminate_report = self._terminate_processes(pids, wait_timeout_seconds=4.0)
+        _LOG.info(
+            "force_restart_to_cdp terminate attempted=%s terminated=%s killed=%s failed=%s",
+            len(pids),
+            len(list(terminate_report.get("terminated_pids") or [])),
+            len(list(terminate_report.get("killed_pids") or [])),
+            len(list(terminate_report.get("failed_pids") or [])),
+        )
 
         deadline = time.time() + max(2.0, float(timeout_seconds or 12.0))
         while time.time() < deadline:
@@ -780,6 +797,11 @@ class BrowserAutomationService:
 
         remaining = self._list_cdp_conflict_processes(max_items=20)
         if remaining:
+            _LOG.warning(
+                "force_restart_to_cdp failed: conflicts_remaining=%s latency_ms=%s",
+                len(remaining),
+                int((time.perf_counter() - started) * 1000),
+            )
             return {
                 "ok": False,
                 "error": "cdp_conflict_process_still_running",
@@ -790,10 +812,21 @@ class BrowserAutomationService:
 
         with self._cdp_bootstrap_lock:
             if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.35):
+                _LOG.info(
+                    "force_restart_to_cdp ready_after_cleanup endpoint=%s latency_ms=%s",
+                    endpoint,
+                    int((time.perf_counter() - started) * 1000),
+                )
                 return {"ok": True, "endpoint": endpoint, "already_ready": True, **terminate_report}
             try:
                 self._launch_cdp_browser(endpoint)
             except Exception as exc:
+                _LOG.warning(
+                    "force_restart_to_cdp launch_failed endpoint=%s error=%s latency_ms=%s",
+                    endpoint,
+                    str(exc)[:180],
+                    int((time.perf_counter() - started) * 1000),
+                )
                 return {
                     "ok": False,
                     "error": str(exc)[:180] or "cdp_launch_failed",
@@ -802,8 +835,18 @@ class BrowserAutomationService:
                 }
             while time.time() < deadline:
                 if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.35):
+                    _LOG.info(
+                        "force_restart_to_cdp success endpoint=%s latency_ms=%s",
+                        endpoint,
+                        int((time.perf_counter() - started) * 1000),
+                    )
                     return {"ok": True, "endpoint": endpoint, **terminate_report}
                 time.sleep(0.2)
+        _LOG.warning(
+            "force_restart_to_cdp timeout endpoint=%s latency_ms=%s",
+            endpoint,
+            int((time.perf_counter() - started) * 1000),
+        )
         return {"ok": False, "error": "cdp_launch_timeout", "endpoint": endpoint, **terminate_report}
 
     @staticmethod

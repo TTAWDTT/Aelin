@@ -346,6 +346,60 @@ def test_aelin_browser_confirm_preserves_selector_args(monkeypatch):
     assert bool(sent_args.get("confirm")) is True
 
 
+def test_aelin_browser_confirm_retries_when_first_result_is_restart_failed(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    calls = {"count": 0}
+
+    def _fake_use(*, user_id, workspace, action, args, scope):
+        _ = user_id, workspace, action, args, scope
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "ok": False,
+                "error": "browser_restart_failed_for_cdp",
+                "restart": {
+                    "attempted": True,
+                    "ok": False,
+                    "error": "cdp_conflict_process_still_running",
+                    "remaining_pids": [111],
+                },
+            }
+        return {"ok": True, "action": "scroll", "scope": "cdp", "effect_summary": "scrolled"}
+
+    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(
+        aelin_chat_router.browser_automation_service,
+        "force_restart_to_cdp",
+        lambda timeout_seconds=12.0: {"ok": True, "terminated_pids": [111], "killed_pids": [], "failed_pids": []},
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/agent/browser/confirm",
+        json={
+            "workspace": "default",
+            "action_kind": "confirm_browser_action",
+            "action": "scroll",
+            "next_call": {
+                "tool": "browser_use",
+                "action": "scroll",
+                "args": {"direction": "down", "amount": 600, "scope": "cdp"},
+            },
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert bool(data.get("ok")) is True
+    assert calls["count"] == 2
+    tool_result = data.get("tool_result") or {}
+    restart = tool_result.get("restart") or {}
+    assert bool(restart.get("attempted")) is True
+    assert bool(restart.get("ok")) is True
+    assert list(restart.get("terminated_pids") or []) == [111]
+
+
 def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
