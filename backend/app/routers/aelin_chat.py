@@ -335,18 +335,28 @@ def confirm_browser_action(
     continuation_error = ""
     followup_result: dict[str, Any] = {}
     resume_query = str(payload.resume_query or "").strip()
+    resume_request = payload.resume_request if isinstance(payload.resume_request, dict) else {}
     if ok and bool(payload.continue_after_confirm):
-        if not resume_query:
-            resume_query = "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
         try:
-            followup = _dispatch_aelin_chat(
-                AelinChatRequest(
+            if resume_request:
+                followup_request_payload = dict(resume_request)
+                followup_request_payload["workspace"] = workspace
+                followup_request_payload["use_memory"] = bool(followup_request_payload.get("use_memory", True))
+                if not str(followup_request_payload.get("query") or "").strip():
+                    followup_request_payload["query"] = resume_query or "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
+                followup_request = AelinChatRequest(**followup_request_payload)
+            else:
+                if not resume_query:
+                    resume_query = "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
+                followup_request = AelinChatRequest(
                     query=resume_query[:500],
                     workspace=workspace,
                     use_memory=True,
                     history=[],
                     images=[],
-                ),
+                )
+            followup = _dispatch_aelin_chat(
+                followup_request,
                 db,
                 current_user,
                 event_cb=None,

@@ -400,6 +400,7 @@ class AelinBrowserConfirmRequest(BaseModel):
     action_kind: str = Field(default="confirm_browser_action", max_length=64)
     action: str = Field(default="", max_length=32)
     next_call: dict[str, Any] = Field(default_factory=dict)
+    resume_request: dict[str, Any] = Field(default_factory=dict)
     resume_query: str = Field(default="", max_length=500)
     continue_after_confirm: bool = True
 

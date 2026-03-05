@@ -121,6 +121,7 @@ export interface AelinBrowserConfirmRequest {
   workspace?: string
   action_kind?: string
   action?: string
+  resume_request?: Record<string, unknown>
   resume_query?: string
   continue_after_confirm?: boolean
   next_call: Record<string, unknown>

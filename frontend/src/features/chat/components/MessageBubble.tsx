@@ -113,6 +113,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
       const rawNextCall = String(payload.next_call || '').trim()
       if (!rawNextCall) throw new Error('缺少 next_call 参数')
       let nextCall: Record<string, unknown> = {}
+      let resumeRequest: Record<string, unknown> = {}
       try {
         const parsed = JSON.parse(rawNextCall)
         if (!parsed || typeof parsed !== 'object') throw new Error('invalid_next_call')
@@ -120,10 +121,22 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
       } catch {
         throw new Error('next_call 解析失败')
       }
+      const rawResumeRequest = String(payload.resume_request || '').trim()
+      if (rawResumeRequest) {
+        try {
+          const parsedResume = JSON.parse(rawResumeRequest)
+          if (parsedResume && typeof parsedResume === 'object') {
+            resumeRequest = parsedResume as Record<string, unknown>
+          }
+        } catch {
+          throw new Error('resume_request 解析失败')
+        }
+      }
       return aelinApi.confirmBrowserAction({
         workspace: String(payload.workspace || 'default').trim() || 'default',
         action_kind: String(action.kind || '').trim() || 'confirm_browser_action',
         action: String(payload.action || '').trim(),
+        resume_request: resumeRequest,
         resume_query: String(payload.resume_query || '').trim(),
         continue_after_confirm: true,
         next_call: nextCall,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -104,6 +105,17 @@ class AelinAgentLoop:
         forced_tool_runs: list[dict[str, Any]] | None = None,
     ) -> AelinAgentLoopResult:
         self._last_query = str(query or "")
+        self._resume_request_json = json.dumps(
+            {
+                "query": str(query or "")[:1200],
+                "workspace": str(self._tool_hub.workspace or "default")[:64],
+                "use_memory": True,
+                "history": list(history_turns or [])[:20],
+                "images": list(images or [])[:4],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         trace_steps: list[AgentLoopTraceStep] = []
         tool_runs: list[AgentLoopToolRun] = []
         usage = ToolPolicyUsage()
@@ -470,4 +482,5 @@ class AelinAgentLoop:
             runs=runs,
             workspace=str(self._tool_hub.workspace),
             resume_query=str(getattr(self, "_last_query", "") or ""),
+            resume_request_json=str(getattr(self, "_resume_request_json", "") or ""),
         )

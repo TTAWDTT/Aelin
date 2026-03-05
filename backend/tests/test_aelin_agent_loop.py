@@ -427,6 +427,9 @@ def test_agent_loop_stops_with_confirmation_when_browser_use_requires_it():
     confirm_actions = [action for action in result.actions if str(action.get("kind") or "") == "confirm_browser_action"]
     assert confirm_actions
     assert str(confirm_actions[0].get("resume_query") or "") == "帮我打开并读取关注列表"
+    resume_request = json.loads(str(confirm_actions[0].get("resume_request") or "{}"))
+    assert str(resume_request.get("query") or "") == "帮我打开并读取关注列表"
+    assert str(resume_request.get("workspace") or "") == "default"
     next_call = json.loads(str(confirm_actions[0].get("next_call") or "{}"))
     assert str(next_call.get("tool") or "") == "browser_use"
     next_args = next_call.get("args") if isinstance(next_call.get("args"), dict) else {}
@@ -465,6 +468,8 @@ def test_agent_loop_stops_with_confirmation_when_browser_state_get_requires_it()
     assert len(service._completions.calls) == 1
     confirm_actions = [action for action in result.actions if str(action.get("kind") or "") == "confirm_browser_action"]
     assert confirm_actions
+    resume_request = json.loads(str(confirm_actions[0].get("resume_request") or "{}"))
+    assert str(resume_request.get("query") or "") == "读取当前页面并总结"
     next_call = json.loads(str(confirm_actions[0].get("next_call") or "{}"))
     assert str(next_call.get("tool") or "") == "browser_state_get"
     assert str(next_call.get("action") or "") == "state_get"
