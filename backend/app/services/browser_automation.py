@@ -335,6 +335,26 @@ class BrowserAutomationService:
         port = self._parse_cdp_port(endpoint)
         if port <= 0:
             raise RuntimeError("cdp_endpoint_invalid")
+        exe_lower = str(exe or "").lower()
+        local_app_data = str(os.environ.get("LOCALAPPDATA") or "").strip()
+        user_data_dir = ""
+        if local_app_data:
+            if "chrome" in exe_lower:
+                candidate = Path(local_app_data) / "Google/Chrome/User Data"
+                if candidate.exists():
+                    user_data_dir = str(candidate)
+            elif "edge" in exe_lower or "msedge" in exe_lower:
+                candidate = Path(local_app_data) / "Microsoft/Edge/User Data"
+                if candidate.exists():
+                    user_data_dir = str(candidate)
+            elif "brave" in exe_lower:
+                candidate = Path(local_app_data) / "BraveSoftware/Brave-Browser/User Data"
+                if candidate.exists():
+                    user_data_dir = str(candidate)
+            elif "opera" in exe_lower:
+                candidate = Path(local_app_data) / "Opera Software/Opera Stable"
+                if candidate.exists():
+                    user_data_dir = str(candidate)
 
         cmd = [
             exe,
@@ -343,6 +363,14 @@ class BrowserAutomationService:
             "--new-window",
             "about:blank",
         ]
+        if user_data_dir:
+            cmd.insert(1, f"--user-data-dir={user_data_dir}")
+        _LOG.info(
+            "cdp_launch command exe=%s port=%s user_data_dir=%s",
+            str(exe)[:180],
+            int(port),
+            str(user_data_dir or "-")[:220],
+        )
         try:
             subprocess.Popen(
                 cmd,
