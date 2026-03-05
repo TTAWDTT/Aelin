@@ -35,6 +35,9 @@ _SENSITIVE_KEY_TOKENS = (
     "sessionid",
     "session_id",
 )
+_MODEL_TOOL_RESULT_MAX_LEN = 1200
+_MODEL_LIST_PREVIEW_ITEMS = 3
+_MODEL_TEXT_PREVIEW_LEN = 220
 
 
 def _normalized_key(key: str) -> str:
@@ -120,11 +123,129 @@ def _summarize_result_for_log(result: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _serialize_tool_message_content(payload: dict[str, Any], *, max_len: int = 8000) -> str:
+def _truncate_model_text(value: Any, *, limit: int = _MODEL_TEXT_PREVIEW_LEN) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 1)]}…"
+
+
+def _preview_item(item: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in ("title", "name", "url", "path", "snippet", "source", "provider", "id"):
+        raw = item.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, (int, float, bool)):
+            out[key] = raw
+        else:
+            out[key] = _truncate_model_text(raw, limit=180)
+    return out
+
+
+def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    tool = str(tool_name or "").strip().lower()
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "invalid_payload"}
+
+    base: dict[str, Any] = {}
+    for key in (
+        "ok",
+        "error",
+        "action",
+        "scope",
+        "requires_confirmation",
+        "confirm_kind",
+        "risk_level",
+        "effect_summary",
+        "user_prompt",
+        "hint",
+    ):
+        if key not in payload:
+            continue
+        val = payload.get(key)
+        if isinstance(val, (bool, int, float)):
+            base[key] = val
+        else:
+            base[key] = _truncate_model_text(val, limit=300)
+
+    if tool == "screen_get":
+        for key in ("name", "width", "height", "source_display", "captured_at", "has_image"):
+            if key in payload:
+                base[key] = payload.get(key)
+        return base
+
+    if tool == "web_search":
+        base["query"] = _truncate_model_text(payload.get("query"), limit=220)
+        base["total"] = int(payload.get("total") or 0)
+        providers = payload.get("providers")
+        if isinstance(providers, list):
+            base["providers"] = [str(x)[:32] for x in providers[:_MODEL_LIST_PREVIEW_ITEMS]]
+        items = payload.get("items")
+        if isinstance(items, list):
+            base["items"] = [
+                _preview_item(row)
+                for row in items[:_MODEL_LIST_PREVIEW_ITEMS]
+                if isinstance(row, dict)
+            ]
+        return base
+
+    if tool in {"context_get", "browser_state_get", "browser_session_list", "tracking", "diary", "profile", "device"}:
+        if "summary" in payload:
+            base["summary"] = _truncate_model_text(payload.get("summary"), limit=260)
+        if "url" in payload:
+            base["url"] = _truncate_model_text(payload.get("url"), limit=240)
+        if "title" in payload:
+            base["title"] = _truncate_model_text(payload.get("title"), limit=200)
+        if "total" in payload:
+            base["total"] = int(payload.get("total") or 0)
+        if "next_call" in payload and isinstance(payload.get("next_call"), dict):
+            base["next_call"] = _sanitize_for_log(payload.get("next_call"))
+        items = payload.get("items")
+        if isinstance(items, list):
+            base["items"] = [
+                _preview_item(row)
+                for row in items[:_MODEL_LIST_PREVIEW_ITEMS]
+                if isinstance(row, dict)
+            ]
+        if "focus_items" in payload and isinstance(payload.get("focus_items"), list):
+            base["focus_items"] = [
+                _preview_item(row)
+                for row in list(payload.get("focus_items") or [])[:_MODEL_LIST_PREVIEW_ITEMS]
+                if isinstance(row, dict)
+            ]
+        if "todos" in payload and isinstance(payload.get("todos"), list):
+            base["todos"] = [
+                _preview_item(row)
+                for row in list(payload.get("todos") or [])[:_MODEL_LIST_PREVIEW_ITEMS]
+                if isinstance(row, dict)
+            ]
+        if "system_processes" in payload and isinstance(payload.get("system_processes"), list):
+            base["system_processes"] = [
+                _preview_item(row)
+                for row in list(payload.get("system_processes") or [])[:_MODEL_LIST_PREVIEW_ITEMS]
+                if isinstance(row, dict)
+            ]
+        return base
+
+    if "next_call" in payload and isinstance(payload.get("next_call"), dict):
+        base["next_call"] = _sanitize_for_log(payload.get("next_call"))
+    if "items" in payload and isinstance(payload.get("items"), list):
+        base["items"] = [
+            _preview_item(row)
+            for row in list(payload.get("items") or [])[:_MODEL_LIST_PREVIEW_ITEMS]
+            if isinstance(row, dict)
+        ]
+    if len(base) <= 1:
+        base["preview"] = _truncate_model_text(_sanitize_for_log(payload), limit=600)
+    return base
+
+
+def _serialize_tool_message_content(payload: dict[str, Any], *, max_len: int = _MODEL_TOOL_RESULT_MAX_LEN) -> str:
     raw = json.dumps(payload, ensure_ascii=False)
     if len(raw) <= max_len:
         return raw
-    preview = raw[:2048]
+    preview = raw[: min(1000, max_len)]
     compact: dict[str, Any] = {
         "truncated": True,
         "original_length": len(raw),
@@ -244,6 +365,7 @@ def append_tool_result(
         status=status,
         result=result,
     )
+    compact_message_result = _compact_tool_result_for_model(tool_name, tool_result_for_message)
     tool_runs.append(
         AgentLoopToolRun(
             round_index=round_index,
@@ -260,7 +382,7 @@ def append_tool_result(
         {
             "role": "tool",
             "tool_call_id": tc_id,
-            "content": _serialize_tool_message_content(tool_result_for_message),
+            "content": _serialize_tool_message_content(compact_message_result),
         }
     )
     if image_data_url:

@@ -155,7 +155,7 @@ def build_initial_messages(
         },
         {
             "role": "system",
-            "content": f"memory_summary={str(memory_summary or '')[:1000]}",
+            "content": f"memory_summary={str(memory_summary or '')[:600]}",
         },
     ]
     if forced_intent:
@@ -172,21 +172,21 @@ def build_initial_messages(
         messages.append(
             {
                 "role": "system",
-                "content": (
-                    f"forced_tool_result[{name}] "
-                    + json.dumps({"args": args, "result": result}, ensure_ascii=False)[:1800]
-                ),
-            }
-        )
+                    "content": (
+                        f"forced_tool_result[{name}] "
+                        + json.dumps({"args": args, "result": result}, ensure_ascii=False)[:900]
+                    ),
+                }
+            )
 
     if history_turns:
-        for row in history_turns[-10:]:
+        for row in history_turns[-6:]:
             role = str(row.get("role") or "").strip().lower()
             content = str(row.get("content") or "").strip()
             if role in {"user", "assistant"} and content:
-                messages.append({"role": role, "content": content[:3000]})
+                messages.append({"role": role, "content": content[:1200]})
 
-    query_text = str(query or "").strip()[:1200]
+    query_text = str(query or "").strip()[:900]
     query_fallback_text = query_text or "请先分析我上传的图片，再继续执行工具流程。"
     normalized_images = _normalize_input_image_data_urls(images)
     if normalized_images:
@@ -197,4 +197,3 @@ def build_initial_messages(
     else:
         messages.append({"role": "user", "content": query_text})
     return messages
-

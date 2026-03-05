@@ -93,6 +93,9 @@ export function useChatStream() {
   const abortRef = useRef<(() => void) | null>(null)
 
   const send = useCallback((text: string, images?: { dataUrl: string; name: string }[]) => {
+    abortRef.current?.()
+    abortRef.current = null
+
     let sessionId = store.activeSessionId
     if (!sessionId) sessionId = store.createSession()
 
@@ -142,7 +145,9 @@ export function useChatStream() {
       onPlan: (d) => store.setStatusText(`计划: ${d.steps?.length || 0} 步`),
       onToolStep: (step) => {
         store.setStatusText(`${step.stage}…`)
-        const currentTrace = store.getActiveSession()?.messages.findLast((m: ChatMessage) => m.role === 'assistant')?.toolTrace
+        const state = useChatStore.getState()
+        const targetSession = state.sessions.find((s) => s.id === sessionId)
+        const currentTrace = targetSession?.messages.findLast((m: ChatMessage) => m.role === 'assistant')?.toolTrace
         store.updateLastAssistant(sessionId!, {
           toolTrace: mergeToolTrace(currentTrace, step),
         })
@@ -152,11 +157,13 @@ export function useChatStream() {
       onReplyChunk: (chunk) => store.appendContent(sessionId!, chunk),
       onDone: (d) => {
         store.updateLastAssistant(sessionId!, { expression: d.expression, memorySummary: d.memory_summary })
+        if (abortRef.current === cancel) abortRef.current = null
         store.setStreaming(false)
         store.setStatusText('')
       },
       onError: (err) => {
         store.appendContent(sessionId!, `\n\n> ⚠️ 错误: ${err.message}`)
+        if (abortRef.current === cancel) abortRef.current = null
         store.setStreaming(false)
         store.setStatusText('')
       },
@@ -225,6 +232,7 @@ export function useChatStream() {
 
   const stop = useCallback(() => {
     abortRef.current?.()
+    abortRef.current = null
     store.setStreaming(false)
     store.setStatusText('')
   }, [store])
