@@ -413,7 +413,6 @@ def test_ensure_cdp_endpoint_ready_auto_launch_success(monkeypatch):
     service._cdp_endpoint = "http://127.0.0.1:9222"
     service._cdp_auto_launch = True
     service._cdp_launch_timeout_seconds = 0.8
-    monkeypatch.setattr(service, "_has_cdp_conflict_process", lambda: False)
 
     probe_calls = {"count": 0}
 
@@ -434,8 +433,22 @@ def test_ensure_cdp_endpoint_ready_requires_restart_when_browser_running(monkeyp
     service = BrowserAutomationService()
     service._cdp_endpoint = "http://127.0.0.1:9222"
     service._cdp_auto_launch = True
+    service._cdp_launch_timeout_seconds = 0.8
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
-    monkeypatch.setattr(service, "_has_cdp_conflict_process", lambda: True)
+    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint: None)
+    monkeypatch.setattr(
+        service,
+        "_list_cdp_conflict_processes",
+        lambda **kwargs: [{"pid": 222, "browser_family": "chrome", "name": "chrome.exe", "exe": "", "cmdline": ""}],
+    )
+    clock = {"t": 0.0}
+
+    def _fake_time():
+        clock["t"] += 1.1
+        return clock["t"]
+
+    monkeypatch.setattr("app.services.browser_automation.time.time", _fake_time)
+    monkeypatch.setattr("app.services.browser_automation.time.sleep", lambda _seconds: None)
 
     try:
         service._ensure_cdp_endpoint_ready()
@@ -450,7 +463,6 @@ def test_ensure_cdp_endpoint_ready_without_auto_launch(monkeypatch):
     service._cdp_endpoint = "http://127.0.0.1:9222"
     service._cdp_auto_launch = False
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
-    monkeypatch.setattr(service, "_has_cdp_conflict_process", lambda: False)
 
     try:
         service._ensure_cdp_endpoint_ready()

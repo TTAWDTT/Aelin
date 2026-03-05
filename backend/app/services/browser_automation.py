@@ -360,8 +360,6 @@ class BrowserAutomationService:
             return
         if not self._cdp_auto_launch:
             raise RuntimeError("cdp_endpoint_unavailable")
-        if self._has_cdp_conflict_process():
-            raise RuntimeError("cdp_requires_browser_restart")
 
         with self._cdp_bootstrap_lock:
             if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
@@ -372,6 +370,9 @@ class BrowserAutomationService:
                 if self._probe_cdp_endpoint(endpoint):
                     return
                 time.sleep(0.2)
+            conflicts = self._list_cdp_conflict_processes(max_items=8, endpoint=endpoint)
+            if conflicts:
+                raise RuntimeError("cdp_requires_browser_restart")
         raise RuntimeError("cdp_launch_timeout")
 
     def _resolve_mode(self, mode: str) -> str:
@@ -681,21 +682,103 @@ class BrowserAutomationService:
         )
         return any(token in blob for token in ("chrome", "chromium", "msedge", "edge", "brave", "opera"))
 
-    def _list_cdp_conflict_processes(self, *, max_items: int = 200) -> list[dict[str, Any]]:
-        rows = self._list_system_browser_processes(max_items=max_items, include_details=False)
-        return [row for row in rows if isinstance(row, dict) and self._is_cdp_conflict_row(row)]
+    @staticmethod
+    def _extract_connection_port(laddr: Any) -> int:
+        if laddr is None:
+            return 0
+        try:
+            if hasattr(laddr, "port"):
+                return int(getattr(laddr, "port") or 0)
+        except Exception:
+            pass
+        try:
+            if isinstance(laddr, (tuple, list)) and len(laddr) >= 2:
+                return int(laddr[1] or 0)
+        except Exception:
+            pass
+        return 0
 
-    def _has_cdp_conflict_process(self) -> bool:
+    def _list_port_listener_pids(self, *, port: int) -> list[int]:
         if psutil is None:
-            return False
-        for proc in psutil.process_iter(attrs=["name"]):
+            return []
+        target = int(port or 0)
+        if target <= 0:
+            return []
+        out: set[int] = set()
+        try:
+            conns = psutil.net_connections(kind="inet")
+        except Exception:
+            return []
+        for conn in conns:
             try:
-                info = proc.info if isinstance(getattr(proc, "info", None), dict) else {}
-                if self._is_chromium_name(str(info.get("name") or "")):
-                    return True
+                local_port = self._extract_connection_port(getattr(conn, "laddr", None))
+            except Exception:
+                local_port = 0
+            if int(local_port or 0) != target:
+                continue
+            status = str(getattr(conn, "status", "") or "").strip().upper()
+            if status and status not in {"LISTEN", "NONE"}:
+                continue
+            pid = int(getattr(conn, "pid", 0) or 0)
+            if pid > 0:
+                out.add(pid)
+        return sorted(out)
+
+    def _list_cdp_conflict_processes(self, *, max_items: int = 200, endpoint: str = "") -> list[dict[str, Any]]:
+        if psutil is None:
+            return []
+        raw_limit = 20 if max_items is None else int(max_items)
+        limit = max(0, min(200, raw_limit))
+        if limit <= 0:
+            return []
+        endpoint_text = str(endpoint or self._cdp_endpoint or "").strip()
+        port = self._parse_cdp_port(endpoint_text)
+        if port <= 0:
+            return []
+        pids = self._list_port_listener_pids(port=port)
+        if not pids:
+            return []
+
+        rows: list[dict[str, Any]] = []
+        for pid in pids[:limit]:
+            try:
+                proc = psutil.Process(int(pid))
             except Exception:
                 continue
-        return False
+            try:
+                name = str(proc.name() or "").strip()
+            except Exception:
+                name = ""
+            try:
+                exe = str(proc.exe() or "").strip()
+            except Exception:
+                exe = ""
+            try:
+                cmdline = " ".join([str(part) for part in (proc.cmdline() or []) if str(part or "").strip()]).strip()
+            except Exception:
+                cmdline = ""
+            try:
+                rss = int(getattr(proc.memory_info(), "rss", 0) or 0)
+            except Exception:
+                rss = 0
+            rows.append(
+                {
+                    "pid": int(pid),
+                    "name": name[:80],
+                    "browser_family": self._guess_browser_family(name, exe, cmdline),
+                    "status": "port_conflict",
+                    "started_at": 0.0,
+                    "memory_mb": round(rss / (1024 * 1024), 2) if rss > 0 else 0.0,
+                    "exe": exe[:260],
+                    "cmdline": cmdline[:600],
+                    "port": int(port),
+                }
+            )
+        rows.sort(key=lambda it: (float(it.get("memory_mb") or 0.0), int(it.get("pid") or 0)), reverse=True)
+        return rows[:limit]
+
+    def _has_cdp_conflict_process(self) -> bool:
+        return bool(self._list_cdp_conflict_processes(max_items=1))
 
     def _collect_sessions_by_mode(self, mode: str) -> list[BrowserSession]:
         target = str(mode or "").strip().lower()
@@ -778,7 +861,7 @@ class BrowserAutomationService:
 
         _LOG.info("force_restart_to_cdp start endpoint=%s timeout_s=%.2f", endpoint, float(timeout_seconds or 12.0))
         self._close_sessions_by_mode("cdp")
-        conflicts = self._list_cdp_conflict_processes(max_items=200)
+        conflicts = self._list_cdp_conflict_processes(max_items=200, endpoint=endpoint)
         pids = [int(row.get("pid") or 0) for row in conflicts if int(row.get("pid") or 0) > 0]
         terminate_report = self._terminate_processes(pids, wait_timeout_seconds=4.0)
         _LOG.info(
@@ -791,15 +874,16 @@ class BrowserAutomationService:
 
         deadline = time.time() + max(2.0, float(timeout_seconds or 12.0))
         while time.time() < deadline:
-            if not self._list_cdp_conflict_processes(max_items=1):
+            if not self._list_cdp_conflict_processes(max_items=1, endpoint=endpoint):
                 break
             time.sleep(0.15)
 
-        remaining = self._list_cdp_conflict_processes(max_items=20)
+        remaining = self._list_cdp_conflict_processes(max_items=20, endpoint=endpoint)
         if remaining:
             _LOG.warning(
-                "force_restart_to_cdp failed: conflicts_remaining=%s latency_ms=%s",
+                "force_restart_to_cdp failed: conflicts_remaining=%s pids=%s latency_ms=%s",
                 len(remaining),
+                ",".join([str(int(row.get("pid") or 0)) for row in remaining[:8]]),
                 int((time.perf_counter() - started) * 1000),
             )
             return {
@@ -807,6 +891,15 @@ class BrowserAutomationService:
                 "error": "cdp_conflict_process_still_running",
                 "endpoint": endpoint,
                 "remaining_pids": [int(row.get("pid") or 0) for row in remaining if int(row.get("pid") or 0) > 0],
+                "remaining_processes": [
+                    {
+                        "pid": int(row.get("pid") or 0),
+                        "name": str(row.get("name") or "")[:80],
+                        "cmdline": str(row.get("cmdline") or "")[:240],
+                        "port": int(row.get("port") or 0),
+                    }
+                    for row in remaining[:8]
+                ],
                 **terminate_report,
             }
 
@@ -842,6 +935,30 @@ class BrowserAutomationService:
                     )
                     return {"ok": True, "endpoint": endpoint, **terminate_report}
                 time.sleep(0.2)
+        remaining_after_launch = self._list_cdp_conflict_processes(max_items=20, endpoint=endpoint)
+        if remaining_after_launch:
+            _LOG.warning(
+                "force_restart_to_cdp timeout_with_conflicts endpoint=%s conflicts=%s latency_ms=%s",
+                endpoint,
+                len(remaining_after_launch),
+                int((time.perf_counter() - started) * 1000),
+            )
+            return {
+                "ok": False,
+                "error": "cdp_conflict_process_still_running",
+                "endpoint": endpoint,
+                "remaining_pids": [int(row.get("pid") or 0) for row in remaining_after_launch if int(row.get("pid") or 0) > 0],
+                "remaining_processes": [
+                    {
+                        "pid": int(row.get("pid") or 0),
+                        "name": str(row.get("name") or "")[:80],
+                        "cmdline": str(row.get("cmdline") or "")[:240],
+                        "port": int(row.get("port") or 0),
+                    }
+                    for row in remaining_after_launch[:8]
+                ],
+                **terminate_report,
+            }
         _LOG.warning(
             "force_restart_to_cdp timeout endpoint=%s latency_ms=%s",
             endpoint,
