@@ -400,6 +400,50 @@ def test_aelin_browser_confirm_retries_when_first_result_is_restart_failed(monke
     assert list(restart.get("terminated_pids") or []) == [111]
 
 
+def test_aelin_browser_confirm_retries_when_first_result_is_cdp_unavailable_launch_timeout(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    calls = {"count": 0}
+
+    def _fake_use(*, user_id, workspace, action, args, scope):
+        _ = user_id, workspace, action, args, scope
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"ok": False, "error": "cdp_unavailable:cdp_launch_timeout"}
+        return {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"}
+
+    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(
+        aelin_chat_router.browser_automation_service,
+        "force_restart_to_cdp",
+        lambda timeout_seconds=12.0: {"ok": True, "terminated_pids": [], "killed_pids": [], "failed_pids": []},
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/agent/browser/confirm",
+        json={
+            "workspace": "default",
+            "action_kind": "confirm_browser_action",
+            "action": "click",
+            "next_call": {
+                "tool": "browser_use",
+                "action": "click",
+                "args": {"target": "个人资料", "scope": "cdp"},
+            },
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert bool(data.get("ok")) is True
+    assert calls["count"] == 2
+    tool_result = data.get("tool_result") or {}
+    restart = tool_result.get("restart") or {}
+    assert bool(restart.get("attempted")) is True
+    assert bool(restart.get("ok")) is True
+
+
 def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)

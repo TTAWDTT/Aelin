@@ -40,13 +40,23 @@ def _is_cdp_restart_error(error: str) -> bool:
     clean = str(error or "").strip().lower()
     if not clean:
         return False
+    # unwrap wrapped transport-style errors like "cdp_unavailable:cdp_launch_timeout"
+    normalized = clean
+    if normalized.startswith("cdp_unavailable:"):
+        normalized = normalized.split(":", 1)[1].strip()
     return clean in {
         "browser_restart_required_for_cdp",
         "browser_restart_confirmation_required",
         "browser_restart_failed_for_cdp",
         "cdp_conflict_process_still_running",
         "cdp_launch_timeout",
-    } or "cdp_requires_browser_restart" in clean
+    } or normalized in {
+        "browser_restart_required_for_cdp",
+        "browser_restart_confirmation_required",
+        "browser_restart_failed_for_cdp",
+        "cdp_conflict_process_still_running",
+        "cdp_launch_timeout",
+    } or "cdp_requires_browser_restart" in clean or "cdp_requires_browser_restart" in normalized
 
 
 @router.post("/chat", response_model=AelinChatResponse)
