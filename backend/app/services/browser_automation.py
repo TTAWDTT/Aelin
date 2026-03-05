@@ -994,6 +994,159 @@ class BrowserAutomationService:
             "dom_digest": digest,
         }
 
+    @staticmethod
+    def _error_payload(
+        *,
+        error: str,
+        scope: str = "",
+        action: str = "",
+        requires_cdp: bool = False,
+        hint: str = "",
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "ok": False,
+            "error": str(error or "unknown_error")[:180],
+        }
+        if scope:
+            payload["scope"] = str(scope)[:24]
+        if action:
+            payload["action"] = str(action)[:24]
+        if requires_cdp:
+            payload["requires_cdp"] = True
+        if hint:
+            payload["hint"] = str(hint)[:220]
+        return payload
+
+    def _system_scope_payload(self, *, scope: str, proc_limit: int, pid: int) -> dict[str, Any]:
+        if proc_limit <= 0:
+            return {
+                "ok": True,
+                "scope": scope,
+                "system_processes": [],
+                "scope_note": (
+                    "系统浏览器进程视图（fast path，未枚举进程详情）。"
+                    if scope == "system"
+                    else "external scope fast path：未枚举系统进程详情。"
+                ),
+            }
+        return {
+            "ok": True,
+            "scope": scope,
+            "system_processes": self._list_system_browser_processes(
+                max_items=proc_limit,
+                pid=int(pid or 0),
+                include_details=False,
+            ),
+            "scope_note": (
+                "系统浏览器进程视图（不保证可获得每个标签页 URL）。"
+                if scope == "system"
+                else "external scope 仅能读取系统浏览器进程级状态，无法直接读取 DOM。"
+            ),
+        }
+
+    def _resolve_state_runtime_scope(
+        self,
+        *,
+        user_scope: str,
+        include_dom: bool,
+        include_a11y: bool,
+        proc_limit: int,
+        pid: int,
+    ) -> tuple[str, str, dict[str, Any] | None]:
+        if user_scope in {"system", "external"}:
+            return user_scope, "", self._system_scope_payload(scope=user_scope, proc_limit=proc_limit, pid=pid)
+
+        if user_scope == "managed":
+            return "", "", self._error_payload(
+                error="managed_scope_soft_deleted",
+                scope="managed",
+                hint="managed 已软下线，请改用 scope=cdp 或 scope=external。",
+            )
+
+        if user_scope == "cdp":
+            return "cdp", "", None
+
+        if user_scope != "auto":
+            return "", "", self._error_payload(error=f"unsupported_scope:{user_scope}", scope=user_scope)
+
+        cdp_reachable = bool(
+            self._cdp_endpoint and self._probe_cdp_endpoint(self._cdp_endpoint, timeout_seconds=0.25)
+        )
+        if cdp_reachable:
+            return "cdp", "", None
+
+        fallback_reason = "cdp_probe_failed" if self._cdp_endpoint else "cdp_endpoint_unconfigured"
+        if not include_dom and not include_a11y and proc_limit <= 0:
+            fast_payload = {
+                "ok": True,
+                "scope": "external",
+                "system_processes": [],
+                "scope_note": "CDP 暂不可用，fast path 已返回 external 轻量状态。",
+            }
+            if self._cdp_endpoint:
+                fast_payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+            return "", fallback_reason, fast_payload
+
+        system_processes = self._list_system_browser_processes(
+            max_items=proc_limit,
+            pid=int(pid or 0),
+            include_details=False,
+        )
+        if system_processes:
+            payload = {
+                "ok": True,
+                "scope": "external",
+                "system_processes": system_processes,
+                "scope_note": "检测到用户浏览器正在运行；当前为进程级状态读取，若需 DOM 级读取请启用 CDP。",
+            }
+            if self._cdp_endpoint:
+                payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+            return "", fallback_reason, payload
+
+        if not self._cdp_endpoint:
+            return "", fallback_reason, self._error_payload(
+                error="cdp_endpoint_unconfigured",
+                scope="auto",
+                requires_cdp=True,
+                hint="当前已软下线 managed；请配置 CDP 端点后重试。",
+            )
+        return "", fallback_reason, self._error_payload(
+            error=f"cdp_unavailable:{fallback_reason}",
+            scope="auto",
+            requires_cdp=True,
+            hint="CDP 暂不可用，请稍后重试。",
+        )
+
+    def _acquire_cdp_session(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        action: str = "",
+        allow_restart_confirmation: bool = False,
+    ) -> tuple[BrowserSession | None, dict[str, Any] | None]:
+        try:
+            session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+            return session, None
+        except Exception as exc:
+            reason = str(exc)[:160]
+            if allow_restart_confirmation and "cdp_requires_browser_restart" in reason:
+                return None, {
+                    "ok": False,
+                    "error": "browser_restart_required_for_cdp",
+                    "requires_confirmation": True,
+                    "confirm_kind": "restart_to_cdp",
+                    "risk_level": "medium",
+                    "action": action,
+                    "user_prompt": "该任务较为复杂，需要重启浏览器后才能执行，是否确认？",
+                    "next_call": {
+                        "tool": "browser_use",
+                        "action": action,
+                        "args": {"scope": "cdp", "confirm": True},
+                    },
+                }
+            return None, self._error_payload(error=f"cdp_unavailable:{reason}", action=action)
+
     def state_get(
         self,
         *,
@@ -1006,36 +1159,10 @@ class BrowserAutomationService:
         max_items: int = 20,
         pid: int = 0,
     ) -> dict[str, Any]:
-        normalized_scope = self._normalize_scope(scope)
+        user_scope = self._normalize_scope(scope)
         target_limit = _clamp_int(max_targets, 30, low=1, high=60)
         proc_limit = _clamp_int(max_items, 20, low=0, high=200)
-        if normalized_scope in {"system", "external"}:
-            if proc_limit <= 0:
-                return {
-                    "ok": True,
-                    "scope": normalized_scope,
-                    "system_processes": [],
-                    "scope_note": (
-                        "系统浏览器进程视图（fast path，未枚举进程详情）。"
-                        if normalized_scope == "system"
-                        else "external scope fast path：未枚举系统进程详情。"
-                    ),
-                }
-            return {
-                "ok": True,
-                "scope": normalized_scope,
-                "system_processes": self._list_system_browser_processes(
-                    max_items=proc_limit,
-                    pid=int(pid or 0),
-                    include_details=False,
-                ),
-                "scope_note": (
-                    "系统浏览器进程视图（不保证可获得每个标签页 URL）。"
-                    if normalized_scope == "system"
-                    else "external scope 仅能读取系统浏览器进程级状态，无法直接读取 DOM。"
-                ),
-            }
-        if normalized_scope == "all":
+        if user_scope == "all":
             sessions = self.list_sessions(
                 user_id=user_id,
                 workspace=workspace,
@@ -1063,99 +1190,61 @@ class BrowserAutomationService:
                 "cdp_endpoint": str(sessions.get("cdp_endpoint") or ""),
             }
 
-        selected_scope = normalized_scope
-        fallback_reason = ""
-        if selected_scope == "auto":
-            cdp_reachable = bool(
-                self._cdp_endpoint
-                and self._probe_cdp_endpoint(self._cdp_endpoint, timeout_seconds=0.25)
+        runtime_scope, fallback_reason, early_payload = self._resolve_state_runtime_scope(
+            user_scope=user_scope,
+            include_dom=bool(include_dom),
+            include_a11y=bool(include_a11y),
+            proc_limit=proc_limit,
+            pid=int(pid or 0),
+        )
+        if isinstance(early_payload, dict):
+            return early_payload
+
+        if runtime_scope != "cdp":
+            return self._error_payload(error=f"unsupported_scope:{runtime_scope or user_scope}", scope=runtime_scope or user_scope)
+
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            action="state_get",
+            allow_restart_confirmation=False,
+        )
+        if session_error:
+            fallback = str((session_error or {}).get("error") or "")[:160]
+            system_processes = self._list_system_browser_processes(
+                max_items=proc_limit,
+                pid=int(pid or 0),
+                include_details=False,
             )
-            if cdp_reachable:
-                selected_scope = "cdp"
-            else:
-                fallback_reason = "cdp_probe_failed" if self._cdp_endpoint else "cdp_endpoint_unconfigured"
-                if not include_dom and not include_a11y and proc_limit <= 0:
-                    payload = {
-                        "ok": True,
-                        "scope": "external",
-                        "system_processes": [],
-                        "scope_note": "CDP 暂不可用，fast path 已返回 external 轻量状态。",
-                    }
-                    if self._cdp_endpoint:
-                        payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
-                    return payload
-                system_processes = self._list_system_browser_processes(
-                    max_items=proc_limit,
-                    pid=int(pid or 0),
-                    include_details=False,
-                )
-                if system_processes:
-                    payload = {
-                        "ok": True,
-                        "scope": "external",
-                        "system_processes": system_processes,
-                        "scope_note": "检测到用户浏览器正在运行；当前为进程级状态读取，若需 DOM 级读取请启用 CDP。",
-                    }
-                    if self._cdp_endpoint:
-                        payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
-                    return payload
+            if system_processes:
                 return {
-                    "ok": False,
-                    "error": "cdp_endpoint_unconfigured" if not self._cdp_endpoint else f"cdp_unavailable:{fallback_reason}",
-                    "scope": "auto",
-                    "requires_cdp": True,
-                    "hint": "当前已软下线 managed；请配置 CDP 端点后重试。",
+                    "ok": True,
+                    "scope": "external",
+                    "system_processes": system_processes,
+                    "scope_fallback": fallback if fallback.startswith("cdp_unavailable:") else f"cdp_unavailable:{fallback}",
+                    "scope_note": "CDP 暂不可用，已退回到系统浏览器进程级状态读取。",
                 }
-        if selected_scope == "managed":
             return {
                 "ok": False,
-                "error": "managed_scope_soft_deleted",
-                "scope": "managed",
-                "hint": "managed 已软下线，请改用 scope=cdp 或 scope=external。",
+                "error": fallback if fallback.startswith("cdp_unavailable:") else f"cdp_unavailable:{fallback}",
+                "scope": "cdp",
+                "requires_cdp": True,
             }
-        if selected_scope == "cdp":
-            try:
-                session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
-            except Exception as exc:
-                fallback_reason = str(exc)[:160]
-                system_processes = self._list_system_browser_processes(
-                    max_items=proc_limit,
-                    pid=int(pid or 0),
-                    include_details=False,
-                )
-                if system_processes:
-                    return {
-                        "ok": True,
-                        "scope": "external",
-                        "system_processes": system_processes,
-                        "scope_fallback": f"cdp_unavailable:{fallback_reason}",
-                        "scope_note": "CDP 暂不可用，已退回到系统浏览器进程级状态读取。",
-                    }
-                return {
-                    "ok": False,
-                    "error": f"cdp_unavailable:{fallback_reason}",
-                    "scope": "cdp",
-                    "requires_cdp": True,
-                }
-        else:
-            return {
-                "ok": False,
-                "error": f"unsupported_scope:{selected_scope}",
-                "scope": selected_scope,
-            }
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", scope="cdp", requires_cdp=True)
 
         with session.lock:
             session.touch()
             snap = self._snapshot_page(
                 page=session.page,
-                mode=str(getattr(session, "mode", selected_scope) or selected_scope),
+                mode=str(getattr(session, "mode", runtime_scope) or runtime_scope),
                 include_dom=bool(include_dom),
                 include_a11y=bool(include_a11y),
                 max_targets=target_limit,
             )
             payload: dict[str, Any] = {
                 "ok": True,
-                "scope": selected_scope,
+                "scope": runtime_scope,
                 "session_id": session.session_id,
                 **snap,
             }
@@ -1197,16 +1286,17 @@ class BrowserAutomationService:
     ) -> dict[str, Any]:
         act = str(action or "").strip().lower()
         if act not in {"navigate", "click", "type", "scroll", "wait"}:
-            return {"ok": False, "error": "unsupported_action", "action": act}
+            return self._error_payload(error="unsupported_action", action=act)
 
         target = str(args.get("target") or args.get("selector") or args.get("text") or "").strip()
         value = str(args.get("value") or "").strip()
         url = str(args.get("url") or "").strip()
-        requested_scope = self._normalize_scope(scope)
+        user_scope = self._normalize_scope(scope)
+        runtime_scope = user_scope
 
-        if requested_scope == "auto":
+        if runtime_scope == "auto":
             if act == "navigate":
-                requested_scope = "external"
+                runtime_scope = "external"
             elif self._is_complex_auto_action(act):
                 has_system_browser = self._has_system_browser_process()
                 cdp_ready = bool(
@@ -1232,17 +1322,15 @@ class BrowserAutomationService:
                             "args": next_args,
                         },
                     }
-                if has_system_browser:
-                    requested_scope = "cdp"
-                else:
-                    requested_scope = "cdp"
+                runtime_scope = "cdp"
 
-        if requested_scope in {"system", "all"}:
-            return {"ok": False, "error": "unsupported_scope_for_use", "action": act, "scope": requested_scope}
-        if requested_scope == "external":
+        if runtime_scope in {"system", "all"}:
+            return self._error_payload(error="unsupported_scope_for_use", action=act, scope=runtime_scope)
+
+        if runtime_scope == "external":
             if act != "navigate":
                 if bool(args.get("confirm")):
-                    requested_scope = "cdp"
+                    runtime_scope = "cdp"
                 else:
                     next_args = dict(args or {})
                     next_args["scope"] = "cdp"
@@ -1265,10 +1353,10 @@ class BrowserAutomationService:
                     }
             else:
                 if not re.match(r"^https?://", url, flags=re.I):
-                    return {"ok": False, "error": "invalid_url", "action": act, "scope": "external"}
+                    return self._error_payload(error="invalid_url", action=act, scope="external")
                 opened = self._open_external_url(url)
                 if not opened:
-                    return {"ok": False, "error": "external_open_failed", "action": act, "scope": "external"}
+                    return self._error_payload(error="external_open_failed", action=act, scope="external")
                 return {
                     "ok": True,
                     "action": act,
@@ -1325,56 +1413,44 @@ class BrowserAutomationService:
         timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)
         strategy = str(args.get("strategy") or "auto").strip().lower()
         role = str(args.get("role") or "").strip().lower()
-        selected_scope = requested_scope if requested_scope != "auto" else "auto"
         fallback_reason = ""
+        if runtime_scope == "managed":
+            return self._error_payload(
+                error="managed_scope_soft_deleted",
+                action=act,
+                scope="managed",
+                hint="managed 已软下线，请改用 scope=cdp 或 scope=external。",
+            )
 
-        if selected_scope == "cdp":
-            try:
-                session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
-            except Exception as exc:
-                reason = str(exc)[:160]
-                if "cdp_requires_browser_restart" in reason:
-                    next_args = dict(args or {})
-                    next_args["scope"] = "cdp"
-                    next_args["confirm"] = True
-                    return {
-                        "ok": False,
-                        "error": "browser_restart_required_for_cdp",
-                        "requires_confirmation": True,
-                        "confirm_kind": "restart_to_cdp",
-                        "risk_level": "medium",
-                        "action": act,
-                        "user_prompt": "该任务较为复杂，需要重启浏览器后才能执行，是否确认？",
-                        "next_call": {
-                            "tool": "browser_use",
-                            "action": act,
-                            "args": next_args,
-                        },
-                    }
-                return {"ok": False, "error": f"cdp_unavailable:{reason}", "action": act}
-        elif selected_scope == "managed":
-            return {
-                "ok": False,
-                "error": "managed_scope_soft_deleted",
-                "action": act,
-                "scope": "managed",
-                "hint": "managed 已软下线，请改用 scope=cdp 或 scope=external。",
-            }
-        else:
+        if runtime_scope != "cdp":
             if self._cdp_endpoint:
-                try:
-                    session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
-                    selected_scope = "cdp"
-                except Exception as exc:
-                    fallback_reason = str(exc)[:160]
-                    return {"ok": False, "error": f"cdp_unavailable:{fallback_reason}", "action": act}
+                session, session_error = self._acquire_cdp_session(
+                    user_id=user_id,
+                    workspace=workspace,
+                    action=act,
+                    allow_restart_confirmation=True,
+                )
+                if session_error:
+                    return session_error
+                runtime_scope = "cdp"
             else:
-                return {"ok": False, "error": "cdp_endpoint_unconfigured", "action": act}
+                return self._error_payload(error="cdp_endpoint_unconfigured", action=act)
+        else:
+            session, session_error = self._acquire_cdp_session(
+                user_id=user_id,
+                workspace=workspace,
+                action=act,
+                allow_restart_confirmation=True,
+            )
+            if session_error:
+                return session_error
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", action=act)
 
         before = self.state_get(
             user_id=user_id,
             workspace=workspace,
-            scope=selected_scope,
+            scope=runtime_scope,
             include_dom=False,
             include_a11y=False,
             max_targets=1,
@@ -1388,7 +1464,7 @@ class BrowserAutomationService:
 
                 if act == "navigate":
                     if not re.match(r"^https?://", url, flags=re.I):
-                        return {"ok": False, "error": "invalid_url", "action": act}
+                        return self._error_payload(error="invalid_url", action=act)
                     page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
                     external_opened = False
                     if self._open_external_on_navigate and (not self._headless):
@@ -1396,14 +1472,14 @@ class BrowserAutomationService:
                     effect = f"navigated:{url[:120]}"
                 elif act == "click":
                     if not target:
-                        return {"ok": False, "error": "missing_target", "action": act}
+                        return self._error_payload(error="missing_target", action=act)
                     locator = self._resolve_locator(page=page, target=target, strategy=strategy, role=role)
                     locator.wait_for(state="visible", timeout=timeout_ms)
                     locator.click(timeout=timeout_ms)
                     effect = f"clicked:{target[:120]}"
                 elif act == "type":
                     if not target:
-                        return {"ok": False, "error": "missing_target", "action": act}
+                        return self._error_payload(error="missing_target", action=act)
                     locator = self._resolve_locator(page=page, target=target, strategy=strategy, role=role)
                     locator.wait_for(state="visible", timeout=timeout_ms)
                     locator.fill(value, timeout=timeout_ms)
@@ -1424,14 +1500,14 @@ class BrowserAutomationService:
                     page.wait_for_timeout(wait_ms)
                     effect = f"waited:{wait_ms}ms"
         except PlaywrightTimeoutError:
-            return {"ok": False, "error": "timeout", "action": act}
+            return self._error_payload(error="timeout", action=act)
         except Exception as exc:
-            return {"ok": False, "error": str(exc)[:180], "action": act}
+            return self._error_payload(error=str(exc)[:180], action=act)
 
         after = self.state_get(
             user_id=user_id,
             workspace=workspace,
-            scope=selected_scope,
+            scope=runtime_scope,
             include_dom=False,
             include_a11y=False,
             max_targets=1,
@@ -1439,7 +1515,7 @@ class BrowserAutomationService:
         payload = {
             "ok": True,
             "action": act,
-            "scope": selected_scope,
+            "scope": runtime_scope,
             "effect_summary": effect,
             "requires_confirmation": False,
             "risk_level": "low",
