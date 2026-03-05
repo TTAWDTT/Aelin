@@ -149,9 +149,14 @@ export function ComposerBar({
       return
     }
 
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Tab') {
+    if (event.key === 'Tab') {
+      setCaptureMenuOpen(false)
+      return
+    }
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
-      const step = event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey) ? -1 : 1
+      const step = event.key === 'ArrowUp' ? -1 : 1
       const baseIndex = currentIndex >= 0 ? currentIndex : 0
       const nextIndex = (baseIndex + step + menuItems.length) % menuItems.length
       menuItems[nextIndex]?.focus()

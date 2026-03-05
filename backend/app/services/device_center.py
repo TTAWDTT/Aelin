@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - optional runtime dependency
     psutil = None
 
 PSUTIL_AVAILABLE = psutil is not None
+REGION_CAPTURE_TIMEOUT_BUFFER_S = 8.0  # buffer for Snipping Tool UI + clipboard polling latency
 
 
 class DeviceScreenCaptureError(RuntimeError):
@@ -69,7 +70,7 @@ def capture_device_screen(
         mode_clean = "fullscreen"
     selection_timeout_clean = max(5_000, min(180_000, int(selection_timeout_ms or 45_000)))
     if mode_clean == "region":
-        timeout_s = max(timeout_s, (selection_timeout_clean / 1000.0) + 8.0)
+        timeout_s = max(timeout_s, (selection_timeout_clean / 1000.0) + REGION_CAPTURE_TIMEOUT_BUFFER_S)
     payload: dict[str, Any] = {
         "max_edge": max(640, min(4096, int(max_edge or 1280))),
         "format": "png" if str(image_format or "").strip().lower() == "png" else "jpeg",
