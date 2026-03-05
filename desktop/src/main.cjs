@@ -738,6 +738,7 @@ async function captureCustomRegionSnapshot(payload = {}) {
     clampCaptureNumber(payload?.selection_timeout_ms || payload?.selectionTimeoutMs, 45_000, 5_000, 180_000)
   );
   const clipboardSnapshot = snapshotClipboardState();
+  const shouldRestoreClipboard = Boolean(clipboardSnapshot);
   let clipboardCleared = false;
   try {
     if (typeof clipboard.clear === "function") {
@@ -752,52 +753,52 @@ async function captureCustomRegionSnapshot(payload = {}) {
   const beforeSignal = clipboardCleared ? "" : buildImageClipSignal(beforeImage);
 
   try {
-    const launcher = spawn("cmd.exe", ["/d", "/s", "/c", "start", "", "ms-screenclip:"], {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    launcher.unref();
-  } catch (error) {
-    if (clipboardCleared) {
-      restoreClipboardState(clipboardSnapshot);
+    try {
+      const launcher = spawn("cmd.exe", ["/d", "/s", "/c", "start", "", "ms-screenclip:"], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      launcher.unref();
+    } catch (error) {
+      throw new Error(`custom_region_capture_launch_failed:${error instanceof Error ? error.message : String(error || "unknown")}`);
     }
-    throw new Error(`custom_region_capture_launch_failed:${error instanceof Error ? error.message : String(error || "unknown")}`);
-  }
 
-  const deadline = Date.now() + timeoutMs;
-  let pollDelayMs = 180;
-  let signalProbeCount = 0;
-  while (Date.now() < deadline) {
-    const image = clipboard.readImage();
-    if (image && !image.isEmpty()) {
-      const currentSize = buildImageSizeKey(image);
-      let changed = clipboardCleared || Boolean(currentSize && currentSize !== beforeSize);
-      if (!changed) {
-        signalProbeCount += 1;
-        if (signalProbeCount % 3 === 0) {
-          const signal = buildImageClipSignal(image);
-          changed = Boolean(signal && signal !== beforeSignal);
+    const deadline = Date.now() + timeoutMs;
+    let pollDelayMs = 180;
+    let signalProbeCount = 0;
+    while (Date.now() < deadline) {
+      const image = clipboard.readImage();
+      if (image && !image.isEmpty()) {
+        const currentSize = buildImageSizeKey(image);
+        let changed = clipboardCleared || Boolean(currentSize && currentSize !== beforeSize);
+        if (!changed) {
+          signalProbeCount += 1;
+          if (signalProbeCount % 3 === 0) {
+            const signal = buildImageClipSignal(image);
+            changed = Boolean(signal && signal !== beforeSignal);
+          }
+        }
+        if (changed) {
+          const resized = resizeImageToMaxEdge(image, maxEdge);
+          return await buildSnapshotFromImage(resized, {
+            format,
+            quality,
+            sourceDisplay: "custom-region",
+            prefix: "screen-region",
+            capturedAt: new Date().toISOString(),
+          });
         }
       }
-      if (changed) {
-        const resized = resizeImageToMaxEdge(image, maxEdge);
-        return await buildSnapshotFromImage(resized, {
-          format,
-          quality,
-          sourceDisplay: "custom-region",
-          prefix: "screen-region",
-          capturedAt: new Date().toISOString(),
-        });
-      }
+      await waitMs(pollDelayMs);
+      pollDelayMs = Math.min(420, pollDelayMs + 20);
     }
-    await waitMs(pollDelayMs);
-    pollDelayMs = Math.min(420, pollDelayMs + 20);
+    throw new Error("custom_region_capture_timeout");
+  } finally {
+    if (shouldRestoreClipboard) {
+      restoreClipboardState(clipboardSnapshot);
+    }
   }
-  if (clipboardCleared) {
-    restoreClipboardState(clipboardSnapshot);
-  }
-  throw new Error("custom_region_capture_timeout");
 }
 
 async function captureFullScreenSnapshot(payload = {}) {
