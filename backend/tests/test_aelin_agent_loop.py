@@ -95,6 +95,25 @@ class _ConfirmToolHub(_FakeToolHub):
         return super().execute(name, args)
 
 
+class _StateConfirmToolHub(_FakeToolHub):
+    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if str(name) == "browser_state_get":
+            return {
+                "ok": False,
+                "error": "browser_restart_confirmation_required",
+                "requires_confirmation": True,
+                "confirm_kind": "restart_to_cdp",
+                "action": "state_get",
+                "user_prompt": "读取页面内容需要切换到 CDP 并重启浏览器，是否确认？",
+                "next_call": {
+                    "tool": "browser_state_get",
+                    "action": "state_get",
+                    "args": {"scope": "cdp", "include_dom": True, "include_a11y": False, "max_targets": 30},
+                },
+            }
+        return super().execute(name, args)
+
+
 def _fake_service(rounds: list[dict[str, Any]]):
     completions = _FakeCompletions(rounds)
     return SimpleNamespace(
@@ -413,6 +432,45 @@ def test_agent_loop_stops_with_confirmation_when_browser_use_requires_it():
     next_args = next_call.get("args") if isinstance(next_call.get("args"), dict) else {}
     assert str(next_args.get("scope") or "") == "cdp"
     assert bool(next_args.get("confirm")) is True
+
+
+def test_agent_loop_stops_with_confirmation_when_browser_state_get_requires_it():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "s1", "name": "browser_state_get", "arguments": '{"scope":"auto","include_dom":true}'},
+            ]
+        },
+        {"content": "不应到达"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _StateConfirmToolHub(sleep_seconds=0.01)
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=2,
+    )
+
+    result = loop.run(query="读取当前页面并总结", memory_summary="m", history_turns=[])
+    assert result.ok is True
+    assert result.stop_reason == "requires_confirmation"
+    assert "是否确认" in result.answer
+    assert len(service._completions.calls) == 1
+    confirm_actions = [action for action in result.actions if str(action.get("kind") or "") == "confirm_browser_action"]
+    assert confirm_actions
+    next_call = json.loads(str(confirm_actions[0].get("next_call") or "{}"))
+    assert str(next_call.get("tool") or "") == "browser_state_get"
+    assert str(next_call.get("action") or "") == "state_get"
+    next_args = next_call.get("args") if isinstance(next_call.get("args"), dict) else {}
+    assert str(next_args.get("scope") or "") == "cdp"
+    assert bool(next_args.get("include_dom")) is True
 
 
 def test_serialize_tool_message_content_keeps_valid_json_when_truncated():

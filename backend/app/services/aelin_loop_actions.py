@@ -29,17 +29,22 @@ def build_actions(*, runs: list[AgentLoopToolRun], workspace: str, resume_query:
     out: list[dict[str, str]] = []
     for run in runs:
         result = run.result if isinstance(run.result, dict) else {}
-        if run.name == "browser_use" and run.status != "completed" and bool(result.get("requires_confirmation")):
+        next_call = result.get("next_call") if isinstance(result.get("next_call"), dict) else {}
+        next_tool = str(next_call.get("tool") or "").strip().lower()
+        should_emit_browser_confirm = bool(result.get("requires_confirmation")) and (
+            str(run.name or "").strip().lower() in {"browser_use", "browser_state_get"}
+            or next_tool in {"browser_use", "browser_state_get"}
+        )
+        if run.status != "completed" and should_emit_browser_confirm:
             prompt = str(result.get("user_prompt") or "该任务需要你的确认才能继续执行。").strip()
             payload: dict[str, str] = {
                 "workspace": str(workspace),
-                "tool": "browser_use",
+                "tool": next_tool or str(run.name or ""),
                 "error": _payload_value(result.get("error")),
                 "confirm_kind": _payload_value(result.get("confirm_kind")),
                 "action": _payload_value(result.get("action")),
                 "resume_query": _payload_value(resume_query),
             }
-            next_call = result.get("next_call") if isinstance(result.get("next_call"), dict) else {}
             if next_call:
                 payload["next_call"] = _payload_json(next_call)
             out.append(

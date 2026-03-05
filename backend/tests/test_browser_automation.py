@@ -241,7 +241,7 @@ def test_state_get_auto_fallbacks_from_cdp_to_external(monkeypatch):
     assert str(out.get("scope_fallback") or "").startswith("cdp_unavailable:")
 
 
-def test_state_get_auto_returns_system_view_when_browser_running_and_cdp_disabled(monkeypatch):
+def test_state_get_auto_dom_requires_cdp_when_endpoint_unconfigured(monkeypatch):
     service = BrowserAutomationService()
     service._cdp_enabled = False
     service._cdp_endpoint = ""
@@ -259,9 +259,52 @@ def test_state_get_auto_returns_system_view_when_browser_running_and_cdp_disable
         include_a11y=False,
         max_targets=10,
     )
-    assert out["ok"] is True
-    assert out["scope"] == "external"
-    assert len(list(out.get("system_processes") or [])) == 1
+    assert out["ok"] is False
+    assert out["error"] == "cdp_endpoint_unconfigured"
+    assert out.get("requires_cdp") is True
+
+
+def test_state_get_external_with_dom_requires_cdp():
+    service = BrowserAutomationService()
+    out = service.state_get(
+        user_id=1,
+        workspace="default",
+        scope="external",
+        include_dom=True,
+        include_a11y=False,
+        max_targets=10,
+    )
+    assert out["ok"] is False
+    assert out["error"] == "external_scope_requires_cdp_for_dom"
+    assert out.get("requires_cdp") is True
+
+
+def test_state_get_auto_dom_returns_confirmation_when_cdp_restart_needed(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("cdp_launch_timeout")))
+
+    out = service.state_get(
+        user_id=1,
+        workspace="default",
+        scope="auto",
+        include_dom=True,
+        include_a11y=False,
+        max_targets=10,
+    )
+    assert out["ok"] is False
+    assert out["error"] == "browser_restart_confirmation_required"
+    assert out["requires_confirmation"] is True
+    assert out["confirm_kind"] == "restart_to_cdp"
+    next_call = out.get("next_call")
+    assert isinstance(next_call, dict)
+    assert str(next_call.get("tool") or "") == "browser_state_get"
+    assert str(next_call.get("action") or "") == "state_get"
+    next_args = next_call.get("args") if isinstance(next_call.get("args"), dict) else {}
+    assert str(next_args.get("scope") or "") == "cdp"
+    assert bool(next_args.get("include_dom")) is True
+    assert bool(next_args.get("include_a11y")) is False
 
 
 def test_use_auto_complex_requires_restart_confirmation_when_browser_running(monkeypatch):

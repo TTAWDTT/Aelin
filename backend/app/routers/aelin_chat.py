@@ -59,6 +59,22 @@ def _is_cdp_restart_error(error: str) -> bool:
     } or "cdp_requires_browser_restart" in clean or "cdp_requires_browser_restart" in normalized
 
 
+def _build_browser_restart_meta(restart_meta: dict[str, Any] | None) -> dict[str, Any]:
+    meta = restart_meta if isinstance(restart_meta, dict) else {}
+    return {
+        "attempted": True,
+        "ok": bool(meta.get("ok")),
+        "error": str(meta.get("error") or "")[:180],
+        "probe_reason": str(meta.get("probe_reason") or "")[:160],
+        "probe_listener_count": int(meta.get("probe_listener_count") or 0),
+        "probe_listener_pids": list(meta.get("probe_listener_pids") or []),
+        "terminated_pids": list(meta.get("terminated_pids") or []),
+        "killed_pids": list(meta.get("killed_pids") or []),
+        "failed_pids": list(meta.get("failed_pids") or []),
+        "remaining_pids": list(meta.get("remaining_pids") or []),
+    }
+
+
 @router.post("/chat", response_model=AelinChatResponse)
 def aelin_chat(
     payload: AelinChatRequest,
@@ -200,73 +216,107 @@ def confirm_browser_action(
     workspace = str(payload.workspace or "default").strip()[:64] or "default"
     next_call = payload.next_call if isinstance(payload.next_call, dict) else {}
     tool_name = str(next_call.get("tool") or "").strip().lower()
-    if tool_name != "browser_use":
+    if tool_name not in {"browser_use", "browser_state_get"}:
         raise HTTPException(status_code=400, detail="unsupported_next_call_tool")
 
     action = str(next_call.get("action") or payload.action or "").strip().lower()
-    if action not in {"navigate", "click", "type", "scroll", "wait"}:
+    if tool_name == "browser_use" and action not in {"navigate", "click", "type", "scroll", "wait"}:
+        raise HTTPException(status_code=400, detail="invalid_next_call_action")
+    if tool_name == "browser_state_get" and action not in {"", "state_get"}:
         raise HTTPException(status_code=400, detail="invalid_next_call_action")
 
     raw_args = next_call.get("args")
     args = raw_args if isinstance(raw_args, dict) else {}
-    allowed_keys = {
-        "url",
-        "target",
-        "selector",
-        "text",
-        "value",
-        "strategy",
-        "role",
-        "press_enter",
-        "direction",
-        "amount",
-        "wait_ms",
-        "timeout_ms",
-        "scope",
-        "confirm",
-    }
-    clean_args = {str(k): v for k, v in args.items() if str(k) in allowed_keys}
-    clean_args["confirm"] = True
-    scope = str(clean_args.get("scope") or "cdp").strip().lower()
-    if scope not in {"auto", "cdp", "external"}:
-        scope = "cdp"
-    if action != "navigate" and scope == "external":
-        scope = "cdp"
-    clean_args["scope"] = scope
+    clean_args: dict[str, Any]
+    scope = "cdp"
+    if tool_name == "browser_use":
+        allowed_keys = {
+            "url",
+            "target",
+            "selector",
+            "text",
+            "value",
+            "strategy",
+            "role",
+            "press_enter",
+            "direction",
+            "amount",
+            "wait_ms",
+            "timeout_ms",
+            "scope",
+            "confirm",
+        }
+        clean_args = {str(k): v for k, v in args.items() if str(k) in allowed_keys}
+        clean_args["confirm"] = True
+        scope = str(clean_args.get("scope") or "cdp").strip().lower()
+        if scope not in {"auto", "cdp", "external"}:
+            scope = "cdp"
+        if action != "navigate" and scope == "external":
+            scope = "cdp"
+        clean_args["scope"] = scope
+        result = browser_automation_service.use(
+            user_id=int(current_user.id),
+            workspace=workspace,
+            action=action,
+            args=clean_args,
+            scope=scope,
+        )
+    else:
+        allowed_keys = {
+            "scope",
+            "include_dom",
+            "include_a11y",
+            "max_targets",
+            "max_items",
+            "pid",
+        }
+        clean_args = {str(k): v for k, v in args.items() if str(k) in allowed_keys}
+        scope = str(clean_args.get("scope") or "cdp").strip().lower()
+        if scope not in {"auto", "cdp", "external", "system", "all"}:
+            scope = "cdp"
+        clean_args["scope"] = "cdp" if scope != "system" else scope
+        scope = str(clean_args.get("scope") or "cdp")
+        result = browser_automation_service.state_get(
+            user_id=int(current_user.id),
+            workspace=workspace,
+            scope=scope,
+            include_dom=bool(clean_args.get("include_dom", False)),
+            include_a11y=bool(clean_args.get("include_a11y", False)),
+            max_targets=int(clean_args.get("max_targets") or 30),
+            max_items=int(clean_args.get("max_items") or 20),
+            pid=int(clean_args.get("pid") or 0),
+        )
 
-    result = browser_automation_service.use(
-        user_id=int(current_user.id),
-        workspace=workspace,
-        action=action,
-        args=clean_args,
-        scope=scope,
-    )
     restart_meta: dict[str, Any] | None = None
     pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
     if (not bool(result.get("ok"))) and _is_cdp_restart_error(str(result.get("error") or "")):
         restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=24.0)
         if bool(restart_meta.get("ok")):
-            retry = browser_automation_service.use(
-                user_id=int(current_user.id),
-                workspace=workspace,
-                action=action,
-                args=clean_args,
-                scope="cdp",
-            )
+            if tool_name == "browser_use":
+                retry = browser_automation_service.use(
+                    user_id=int(current_user.id),
+                    workspace=workspace,
+                    action=action,
+                    args=clean_args,
+                    scope="cdp",
+                )
+            else:
+                retry = browser_automation_service.state_get(
+                    user_id=int(current_user.id),
+                    workspace=workspace,
+                    scope="cdp",
+                    include_dom=bool(clean_args.get("include_dom", False)),
+                    include_a11y=bool(clean_args.get("include_a11y", False)),
+                    max_targets=int(clean_args.get("max_targets") or 30),
+                    max_items=int(clean_args.get("max_items") or 20),
+                    pid=int(clean_args.get("pid") or 0),
+                )
             if isinstance(retry, dict):
                 result = dict(retry)
             else:
                 result = {"ok": False, "error": "browser_confirm_retry_invalid_payload"}
         result = dict(result if isinstance(result, dict) else {})
-        result["restart"] = {
-            "attempted": True,
-            "ok": bool(restart_meta.get("ok")),
-            "error": str(restart_meta.get("error") or "")[:180],
-            "terminated_pids": list(restart_meta.get("terminated_pids") or []),
-            "killed_pids": list(restart_meta.get("killed_pids") or []),
-            "failed_pids": list(restart_meta.get("failed_pids") or []),
-            "remaining_pids": list(restart_meta.get("remaining_pids") or []),
-        }
+        result["restart"] = _build_browser_restart_meta(restart_meta)
     _LOG.info(
         "aelin_browser_confirm uid=%s workspace=%s action=%s scope=%s ok=%s error=%s restart=%s pre_restart=%s restart_error=%s remaining_pids=%s",
         int(current_user.id),

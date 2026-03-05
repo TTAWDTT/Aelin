@@ -272,20 +272,54 @@ class BrowserAutomationService:
         return port
 
     def _probe_cdp_endpoint(self, endpoint: str, *, timeout_seconds: float = 0.35) -> bool:
+        ok, _reason = self._probe_cdp_endpoint_with_reason(endpoint, timeout_seconds=timeout_seconds)
+        return bool(ok)
+
+    def _probe_cdp_endpoint_with_reason(
+        self, endpoint: str, *, timeout_seconds: float = 0.35
+    ) -> tuple[bool, str]:
         target = str(endpoint or "").strip().rstrip("/")
         if not target:
-            return False
+            return False, "endpoint_empty"
         url = f"{target}/json/version"
         try:
             with urllib.request.urlopen(url, timeout=max(0.2, float(timeout_seconds))) as resp:
+                status_code = int(getattr(resp, "status", 200) or 200)
+                if status_code >= 400:
+                    return False, f"http_status_{status_code}"
                 payload = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
             if not isinstance(payload, dict):
-                return False
-            return bool(str(payload.get("webSocketDebuggerUrl") or "").strip())
-        except (urllib.error.URLError, TimeoutError, ValueError):
-            return False
+                return False, "invalid_json_payload"
+            websocket_url = str(payload.get("webSocketDebuggerUrl") or "").strip()
+            if not websocket_url:
+                return False, "missing_websocket_debugger_url"
+            return True, "ok"
+        except urllib.error.HTTPError as exc:
+            return False, f"http_error_{int(getattr(exc, 'code', 0) or 0)}"
+        except urllib.error.URLError as exc:
+            reason = str(getattr(exc, "reason", "") or "").strip()
+            if reason:
+                return False, f"url_error:{reason[:80]}"
+            return False, "url_error"
+        except TimeoutError:
+            return False, "timeout"
+        except ValueError:
+            return False, "invalid_json"
         except Exception:
-            return False
+            return False, "unexpected_exception"
+
+    def _collect_cdp_probe_snapshot(self, endpoint: str, *, timeout_seconds: float = 0.4) -> dict[str, Any]:
+        ok, reason = self._probe_cdp_endpoint_with_reason(endpoint, timeout_seconds=timeout_seconds)
+        port = self._parse_cdp_port(endpoint)
+        listeners = self._list_port_listener_pids(port=port) if port > 0 else []
+        return {
+            "ok": bool(ok),
+            "reason": str(reason or "unknown"),
+            "endpoint": str(endpoint or "")[:160],
+            "port": int(port),
+            "listener_count": len(listeners),
+            "listener_pids": [int(pid) for pid in listeners[:8]],
+        }
 
     def _resolve_cdp_browser_executable(self) -> str:
         configured = str(self._cdp_browser_path or "").strip()
@@ -372,10 +406,15 @@ class BrowserAutomationService:
             str(user_data_dir or "-")[:220],
         )
         try:
-            subprocess.Popen(
+            child = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+            )
+            _LOG.info(
+                "cdp_launch spawned pid=%s endpoint=%s",
+                int(getattr(child, "pid", 0) or 0),
+                str(endpoint)[:160],
             )
         except Exception as exc:
             raise RuntimeError(f"cdp_launch_failed:{str(exc)[:120]}") from exc
@@ -407,6 +446,7 @@ class BrowserAutomationService:
 
     def _ensure_cdp_endpoint_ready(self) -> None:
         endpoint = str(self._cdp_endpoint or "").strip()
+        probe_attempts = 0
         if not endpoint:
             raise RuntimeError("cdp_endpoint_unconfigured")
         if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
@@ -420,12 +460,29 @@ class BrowserAutomationService:
             self._launch_cdp_browser(endpoint)
             deadline = time.time() + max(2.0, float(self._cdp_launch_timeout_seconds or 10.0))
             while time.time() < deadline:
+                probe_attempts += 1
                 if self._probe_cdp_endpoint(endpoint):
                     return
                 time.sleep(0.2)
             conflicts = self._list_cdp_conflict_processes(max_items=8, endpoint=endpoint)
             if conflicts:
+                diag = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
+                _LOG.warning(
+                    "ensure_cdp_endpoint_ready requires_restart endpoint=%s attempts=%s reason=%s listeners=%s",
+                    str(endpoint)[:160],
+                    int(probe_attempts),
+                    str(diag.get("reason") or "unknown")[:120],
+                    int(diag.get("listener_count") or 0),
+                )
                 raise RuntimeError("cdp_requires_browser_restart")
+        diag = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
+        _LOG.warning(
+            "ensure_cdp_endpoint_ready timeout endpoint=%s attempts=%s reason=%s listeners=%s",
+            str(endpoint)[:160],
+            int(probe_attempts),
+            str(diag.get("reason") or "unknown")[:120],
+            int(diag.get("listener_count") or 0),
+        )
         raise RuntimeError("cdp_launch_timeout")
 
     def _resolve_mode(self, mode: str) -> str:
@@ -1078,12 +1135,23 @@ class BrowserAutomationService:
                 ],
                 **terminate_report,
             }
+        probe_snapshot = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
         _LOG.warning(
-            "force_restart_to_cdp timeout endpoint=%s latency_ms=%s",
+            "force_restart_to_cdp timeout endpoint=%s latency_ms=%s probe_reason=%s listeners=%s",
             endpoint,
             int((time.perf_counter() - started) * 1000),
+            str(probe_snapshot.get("reason") or "unknown")[:120],
+            int(probe_snapshot.get("listener_count") or 0),
         )
-        return {"ok": False, "error": "cdp_launch_timeout", "endpoint": endpoint, **terminate_report}
+        return {
+            "ok": False,
+            "error": "cdp_launch_timeout",
+            "endpoint": endpoint,
+            "probe_reason": str(probe_snapshot.get("reason") or ""),
+            "probe_listener_count": int(probe_snapshot.get("listener_count") or 0),
+            "probe_listener_pids": list(probe_snapshot.get("listener_pids") or []),
+            **terminate_report,
+        }
 
     @staticmethod
     def _is_complex_auto_action(action: str) -> bool:
@@ -1332,7 +1400,16 @@ class BrowserAutomationService:
         proc_limit: int,
         pid: int,
     ) -> tuple[str, str, dict[str, Any] | None]:
-        if user_scope in {"system", "external"}:
+        if user_scope == "system":
+            return user_scope, "", self._system_scope_payload(scope=user_scope, proc_limit=proc_limit, pid=pid)
+        if user_scope == "external":
+            if include_dom or include_a11y:
+                return "", "", self._error_payload(
+                    error="external_scope_requires_cdp_for_dom",
+                    scope="external",
+                    requires_cdp=True,
+                    hint="external scope 不支持 DOM/A11y 读取，请改用 scope=auto 或 scope=cdp。",
+                )
             return user_scope, "", self._system_scope_payload(scope=user_scope, proc_limit=proc_limit, pid=pid)
 
         if user_scope == "managed":
@@ -1352,6 +1429,17 @@ class BrowserAutomationService:
             self._cdp_endpoint and self._probe_cdp_endpoint(self._cdp_endpoint, timeout_seconds=0.25)
         )
         if cdp_reachable:
+            return "cdp", "", None
+
+        if include_dom or include_a11y:
+            if not self._cdp_endpoint:
+                return "", "cdp_endpoint_unconfigured", self._error_payload(
+                    error="cdp_endpoint_unconfigured",
+                    scope="auto",
+                    requires_cdp=True,
+                    hint="当前已软下线 managed；请配置 CDP 端点后重试。",
+                )
+            # DOM/A11y 读取必须走 CDP，auto 模式下即使 probe 失败也先尝试一次 CDP bootstrap。
             return "cdp", "", None
 
         fallback_reason = "cdp_probe_failed" if self._cdp_endpoint else "cdp_endpoint_unconfigured"
@@ -1523,6 +1611,43 @@ class BrowserAutomationService:
         )
         if session_error:
             fallback = str((session_error or {}).get("error") or "")[:160]
+            normalized_fallback = fallback.split(":", 1)[1].strip() if fallback.startswith("cdp_unavailable:") else fallback
+            if bool(include_dom) or bool(include_a11y):
+                if (
+                    normalized_fallback in {"cdp_requires_browser_restart", "cdp_launch_timeout", "browser_restart_failed_for_cdp"}
+                    or "cdp_requires_browser_restart" in normalized_fallback
+                ):
+                    next_args: dict[str, Any] = {
+                        "scope": "cdp",
+                        "include_dom": bool(include_dom),
+                        "include_a11y": bool(include_a11y),
+                        "max_targets": int(target_limit),
+                        "max_items": int(proc_limit),
+                        "pid": int(pid or 0),
+                    }
+                    return {
+                        "ok": False,
+                        "error": "browser_restart_confirmation_required",
+                        "requires_confirmation": True,
+                        "confirm_kind": "restart_to_cdp",
+                        "risk_level": "medium",
+                        "action": "state_get",
+                        "scope": user_scope,
+                        "user_prompt": "读取页面内容需要切换到 CDP 并重启浏览器，是否确认？",
+                        "hint": "确认后将自动重启浏览器并继续执行页面读取。",
+                        "next_call": {
+                            "tool": "browser_state_get",
+                            "action": "state_get",
+                            "args": next_args,
+                        },
+                    }
+                return {
+                    "ok": False,
+                    "error": fallback if fallback.startswith("cdp_unavailable:") else f"cdp_unavailable:{fallback}",
+                    "scope": "cdp",
+                    "requires_cdp": True,
+                    "hint": "当前无法建立 CDP 会话，暂不支持 DOM/A11y 读取。",
+                }
             system_processes = self._list_system_browser_processes(
                 max_items=proc_limit,
                 pid=int(pid or 0),
