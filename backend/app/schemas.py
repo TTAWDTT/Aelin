@@ -400,6 +400,8 @@ class AelinBrowserConfirmRequest(BaseModel):
     action_kind: str = Field(default="confirm_browser_action", max_length=64)
     action: str = Field(default="", max_length=32)
     next_call: dict[str, Any] = Field(default_factory=dict)
+    resume_query: str = Field(default="", max_length=500)
+    continue_after_confirm: bool = True
 
 
 class AelinBrowserConfirmResponse(BaseModel):
@@ -407,6 +409,9 @@ class AelinBrowserConfirmResponse(BaseModel):
     message: str = ""
     requires_followup: bool = False
     tool_result: dict[str, Any] = Field(default_factory=dict)
+    continued: bool = False
+    continuation_error: str = ""
+    followup_result: dict[str, Any] = Field(default_factory=dict)
     generated_at: datetime
 
 

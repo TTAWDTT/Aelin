@@ -25,7 +25,7 @@ def _payload_json(value: object) -> str:
         return "{}"
 
 
-def build_actions(*, runs: list[AgentLoopToolRun], workspace: str) -> list[dict[str, str]]:
+def build_actions(*, runs: list[AgentLoopToolRun], workspace: str, resume_query: str = "") -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for run in runs:
         result = run.result if isinstance(run.result, dict) else {}
@@ -37,6 +37,7 @@ def build_actions(*, runs: list[AgentLoopToolRun], workspace: str) -> list[dict[
                 "error": _payload_value(result.get("error")),
                 "confirm_kind": _payload_value(result.get("confirm_kind")),
                 "action": _payload_value(result.get("action")),
+                "resume_query": _payload_value(resume_query),
             }
             next_call = result.get("next_call") if isinstance(result.get("next_call"), dict) else {}
             if next_call:

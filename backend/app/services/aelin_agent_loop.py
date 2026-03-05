@@ -43,7 +43,13 @@ def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResul
     )
 
 
-def _extract_confirmation_request(*, tool_name: str, args: dict[str, Any], result: dict[str, Any]) -> dict[str, Any] | None:
+def _extract_confirmation_request(
+    *,
+    tool_name: str,
+    args: dict[str, Any],
+    result: dict[str, Any],
+    query: str,
+) -> dict[str, Any] | None:
     if str(tool_name or "").strip().lower() != "browser_use":
         return None
     if not isinstance(result, dict):
@@ -59,6 +65,7 @@ def _extract_confirmation_request(*, tool_name: str, args: dict[str, Any], resul
         "error": str(result.get("error") or "")[:120],
         "confirm_kind": str(result.get("confirm_kind") or "")[:48],
         "action": str(result.get("action") or str(args.get("action") or ""))[:48],
+        "resume_query": str(query or "").strip()[:500],
         "next_call": result.get("next_call") if isinstance(result.get("next_call"), dict) else {},
     }
 
@@ -93,6 +100,7 @@ class AelinAgentLoop:
         forced_intent: str = "",
         forced_tool_runs: list[dict[str, Any]] | None = None,
     ) -> AelinAgentLoopResult:
+        self._last_query = str(query or "")
         trace_steps: list[AgentLoopTraceStep] = []
         tool_runs: list[AgentLoopToolRun] = []
         usage = ToolPolicyUsage()
@@ -253,6 +261,7 @@ class AelinAgentLoop:
                                 tool_name=tool_name,
                                 args=args,
                                 result=result,
+                                query=query,
                             )
                         continue
                     pending_reads.append(planned)
@@ -309,6 +318,7 @@ class AelinAgentLoop:
                         tool_name=tool_name,
                         args=args,
                         result=result,
+                        query=query,
                     )
 
             if pending_confirmation is not None:
@@ -453,4 +463,8 @@ class AelinAgentLoop:
         return "我已完成部分步骤，当前阶段结果：\n" + "\n".join(lines) + "\n如需我继续，我会基于这一步接着执行。"
 
     def _build_actions(self, runs: list[AgentLoopToolRun]) -> list[dict[str, str]]:
-        return _build_actions_from_runs(runs=runs, workspace=str(self._tool_hub.workspace))
+        return _build_actions_from_runs(
+            runs=runs,
+            workspace=str(self._tool_hub.workspace),
+            resume_query=str(getattr(self, "_last_query", "") or ""),
+        )

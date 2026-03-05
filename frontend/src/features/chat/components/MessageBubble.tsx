@@ -1,6 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatMessage } from '../stores/chatStore'
+import { useChatStore, type ChatMessage } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { sourceIcon, relativeTime } from '@/shared/utils/format'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
@@ -124,13 +124,35 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
         workspace: String(payload.workspace || 'default').trim() || 'default',
         action_kind: String(action.kind || '').trim() || 'confirm_browser_action',
         action: String(payload.action || '').trim(),
+        resume_query: String(payload.resume_query || '').trim(),
+        continue_after_confirm: true,
         next_call: nextCall,
       })
     },
     onSuccess: (res) => {
       if (res.ok) {
         toast.success(String(res.message || '已确认并继续执行'))
-        onQuickPrompt?.('我已确认，请继续完成刚才的浏览器任务并直接给我结果。')
+        const followup = (res.followup_result || {}) as Record<string, unknown>
+        const followupAnswer = String(followup.answer || '').trim()
+        if (res.continued && followupAnswer) {
+          const store = useChatStore.getState()
+          const sessionId = store.activeSessionId
+          if (sessionId) {
+            store.addMessage(sessionId, {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: followupAnswer,
+              expression: String(followup.expression || '').trim() || undefined,
+              citations: Array.isArray(followup.citations) ? (followup.citations as any[]) : undefined,
+              actions: Array.isArray(followup.actions) ? (followup.actions as any[]) : undefined,
+              toolTrace: Array.isArray(followup.tool_trace) ? (followup.tool_trace as any[]) : undefined,
+              memorySummary: String(followup.memory_summary || '').trim() || undefined,
+              timestamp: Date.now(),
+            })
+          }
+        } else if (onQuickPrompt) {
+          onQuickPrompt('我已确认，请继续完成刚才的浏览器任务并直接给我结果。')
+        }
       } else {
         toast.error(String(res.message || '确认后执行失败'))
       }

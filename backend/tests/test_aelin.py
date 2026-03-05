@@ -444,6 +444,58 @@ def test_aelin_browser_confirm_retries_when_first_result_is_cdp_unavailable_laun
     assert bool(restart.get("ok")) is True
 
 
+def test_aelin_browser_confirm_auto_continues_with_resume_query(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        aelin_chat_router.browser_automation_service,
+        "use",
+        lambda **kwargs: {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"},
+    )
+
+    captured: dict[str, Any] = {}
+
+    def _fake_dispatch(payload, db, current_user, event_cb=None):
+        _ = db, current_user, event_cb
+        captured["query"] = str(payload.query or "")
+        return aelin_router.AelinChatResponse(
+            answer="continuation-ok",
+            expression="exp-04",
+            citations=[],
+            actions=[],
+            tool_trace=[],
+            memory_summary="",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(aelin_chat_router, "_dispatch_aelin_chat", _fake_dispatch)
+
+    resp = client.post(
+        "/api/v1/aelin/agent/browser/confirm",
+        json={
+            "workspace": "default",
+            "action_kind": "confirm_browser_action",
+            "action": "click",
+            "resume_query": "继续刚才的任务并给出结果",
+            "continue_after_confirm": True,
+            "next_call": {
+                "tool": "browser_use",
+                "action": "click",
+                "args": {"target": "个人资料", "scope": "cdp"},
+            },
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert bool(data.get("ok")) is True
+    assert bool(data.get("continued")) is True
+    assert str(captured.get("query") or "") == "继续刚才的任务并给出结果"
+    followup = data.get("followup_result") or {}
+    assert str(followup.get("answer") or "") == "continuation-ok"
+
+
 def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)

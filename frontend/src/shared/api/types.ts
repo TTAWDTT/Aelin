@@ -121,6 +121,8 @@ export interface AelinBrowserConfirmRequest {
   workspace?: string
   action_kind?: string
   action?: string
+  resume_query?: string
+  continue_after_confirm?: boolean
   next_call: Record<string, unknown>
 }
 export interface AelinBrowserConfirmResponse {
@@ -128,6 +130,9 @@ export interface AelinBrowserConfirmResponse {
   message: string
   requires_followup: boolean
   tool_result: Record<string, unknown>
+  continued: boolean
+  continuation_error: string
+  followup_result: Record<string, unknown>
   generated_at: string
 }
 export interface AelinTrackingItem {

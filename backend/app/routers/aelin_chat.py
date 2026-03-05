@@ -194,6 +194,7 @@ def aelin_chat_stream(
 @router.post("/agent/browser/confirm", response_model=AelinBrowserConfirmResponse)
 def confirm_browser_action(
     payload: AelinBrowserConfirmRequest,
+    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     workspace = str(payload.workspace or "default").strip()[:64] or "default"
@@ -280,8 +281,42 @@ def confirm_browser_action(
         len(list((restart_meta or pre_restart_meta or {}).get("remaining_pids") or [])),
     )
     ok = bool(result.get("ok"))
+    continued = False
+    continuation_error = ""
+    followup_result: dict[str, Any] = {}
+    resume_query = str(payload.resume_query or "").strip()
+    if ok and bool(payload.continue_after_confirm):
+        if not resume_query:
+            resume_query = "我已确认，请继续完成刚才的浏览器任务并直接给我结果。"
+        try:
+            followup = _dispatch_aelin_chat(
+                AelinChatRequest(
+                    query=resume_query[:500],
+                    workspace=workspace,
+                    use_memory=True,
+                    history=[],
+                    images=[],
+                ),
+                db,
+                current_user,
+                event_cb=None,
+            )
+            followup_result = followup.model_dump() if followup is not None else {}
+            continued = True
+        except Exception as exc:
+            continuation_error = str(exc)[:200]
+            _LOG.warning(
+                "aelin_browser_confirm continuation_failed uid=%s workspace=%s error=%s",
+                int(current_user.id),
+                workspace,
+                continuation_error,
+            )
     if ok:
         message = "已确认并执行浏览器步骤。"
+        if continued:
+            message = "已确认并继续执行任务。"
+        elif continuation_error:
+            message = f"已确认并执行浏览器步骤，但自动继续失败：{continuation_error}"
     else:
         message = f"确认后执行失败：{str(result.get('error') or 'unknown')[:160]}"
     return AelinBrowserConfirmResponse(
@@ -289,5 +324,8 @@ def confirm_browser_action(
         message=message,
         requires_followup=ok,
         tool_result=result if isinstance(result, dict) else {},
+        continued=continued,
+        continuation_error=continuation_error,
+        followup_result=followup_result,
         generated_at=datetime.now(timezone.utc),
     )
