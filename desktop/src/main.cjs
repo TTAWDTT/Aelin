@@ -568,7 +568,12 @@ async function saveCaptureImage(buffer, name) {
   try {
     const picturesDir = app.getPath("pictures");
     const captureDir = path.join(picturesDir, "Aelin", "captures");
-    const safeName = String(name || "").trim() || `screen-${Date.now()}.jpg`;
+    const rawName = String(name || "").trim();
+    let safeName = path.basename(rawName).replace(/[\\/]+/g, "_");
+    safeName = safeName.replace(/[:*?"<>|]/g, "_");
+    if (!safeName || safeName === "." || safeName === "..") {
+      safeName = `screen-${Date.now()}.jpg`;
+    }
     const savePath = path.join(captureDir, safeName);
     await fs.promises.mkdir(captureDir, { recursive: true });
     await fs.promises.writeFile(savePath, buffer);
