@@ -623,47 +623,77 @@ function buildImageClipSignal(image) {
 }
 
 function snapshotClipboardState() {
-  if (!clipboard || typeof clipboard.availableFormats !== "function" || typeof clipboard.readBuffer !== "function") {
+  if (!clipboard) {
     return null;
   }
   try {
-    const formats = clipboard.availableFormats();
-    if (!Array.isArray(formats) || formats.length === 0) {
-      return { records: [] };
+    const snapshot = {
+      text: "",
+      html: "",
+      rtf: "",
+      image: null,
+      bookmark: null,
+    };
+    if (typeof clipboard.readText === "function") {
+      snapshot.text = String(clipboard.readText() || "");
     }
-    const records = [];
-    for (const rawFormat of formats) {
-      const format = String(rawFormat || "").trim();
-      if (!format) continue;
-      try {
-        const buffer = clipboard.readBuffer(format);
-        records.push({ format, buffer: Buffer.from(buffer || Buffer.alloc(0)) });
-      } catch {
-        // best effort snapshot: skip unsupported format reads
+    if (typeof clipboard.readHTML === "function") {
+      snapshot.html = String(clipboard.readHTML() || "");
+    }
+    if (typeof clipboard.readRTF === "function") {
+      snapshot.rtf = String(clipboard.readRTF() || "");
+    }
+    if (typeof clipboard.readImage === "function") {
+      const image = clipboard.readImage();
+      if (image && typeof image.isEmpty === "function" && !image.isEmpty()) {
+        snapshot.image = image;
       }
     }
-    return { records };
+    if (typeof clipboard.readBookmark === "function") {
+      const bookmark = clipboard.readBookmark();
+      const title = String(bookmark?.title || "");
+      const url = String(bookmark?.url || "");
+      if (title || url) {
+        snapshot.bookmark = { title, url };
+      }
+    }
+    if (!snapshot.text && !snapshot.html && !snapshot.rtf && !snapshot.image && !snapshot.bookmark) {
+      return null;
+    }
+    return snapshot;
   } catch {
     return null;
   }
 }
 
 function restoreClipboardState(snapshot) {
-  if (!clipboard || typeof clipboard.clear !== "function" || typeof clipboard.writeBuffer !== "function") return;
-  if (!snapshot || !Array.isArray(snapshot.records)) return;
+  if (!clipboard || typeof clipboard.clear !== "function") return;
+  if (!snapshot || typeof snapshot !== "object") return;
   try {
     clipboard.clear();
   } catch {
     // ignore clear failures in best-effort restore
   }
-  for (const record of snapshot.records) {
-    const format = String(record?.format || "").trim();
-    if (!format) continue;
-    try {
-      clipboard.writeBuffer(format, Buffer.from(record?.buffer || Buffer.alloc(0)));
-    } catch {
-      // ignore per-format restore failures
+  try {
+    if (typeof clipboard.write === "function") {
+      const writePayload = {};
+      if (typeof snapshot.text === "string" && snapshot.text.length > 0) writePayload.text = snapshot.text;
+      if (typeof snapshot.html === "string" && snapshot.html.length > 0) writePayload.html = snapshot.html;
+      if (typeof snapshot.rtf === "string" && snapshot.rtf.length > 0) writePayload.rtf = snapshot.rtf;
+      if (snapshot.image && typeof snapshot.image.isEmpty === "function" && !snapshot.image.isEmpty()) {
+        writePayload.image = snapshot.image;
+      }
+      if (Object.keys(writePayload).length > 0) {
+        clipboard.write(writePayload);
+      }
     }
+    const bookmarkTitle = String(snapshot?.bookmark?.title || "");
+    const bookmarkUrl = String(snapshot?.bookmark?.url || "");
+    if (bookmarkUrl && typeof clipboard.writeBookmark === "function") {
+      clipboard.writeBookmark(bookmarkTitle, bookmarkUrl);
+    }
+  } catch {
+    // ignore restore failures in best-effort restore
   }
 }
 
