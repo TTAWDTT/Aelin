@@ -622,6 +622,51 @@ function buildImageClipSignal(image) {
   }
 }
 
+function snapshotClipboardState() {
+  if (!clipboard || typeof clipboard.availableFormats !== "function" || typeof clipboard.readBuffer !== "function") {
+    return null;
+  }
+  try {
+    const formats = clipboard.availableFormats();
+    if (!Array.isArray(formats) || formats.length === 0) {
+      return { records: [] };
+    }
+    const records = [];
+    for (const rawFormat of formats) {
+      const format = String(rawFormat || "").trim();
+      if (!format) continue;
+      try {
+        const buffer = clipboard.readBuffer(format);
+        records.push({ format, buffer: Buffer.from(buffer || Buffer.alloc(0)) });
+      } catch {
+        // best effort snapshot: skip unsupported format reads
+      }
+    }
+    return { records };
+  } catch {
+    return null;
+  }
+}
+
+function restoreClipboardState(snapshot) {
+  if (!clipboard || typeof clipboard.clear !== "function" || typeof clipboard.writeBuffer !== "function") return;
+  if (!snapshot || !Array.isArray(snapshot.records)) return;
+  try {
+    clipboard.clear();
+  } catch {
+    // ignore clear failures in best-effort restore
+  }
+  for (const record of snapshot.records) {
+    const format = String(record?.format || "").trim();
+    if (!format) continue;
+    try {
+      clipboard.writeBuffer(format, Buffer.from(record?.buffer || Buffer.alloc(0)));
+    } catch {
+      // ignore per-format restore failures
+    }
+  }
+}
+
 async function buildSnapshotFromImage(image, options = {}) {
   if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) {
     throw new Error("screen_image_empty");
@@ -662,9 +707,19 @@ async function captureCustomRegionSnapshot(payload = {}) {
   const timeoutMs = Math.floor(
     clampCaptureNumber(payload?.selection_timeout_ms || payload?.selectionTimeoutMs, 45_000, 5_000, 180_000)
   );
-  const beforeImage = clipboard.readImage();
-  const beforeSize = buildImageSizeKey(beforeImage);
-  const beforeSignal = buildImageClipSignal(beforeImage);
+  const clipboardSnapshot = snapshotClipboardState();
+  let clipboardCleared = false;
+  try {
+    if (typeof clipboard.clear === "function") {
+      clipboard.clear();
+      clipboardCleared = true;
+    }
+  } catch {
+    clipboardCleared = false;
+  }
+  const beforeImage = clipboardCleared ? null : clipboard.readImage();
+  const beforeSize = clipboardCleared ? "" : buildImageSizeKey(beforeImage);
+  const beforeSignal = clipboardCleared ? "" : buildImageClipSignal(beforeImage);
 
   try {
     const launcher = spawn("cmd.exe", ["/d", "/s", "/c", "start", "", "ms-screenclip:"], {
@@ -674,6 +729,9 @@ async function captureCustomRegionSnapshot(payload = {}) {
     });
     launcher.unref();
   } catch (error) {
+    if (clipboardCleared) {
+      restoreClipboardState(clipboardSnapshot);
+    }
     throw new Error(`custom_region_capture_launch_failed:${error instanceof Error ? error.message : String(error || "unknown")}`);
   }
 
@@ -684,7 +742,7 @@ async function captureCustomRegionSnapshot(payload = {}) {
     const image = clipboard.readImage();
     if (image && !image.isEmpty()) {
       const currentSize = buildImageSizeKey(image);
-      let changed = Boolean(currentSize && currentSize !== beforeSize);
+      let changed = clipboardCleared || Boolean(currentSize && currentSize !== beforeSize);
       if (!changed) {
         signalProbeCount += 1;
         if (signalProbeCount % 3 === 0) {
@@ -705,6 +763,9 @@ async function captureCustomRegionSnapshot(payload = {}) {
     }
     await waitMs(pollDelayMs);
     pollDelayMs = Math.min(420, pollDelayMs + 20);
+  }
+  if (clipboardCleared) {
+    restoreClipboardState(clipboardSnapshot);
   }
   throw new Error("custom_region_capture_timeout");
 }
