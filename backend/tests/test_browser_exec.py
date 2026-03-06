@@ -36,11 +36,12 @@ def test_run_in_browser_thread_timeout_does_not_wait_for_completion():
 def test_run_in_browser_thread_returns_busy_when_inflight_slots_are_exhausted(monkeypatch):
     original_pool = browser_exec._BROWSER_THREAD_POOL
     original_semaphore = browser_exec._BROWSER_INFLIGHT_SEMAPHORE
+    temp_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-browser-exec")
 
     monkeypatch.setattr(
         browser_exec,
         "_BROWSER_THREAD_POOL",
-        ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-browser-exec"),
+        temp_pool,
     )
     monkeypatch.setattr(browser_exec, "_BROWSER_INFLIGHT_SEMAPHORE", threading.BoundedSemaphore(value=1))
     monkeypatch.setattr(browser_exec, "_BROWSER_INFLIGHT_ACQUIRE_TIMEOUT_SECONDS", 0.05)
@@ -60,19 +61,21 @@ def test_run_in_browser_thread_returns_busy_when_inflight_slots_are_exhausted(mo
         finally:
             worker_done.set()
 
-    thread = threading.Thread(target=_run_slow, daemon=True)
-    thread.start()
-    assert started.wait(timeout=1.0) is True
+    try:
+        thread = threading.Thread(target=_run_slow, daemon=True)
+        thread.start()
+        assert started.wait(timeout=1.0) is True
 
-    begin = time.perf_counter()
-    with pytest.raises(RuntimeError, match="browser_tool_busy"):
-        browser_exec.run_in_browser_thread(lambda: "never-runs", timeout=1.0)
-    elapsed = time.perf_counter() - begin
+        begin = time.perf_counter()
+        with pytest.raises(RuntimeError, match="browser_tool_busy"):
+            browser_exec.run_in_browser_thread(lambda: "never-runs", timeout=1.0)
+        elapsed = time.perf_counter() - begin
 
-    assert elapsed < 0.5
-    release.set()
-    assert worker_done.wait(timeout=2.0) is True
-
-    browser_exec._BROWSER_THREAD_POOL.shutdown(wait=True, cancel_futures=True)
-    monkeypatch.setattr(browser_exec, "_BROWSER_THREAD_POOL", original_pool)
-    monkeypatch.setattr(browser_exec, "_BROWSER_INFLIGHT_SEMAPHORE", original_semaphore)
+        assert elapsed < 0.5
+        release.set()
+        assert worker_done.wait(timeout=2.0) is True
+    finally:
+        release.set()
+        temp_pool.shutdown(wait=True, cancel_futures=True)
+        monkeypatch.setattr(browser_exec, "_BROWSER_THREAD_POOL", original_pool)
+        monkeypatch.setattr(browser_exec, "_BROWSER_INFLIGHT_SEMAPHORE", original_semaphore)

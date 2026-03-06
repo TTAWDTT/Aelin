@@ -516,10 +516,11 @@ def confirm_browser_action(
             message = f"已确认并执行浏览器步骤，但自动继续失败：{continuation_error}"
     else:
         message = f"确认后执行失败：{str(result.get('error') or 'unknown')[:160]}"
+    requires_followup = bool(ok and effective_continue_after_confirm and not continued)
     return AelinBrowserConfirmResponse(
         ok=ok,
         message=message,
-        requires_followup=ok,
+        requires_followup=requires_followup,
         profile_id=str(payload.profile_id or result.get("profile_id") or ""),
         login_request_id=str(payload.login_request_id or result.get("login_request_id") or ""),
         login_state=login_state,
