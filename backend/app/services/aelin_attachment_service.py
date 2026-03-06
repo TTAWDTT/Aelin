@@ -65,7 +65,7 @@ _WS_RE = re.compile(r"\s+")
 _LOGGER = logging.getLogger(__name__)
 _CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
 _ALNUM_CHAR_RE = re.compile(r"[A-Za-z0-9]")
-_PUNCT_CHAR_RE = re.compile(r"[，。！？、；：,.!?;:()（）【】\\[\\]{}<>《》“”‘’\"'\\-_/]")
+_PUNCT_CHAR_RE = re.compile("[" + re.escape("，。！？、；：,.!?;:()（）【】[]{}<>《》“”‘’\"'\\-_/") + "]")
 _OCR_PIPELINE_VERSION = "rapidocr_v1"
 
 
@@ -1029,6 +1029,7 @@ class AelinAttachmentService:
                 )
             )
             if should_refresh_existing:
+                mutated_existing = False
                 try:
                     parsed_text, blocks, metadata = self._parse_content(
                         content=content,
@@ -1045,6 +1046,7 @@ class AelinAttachmentService:
                         storage_path = shard_dir / storage_name
                         if not storage_path.exists():
                             self._write_storage_if_missing(storage_path, content)
+                        mutated_existing = True
                         db.query(AttachmentChunk).filter(AttachmentChunk.attachment_id == int(existing.id)).delete(synchronize_session=False)
                         existing.file_name = safe_name
                         existing.file_ext = ext
@@ -1072,6 +1074,8 @@ class AelinAttachmentService:
                         chunk_count = len(chunk_rows)
                 except Exception as exc:
                     _LOGGER.warning("attachment reparse existing doc failed id=%s err=%s", int(existing.id), str(exc)[:180])
+                    if mutated_existing:
+                        raise
             return {
                 "attachment_id": int(existing.id),
                 "file_name": str(existing.file_name or safe_name),

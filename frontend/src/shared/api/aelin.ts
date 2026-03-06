@@ -21,7 +21,9 @@ export const aelinApi = {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('workspace', params?.workspace || 'default')
-    fd.append('session_id', params?.session_id || '')
+    if (params?.session_id) {
+      fd.append('session_id', params.session_id)
+    }
     return fetchFormData<AelinAttachmentUploadResponse>('/api/v1/aelin/attachments/upload', fd)
   },
 
