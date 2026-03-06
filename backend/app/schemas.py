@@ -5,6 +5,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.services.aelin_utils import normalize_positive_ints
+
 
 class Token(BaseModel):
     access_token: str
@@ -210,15 +212,7 @@ class AelinChatRequest(BaseModel):
     def _normalize_attachment_ids(cls, value: Any) -> list[int]:
         if not isinstance(value, list):
             return []
-        out: list[int] = []
-        for item in value[:20]:
-            try:
-                val = int(item)
-            except Exception:
-                continue
-            if val > 0:
-                out.append(val)
-        return out
+        return normalize_positive_ints(value, cap=20)
 
     @model_validator(mode="after")
     def _finalize_query(self) -> "AelinChatRequest":

@@ -1,5 +1,7 @@
 ﻿# Aelin Attachment Parsing & QA Plan (LangChain-Inspired)
 
+> Status: this plan is paired with runtime implementation changes (backend models/service/router + frontend upload/chat integration), not documentation-only scope.
+
 ## Goal
 Enable Aelin Agent to parse user-uploaded attachments (PDF / DOC / DOCX / PPT / PPTX / XLSX / TXT / MD / CSV / JSON / images), answer questions grounded in file content, and return traceable citations.
 
