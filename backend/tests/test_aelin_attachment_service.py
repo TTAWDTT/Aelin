@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import zipfile
 
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import AttachmentChunk, AttachmentDocument, Base, User
-from app.services.aelin_attachment_service import AelinAttachmentService
+from app.services.aelin_attachment_service import AelinAttachmentService, AttachmentIngestError
 from app.settings import settings
 
 
@@ -192,3 +193,31 @@ def test_parse_pdf_empty_text_has_scanned_hint(monkeypatch, tmp_path):
         assert "暂不支持 OCR 兜底" in text
     else:
         raise AssertionError("Expected parse error for blank PDF")
+
+
+def test_ingest_parse_error_does_not_leave_orphan_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
+    service = AelinAttachmentService()
+    db = _create_db()
+    _seed_user(db, user_id=12)
+
+    content = b"not-a-valid-docx"
+    digest = hashlib.sha256(content).hexdigest()
+    expected_path = (tmp_path / "attachments" / "user_12" / digest[:2] / f"{digest}.docx")
+
+    try:
+        service.ingest_bytes(
+            db,
+            user_id=12,
+            workspace="default",
+            session_id="s1",
+            file_name="broken.docx",
+            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            content=content,
+        )
+    except AttachmentIngestError:
+        pass
+    else:
+        raise AssertionError("Expected ingest error for invalid DOCX")
+
+    assert not expected_path.exists()

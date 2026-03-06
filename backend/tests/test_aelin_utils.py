@@ -6,8 +6,8 @@ def test_normalize_positive_ints_filters_and_caps():
     assert out == [2, 3]
 
 
-def test_normalize_positive_ints_cap_none_and_zero():
-    assert normalize_positive_ints([1, 2, 3], cap=None) == [1, 2, 3]
+def test_normalize_positive_ints_cap_zero_and_default():
+    assert normalize_positive_ints([1, 2, 3]) == [1, 2, 3]
     assert normalize_positive_ints([1, 2, 3], cap=0) == [1]
 
 

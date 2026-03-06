@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import subprocess
 import tempfile
@@ -166,6 +167,26 @@ class AelinAttachmentService:
                 break
             start += step
         return chunks[:500]
+
+    @staticmethod
+    def _write_storage_if_missing(storage_path: Path, content: bytes) -> bool:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_BINARY"):
+            flags |= int(getattr(os, "O_BINARY"))
+        try:
+            fd = os.open(str(storage_path), flags)
+        except FileExistsError:
+            return False
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(content)
+        except Exception:
+            try:
+                storage_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
+        return True
 
     def _build_chunk_rows(self, blocks: list[ParsedBlock], fallback_text: str) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -617,10 +638,8 @@ class AelinAttachmentService:
         shard_dir.mkdir(parents=True, exist_ok=True)
         storage_name = f"{file_sha}.{ext}"
         storage_path = shard_dir / storage_name
+        created_storage = False
         try:
-            if not storage_path.exists():
-                storage_path.write_bytes(content)
-
             parsed_text, blocks, metadata = self._parse_content(
                 content=content,
                 file_name=safe_name,
@@ -661,7 +680,7 @@ class AelinAttachmentService:
                     )
                 )
                 if existing is None:
-                    raise AttachmentIngestError("attachment_target_busy", "target is busy,retry in a few seconds") from None
+                    raise AttachmentIngestError("attachment_target_busy", "target is busy, retry in a few seconds") from None
                 chunk_count = db.query(AttachmentChunk).filter(AttachmentChunk.attachment_id == int(existing.id)).count()
                 return {
                     "attachment_id": int(existing.id),
@@ -688,6 +707,7 @@ class AelinAttachmentService:
                     )
                 )
 
+            created_storage = self._write_storage_if_missing(storage_path, content)
             return {
                 "attachment_id": int(row.id),
                 "file_name": safe_name,
@@ -701,6 +721,17 @@ class AelinAttachmentService:
                 "deduplicated": False,
             }
         except Exception:
+            if created_storage:
+                existing = db.scalar(
+                    select(AttachmentDocument.id).where(
+                        AttachmentDocument.user_id == int(user_id),
+                        AttachmentDocument.workspace == workspace_norm,
+                        AttachmentDocument.sha256 == file_sha,
+                        AttachmentDocument.parse_status == "ready",
+                    )
+                )
+                if existing is None:
+                    self.cleanup_storage_path(storage_path)
             raise
 
     @staticmethod
