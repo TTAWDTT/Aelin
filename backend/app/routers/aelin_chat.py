@@ -19,10 +19,13 @@ from app.routers.auth import get_current_user
 from app.schemas import (
     AelinBrowserConfirmRequest,
     AelinBrowserConfirmResponse,
+    AelinBrowserLoginCheckpointItem,
+    AelinBrowserLoginCheckpointListResponse,
     AelinChatRequest,
     AelinChatResponse,
 )
 from app.services.browser_automation import browser_automation_service
+from app.services.browser_exec import run_sync_playwright_call
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -150,25 +153,33 @@ def _execute_confirmed_browser_call(
     clean_args: dict[str, Any],
     user_id: int,
     workspace: str,
+    profile_id: str = "",
 ) -> dict[str, Any]:
+    profile_value = str(profile_id or "").strip()
     if tool_name == "browser_use":
-        return browser_automation_service.use(
-            user_id=user_id,
-            workspace=workspace,
-            action=action,
-            args=clean_args,
-            scope=scope,
-        )
-    return browser_automation_service.state_get(
-        user_id=user_id,
-        workspace=workspace,
-        scope=scope,
-        include_dom=bool(clean_args.get("include_dom", False)),
-        include_a11y=bool(clean_args.get("include_a11y", False)),
-        max_targets=int(clean_args.get("max_targets") or 30),
-        max_items=int(clean_args.get("max_items") or 20),
-        pid=int(clean_args.get("pid") or 0),
-    )
+        kwargs: dict[str, Any] = {
+            "user_id": user_id,
+            "workspace": workspace,
+            "action": action,
+            "args": clean_args,
+            "scope": scope,
+        }
+        if profile_value:
+            kwargs["profile_id"] = profile_value
+        return run_sync_playwright_call(browser_automation_service.use, **kwargs)
+    kwargs = {
+        "user_id": user_id,
+        "workspace": workspace,
+        "scope": scope,
+        "include_dom": bool(clean_args.get("include_dom", False)),
+        "include_a11y": bool(clean_args.get("include_a11y", False)),
+        "max_targets": int(clean_args.get("max_targets") or 30),
+        "max_items": int(clean_args.get("max_items") or 20),
+        "pid": int(clean_args.get("pid") or 0),
+    }
+    if profile_value:
+        kwargs["profile_id"] = profile_value
+    return run_sync_playwright_call(browser_automation_service.state_get, **kwargs)
 
 
 def _build_followup_request(
@@ -333,7 +344,17 @@ def confirm_browser_action(
     current_user: User = Depends(get_current_user),
 ):
     workspace = str(payload.workspace or "default").strip()[:64] or "default"
-    next_call = payload.next_call if isinstance(payload.next_call, dict) else {}
+    stored_login_state = {}
+    if str(payload.login_request_id or "").strip():
+        stored_login_state = browser_automation_service.get_login_state(
+            user_id=int(current_user.id),
+            workspace=workspace,
+            request_id=str(payload.login_request_id or ""),
+            profile_id=str(payload.profile_id or ""),
+        )
+    next_call = payload.next_call if isinstance(payload.next_call, dict) and payload.next_call else {}
+    if (not next_call) and isinstance(stored_login_state.get("next_call"), dict):
+        next_call = dict(stored_login_state.get("next_call") or {})
     tool_name = str(next_call.get("tool") or "").strip().lower()
     if tool_name not in {"browser_use", "browser_state_get"}:
         raise HTTPException(status_code=400, detail="unsupported_next_call_tool")
@@ -353,7 +374,12 @@ def confirm_browser_action(
     restart_meta: dict[str, Any] | None = None
     pre_restart_meta: dict[str, Any] | None = None
     if _needs_restart_before_confirmed_call(tool_name=tool_name, scope=scope, clean_args=clean_args):
-        restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=24.0)
+        restart_meta = browser_automation_service.force_restart_to_cdp(
+            timeout_seconds=24.0,
+            user_id=int(current_user.id),
+            workspace=workspace,
+            profile_id=str(payload.profile_id or ""),
+        )
         if bool(restart_meta.get("ok")):
             result = _execute_confirmed_browser_call(
                 tool_name=tool_name,
@@ -362,6 +388,7 @@ def confirm_browser_action(
                 clean_args=clean_args,
                 user_id=int(current_user.id),
                 workspace=workspace,
+                profile_id=str(payload.profile_id or ""),
             )
             if not isinstance(result, dict):
                 result = _build_restart_failed_result(
@@ -386,10 +413,16 @@ def confirm_browser_action(
             clean_args=clean_args,
             user_id=int(current_user.id),
             workspace=workspace,
+            profile_id=str(payload.profile_id or ""),
         )
         pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
         if (not bool(result.get("ok"))) and _is_cdp_restart_error(str(result.get("error") or "")):
-            restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=24.0)
+            restart_meta = browser_automation_service.force_restart_to_cdp(
+                timeout_seconds=24.0,
+                user_id=int(current_user.id),
+                workspace=workspace,
+                profile_id=str(payload.profile_id or ""),
+            )
             if bool(restart_meta.get("ok")):
                 retry = _execute_confirmed_browser_call(
                     tool_name=tool_name,
@@ -398,6 +431,7 @@ def confirm_browser_action(
                     clean_args=clean_args,
                     user_id=int(current_user.id),
                     workspace=workspace,
+                    profile_id=str(payload.profile_id or ""),
                 )
                 if isinstance(retry, dict):
                     result = dict(retry)
@@ -419,12 +453,31 @@ def confirm_browser_action(
         len(list((restart_meta or pre_restart_meta or {}).get("remaining_pids") or [])),
     )
     ok = bool(result.get("ok"))
+    effective_resume_request = payload.resume_request if isinstance(payload.resume_request, dict) and payload.resume_request else {}
+    if (not effective_resume_request) and isinstance(stored_login_state.get("resume_request"), dict):
+        effective_resume_request = dict(stored_login_state.get("resume_request") or {})
+    effective_resume_query = str(payload.resume_query or "").strip() or str(stored_login_state.get("resume_query") or "").strip()
+    payload_controls_resume = bool(payload.next_call) or bool(payload.resume_request) or bool(str(payload.resume_query or "").strip())
+    if payload.continue_after_confirm is False:
+        effective_continue_after_confirm = False
+    elif payload_controls_resume:
+        effective_continue_after_confirm = bool(payload.continue_after_confirm)
+    else:
+        effective_continue_after_confirm = bool(stored_login_state.get("continue_after_confirm", payload.continue_after_confirm))
     continued = False
     continuation_error = ""
     followup_result: dict[str, Any] = {}
-    if ok and bool(payload.continue_after_confirm):
+    if ok and effective_continue_after_confirm:
         try:
-            followup_request = _build_followup_request(payload=payload, workspace=workspace)
+            followup_payload = payload.model_copy(
+                update={
+                    "next_call": next_call,
+                    "resume_request": effective_resume_request,
+                    "resume_query": effective_resume_query,
+                    "continue_after_confirm": effective_continue_after_confirm,
+                }
+            )
+            followup_request = _build_followup_request(payload=followup_payload, workspace=workspace)
             followup = _dispatch_aelin_chat(
                 followup_request,
                 db,
@@ -441,6 +494,20 @@ def confirm_browser_action(
                 workspace,
                 continuation_error,
             )
+    login_state: dict[str, Any] = {}
+    if ok and str(payload.login_request_id or "").strip():
+        resolved_status = "confirmed"
+        if effective_continue_after_confirm and continued:
+            resolved_status = "continued"
+        elif effective_continue_after_confirm and continuation_error:
+            resolved_status = "continue_failed"
+        login_state = browser_automation_service.resolve_login_pending(
+            user_id=int(current_user.id),
+            workspace=workspace,
+            request_id=str(payload.login_request_id or ""),
+            profile_id=str(payload.profile_id or ""),
+            status=resolved_status,
+        )
     if ok:
         message = "已确认并执行浏览器步骤。"
         if continued:
@@ -453,9 +520,34 @@ def confirm_browser_action(
         ok=ok,
         message=message,
         requires_followup=ok,
+        profile_id=str(payload.profile_id or result.get("profile_id") or ""),
+        login_request_id=str(payload.login_request_id or result.get("login_request_id") or ""),
+        login_state=login_state,
         tool_result=result if isinstance(result, dict) else {},
         continued=continued,
         continuation_error=continuation_error,
         followup_result=followup_result,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/login-checkpoints", response_model=AelinBrowserLoginCheckpointListResponse)
+def list_browser_login_checkpoints(
+    workspace: str = "default",
+    status: str = "awaiting_login,continue_failed",
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    normalized_workspace = str(workspace or "").strip()[:64] or "default"
+    statuses = [str(item).strip().lower() for item in str(status or "").split(",") if str(item).strip()]
+    items = browser_automation_service.list_login_states(
+        user_id=int(current_user.id),
+        workspace=normalized_workspace,
+        statuses=statuses,
+        limit=max(1, min(100, int(limit or 20))),
+    )
+    return AelinBrowserLoginCheckpointListResponse(
+        total=len(items),
+        items=[AelinBrowserLoginCheckpointItem(**item) for item in items],
         generated_at=datetime.now(timezone.utc),
     )

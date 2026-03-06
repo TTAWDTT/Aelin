@@ -399,6 +399,8 @@ class AelinBrowserConfirmRequest(BaseModel):
     workspace: str = Field(default="default", min_length=1, max_length=64)
     action_kind: str = Field(default="confirm_browser_action", max_length=64)
     action: str = Field(default="", max_length=32)
+    profile_id: str = Field(default="", max_length=120)
+    login_request_id: str = Field(default="", max_length=64)
     next_call: dict[str, Any] = Field(default_factory=dict)
     resume_request: dict[str, Any] = Field(default_factory=dict)
     resume_query: str = Field(default="", max_length=500)
@@ -409,10 +411,34 @@ class AelinBrowserConfirmResponse(BaseModel):
     ok: bool
     message: str = ""
     requires_followup: bool = False
+    profile_id: str = ""
+    login_request_id: str = ""
+    login_state: dict[str, Any] = Field(default_factory=dict)
     tool_result: dict[str, Any] = Field(default_factory=dict)
     continued: bool = False
     continuation_error: str = ""
     followup_result: dict[str, Any] = Field(default_factory=dict)
+    generated_at: datetime
+
+
+class AelinBrowserLoginCheckpointItem(BaseModel):
+    request_id: str
+    profile_id: str = ""
+    workspace: str = "default"
+    domain: str = ""
+    reason: str = ""
+    status: str = "awaiting_login"
+    next_call: dict[str, Any] = Field(default_factory=dict)
+    resume_query: str = ""
+    resume_request: dict[str, Any] = Field(default_factory=dict)
+    continue_after_confirm: bool = True
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+class AelinBrowserLoginCheckpointListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserLoginCheckpointItem] = Field(default_factory=list)
     generated_at: datetime
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from app.services.aelin_loop_types import AgentLoopToolRun
+from app.services.browser_automation import browser_automation_service
 
 
 def _payload_value(value: object) -> str:
@@ -28,6 +29,7 @@ def _payload_json(value: object) -> str:
 def build_actions(
     *,
     runs: list[AgentLoopToolRun],
+    user_id: int,
     workspace: str,
     resume_query: str = "",
     resume_request_json: str = "",
@@ -43,6 +45,25 @@ def build_actions(
         )
         if run.status != "completed" and should_emit_browser_confirm:
             prompt = str(result.get("user_prompt") or "该任务需要你的确认才能继续执行。").strip()
+            login_request_id = _payload_value(result.get("login_request_id"))
+            parsed_resume_request: dict[str, object] = {}
+            if resume_request_json:
+                try:
+                    loaded = json.loads(resume_request_json)
+                    if isinstance(loaded, dict):
+                        parsed_resume_request = dict(loaded)
+                except Exception:
+                    parsed_resume_request = {}
+            if login_request_id:
+                browser_automation_service.attach_login_resume_context(
+                    user_id=int(user_id),
+                    workspace=str(workspace),
+                    request_id=login_request_id,
+                    profile_id=_payload_value(result.get("profile_id")),
+                    resume_query=str(resume_query or ""),
+                    resume_request=parsed_resume_request,
+                    continue_after_confirm=True,
+                )
             payload: dict[str, str] = {
                 "workspace": str(workspace),
                 "tool": next_tool or str(run.name or ""),
@@ -50,6 +71,8 @@ def build_actions(
                 "confirm_kind": _payload_value(result.get("confirm_kind")),
                 "action": _payload_value(result.get("action")),
                 "resume_query": _payload_value(resume_query),
+                "login_request_id": login_request_id,
+                "profile_id": _payload_value(result.get("profile_id")),
             }
             if resume_request_json:
                 payload["resume_request"] = resume_request_json

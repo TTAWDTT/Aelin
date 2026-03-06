@@ -11,7 +11,9 @@ class _FakeSession:
     def __init__(self, *, owner_thread_id: int) -> None:
         self.session_id = "bs-test"
         self.owner_thread_id = int(owner_thread_id)
+        self.profile_id = "default:default"
         self.mode = "managed"
+        self.user_data_dir = ""
         self.closed = False
         self.touched = 0
 
@@ -214,6 +216,24 @@ def test_use_auto_navigate_prefers_external_scope(monkeypatch):
     assert opened == ["https://example.com"]
 
 
+def test_use_sensitive_domain_auth_guard_emits_login_checkpoint():
+    service = BrowserAutomationService()
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://x.com/i/flow/login", "confirm": False},
+        scope="managed",
+    )
+    assert out["ok"] is False
+    assert out["error"] == "auth_permission_required"
+    assert str(out.get("profile_id") or "").endswith(":default")
+    assert str(out.get("login_request_id") or "").startswith("blogin-")
+    login_state = out.get("login_state") if isinstance(out.get("login_state"), dict) else {}
+    assert login_state.get("status") == "awaiting_login"
+    assert login_state.get("domain") == "x.com"
+
+
 def test_state_get_auto_fallbacks_from_cdp_to_external(monkeypatch):
     service = BrowserAutomationService()
     page = _FakePage()
@@ -391,7 +411,11 @@ def test_use_auto_complex_with_browser_running_restarts_to_cdp_after_confirm(mon
         return cdp_session
 
     monkeypatch.setattr(service, "_get_session", _fake_get_session)
-    monkeypatch.setattr(service, "force_restart_to_cdp", lambda timeout_seconds=12.0: {"ok": True, "endpoint": "http://127.0.0.1:9222"})
+    monkeypatch.setattr(
+        service,
+        "force_restart_to_cdp",
+        lambda timeout_seconds=12.0, **kwargs: {"ok": True, "endpoint": "http://127.0.0.1:9222"},
+    )
 
     states = iter(
         [
@@ -420,7 +444,11 @@ def test_use_auto_complex_with_browser_running_returns_restart_failed_when_confi
     monkeypatch.setattr(
         service,
         "force_restart_to_cdp",
-        lambda timeout_seconds=12.0: {"ok": False, "error": "cdp_conflict_process_still_running", "remaining_pids": [1, 2]},
+        lambda timeout_seconds=12.0, **kwargs: {
+            "ok": False,
+            "error": "cdp_conflict_process_still_running",
+            "remaining_pids": [1, 2],
+        },
     )
 
     out = service.use(
@@ -505,9 +533,13 @@ def test_ensure_cdp_endpoint_ready_auto_launch_success(monkeypatch):
 
     launched: list[str] = []
     monkeypatch.setattr(service, "_probe_cdp_endpoint", _fake_probe)
-    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint: launched.append(str(endpoint)))
+    monkeypatch.setattr(
+        service,
+        "_launch_cdp_browser",
+        lambda endpoint, **kwargs: launched.append(str(endpoint)) or {"user_data_dir": "D:/tmp/profile"},
+    )
 
-    service._ensure_cdp_endpoint_ready()
+    service._ensure_cdp_endpoint_ready(user_id=1, workspace="default")
     assert launched == ["http://127.0.0.1:9222"]
     assert probe_calls["count"] >= 3
 
@@ -517,10 +549,12 @@ def test_build_cdp_launch_command_uses_dedicated_profile_dir(tmp_path, monkeypat
     service._cdp_profile_dir = tmp_path / "cdp-profile"
     monkeypatch.setattr(service, "_resolve_cdp_browser_executable", lambda: str(tmp_path / "chrome.exe"))
 
-    launch = service._build_cdp_launch_command("http://127.0.0.1:9222")
+    launch = service._build_cdp_launch_command("http://127.0.0.1:9222", user_id=1, workspace="default", profile_id="x-main")
 
     assert str(launch.get("exe") or "").endswith("chrome.exe")
-    assert Path(str(launch.get("user_data_dir") or "")).resolve() == (tmp_path / "cdp-profile").resolve()
+    assert Path(str(launch.get("user_data_dir") or "")).resolve() == (
+        tmp_path / "cdp-profile" / "user_1" / "default" / "x-main"
+    ).resolve()
     cmd = [str(item) for item in list(launch.get("cmd") or [])]
     assert any(item.startswith("--user-data-dir=") for item in cmd)
     assert not any("Google/Chrome/User Data" in item for item in cmd)
@@ -546,7 +580,7 @@ def test_ensure_cdp_endpoint_ready_requires_restart_when_browser_running(monkeyp
     service._cdp_auto_launch = True
     service._cdp_launch_timeout_seconds = 0.8
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
-    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint: None)
+    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint, **kwargs: {"user_data_dir": "D:/tmp/profile"})
     monkeypatch.setattr(
         service,
         "_list_cdp_conflict_processes",
@@ -562,7 +596,7 @@ def test_ensure_cdp_endpoint_ready_requires_restart_when_browser_running(monkeyp
     monkeypatch.setattr("app.services.browser_automation.time.sleep", lambda _seconds: None)
 
     try:
-        service._ensure_cdp_endpoint_ready()
+        service._ensure_cdp_endpoint_ready(user_id=1, workspace="default")
     except RuntimeError as exc:
         assert "cdp_requires_browser_restart" in str(exc)
     else:
@@ -576,11 +610,35 @@ def test_ensure_cdp_endpoint_ready_without_auto_launch(monkeypatch):
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
 
     try:
-        service._ensure_cdp_endpoint_ready()
+        service._ensure_cdp_endpoint_ready(user_id=1, workspace="default")
     except RuntimeError as exc:
         assert "cdp_endpoint_unavailable" in str(exc)
     else:
         raise AssertionError("expected cdp_endpoint_unavailable")
+
+
+def test_ensure_cdp_endpoint_ready_requires_restart_when_active_profile_differs(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    service._cdp_auto_launch = True
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: True)
+    monkeypatch.setattr(
+        service,
+        "_get_cdp_listener_user_data_dir",
+        lambda **kwargs: str(Path("D:/profiles/user_1/default/other").resolve()),
+    )
+    monkeypatch.setattr(
+        service,
+        "_resolve_cdp_profile_dir",
+        lambda **kwargs: Path("D:/profiles/user_1/default/main"),
+    )
+
+    try:
+        service._ensure_cdp_endpoint_ready(user_id=1, workspace="default", profile_id="main")
+    except RuntimeError as exc:
+        assert "cdp_requires_browser_restart" in str(exc)
+    else:
+        raise AssertionError("expected cdp_requires_browser_restart")
 
 
 def test_use_navigate_requires_domain_confirmation():
@@ -698,6 +756,28 @@ def test_use_auto_navigate_reuses_existing_cdp_session(monkeypatch):
     assert out["scope"] == "cdp"
     assert out["external_opened"] is False
     assert page.goto_calls == ["https://x.com/following"]
+
+
+def test_get_session_keeps_profiles_isolated(monkeypatch):
+    service = BrowserAutomationService()
+    service._sessions.clear()
+    monkeypatch.setattr(service, "_cleanup_idle_sessions", lambda: None)
+
+    created_profiles: list[str] = []
+
+    def _fake_create(**kwargs):
+        created_profiles.append(str(kwargs.get("profile_id") or ""))
+        session = _FakeSession(owner_thread_id=threading.get_ident())
+        session.profile_id = str(kwargs.get("profile_id") or "")
+        return session
+
+    monkeypatch.setattr(service, "_create_managed_session", _fake_create)
+
+    session_a = service._get_session(user_id=1, workspace="default", mode="managed", profile_id="alpha")
+    session_b = service._get_session(user_id=1, workspace="default", mode="managed", profile_id="beta")
+
+    assert session_a is not session_b
+    assert created_profiles == ["alpha", "beta"]
 
 
 def test_use_auto_navigate_prefers_sticky_cdp_without_same_thread_session(monkeypatch):
@@ -863,9 +943,13 @@ def test_force_restart_to_cdp_launches_after_terminating_conflicts(monkeypatch):
             "failed_pids": [],
         },
     )
-    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint: launched.append(str(endpoint)))
+    monkeypatch.setattr(
+        service,
+        "_launch_cdp_browser",
+        lambda endpoint, **kwargs: launched.append(str(endpoint)) or {"user_data_dir": "D:/tmp/profile"},
+    )
 
-    out = service.force_restart_to_cdp(timeout_seconds=2.0)
+    out = service.force_restart_to_cdp(timeout_seconds=2.0, user_id=1, workspace="default", profile_id="main")
     assert out["ok"] is True
     assert launched == ["http://127.0.0.1:9222"]
     assert out.get("terminated_pids") == [111]
@@ -890,7 +974,7 @@ def test_force_restart_to_cdp_returns_error_when_conflicts_remain(monkeypatch):
         },
     )
 
-    out = service.force_restart_to_cdp(timeout_seconds=1.0)
+    out = service.force_restart_to_cdp(timeout_seconds=1.0, user_id=1, workspace="default", profile_id="main")
     assert out["ok"] is False
     assert out["error"] == "cdp_conflict_process_still_running"
 
@@ -907,9 +991,10 @@ def test_force_restart_to_cdp_fallback_full_restart_can_recover(monkeypatch):
         _ = endpoint, kwargs
         return state["launch_calls"] >= 2
 
-    def _fake_launch(endpoint: str):
-        _ = endpoint
+    def _fake_launch(endpoint: str, **kwargs):
+        _ = endpoint, kwargs
         state["launch_calls"] += 1
+        return {"user_data_dir": "D:/tmp/profile"}
 
     terminated_calls: list[list[int]] = []
 
@@ -933,7 +1018,7 @@ def test_force_restart_to_cdp_fallback_full_restart_can_recover(monkeypatch):
     monkeypatch.setattr("app.services.browser_automation.time.time", _fake_time)
     monkeypatch.setattr("app.services.browser_automation.time.sleep", lambda _seconds: None)
 
-    out = service.force_restart_to_cdp(timeout_seconds=1.0)
+    out = service.force_restart_to_cdp(timeout_seconds=1.0, user_id=1, workspace="default", profile_id="main")
     assert out["ok"] is True
     assert out.get("fallback_full_restart") is True
     assert state["launch_calls"] == 2

@@ -95,6 +95,7 @@ class BrowserSession:
     session_id: str
     user_id: int
     workspace: str
+    profile_id: str
     mode: str
     owner_thread_id: int
     playwright: Any
@@ -103,6 +104,7 @@ class BrowserSession:
     page: Any
     created_at: float
     last_used: float
+    user_data_dir: str = ""
     lock: threading.RLock = field(default_factory=threading.RLock)
 
     def touch(self) -> None:
@@ -125,9 +127,47 @@ class BrowserSession:
                 pass
 
 
+@dataclass
+class BrowserProfile:
+    profile_id: str
+    user_id: int
+    workspace: str
+    label: str
+    kind: str
+    created_at: float
+    last_used: float
+
+    def touch(self) -> None:
+        self.last_used = time.time()
+
+
+@dataclass
+class BrowserLoginState:
+    request_id: str
+    profile_id: str
+    user_id: int
+    workspace: str
+    domain: str
+    reason: str
+    status: str
+    next_call: dict[str, Any]
+    resume_query: str
+    resume_request: dict[str, Any]
+    continue_after_confirm: bool
+    created_at: float
+    updated_at: float
+
+    def touch(self, *, status: str = "") -> None:
+        self.updated_at = time.time()
+        if status:
+            self.status = str(status or self.status)
+
+
 class BrowserAutomationService:
     def __init__(self) -> None:
         self._sessions: dict[str, BrowserSession] = {}
+        self._profiles: dict[str, BrowserProfile] = {}
+        self._login_states: dict[str, BrowserLoginState] = {}
         self._lock = threading.RLock()
         self._creation_locks: dict[str, threading.Lock] = {}
         self._preferred_scope_by_workspace: dict[str, tuple[str, float]] = {}
@@ -167,6 +207,8 @@ class BrowserAutomationService:
             getattr(settings, "browser_tool_system_process_cache_ttl_seconds", 2.0) or 2.0
         )
         self._system_process_cache: dict[tuple[int, bool], tuple[float, list[dict[str, Any]]]] = {}
+        self._active_cdp_profile_key = ""
+        self._active_cdp_user_data_dir = ""
 
     @staticmethod
     def _resolve_runtime_path(raw: str) -> Path:
@@ -177,16 +219,247 @@ class BrowserAutomationService:
         return (backend_dir / path).resolve()
 
     @staticmethod
-    def _session_key(*, user_id: int, workspace: str, mode: str) -> str:
+    def _session_key(*, user_id: int, workspace: str, mode: str, profile_id: str = "") -> str:
         safe_mode = str(mode or "managed").strip().lower() or "managed"
-        return f"{safe_mode}::{int(user_id)}::{_normalize_workspace(workspace)}"
+        safe_profile = (
+            str(profile_id or "").strip()
+            or BrowserAutomationService._default_profile_id(workspace=_normalize_workspace(workspace))
+        )
+        return f"{safe_mode}::{int(user_id)}::{_normalize_workspace(workspace)}::{safe_profile}"
 
     @staticmethod
     def _workspace_scope_key(*, user_id: int, workspace: str) -> str:
         return f"{int(user_id)}::{_normalize_workspace(workspace)}"
 
-    def _peek_session(self, *, user_id: int, workspace: str, mode: str) -> BrowserSession | None:
-        key = self._session_key(user_id=user_id, workspace=workspace, mode=mode)
+    @staticmethod
+    def _default_profile_id(*, workspace: str) -> str:
+        return f"{_normalize_workspace(workspace)}:default"
+
+    @staticmethod
+    def _profile_key(*, user_id: int, workspace: str, profile_id: str) -> str:
+        clean_profile = str(profile_id or "").strip() or BrowserAutomationService._default_profile_id(workspace=workspace)
+        return f"{int(user_id)}::{_normalize_workspace(workspace)}::{clean_profile}"
+
+    @staticmethod
+    def _resolved_profile_id(*, workspace: str, profile_id: str = "") -> str:
+        return str(profile_id or "").strip() or BrowserAutomationService._default_profile_id(workspace=workspace)
+
+    @staticmethod
+    def _sanitize_profile_segment(value: str, *, default: str = "default") -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return default
+        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+        return sanitized[:80] or default
+
+    def _ensure_profile(self, *, user_id: int, workspace: str, profile_id: str = "") -> BrowserProfile:
+        normalized_workspace = _normalize_workspace(workspace)
+        resolved_profile_id = self._resolved_profile_id(workspace=normalized_workspace, profile_id=profile_id)
+        key = self._profile_key(user_id=user_id, workspace=normalized_workspace, profile_id=resolved_profile_id)
+        now = time.time()
+        with self._lock:
+            profile = self._profiles.get(key)
+            if profile is None:
+                profile = BrowserProfile(
+                    profile_id=resolved_profile_id,
+                    user_id=int(user_id),
+                    workspace=normalized_workspace,
+                    label="Default controlled browser",
+                    kind="managed_cdp",
+                    created_at=now,
+                    last_used=now,
+                )
+                self._profiles[key] = profile
+            else:
+                profile.touch()
+            return profile
+
+    @staticmethod
+    def _profile_payload(profile: BrowserProfile | None) -> dict[str, Any]:
+        if profile is None:
+            return {}
+        return {
+            "profile_id": str(profile.profile_id or ""),
+            "workspace": str(profile.workspace or "")[:64],
+            "label": str(profile.label or "")[:80],
+            "kind": str(profile.kind or "")[:32],
+        }
+
+    @staticmethod
+    def _login_state_payload(state: BrowserLoginState | None) -> dict[str, Any]:
+        if state is None:
+            return {}
+        return {
+            "request_id": str(state.request_id or ""),
+            "profile_id": str(state.profile_id or ""),
+            "workspace": str(state.workspace or "")[:64],
+            "domain": str(state.domain or "")[:120],
+            "reason": str(state.reason or "")[:80],
+            "status": str(state.status or "")[:32],
+            "next_call": dict(state.next_call or {}),
+            "resume_query": str(state.resume_query or "")[:500],
+            "resume_request": dict(state.resume_request or {}),
+            "continue_after_confirm": bool(state.continue_after_confirm),
+            "created_at": float(state.created_at or 0.0),
+            "updated_at": float(state.updated_at or 0.0),
+        }
+
+    def mark_login_pending(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        domain: str,
+        next_call: dict[str, Any] | None = None,
+        profile_id: str = "",
+        reason: str = "auth_guard",
+        resume_query: str = "",
+        resume_request: dict[str, Any] | None = None,
+        continue_after_confirm: bool = True,
+    ) -> dict[str, Any]:
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        request_id = f"blogin-{uuid4().hex[:12]}"
+        now = time.time()
+        state = BrowserLoginState(
+            request_id=request_id,
+            profile_id=profile.profile_id,
+            user_id=int(user_id),
+            workspace=_normalize_workspace(workspace),
+            domain=str(domain or "")[:120],
+            reason=str(reason or "auth_guard")[:80],
+            status="awaiting_login",
+            next_call=dict(next_call or {}),
+            resume_query=str(resume_query or "")[:500],
+            resume_request=dict(resume_request or {}),
+            continue_after_confirm=bool(continue_after_confirm),
+            created_at=now,
+            updated_at=now,
+        )
+        with self._lock:
+            self._login_states[request_id] = state
+        return self._login_state_payload(state)
+
+    def get_login_state(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        request_id: str,
+        profile_id: str = "",
+    ) -> dict[str, Any]:
+        clean_request_id = str(request_id or "").strip()
+        if not clean_request_id:
+            return {}
+        with self._lock:
+            state = self._login_states.get(clean_request_id)
+            if state is None:
+                return {}
+            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                return {}
+            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                return {}
+            return self._login_state_payload(state)
+
+    def attach_login_resume_context(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        request_id: str,
+        profile_id: str = "",
+        resume_query: str = "",
+        resume_request: dict[str, Any] | None = None,
+        continue_after_confirm: bool | None = None,
+    ) -> dict[str, Any]:
+        clean_request_id = str(request_id or "").strip()
+        if not clean_request_id:
+            return {}
+        with self._lock:
+            state = self._login_states.get(clean_request_id)
+            if state is None:
+                return {}
+            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                return {}
+            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                return {}
+            if str(resume_query or "").strip():
+                state.resume_query = str(resume_query or "")[:500]
+            if isinstance(resume_request, dict) and resume_request:
+                state.resume_request = dict(resume_request)
+            if continue_after_confirm is not None:
+                state.continue_after_confirm = bool(continue_after_confirm)
+            state.touch()
+            return self._login_state_payload(state)
+
+    def list_login_states(
+        self,
+        *,
+        user_id: int,
+        workspace: str = "",
+        statuses: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        normalized_workspace = _normalize_workspace(workspace) if str(workspace or "").strip() else ""
+        allow_statuses = {
+            str(item or "").strip().lower()
+            for item in list(statuses or [])
+            if str(item or "").strip()
+        }
+        max_items = max(1, min(100, int(limit or 20)))
+        rows: list[BrowserLoginState] = []
+        with self._lock:
+            for state in self._login_states.values():
+                if int(state.user_id) != int(user_id):
+                    continue
+                if normalized_workspace and str(state.workspace or "") != normalized_workspace:
+                    continue
+                if allow_statuses and str(state.status or "").strip().lower() not in allow_statuses:
+                    continue
+                rows.append(state)
+        rows.sort(key=lambda item: float(item.updated_at or item.created_at or 0.0), reverse=True)
+        return [self._login_state_payload(item) for item in rows[:max_items]]
+
+    def cancel_login_pending(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        request_id: str,
+        profile_id: str = "",
+    ) -> dict[str, Any]:
+        return self.resolve_login_pending(
+            user_id=user_id,
+            workspace=workspace,
+            request_id=request_id,
+            profile_id=profile_id,
+            status="cancelled",
+        )
+
+    def resolve_login_pending(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        request_id: str,
+        profile_id: str = "",
+        status: str = "resolved",
+    ) -> dict[str, Any]:
+        clean_request_id = str(request_id or "").strip()
+        if not clean_request_id:
+            return {}
+        with self._lock:
+            state = self._login_states.get(clean_request_id)
+            if state is None:
+                return {}
+            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                return {}
+            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                return {}
+            state.touch(status=str(status or "resolved")[:32])
+            return self._login_state_payload(state)
+
+    def _peek_session(self, *, user_id: int, workspace: str, mode: str, profile_id: str = "") -> BrowserSession | None:
+        key = self._session_key(user_id=user_id, workspace=workspace, mode=mode, profile_id=profile_id)
         thread_id = threading.get_ident()
         with self._lock:
             session = self._sessions.get(key)
@@ -244,10 +517,11 @@ class BrowserAutomationService:
             except Exception:
                 pass
 
-    def _create_managed_session(self, *, user_id: int, workspace: str) -> BrowserSession:
+    def _create_managed_session(self, *, user_id: int, workspace: str, profile_id: str = "") -> BrowserSession:
         if sync_playwright is None:
             raise RuntimeError("playwright_unavailable")
 
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
         pw = sync_playwright().start()
         browser = pw.chromium.launch(
             headless=self._headless,
@@ -264,6 +538,7 @@ class BrowserAutomationService:
             session_id=f"bs-{uuid4().hex[:12]}",
             user_id=int(user_id),
             workspace=_normalize_workspace(workspace),
+            profile_id=resolved_profile_id,
             mode="managed",
             owner_thread_id=threading.get_ident(),
             playwright=pw,
@@ -274,13 +549,26 @@ class BrowserAutomationService:
             last_used=now,
         )
 
-    def _create_cdp_session(self, *, user_id: int, workspace: str, endpoint: str) -> BrowserSession:
+    def _create_cdp_session(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        endpoint: str,
+        profile_id: str = "",
+    ) -> BrowserSession:
         if sync_playwright is None:
             raise RuntimeError("playwright_unavailable")
         target = str(endpoint or "").strip()
         if not re.match(r"^https?://", target, flags=re.I):
             raise RuntimeError("cdp_endpoint_invalid")
 
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
+        user_data_dir = self._resolve_cdp_profile_dir(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=resolved_profile_id,
+        )
         pw = sync_playwright().start()
         browser = pw.chromium.connect_over_cdp(
             target,
@@ -295,6 +583,7 @@ class BrowserAutomationService:
             session_id=f"bs-{uuid4().hex[:12]}",
             user_id=int(user_id),
             workspace=_normalize_workspace(workspace),
+            profile_id=resolved_profile_id,
             mode="cdp",
             owner_thread_id=threading.get_ident(),
             playwright=pw,
@@ -303,6 +592,7 @@ class BrowserAutomationService:
             page=page,
             created_at=now,
             last_used=now,
+            user_data_dir=str(user_data_dir),
         )
 
     @staticmethod
@@ -437,18 +727,113 @@ class BrowserAutomationService:
             return cft
         return self._select_first_existing_path(self._list_system_browser_candidates())
 
-    def _resolve_cdp_profile_dir(self) -> Path:
-        self._cdp_profile_dir.mkdir(parents=True, exist_ok=True)
-        return self._cdp_profile_dir
+    def _resolve_cdp_profile_dir(self, *, user_id: int, workspace: str, profile_id: str = "") -> Path:
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
+        normalized_workspace = _normalize_workspace(workspace)
+        user_segment = f"user_{int(user_id)}"
+        workspace_segment = self._sanitize_profile_segment(normalized_workspace, default="default")
+        profile_segment = self._sanitize_profile_segment(resolved_profile_id, default="default")
+        target = self._cdp_profile_dir / user_segment / workspace_segment / profile_segment
+        target.mkdir(parents=True, exist_ok=True)
+        return target
 
-    def _build_cdp_launch_command(self, endpoint: str) -> dict[str, Any]:
+    @staticmethod
+    def _normalize_path_value(path: str | Path | None) -> str:
+        raw = str(path or "").strip()
+        if not raw:
+            return ""
+        try:
+            return str(Path(raw).resolve())
+        except Exception:
+            return str(Path(raw))
+
+    @staticmethod
+    def _extract_user_data_dir_from_cmdline(cmdline: str) -> str:
+        text = str(cmdline or "").strip()
+        if not text:
+            return ""
+        patterns = (
+            r'--user-data-dir="([^"]+)"',
+            r"--user-data-dir=([^\s]+)",
+            r'--user-data-dir\s+"([^"]+)"',
+            r"--user-data-dir\s+([^\s]+)",
+        )
+        for pattern in patterns:
+            matched = re.search(pattern, text, flags=re.I)
+            if matched:
+                return str(matched.group(1) or "").strip().strip('"')
+        return ""
+
+    def _get_cdp_listener_user_data_dir(self, *, endpoint: str) -> str:
+        conflicts = self._list_cdp_conflict_processes(max_items=8, endpoint=endpoint)
+        for row in conflicts:
+            cmdline = str(row.get("cmdline") or "")
+            user_data_dir = self._extract_user_data_dir_from_cmdline(cmdline)
+            normalized = self._normalize_path_value(user_data_dir)
+            if normalized:
+                return normalized
+        return ""
+
+    def _remember_active_cdp_profile(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+        user_data_dir: str = "",
+    ) -> None:
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
+        profile_key = self._profile_key(user_id=user_id, workspace=workspace, profile_id=resolved_profile_id)
+        with self._lock:
+            self._active_cdp_profile_key = profile_key
+            self._active_cdp_user_data_dir = self._normalize_path_value(user_data_dir)
+
+    def _clear_active_cdp_profile(self) -> None:
+        with self._lock:
+            self._active_cdp_profile_key = ""
+            self._active_cdp_user_data_dir = ""
+
+    def _is_target_cdp_profile_active(self, *, user_id: int, workspace: str, profile_id: str = "") -> bool:
+        target_dir = self._normalize_path_value(
+            self._resolve_cdp_profile_dir(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        )
+        if not target_dir:
+            return False
+        active_dir = self._get_cdp_listener_user_data_dir(endpoint=self._cdp_endpoint)
+        if active_dir:
+            return active_dir == target_dir
+        target_profile_key = self._profile_key(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=self._resolved_profile_id(workspace=workspace, profile_id=profile_id),
+        )
+        with self._lock:
+            remembered_key = str(self._active_cdp_profile_key or "")
+            remembered_dir = str(self._active_cdp_user_data_dir or "")
+        if remembered_dir:
+            return self._normalize_path_value(remembered_dir) == target_dir
+        return bool(remembered_key) and remembered_key == target_profile_key
+
+    def _build_cdp_launch_command(
+        self,
+        endpoint: str,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+    ) -> dict[str, Any]:
         exe = self._resolve_cdp_browser_executable()
         if not exe:
             raise RuntimeError("cdp_browser_not_found")
         port = self._parse_cdp_port(endpoint)
         if port <= 0:
             raise RuntimeError("cdp_endpoint_invalid")
-        user_data_dir = self._resolve_cdp_profile_dir()
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
+        user_data_dir = self._resolve_cdp_profile_dir(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=resolved_profile_id,
+        )
         cmd = [
             exe,
             f"--remote-debugging-port={port}",
@@ -464,15 +849,29 @@ class BrowserAutomationService:
             "exe": exe,
             "port": int(port),
             "user_data_dir": str(user_data_dir),
+            "profile_id": resolved_profile_id,
         }
 
-    def _launch_cdp_browser(self, endpoint: str) -> dict[str, Any]:
-        launch = self._build_cdp_launch_command(endpoint)
+    def _launch_cdp_browser(
+        self,
+        endpoint: str,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+    ) -> dict[str, Any]:
+        launch = self._build_cdp_launch_command(
+            endpoint,
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile_id,
+        )
         _LOG.info(
-            "cdp_launch command exe=%s port=%s user_data_dir=%s",
+            "cdp_launch command exe=%s port=%s user_data_dir=%s profile_id=%s",
             str(launch.get("exe") or "")[:180],
             int(launch.get("port") or 0),
             str(launch.get("user_data_dir") or "-")[:220],
+            str(launch.get("profile_id") or "")[:120],
         )
         try:
             child = subprocess.Popen(
@@ -488,13 +887,15 @@ class BrowserAutomationService:
                 "alive": exit_code is None,
                 "exit_code": None if exit_code is None else int(exit_code),
                 "user_data_dir": str(launch.get("user_data_dir") or "")[:220],
+                "profile_id": str(launch.get("profile_id") or "")[:120],
             }
             _LOG.info(
-                "cdp_launch spawned pid=%s endpoint=%s alive=%s exit_code=%s",
+                "cdp_launch spawned pid=%s endpoint=%s alive=%s exit_code=%s profile_id=%s",
                 int(launch_meta.get("pid") or 0),
                 str(launch_meta.get("endpoint") or "")[:160],
                 "1" if bool(launch_meta.get("alive")) else "0",
                 "" if launch_meta.get("exit_code") is None else str(launch_meta.get("exit_code")),
+                str(launch_meta.get("profile_id") or "")[:120],
             )
             return launch_meta
         except Exception as exc:
@@ -541,21 +942,51 @@ class BrowserAutomationService:
         launch_budget = max(8.0, float(self._cdp_launch_timeout_seconds or 10.0))
         return max(18.0, launch_budget + 10.0)
 
-    def _ensure_cdp_endpoint_ready(self) -> None:
+    def _ensure_cdp_endpoint_ready(self, *, user_id: int, workspace: str, profile_id: str = "") -> None:
         endpoint = str(self._cdp_endpoint or "").strip()
         probe_attempts = 0
         launch_meta: dict[str, Any] | None = None
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
         if not endpoint:
             raise RuntimeError("cdp_endpoint_unconfigured")
         if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
-            return
+            if self._is_target_cdp_profile_active(
+                user_id=user_id,
+                workspace=workspace,
+                profile_id=resolved_profile_id,
+            ):
+                self._remember_active_cdp_profile(
+                    user_id=user_id,
+                    workspace=workspace,
+                    profile_id=resolved_profile_id,
+                    user_data_dir=self._get_cdp_listener_user_data_dir(endpoint=endpoint),
+                )
+                return
+            raise RuntimeError("cdp_requires_browser_restart")
         if not self._cdp_auto_launch:
             raise RuntimeError("cdp_endpoint_unavailable")
 
         with self._cdp_bootstrap_lock:
             if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
-                return
-            launch_meta = self._launch_cdp_browser(endpoint)
+                if self._is_target_cdp_profile_active(
+                    user_id=user_id,
+                    workspace=workspace,
+                    profile_id=resolved_profile_id,
+                ):
+                    self._remember_active_cdp_profile(
+                        user_id=user_id,
+                        workspace=workspace,
+                        profile_id=resolved_profile_id,
+                        user_data_dir=self._get_cdp_listener_user_data_dir(endpoint=endpoint),
+                    )
+                    return
+                raise RuntimeError("cdp_requires_browser_restart")
+            launch_meta = self._launch_cdp_browser(
+                endpoint,
+                user_id=user_id,
+                workspace=workspace,
+                profile_id=resolved_profile_id,
+            )
             deadline = time.time() + max(2.0, float(self._cdp_launch_timeout_seconds or 10.0))
             ready, probe_attempts = self._wait_for_cdp_endpoint(
                 endpoint,
@@ -564,12 +995,18 @@ class BrowserAutomationService:
                 sleep_seconds=0.2,
             )
             if ready:
+                self._remember_active_cdp_profile(
+                    user_id=user_id,
+                    workspace=workspace,
+                    profile_id=resolved_profile_id,
+                    user_data_dir=str(launch_meta.get("user_data_dir") or ""),
+                )
                 return
             conflicts = self._list_cdp_conflict_processes(max_items=8, endpoint=endpoint)
             if conflicts:
                 diag = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
                 _LOG.warning(
-                    "ensure_cdp_endpoint_ready requires_restart endpoint=%s attempts=%s reason=%s listeners=%s launch_pid=%s launch_alive=%s launch_exit_code=%s",
+                    "ensure_cdp_endpoint_ready requires_restart endpoint=%s attempts=%s reason=%s listeners=%s launch_pid=%s launch_alive=%s launch_exit_code=%s profile_id=%s",
                     str(endpoint)[:160],
                     int(probe_attempts),
                     str(diag.get("reason") or "unknown")[:120],
@@ -577,11 +1014,12 @@ class BrowserAutomationService:
                     int((launch_meta or {}).get("pid") or 0),
                     "1" if bool((launch_meta or {}).get("alive")) else "0",
                     "" if (launch_meta or {}).get("exit_code") is None else str((launch_meta or {}).get("exit_code")),
+                    resolved_profile_id[:120],
                 )
                 raise RuntimeError("cdp_requires_browser_restart")
         diag = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
         _LOG.warning(
-            "ensure_cdp_endpoint_ready timeout endpoint=%s attempts=%s reason=%s listeners=%s launch_pid=%s launch_alive=%s launch_exit_code=%s",
+            "ensure_cdp_endpoint_ready timeout endpoint=%s attempts=%s reason=%s listeners=%s launch_pid=%s launch_alive=%s launch_exit_code=%s profile_id=%s",
             str(endpoint)[:160],
             int(probe_attempts),
             str(diag.get("reason") or "unknown")[:120],
@@ -589,6 +1027,7 @@ class BrowserAutomationService:
             int((launch_meta or {}).get("pid") or 0),
             "1" if bool((launch_meta or {}).get("alive")) else "0",
             "" if (launch_meta or {}).get("exit_code") is None else str((launch_meta or {}).get("exit_code")),
+            resolved_profile_id[:120],
         )
         raise RuntimeError("cdp_launch_timeout")
 
@@ -599,31 +1038,45 @@ class BrowserAutomationService:
         default = str(self._mode_default or "auto").strip().lower()
         return default if default in {"managed", "cdp", "auto"} else "auto"
 
-    def _create_session_for_mode(self, *, user_id: int, workspace: str, mode: str) -> BrowserSession:
+    def _create_session_for_mode(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        mode: str,
+        profile_id: str = "",
+    ) -> BrowserSession:
         if mode == "cdp":
-            self._ensure_cdp_endpoint_ready()
+            self._ensure_cdp_endpoint_ready(user_id=user_id, workspace=workspace, profile_id=profile_id)
             return self._create_cdp_session(
                 user_id=user_id,
                 workspace=workspace,
                 endpoint=self._cdp_endpoint,
+                profile_id=profile_id,
             )
         if mode == "managed":
-            return self._create_managed_session(user_id=user_id, workspace=workspace)
+            return self._create_managed_session(user_id=user_id, workspace=workspace, profile_id=profile_id)
         raise RuntimeError(f"unsupported_session_mode:{mode}")
 
-    def _get_session(self, *, user_id: int, workspace: str, mode: str = "auto") -> BrowserSession:
+    def _get_session(self, *, user_id: int, workspace: str, mode: str = "auto", profile_id: str = "") -> BrowserSession:
         resolved_mode = self._resolve_mode(mode)
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
         if resolved_mode == "auto":
             if self._cdp_enabled and self._cdp_endpoint:
                 try:
-                    return self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+                    return self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=resolved_profile_id)
                 except Exception:
                     pass
-            return self._get_session(user_id=user_id, workspace=workspace, mode="managed")
+            return self._get_session(user_id=user_id, workspace=workspace, mode="managed", profile_id=resolved_profile_id)
         if resolved_mode not in {"managed", "cdp"}:
             raise RuntimeError(f"unsupported_session_mode:{resolved_mode}")
 
-        key = self._session_key(user_id=user_id, workspace=workspace, mode=resolved_mode)
+        key = self._session_key(
+            user_id=user_id,
+            workspace=workspace,
+            mode=resolved_mode,
+            profile_id=resolved_profile_id,
+        )
         thread_id = threading.get_ident()
         while True:
             self._cleanup_idle_sessions()
@@ -659,6 +1112,7 @@ class BrowserAutomationService:
                     user_id=user_id,
                     workspace=workspace,
                     mode=resolved_mode,
+                    profile_id=resolved_profile_id,
                 )
                 with self._lock:
                     existing = self._sessions.get(key)
@@ -885,8 +1339,8 @@ class BrowserAutomationService:
                 continue
         return False
 
-    def _has_reusable_cdp_session(self, *, user_id: int, workspace: str) -> bool:
-        session = self._peek_session(user_id=user_id, workspace=workspace, mode="cdp")
+    def _has_reusable_cdp_session(self, *, user_id: int, workspace: str, profile_id: str = "") -> bool:
+        session = self._peek_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile_id)
         if session is None:
             return False
         try:
@@ -1075,20 +1529,39 @@ class BrowserAutomationService:
             "failed_pids": sorted({pid for pid in failed if pid > 0}),
         }
 
-    def force_restart_to_cdp(self, *, timeout_seconds: float = 12.0) -> dict[str, Any]:
+    def force_restart_to_cdp(
+        self,
+        *,
+        timeout_seconds: float = 12.0,
+        user_id: int = 0,
+        workspace: str = "default",
+        profile_id: str = "",
+    ) -> dict[str, Any]:
         started = time.perf_counter()
         endpoint = str(self._cdp_endpoint or "").strip()
         last_launch_meta: dict[str, Any] | None = None
+        resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
         if not endpoint:
             _LOG.warning("force_restart_to_cdp failed: endpoint_unconfigured")
             return {"ok": False, "error": "cdp_endpoint_unconfigured"}
-        if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.4):
+        if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.4) and self._is_target_cdp_profile_active(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=resolved_profile_id,
+        ):
+            self._remember_active_cdp_profile(
+                user_id=user_id,
+                workspace=workspace,
+                profile_id=resolved_profile_id,
+                user_data_dir=self._get_cdp_listener_user_data_dir(endpoint=endpoint),
+            )
             _LOG.info(
-                "force_restart_to_cdp skipped: already_ready endpoint=%s latency_ms=%s",
+                "force_restart_to_cdp skipped: already_ready endpoint=%s latency_ms=%s profile_id=%s",
                 endpoint,
                 int((time.perf_counter() - started) * 1000),
+                resolved_profile_id[:120],
             )
-            return {"ok": True, "endpoint": endpoint, "already_ready": True}
+            return {"ok": True, "endpoint": endpoint, "already_ready": True, "profile_id": resolved_profile_id}
 
         requested_timeout = max(2.0, float(timeout_seconds or 12.0))
         effective_timeout = max(requested_timeout, self._recommended_restart_timeout_seconds())
@@ -1150,7 +1623,12 @@ class BrowserAutomationService:
                 )
                 return {"ok": True, "endpoint": endpoint, "already_ready": True, **terminate_report}
             try:
-                last_launch_meta = self._launch_cdp_browser(endpoint)
+                last_launch_meta = self._launch_cdp_browser(
+                    endpoint,
+                    user_id=user_id,
+                    workspace=workspace,
+                    profile_id=resolved_profile_id,
+                )
             except Exception as exc:
                 _LOG.warning(
                     "force_restart_to_cdp launch_failed endpoint=%s error=%s latency_ms=%s",
@@ -1171,12 +1649,19 @@ class BrowserAutomationService:
                 sleep_seconds=0.2,
             )
             if ready:
+                self._remember_active_cdp_profile(
+                    user_id=user_id,
+                    workspace=workspace,
+                    profile_id=resolved_profile_id,
+                    user_data_dir=str((last_launch_meta or {}).get("user_data_dir") or ""),
+                )
                 _LOG.info(
-                    "force_restart_to_cdp success endpoint=%s latency_ms=%s",
+                    "force_restart_to_cdp success endpoint=%s latency_ms=%s profile_id=%s",
                     endpoint,
                     int((time.perf_counter() - started) * 1000),
+                    resolved_profile_id[:120],
                 )
-                return {"ok": True, "endpoint": endpoint, **terminate_report}
+                return {"ok": True, "endpoint": endpoint, "profile_id": resolved_profile_id, **terminate_report}
         # Fallback: if launch timed out without explicit port conflicts,
         # Chromium family processes may still be reusing an existing browser instance
         # and swallowing --remote-debugging-port flags.
@@ -1212,7 +1697,12 @@ class BrowserAutomationService:
                 "failed_pids": merged_failed,
             }
             try:
-                last_launch_meta = self._launch_cdp_browser(endpoint)
+                last_launch_meta = self._launch_cdp_browser(
+                    endpoint,
+                    user_id=user_id,
+                    workspace=workspace,
+                    profile_id=resolved_profile_id,
+                )
             except Exception as exc:
                 _LOG.warning(
                     "force_restart_to_cdp fallback_launch_failed endpoint=%s error=%s latency_ms=%s",
@@ -1234,12 +1724,25 @@ class BrowserAutomationService:
                 sleep_seconds=0.2,
             )
             if ready:
+                self._remember_active_cdp_profile(
+                    user_id=user_id,
+                    workspace=workspace,
+                    profile_id=resolved_profile_id,
+                    user_data_dir=str((last_launch_meta or {}).get("user_data_dir") or ""),
+                )
                 _LOG.info(
-                    "force_restart_to_cdp success_after_fallback endpoint=%s latency_ms=%s",
+                    "force_restart_to_cdp success_after_fallback endpoint=%s latency_ms=%s profile_id=%s",
                     endpoint,
                     int((time.perf_counter() - started) * 1000),
+                    resolved_profile_id[:120],
                 )
-                return {"ok": True, "endpoint": endpoint, "fallback_full_restart": True, **terminate_report}
+                return {
+                    "ok": True,
+                    "endpoint": endpoint,
+                    "profile_id": resolved_profile_id,
+                    "fallback_full_restart": True,
+                    **terminate_report,
+                }
         remaining_after_launch = self._list_cdp_conflict_processes(max_items=20, endpoint=endpoint)
         if remaining_after_launch:
             _LOG.warning(
@@ -1329,6 +1832,8 @@ class BrowserAutomationService:
                         {
                             "session_id": str(getattr(session, "session_id", "") or ""),
                             "mode": str(getattr(session, "mode", "managed") or "managed"),
+                            "profile_id": str(getattr(session, "profile_id", "") or ""),
+                            "user_data_dir": str(getattr(session, "user_data_dir", "") or "")[:220],
                             "last_used": float(getattr(session, "last_used", 0.0) or 0.0),
                             "created_at": float(getattr(session, "created_at", 0.0) or 0.0),
                             "owner_thread_id": int(getattr(session, "owner_thread_id", 0) or 0),
@@ -1624,22 +2129,33 @@ class BrowserAutomationService:
         *,
         user_id: int,
         workspace: str,
+        profile_id: str = "",
         action: str = "",
         allow_restart_confirmation: bool = False,
         confirmed: bool = False,
         next_args: dict[str, Any] | None = None,
     ) -> tuple[BrowserSession | None, dict[str, Any] | None]:
         try:
-            session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+            session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile_id)
             return session, None
         except Exception as exc:
             reason = str(exc)[:160]
             if allow_restart_confirmation and "cdp_requires_browser_restart" in reason:
                 if confirmed:
-                    restart_meta = self.force_restart_to_cdp(timeout_seconds=self._recommended_restart_timeout_seconds())
+                    restart_meta = self.force_restart_to_cdp(
+                        timeout_seconds=self._recommended_restart_timeout_seconds(),
+                        user_id=user_id,
+                        workspace=workspace,
+                        profile_id=profile_id,
+                    )
                     if bool(restart_meta.get("ok")):
                         try:
-                            session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp")
+                            session = self._get_session(
+                                user_id=user_id,
+                                workspace=workspace,
+                                mode="cdp",
+                                profile_id=profile_id,
+                            )
                             return session, None
                         except Exception as retry_exc:
                             retry_reason = str(retry_exc)[:160]
@@ -1687,6 +2203,7 @@ class BrowserAutomationService:
         *,
         user_id: int,
         workspace: str,
+        profile_id: str = "",
         scope: str = "auto",
         include_dom: bool = True,
         include_a11y: bool = False,
@@ -1694,6 +2211,7 @@ class BrowserAutomationService:
         max_items: int = 20,
         pid: int = 0,
     ) -> dict[str, Any]:
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
         user_scope = self._normalize_scope(scope)
         target_limit = _clamp_int(max_targets, 30, low=1, high=60)
         proc_limit = _clamp_int(max_items, 20, low=0, high=200)
@@ -1709,6 +2227,7 @@ class BrowserAutomationService:
             active_state = self.state_get(
                 user_id=user_id,
                 workspace=workspace,
+                profile_id=profile.profile_id,
                 scope="auto",
                 include_dom=include_dom,
                 include_a11y=include_a11y,
@@ -1748,6 +2267,7 @@ class BrowserAutomationService:
         session, session_error = self._acquire_cdp_session(
             user_id=user_id,
             workspace=workspace,
+            profile_id=profile.profile_id,
             action="state_get",
             allow_restart_confirmation=False,
         )
@@ -1825,6 +2345,8 @@ class BrowserAutomationService:
                 "ok": True,
                 "scope": runtime_scope,
                 "session_id": session.session_id,
+                "profile_id": profile.profile_id,
+                "profile": self._profile_payload(profile),
                 **snap,
             }
             if fallback_reason:
@@ -1863,6 +2385,7 @@ class BrowserAutomationService:
         workspace: str,
         action: str,
         args: dict[str, Any],
+        profile_id: str = "",
         scope: str = "auto",
     ) -> dict[str, Any]:
         act = str(action or "").strip().lower()
@@ -1872,6 +2395,7 @@ class BrowserAutomationService:
         target = str(args.get("target") or args.get("selector") or args.get("text") or "").strip()
         value = str(args.get("value") or "").strip()
         url = str(args.get("url") or "").strip()
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
         user_scope = self._normalize_scope(scope)
         runtime_scope = user_scope
         prefer_existing_cdp = False
@@ -1882,6 +2406,7 @@ class BrowserAutomationService:
                 prefer_existing_cdp = sticky_scope == "cdp" or self._has_reusable_cdp_session(
                     user_id=int(user_id),
                     workspace=workspace,
+                    profile_id=profile.profile_id,
                 )
                 runtime_scope = "cdp" if prefer_existing_cdp else "external"
             elif self._is_complex_auto_action(act):
@@ -1958,6 +2483,8 @@ class BrowserAutomationService:
                     "before": {"url": "", "title": ""},
                     "after": {"url": url[:800], "title": ""},
                     "session_id": "",
+                    "profile_id": profile.profile_id,
+                    "profile": self._profile_payload(profile),
                 }
 
         if (
@@ -1968,6 +2495,14 @@ class BrowserAutomationService:
         ):
             next_args = dict(args or {})
             next_args["confirm"] = True
+            login_state = self.mark_login_pending(
+                user_id=user_id,
+                workspace=workspace,
+                domain=self._extract_hostname(url),
+                next_call={"tool": "browser_use", "action": act, "args": next_args},
+                profile_id=profile.profile_id,
+                reason="auth_guard",
+            )
             return {
                 "ok": False,
                 "error": "auth_permission_required",
@@ -1976,6 +2511,10 @@ class BrowserAutomationService:
                 "risk_level": "auth_guard",
                 "action": act,
                 "domain": self._extract_hostname(url),
+                "profile_id": profile.profile_id,
+                "profile": self._profile_payload(profile),
+                "login_request_id": str(login_state.get("request_id") or ""),
+                "login_state": login_state,
                 "fallback_scope": "external",
                 "supported_scopes": ["auto", "cdp", "external"],
                 "hint": (
@@ -2036,6 +2575,7 @@ class BrowserAutomationService:
                 session, session_error = self._acquire_cdp_session(
                     user_id=user_id,
                     workspace=workspace,
+                    profile_id=profile.profile_id,
                     action=act,
                     allow_restart_confirmation=True,
                     confirmed=bool(args.get("confirm")),
@@ -2050,6 +2590,7 @@ class BrowserAutomationService:
             session, session_error = self._acquire_cdp_session(
                 user_id=user_id,
                 workspace=workspace,
+                profile_id=profile.profile_id,
                 action=act,
                 allow_restart_confirmation=True,
                 confirmed=bool(args.get("confirm")),
@@ -2063,6 +2604,7 @@ class BrowserAutomationService:
         before = self.state_get(
             user_id=user_id,
             workspace=workspace,
+            profile_id=profile.profile_id,
             scope=runtime_scope,
             include_dom=False,
             include_a11y=False,
@@ -2120,6 +2662,7 @@ class BrowserAutomationService:
         after = self.state_get(
             user_id=user_id,
             workspace=workspace,
+            profile_id=profile.profile_id,
             scope=runtime_scope,
             include_dom=False,
             include_a11y=False,
@@ -2136,6 +2679,8 @@ class BrowserAutomationService:
             "before": {"url": str(before.get("url") or ""), "title": str(before.get("title") or "")},
             "after": {"url": str(after.get("url") or ""), "title": str(after.get("title") or "")},
             "session_id": str(after.get("session_id") or ""),
+            "profile_id": profile.profile_id,
+            "profile": self._profile_payload(profile),
         }
         if fallback_reason:
             payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +19,7 @@ from app.services.device_center import (
     device_capabilities as device_capabilities_info,
 )
 from app.services.browser_automation import browser_automation_service
+from app.services import browser_exec
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.tracking_autonomy import TrackingAutonomyService
 from app.services.llm import LLMService
@@ -94,23 +93,13 @@ def _result_items(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
 
 
 def _has_running_event_loop() -> bool:
-    try:
-        asyncio.get_running_loop()
-        return True
-    except Exception:
-        return False
+    return browser_exec.has_running_event_loop()
 
 
 def _run_sync_playwright_call(callable_obj, *args, **kwargs):
-    """Avoid Playwright Sync API usage on threads that already run an asyncio loop."""
     if not _has_running_event_loop():
         return callable_obj(*args, **kwargs)
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="aelin-browser-tool") as pool:
-        future = pool.submit(callable_obj, *args, **kwargs)
-        try:
-            return future.result(timeout=45)
-        except FutureTimeoutError as exc:
-            raise RuntimeError("browser_tool_timeout") from exc
+    return browser_exec.run_in_browser_thread(callable_obj, *args, timeout=45, **kwargs)
 
 
 def should_attempt_aelin_tools(query: str) -> bool:

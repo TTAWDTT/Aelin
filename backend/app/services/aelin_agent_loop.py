@@ -480,6 +480,7 @@ class AelinAgentLoop:
     def _build_actions(self, runs: list[AgentLoopToolRun]) -> list[dict[str, str]]:
         return _build_actions_from_runs(
             runs=runs,
+            user_id=int(getattr(self._tool_hub, "user_id", 0) or 0),
             workspace=str(self._tool_hub.workspace),
             resume_query=str(getattr(self, "_last_query", "") or ""),
             resume_request_json=str(getattr(self, "_resume_request_json", "") or ""),
