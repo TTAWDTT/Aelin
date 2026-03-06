@@ -367,6 +367,28 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
     if tool in {"context_get", "browser_state_get", "browser_session_list", "tracking", "diary", "profile", "device"}:
         if "summary" in payload:
             base["summary"] = _truncate_model_text(payload.get("summary"), limit=260)
+        if "snapshot" in payload and isinstance(payload.get("snapshot"), dict):
+            snapshot = payload.get("snapshot") or {}
+            base["snapshot"] = {
+                "url": _truncate_model_text(snapshot.get("url"), limit=220),
+                "title": _truncate_model_text(snapshot.get("title"), limit=180),
+                "ready_state": _truncate_model_text(snapshot.get("ready_state"), limit=40),
+            }
+            focus_targets = snapshot.get("focus_targets")
+            if isinstance(focus_targets, list):
+                compact_targets: list[dict[str, Any]] = []
+                for item in focus_targets[:_MODEL_LIST_PREVIEW_ITEMS]:
+                    if not isinstance(item, dict):
+                        continue
+                    compact_targets.append(
+                        {
+                            "label": _truncate_model_text(item.get("label"), limit=120),
+                            "tag": _truncate_model_text(item.get("tag"), limit=24),
+                            "role": _truncate_model_text(item.get("role"), limit=24),
+                            "selector_hint": _truncate_model_text(item.get("selector_hint"), limit=120),
+                        }
+                    )
+                base["snapshot"]["focus_targets"] = compact_targets
         if "url" in payload:
             base["url"] = _truncate_model_text(payload.get("url"), limit=240)
         if "title" in payload:

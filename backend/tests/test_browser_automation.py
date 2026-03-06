@@ -162,6 +162,24 @@ def test_snapshot_page_marks_blank_scope():
     assert snap["session_scope"] == "managed"
     assert snap["is_blank_page"] is True
     assert "agent" in str(snap.get("scope_note") or "").lower()
+    snapshot = snap.get("snapshot") if isinstance(snap.get("snapshot"), dict) else {}
+    assert snapshot.get("ready_state") == "complete"
+    assert "当前地址" in str(snapshot.get("summary") or "")
+
+
+def test_build_agent_snapshot_prefers_interactive_labels():
+    snapshot = BrowserAutomationService._build_agent_snapshot(
+        url="https://x.com/home",
+        title="Home / X",
+        ready_state="complete",
+        interactive_targets=[
+            {"text": "Profile", "tag": "a", "role": "link", "selector_hint": "a[href='/profile']"},
+            {"text": "Following", "tag": "a", "role": "link", "selector_hint": "a[href='/following']"},
+        ],
+        a11y_nodes=[],
+    )
+    assert snapshot["focus_targets"][0]["label"] == "Profile"
+    assert "Profile" in str(snapshot.get("summary") or "")
 
 
 def test_use_navigate_can_open_external_browser(monkeypatch):

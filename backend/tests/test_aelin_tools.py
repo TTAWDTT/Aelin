@@ -374,6 +374,30 @@ def test_browser_record_result_does_not_mark_failed_navigate_as_observed():
     assert short_circuit is None
 
 
+def test_compact_browser_state_result_keeps_snapshot_preview():
+    compact = aelin_loop_tools._compact_tool_result_for_model(
+        "browser_state_get",
+        {
+            "ok": True,
+            "summary": "页面标题: Home / X；可操作元素: Following / Profile；加载状态: complete",
+            "snapshot": {
+                "url": "https://x.com/home",
+                "title": "Home / X",
+                "ready_state": "complete",
+                "focus_targets": [
+                    {"label": "Following", "tag": "a", "role": "link", "selector_hint": "a[href='/following']"},
+                    {"label": "Profile", "tag": "a", "role": "link", "selector_hint": "a[href='/user']"},
+                ],
+            },
+        },
+    )
+
+    snapshot = compact.get("snapshot") if isinstance(compact.get("snapshot"), dict) else {}
+    assert snapshot.get("title") == "Home / X"
+    focus_targets = snapshot.get("focus_targets") if isinstance(snapshot.get("focus_targets"), list) else []
+    assert focus_targets[0]["tag"] == "a"
+
+
 def test_attachment_search_uses_available_ids_fallback():
     fake_web = _FakeWebSearch()
     fake_attachment = _FakeAttachmentService()

@@ -2007,6 +2007,13 @@ class BrowserAutomationService:
             scope_note = "这是 Aelin agent 的浏览器会话，不是系统当前前台浏览器标签页。"
         else:
             scope_note = "这是 Aelin agent 的浏览器会话状态。"
+        snapshot = self._build_agent_snapshot(
+            url=url,
+            title=title,
+            ready_state=ready_state,
+            interactive_targets=interactive_targets,
+            a11y_nodes=a11y_nodes,
+        )
         return {
             "session_scope": mode_tag,
             "is_blank_page": is_blank_page,
@@ -2015,9 +2022,68 @@ class BrowserAutomationService:
             "url": url,
             "title": title,
             "ready_state": ready_state,
+            "summary": str(snapshot.get("summary") or "")[:260],
+            "snapshot": snapshot,
             "interactive_targets": interactive_targets,
             "a11y_nodes": a11y_nodes,
             "dom_digest": digest,
+        }
+
+    @staticmethod
+    def _build_agent_snapshot(
+        *,
+        url: str,
+        title: str,
+        ready_state: str,
+        interactive_targets: list[dict[str, Any]],
+        a11y_nodes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        focus_targets: list[dict[str, Any]] = []
+        labels: list[str] = []
+        for item in interactive_targets[:8]:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("text") or item.get("selector_hint") or item.get("role") or item.get("tag") or "").strip()
+            tag = str(item.get("tag") or "").strip()[:24]
+            role = str(item.get("role") or "").strip()[:24]
+            selector_hint = str(item.get("selector_hint") or "").strip()[:120]
+            entry = {
+                "label": label[:120],
+                "tag": tag,
+                "role": role,
+                "selector_hint": selector_hint,
+            }
+            focus_targets.append(entry)
+            if label:
+                labels.append(label[:40])
+
+        cues: list[str] = []
+        for node in a11y_nodes[:6]:
+            if not isinstance(node, dict):
+                continue
+            cue = str(node.get("name") or node.get("role") or "").strip()
+            if cue:
+                cues.append(cue[:40])
+
+        parts: list[str] = []
+        if title:
+            parts.append(f"页面标题: {title[:80]}")
+        if labels:
+            parts.append("可操作元素: " + " / ".join(labels[:4]))
+        elif cues:
+            parts.append("辅助线索: " + " / ".join(cues[:4]))
+        elif url:
+            parts.append(f"当前地址: {url[:120]}")
+        if ready_state:
+            parts.append(f"加载状态: {ready_state[:24]}")
+
+        return {
+            "url": url[:240],
+            "title": title[:180],
+            "ready_state": ready_state[:40],
+            "focus_targets": focus_targets,
+            "a11y_cues": cues[:4],
+            "summary": "；".join(parts)[:260],
         }
 
     @staticmethod
