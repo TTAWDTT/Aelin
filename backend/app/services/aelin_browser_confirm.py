@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.models import User
 from app.schemas import AelinBrowserConfirmRequest, AelinBrowserConfirmResponse
-from app.services.browser_automation import browser_automation_service
 from app.services.aelin_browser_confirm_call import (
     build_browser_restart_meta,
     build_restart_failed_result,
@@ -25,6 +24,8 @@ from app.services.aelin_browser_confirm_followup import (
     resolve_confirm_controls,
     resolve_confirm_login_state,
 )
+from app.services.browser_runtime import browser_runtime_service
+from app.services.browser_runtime_login import browser_runtime_login_service
 
 
 _LOG = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def confirm_browser_action_request(
     workspace = str(payload.workspace or "default").strip()[:64] or "default"
     stored_login_state: dict[str, Any] = {}
     if str(payload.login_request_id or "").strip():
-        stored_login_state = browser_automation_service.get_login_state(
+        stored_login_state = browser_runtime_login_service.get_login_state(
             user_id=int(current_user.id),
             workspace=workspace,
             request_id=str(payload.login_request_id or ""),
@@ -69,7 +70,7 @@ def confirm_browser_action_request(
     restart_meta: dict[str, Any] | None = None
     pre_restart_meta: dict[str, Any] | None = None
     if needs_restart_before_confirmed_call(tool_name=tool_name, scope=scope, clean_args=clean_args):
-        restart_meta = browser_automation_service.force_restart_to_cdp(
+        restart_meta = browser_runtime_service.force_restart_to_cdp(
             timeout_seconds=24.0,
             user_id=int(current_user.id),
             workspace=workspace,
@@ -112,7 +113,7 @@ def confirm_browser_action_request(
         )
         pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
         if (not bool(result.get("ok"))) and is_cdp_restart_error(str(result.get("error") or "")):
-            restart_meta = browser_automation_service.force_restart_to_cdp(
+            restart_meta = browser_runtime_service.force_restart_to_cdp(
                 timeout_seconds=24.0,
                 user_id=int(current_user.id),
                 workspace=workspace,

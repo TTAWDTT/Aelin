@@ -18,7 +18,7 @@ from app.services.device_center import (
     DeviceScreenCaptureError,
     device_capabilities as device_capabilities_info,
 )
-from app.services.browser_automation import browser_automation_service
+from app.services.browser_runtime import browser_runtime_service
 from app.services import browser_exec
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
@@ -26,6 +26,8 @@ from app.services.tracking_autonomy import TrackingAutonomyService
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
+
+browser_automation_service = browser_runtime_service
 
 _TOOL_KEYWORDS = (
     "日记",
@@ -699,7 +701,7 @@ class AelinToolHub:
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
             result = _run_sync_playwright_call(
-                browser_automation_service.list_sessions,
+                browser_runtime_service.list_sessions,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -719,7 +721,7 @@ class AelinToolHub:
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
             result = _run_sync_playwright_call(
-                browser_automation_service.state_get,
+                browser_runtime_service.state_get,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -755,7 +757,7 @@ class AelinToolHub:
         }
         try:
             result = _run_sync_playwright_call(
-                browser_automation_service.use,
+                browser_runtime_service.use,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 action=action,

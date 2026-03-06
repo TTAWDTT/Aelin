@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     media_ingest_douyin_asr_local_beam_size: int = 4
     media_ingest_douyin_asr_max_audio_seconds: int = 120
     media_ingest_douyin_asr_timeout_seconds: int = 80
+    browser_runtime_backend: str = "playwright"
     browser_tool_headless: bool = True
     browser_tool_open_external_on_navigate: bool = False
     browser_tool_mode_default: str = "auto"  # auto | managed | cdp

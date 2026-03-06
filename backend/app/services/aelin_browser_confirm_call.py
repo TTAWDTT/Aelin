@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.browser_automation import browser_automation_service
+from app.services.browser_runtime import browser_runtime_service
 from app.services.browser_exec import run_sync_playwright_call
 
 
@@ -132,7 +132,7 @@ def execute_confirmed_browser_call(
         }
         if profile_value:
             kwargs["profile_id"] = profile_value
-        return run_sync_playwright_call(browser_automation_service.use, **kwargs)
+        return run_sync_playwright_call(browser_runtime_service.use, **kwargs)
     kwargs = {
         "user_id": user_id,
         "workspace": workspace,
@@ -145,4 +145,4 @@ def execute_confirmed_browser_call(
     }
     if profile_value:
         kwargs["profile_id"] = profile_value
-    return run_sync_playwright_call(browser_automation_service.state_get, **kwargs)
+    return run_sync_playwright_call(browser_runtime_service.state_get, **kwargs)

@@ -6,6 +6,8 @@ from typing import Any
 
 import app.routers.aelin as aelin_router
 import app.routers.aelin_chat as aelin_chat_router
+import app.services.aelin_browser_confirm as aelin_browser_confirm
+import app.services.aelin_browser_confirm_call as aelin_browser_confirm_call
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 def test_aelin_browser_confirm_restarts_and_retries_when_cdp_restart_required(monkeypatch):
@@ -21,9 +23,9 @@ def test_aelin_browser_confirm_restarts_and_retries_when_cdp_restart_required(mo
             return {"ok": False, "error": "browser_restart_required_for_cdp"}
         return {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked:Profile"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "use", _fake_use)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        aelin_browser_confirm.browser_runtime_service,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -71,7 +73,7 @@ def test_aelin_browser_confirm_preserves_selector_args(monkeypatch):
         captured["scope"] = scope
         return {"ok": True, "action": action, "scope": scope, "effect_summary": "typed"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "use", _fake_use)
 
     resp = client.post(
         "/api/v1/aelin/agent/browser/confirm",
@@ -105,7 +107,7 @@ def test_confirmed_browser_call_uses_safe_executor_inside_running_loop(monkeypat
             return {"ok": True, "action": action, "scope": scope, "effect_summary": "clicked"}
         raise RuntimeError("should_not_run_on_event_loop_thread")
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "use", _fake_use)
 
     async def _run():
         return aelin_chat_router._execute_confirmed_browser_call(
@@ -218,7 +220,7 @@ def test_aelin_browser_confirm_can_resume_from_stored_login_checkpoint(monkeypat
         captured["scope"] = scope
         return {"ok": True, "action": action, "scope": scope, "effect_summary": "navigated"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "use", _fake_use)
 
     resp = client.post(
         "/api/v1/aelin/agent/browser/confirm",
@@ -260,9 +262,9 @@ def test_aelin_browser_confirm_retries_when_first_result_is_restart_failed(monke
             }
         return {"ok": True, "action": "scroll", "scope": "cdp", "effect_summary": "scrolled"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "use", _fake_use)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        aelin_browser_confirm.browser_runtime_service,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -309,9 +311,9 @@ def test_aelin_browser_confirm_retries_when_first_result_is_cdp_unavailable_laun
             return {"ok": False, "error": "cdp_unavailable:cdp_launch_timeout"}
         return {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "use", _fake_use)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        aelin_browser_confirm.browser_runtime_service,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -536,9 +538,9 @@ def test_aelin_browser_confirm_supports_browser_state_get_and_retries_after_rest
         calls["count"] += 1
         return {"ok": True, "scope": "cdp", "url": "https://x.com/home", "title": "X", "session_id": "bs-test"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "state_get", _fake_state_get)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "state_get", _fake_state_get)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        aelin_browser_confirm.browser_runtime_service,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -585,9 +587,9 @@ def test_aelin_browser_confirm_state_get_skips_initial_retry_when_restart_fails(
         calls["count"] += 1
         return {"ok": True, "scope": "cdp", "url": "https://x.com/home", "title": "X", "session_id": "bs-test"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "state_get", _fake_state_get)
+    monkeypatch.setattr(aelin_browser_confirm_call.browser_runtime_service, "state_get", _fake_state_get)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        aelin_browser_confirm.browser_runtime_service,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": False,
