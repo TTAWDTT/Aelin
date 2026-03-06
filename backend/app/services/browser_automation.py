@@ -17,6 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.settings import settings
+from app.services.browser_login_checkpoint import browser_login_checkpoint_service
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore
@@ -319,26 +320,17 @@ class BrowserAutomationService:
         continue_after_confirm: bool = True,
     ) -> dict[str, Any]:
         profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
-        request_id = f"blogin-{uuid4().hex[:12]}"
-        now = time.time()
-        state = BrowserLoginState(
-            request_id=request_id,
+        return browser_login_checkpoint_service.mark_login_pending(
+            user_id=user_id,
+            workspace=workspace,
+            domain=domain,
+            next_call=next_call,
             profile_id=profile.profile_id,
-            user_id=int(user_id),
-            workspace=_normalize_workspace(workspace),
-            domain=str(domain or "")[:120],
-            reason=str(reason or "auth_guard")[:80],
-            status="awaiting_login",
-            next_call=dict(next_call or {}),
-            resume_query=str(resume_query or "")[:500],
-            resume_request=dict(resume_request or {}),
-            continue_after_confirm=bool(continue_after_confirm),
-            created_at=now,
-            updated_at=now,
+            reason=reason,
+            resume_query=resume_query,
+            resume_request=resume_request,
+            continue_after_confirm=continue_after_confirm,
         )
-        with self._lock:
-            self._login_states[request_id] = state
-        return self._login_state_payload(state)
 
     def get_login_state(
         self,
@@ -348,18 +340,12 @@ class BrowserAutomationService:
         request_id: str,
         profile_id: str = "",
     ) -> dict[str, Any]:
-        clean_request_id = str(request_id or "").strip()
-        if not clean_request_id:
-            return {}
-        with self._lock:
-            state = self._login_states.get(clean_request_id)
-            if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            return self._login_state_payload(state)
+        return browser_login_checkpoint_service.get_login_state(
+            user_id=user_id,
+            workspace=workspace,
+            request_id=request_id,
+            profile_id=profile_id,
+        )
 
     def attach_login_resume_context(
         self,
@@ -372,25 +358,15 @@ class BrowserAutomationService:
         resume_request: dict[str, Any] | None = None,
         continue_after_confirm: bool | None = None,
     ) -> dict[str, Any]:
-        clean_request_id = str(request_id or "").strip()
-        if not clean_request_id:
-            return {}
-        with self._lock:
-            state = self._login_states.get(clean_request_id)
-            if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            if str(resume_query or "").strip():
-                state.resume_query = str(resume_query or "")[:500]
-            if isinstance(resume_request, dict) and resume_request:
-                state.resume_request = dict(resume_request)
-            if continue_after_confirm is not None:
-                state.continue_after_confirm = bool(continue_after_confirm)
-            state.touch()
-            return self._login_state_payload(state)
+        return browser_login_checkpoint_service.attach_login_resume_context(
+            user_id=user_id,
+            workspace=workspace,
+            request_id=request_id,
+            profile_id=profile_id,
+            resume_query=resume_query,
+            resume_request=resume_request,
+            continue_after_confirm=continue_after_confirm,
+        )
 
     def list_login_states(
         self,
@@ -400,25 +376,12 @@ class BrowserAutomationService:
         statuses: list[str] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        normalized_workspace = _normalize_workspace(workspace) if str(workspace or "").strip() else ""
-        allow_statuses = {
-            str(item or "").strip().lower()
-            for item in list(statuses or [])
-            if str(item or "").strip()
-        }
-        max_items = max(1, min(100, int(limit or 20)))
-        rows: list[BrowserLoginState] = []
-        with self._lock:
-            for state in self._login_states.values():
-                if int(state.user_id) != int(user_id):
-                    continue
-                if normalized_workspace and str(state.workspace or "") != normalized_workspace:
-                    continue
-                if allow_statuses and str(state.status or "").strip().lower() not in allow_statuses:
-                    continue
-                rows.append(state)
-        rows.sort(key=lambda item: float(item.updated_at or item.created_at or 0.0), reverse=True)
-        return [self._login_state_payload(item) for item in rows[:max_items]]
+        return browser_login_checkpoint_service.list_login_states(
+            user_id=user_id,
+            workspace=workspace,
+            statuses=statuses,
+            limit=limit,
+        )
 
     def cancel_login_pending(
         self,
@@ -428,12 +391,11 @@ class BrowserAutomationService:
         request_id: str,
         profile_id: str = "",
     ) -> dict[str, Any]:
-        return self.resolve_login_pending(
+        return browser_login_checkpoint_service.cancel_login_pending(
             user_id=user_id,
             workspace=workspace,
             request_id=request_id,
             profile_id=profile_id,
-            status="cancelled",
         )
 
     def resolve_login_pending(
@@ -445,19 +407,13 @@ class BrowserAutomationService:
         profile_id: str = "",
         status: str = "resolved",
     ) -> dict[str, Any]:
-        clean_request_id = str(request_id or "").strip()
-        if not clean_request_id:
-            return {}
-        with self._lock:
-            state = self._login_states.get(clean_request_id)
-            if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            state.touch(status=str(status or "resolved")[:32])
-            return self._login_state_payload(state)
+        return browser_login_checkpoint_service.resolve_login_pending(
+            user_id=user_id,
+            workspace=workspace,
+            request_id=request_id,
+            profile_id=profile_id,
+            status=status,
+        )
 
     def _peek_session(self, *, user_id: int, workspace: str, mode: str, profile_id: str = "") -> BrowserSession | None:
         key = self._session_key(user_id=user_id, workspace=workspace, mode=mode, profile_id=profile_id)
