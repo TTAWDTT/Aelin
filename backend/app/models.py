@@ -417,3 +417,54 @@ class UserFollowedTag(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship(back_populates="followed_tags")
+
+
+class AttachmentDocument(Base):
+    __tablename__ = "attachment_documents"
+    __table_args__ = (
+        UniqueConstraint("user_id", "workspace", "sha256", name="uq_attachment_user_workspace_sha256"),
+        Index("ix_attachment_documents_user_workspace_created", "user_id", "workspace", "created_at"),
+        Index("ix_attachment_documents_user_session_created", "user_id", "session_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    file_name: Mapped[str] = mapped_column(String(255), default="")
+    file_ext: Mapped[str] = mapped_column(String(16), default="")
+    mime_type: Mapped[str] = mapped_column(String(160), default="")
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    sha256: Mapped[str] = mapped_column(String(64), default="", index=True)
+    storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    parse_status: Mapped[str] = mapped_column(String(16), default="ready", index=True)  # ready | failed
+    parse_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    chunks: Mapped[list["AttachmentChunk"]] = relationship(
+        back_populates="attachment",
+        cascade="all, delete-orphan",
+    )
+
+
+class AttachmentChunk(Base):
+    __tablename__ = "attachment_chunks"
+    __table_args__ = (
+        UniqueConstraint("attachment_id", "chunk_index", name="uq_attachment_chunk_index"),
+        Index("ix_attachment_chunks_attachment_created", "attachment_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attachment_id: Mapped[int] = mapped_column(ForeignKey("attachment_documents.id", ondelete="CASCADE"), index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text, default="")
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    keyword_vector_json: Mapped[str] = mapped_column(Text, default="{}")
+    loc_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    attachment: Mapped["AttachmentDocument"] = relationship(back_populates="chunks")

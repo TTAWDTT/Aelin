@@ -61,6 +61,39 @@ def _hub(fake_web: _FakeWebSearch) -> AelinToolHub:
     )
 
 
+class _FakeAttachmentService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def search(self, db, *, user_id: int, workspace: str, query: str, attachment_ids: list[int], top_k: int, mode: str):
+        self.calls.append(
+            {
+                "db": db,
+                "user_id": user_id,
+                "workspace": workspace,
+                "query": query,
+                "attachment_ids": list(attachment_ids),
+                "top_k": top_k,
+                "mode": mode,
+            }
+        )
+        return {
+            "ok": True,
+            "attachment_ids": list(attachment_ids),
+            "total": 1,
+            "content": "[1] chunk text",
+            "hits": [
+                {
+                    "chunk_id": 11,
+                    "text": "chunk text",
+                    "score": 1.0,
+                    "citation": {"attachment_id": attachment_ids[0], "file_name": "demo.docx"},
+                    "metadata": {"loc": {"page": 1}},
+                }
+            ],
+        }
+
+
 def test_web_search_tool_search_and_fetch():
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -217,3 +250,48 @@ def test_tool_definitions_include_external_browser_scope():
     )
     scope_enum = list(browser_use["parameters"]["properties"]["scope"]["enum"])
     assert "external" in scope_enum
+
+
+def test_attachment_search_uses_available_ids_fallback():
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=7,
+        workspace="default",
+        memory_service=_DummyMemory(),  # type: ignore[arg-type]
+        tracking_service=_DummyTracking(),  # type: ignore[arg-type]
+        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[3, "2", 3, 0],  # type: ignore[list-item]
+    )
+    result = hub.execute("attachment_search", {"query": "总结附件"})
+    assert result["ok"] is True
+    assert result["attachment_ids"] == [2, 3]
+    assert fake_attachment.calls[0]["attachment_ids"] == [2, 3]
+
+
+def test_attachment_search_prefers_explicit_ids():
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=7,
+        workspace="default",
+        memory_service=_DummyMemory(),  # type: ignore[arg-type]
+        tracking_service=_DummyTracking(),  # type: ignore[arg-type]
+        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[9, 10],
+    )
+    result = hub.execute(
+        "attachment_search",
+        {"query": "翻译", "attachment_ids": [5, "6", -1], "top_k": 6, "mode": "hybrid"},  # type: ignore[list-item]
+    )
+    assert result["ok"] is True
+    assert result["attachment_ids"] == [5, 6]
+    assert fake_attachment.calls[0]["attachment_ids"] == [5, 6]
+    assert fake_attachment.calls[0]["top_k"] == 6
+    assert fake_attachment.calls[0]["mode"] == "hybrid"

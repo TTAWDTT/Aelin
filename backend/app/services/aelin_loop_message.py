@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
+from app.services.aelin_utils import normalize_positive_ints
 
 
 def safe_json_loads(raw: str) -> dict[str, Any]:
@@ -141,6 +142,7 @@ def build_initial_messages(
     memory_summary: str,
     history_turns: list[dict[str, str]] | None,
     images: list[dict[str, str]] | None,
+    attachment_ids: list[int] | None,
     forced_intent: str,
     forced_tool_runs: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
@@ -165,6 +167,18 @@ def build_initial_messages(
                 "content": f"forced_intent={str(forced_intent).strip()[:120]}",
             }
         )
+    normalized_attachment_ids = normalize_positive_ints(attachment_ids, cap=20)
+    if normalized_attachment_ids:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "available_attachment_ids="
+                    + json.dumps(normalized_attachment_ids, ensure_ascii=False)
+                    + "; 当用户问题涉及上传附件时，优先调用 attachment_search 工具再回答，并在答案里给出来源定位。"
+                ),
+            }
+        )
     for run in list(forced_tool_runs or [])[:4]:
         name = str(run.get("name") or "").strip().lower()[:64]
         args = run.get("args") if isinstance(run.get("args"), dict) else {}
@@ -174,10 +188,24 @@ def build_initial_messages(
                 "role": "system",
                 "content": (
                     f"forced_tool_result[{name}] "
-                    + json.dumps({"args": args, "result": result}, ensure_ascii=False)[:1800]
+                    + json.dumps({"args": args, "result": result}, ensure_ascii=False)[:5000]
                 ),
             }
         )
+        if name == "attachment_search" and bool(result.get("ok")):
+            hits = list(result.get("hits") or [])
+            content = str(result.get("content") or "").strip()
+            if content:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "prefetched_attachment_content="
+                            + content[:6000]
+                            + f"\n(prefetched_hits={len(hits)})"
+                        ),
+                    }
+                )
 
     if history_turns:
         for row in history_turns[-10:]:
@@ -187,7 +215,7 @@ def build_initial_messages(
                 messages.append({"role": role, "content": content[:3000]})
 
     query_text = str(query or "").strip()[:1200]
-    query_fallback_text = query_text or "请先分析我上传的图片，再继续执行工具流程。"
+    query_fallback_text = query_text or ("请先分析我上传的图片，再继续执行工具流程。" if not normalized_attachment_ids else "请先检索并分析我上传的附件内容，再继续。")
     normalized_images = _normalize_input_image_data_urls(images)
     if normalized_images:
         user_content: list[dict[str, Any]] = [{"type": "text", "text": query_fallback_text}]

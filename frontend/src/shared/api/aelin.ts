@@ -1,4 +1,4 @@
-import { fetchJson } from './client'
+import { fetchFormData, fetchJson } from './client'
 import type {
   AelinChatRequest, AelinChatResponse, AelinContextResponse,
   AelinNotificationResponse, AelinProactivePollResponse,
@@ -10,11 +10,22 @@ import type {
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
+  AelinAttachmentUploadResponse,
 } from './types'
 
 export const aelinApi = {
   chat: (body: AelinChatRequest) =>
     fetchJson<AelinChatResponse>('/api/v1/aelin/chat', { method: 'POST', body: JSON.stringify(body) }),
+
+  uploadAttachment: (file: File, params?: { workspace?: string; session_id?: string }) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('workspace', params?.workspace || 'default')
+    if (params?.session_id) {
+      fd.append('session_id', params.session_id)
+    }
+    return fetchFormData<AelinAttachmentUploadResponse>('/api/v1/aelin/attachments/upload', fd)
+  },
 
   context: (workspace = 'default') =>
     fetchJson<AelinContextResponse>(`/api/v1/aelin/context?workspace=${workspace}`),

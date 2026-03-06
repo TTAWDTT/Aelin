@@ -59,6 +59,7 @@ from app.services.aelin_media_pipeline import (
     save_media_ingest_diary as _save_media_ingest_diary,
 )
 from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
+from app.services.aelin_utils import normalize_positive_ints
 from app.services.aelin_runtime import (
     json_from_text as _json_from_text,
     normalize_workspace as _normalize_workspace,
@@ -703,6 +704,10 @@ def _normalize_history(raw_turns: list[Any]) -> list[dict[str, str]]:
             continue
         out.append({"role": role, "content": content[:3000]})
     return out
+
+
+def _normalize_attachment_ids(raw_ids: list[Any]) -> list[int]:
+    return normalize_positive_ints(raw_ids, cap=20)
 
 
 def _extract_first_supported_media_url(query: str) -> tuple[str, str] | None:
@@ -1747,6 +1752,7 @@ def _aelin_chat_impl(
             tracking_service=_tracking,
             file_memory_bridge=_tracking_file_memory,
             web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
+            available_attachment_ids=_normalize_attachment_ids(getattr(payload, "attachment_ids", [])),
         )
         runs, tool_err = run_aelin_structured_tools(
             service=service,
@@ -2661,6 +2667,71 @@ def _detect_forced_tracking_create(query: str) -> dict[str, str] | None:
     }
 
 
+def _build_attachment_prefetch_fallback_response(
+    *,
+    payload: AelinChatRequest,
+    memory_summary: str,
+    prefetch_result: dict[str, Any],
+    reason: str,
+    prefixed_traces: list[AelinToolStep] | None = None,
+) -> AelinChatResponse | None:
+    if not bool(prefetch_result.get("ok")):
+        return None
+    hits = prefetch_result.get("hits")
+    if not isinstance(hits, list) or not hits:
+        return None
+
+    lines: list[str] = []
+    for idx, hit in enumerate(hits[:5], start=1):
+        if not isinstance(hit, dict):
+            continue
+        text = " ".join(str(hit.get("text") or "").strip().split())
+        if not text:
+            continue
+        citation = hit.get("citation")
+        citation_map = citation if isinstance(citation, dict) else {}
+        file_name = str(citation_map.get("file_name") or "附件").strip() or "附件"
+        loc_parts: list[str] = []
+        if citation_map.get("page"):
+            loc_parts.append(f"第{int(citation_map.get('page') or 0)}页")
+        if citation_map.get("slide"):
+            loc_parts.append(f"第{int(citation_map.get('slide') or 0)}页幻灯片")
+        if citation_map.get("sheet"):
+            loc_parts.append(f"Sheet={str(citation_map.get('sheet') or '')[:40]}")
+        if citation_map.get("row_range"):
+            loc_parts.append(f"行={str(citation_map.get('row_range') or '')[:40]}")
+        loc_text = f"（{'，'.join(loc_parts)}）" if loc_parts else ""
+        lines.append(f"{idx}. {file_name}{loc_text}: {text[:220]}")
+
+    if not lines:
+        return None
+
+    if reason == "llm_unavailable":
+        head = "当前模型不可用，我先基于已解析附件给你返回可用片段："
+    else:
+        head = "本轮 Agent Loop 未稳定产出，我先基于已解析附件给你返回可用片段："
+    answer = f"{head}\n\n" + "\n".join(lines)
+    trace_steps: list[AelinToolStep] = [*(prefixed_traces or [])]
+    trace_steps.append(
+        AelinToolStep(
+            stage="agent_loop",
+            status="completed",
+            detail=f"attachment_fallback:{reason}; hits={len(lines)}",
+            count=len(lines),
+            ts=_now_ms(),
+        )
+    )
+    return AelinChatResponse(
+        answer=answer,
+        expression=_pick_expression(payload.query, answer),
+        citations=[],
+        actions=[],
+        tool_trace=trace_steps[:64],
+        memory_summary=memory_summary,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
 def _try_agent_loop_chat(
     payload: AelinChatRequest,
     db: Session,
@@ -2672,8 +2743,7 @@ def _try_agent_loop_chat(
     forced_tracking_create: dict[str, str] | None = None,
 ) -> AelinChatResponse | None:
     service, provider = _resolve_llm_service(db, current_user)
-    if provider == "rule_based" or not service.is_configured():
-        return None
+    llm_available = not (provider == "rule_based" or not service.is_configured())
 
     workspace = _normalize_workspace(payload.workspace)
     base_bundle = _build_cached_base_context_bundle(
@@ -2684,6 +2754,7 @@ def _try_agent_loop_chat(
     memory_summary = str(base_bundle.get("summary") or "")
     history_turns = _normalize_history(payload.history)
     images = _normalize_images(payload.images)
+    attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
 
     tool_hub = AelinToolHub(
         db=db,
@@ -2693,12 +2764,14 @@ def _try_agent_loop_chat(
         tracking_service=_tracking,
         file_memory_bridge=_tracking_file_memory,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
+        available_attachment_ids=attachment_ids,
     )
 
     prefixed_traces: list[AelinToolStep] = []
     prefixed_actions: list[AelinAction] = []
     forced_intent = ""
     forced_tool_runs: list[dict[str, Any]] = []
+    attachment_prefetch_result: dict[str, Any] = {}
 
     def _emit_prefixed(stage: str, *, status: str, detail: str = "", count: int = 0) -> None:
         step = AelinToolStep(
@@ -2747,6 +2820,56 @@ def _try_agent_loop_chat(
                 count=0,
             )
 
+    def _run_attachment_prefetch() -> None:
+        nonlocal attachment_prefetch_result
+        if not attachment_ids:
+            return
+        attachment_prefetch_args = {
+            "query": str(payload.query or "请总结附件主要内容")[:500],
+            "attachment_ids": attachment_ids[:20],
+            "top_k": 10,
+            "mode": "hybrid",
+        }
+        prefetch_started = time.perf_counter()
+        attachment_prefetch_result = tool_hub.execute("attachment_search", attachment_prefetch_args)
+        prefetch_latency_ms = int((time.perf_counter() - prefetch_started) * 1000)
+        forced_tool_runs.append(
+            {
+                "name": "attachment_search",
+                "args": attachment_prefetch_args,
+                "result": attachment_prefetch_result,
+            }
+        )
+        if bool(attachment_prefetch_result.get("ok")):
+            _emit_prefixed(
+                "attachment_prefetch",
+                status="completed",
+                detail=f"hits={int(attachment_prefetch_result.get('total') or 0)}; latency_ms={prefetch_latency_ms}",
+                count=int(attachment_prefetch_result.get("total") or 0),
+            )
+        else:
+            _emit_prefixed(
+                "attachment_prefetch",
+                status="failed",
+                detail=f"{str(attachment_prefetch_result.get('error') or 'unknown')[:140]}; latency_ms={prefetch_latency_ms}",
+                count=0,
+            )
+
+    if not llm_available:
+        _run_attachment_prefetch()
+        fallback_resp = _build_attachment_prefetch_fallback_response(
+            payload=payload,
+            memory_summary=memory_summary,
+            prefetch_result=attachment_prefetch_result,
+            reason="llm_unavailable",
+            prefixed_traces=prefixed_traces,
+        )
+        if fallback_resp is not None:
+            return fallback_resp
+        return None
+
+    _run_attachment_prefetch()
+
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
     if forced_tracking_create and not force_disable_writes:
         # Temporarily allow writes for this request scope only.
@@ -2776,6 +2899,7 @@ def _try_agent_loop_chat(
         memory_summary=memory_summary,
         history_turns=history_turns,
         images=images,
+        attachment_ids=attachment_ids,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
     )
@@ -2797,6 +2921,15 @@ def _try_agent_loop_chat(
                 pass
 
     if not bool(result.ok) or not str(result.answer or "").strip():
+        fallback_resp = _build_attachment_prefetch_fallback_response(
+            payload=payload,
+            memory_summary=memory_summary,
+            prefetch_result=attachment_prefetch_result,
+            reason="agent_loop_no_result",
+            prefixed_traces=trace_steps,
+        )
+        if fallback_resp is not None:
+            return fallback_resp
         if event_cb is not None:
             try:
                 event_cb(
