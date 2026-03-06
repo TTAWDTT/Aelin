@@ -142,14 +142,15 @@ export function useChatStream() {
     if (picked.length === 0) return []
 
     let sessionId = store.activeSessionId
-    if (!sessionId) sessionId = store.createSession()
+    if (!sessionId) sessionId = store.createSession() || store.activeSessionId
+    const resolvedSessionId = String(sessionId || '')
     const session = store.sessions.find(s => s.id === sessionId)
     const workspace = session?.workspace || 'default'
 
     store.setStatusText('附件处理中…')
     try {
       const uploaded: AelinAttachmentUploadResponse[] = await Promise.all(
-        picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: sessionId }))
+        picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId }))
       )
       store.setStatusText('')
       return uploaded

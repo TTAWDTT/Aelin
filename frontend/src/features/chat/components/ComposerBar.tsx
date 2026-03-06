@@ -219,6 +219,7 @@ export function ComposerBar({
   }
 
   const canSend = !!text.trim() || pendingAttachments.length > 0
+  const canSendNow = canSend && !isCapturing && !isAttaching && !hasProcessingAttachments
   const captureButtonLabel = pendingAttachments.length > 0
     ? '请先发送待处理附件'
     : isCapturing
@@ -374,7 +375,7 @@ export function ComposerBar({
                 `flex shrink-0 items-center justify-center rounded-[10px] transition-all active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`,
                 isStreaming
                   ? 'bg-[var(--color-accent)] text-[var(--color-bg)]'
-                  : canSend
+                  : canSendNow
                     ? 'bg-[var(--color-accent)] text-[var(--color-bg)]'
                     : 'bg-[var(--color-accent-soft)] text-[var(--color-text-muted)]'
               )}

@@ -4,6 +4,7 @@ import io
 import zipfile
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -130,3 +131,64 @@ def test_parse_pptx_ignores_non_numeric_slide_names(monkeypatch, tmp_path):
     assert "Hello Slide" in parsed_text
     assert any(block.block_type == "slide" for block in blocks)
     assert int(metadata["slide_count"]) == 1
+
+
+def test_ingest_bytes_integrity_error_returns_deduped_existing(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
+    service = AelinAttachmentService()
+    db = _create_db()
+    _seed_user(db, user_id=11)
+
+    content = b"dedupe me"
+    baseline = service.ingest_bytes(
+        db,
+        user_id=11,
+        workspace="default",
+        session_id="s1",
+        file_name="same.txt",
+        mime_type="text/plain",
+        content=content,
+    )
+    db.commit()
+
+    original_flush = db.flush
+
+    def _fake_flush(*args, **kwargs):
+        raise IntegrityError("insert", {}, RuntimeError("unique"))
+
+    monkeypatch.setattr(db, "flush", _fake_flush)
+    deduped = service.ingest_bytes(
+        db,
+        user_id=11,
+        workspace="default",
+        session_id="s1",
+        file_name="same.txt",
+        mime_type="text/plain",
+        content=content,
+    )
+    monkeypatch.setattr(db, "flush", original_flush)
+
+    assert deduped["deduplicated"] is True
+    assert deduped["attachment_id"] == baseline["attachment_id"]
+
+
+def test_parse_pdf_empty_text_has_scanned_hint(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
+    service = AelinAttachmentService()
+    try:
+        from pypdf import PdfWriter  # type: ignore
+    except Exception:
+        return
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    buff = io.BytesIO()
+    writer.write(buff)
+
+    try:
+        service._parse_pdf(buff.getvalue(), file_name="blank.pdf")
+    except Exception as exc:
+        text = str(exc)
+        assert "暂不支持 OCR 兜底" in text
+    else:
+        raise AssertionError("Expected parse error for blank PDF")

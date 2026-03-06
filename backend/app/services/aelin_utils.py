@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: int = 20) -> list[int]:
+def normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: int | None = 20) -> list[int]:
     out: list[int] = []
     for item in list(values or []):
         try:
@@ -13,7 +13,8 @@ def normalize_positive_ints(values: list[Any] | tuple[Any, ...] | None, *, cap: 
         if value <= 0:
             continue
         out.append(value)
-    return sorted(set(out))[: max(1, int(cap or 20))]
+    slice_cap = 20 if cap is None else int(cap)
+    return sorted(set(out))[: max(1, slice_cap)]
 
 
 def escape_sql_like(value: str, *, escape: str = "\\") -> str:

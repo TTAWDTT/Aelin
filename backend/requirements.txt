@@ -16,6 +16,7 @@ faster-whisper>=1.1.1
 requests>=2.32
 pypdf>=4.3.1
 Pillow>=10.4.0
+defusedxml>=0.7.1
 # optional semantic file-memory backend
 openviking>=0.1.18
 

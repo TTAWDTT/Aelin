@@ -6,10 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import create_session, get_session
-from app.models import User
+from app.models import AttachmentDocument, User
 from app.routers.aelin import _dispatch_aelin_chat, _normalize_search_mode
 from app.routers.aelin_text_helpers import _now_ms, _sse_event
 from app.routers.auth import get_current_user
@@ -29,6 +30,20 @@ def aelin_attachment_upload(
     current_user: User = Depends(get_current_user),
 ):
     service = get_aelin_attachment_service()
+    workspace_norm = service.normalize_workspace(workspace)
+    session_norm = service.normalize_session(session_id)
+    if session_norm:
+        existing_workspace = db.scalar(
+            select(AttachmentDocument.workspace)
+            .where(
+                AttachmentDocument.user_id == int(current_user.id),
+                AttachmentDocument.session_id == session_norm,
+            )
+            .order_by(AttachmentDocument.id.desc())
+        )
+        if existing_workspace:
+            workspace_norm = str(existing_workspace)
+
     max_size = int(service.max_size_bytes)
     if int(getattr(file, "size", 0) or 0) > max_size:
         try:
@@ -57,8 +72,8 @@ def aelin_attachment_upload(
         result = service.ingest_bytes(
             db,
             user_id=int(current_user.id),
-            workspace=workspace,
-            session_id=session_id,
+            workspace=workspace_norm,
+            session_id=session_norm,
             file_name=str(file.filename or "attachment"),
             mime_type=str(file.content_type or ""),
             content=content,
@@ -67,7 +82,6 @@ def aelin_attachment_upload(
             db.commit()
         except Exception:
             db.rollback()
-            service.cleanup_storage_path(result.get("_storage_path"))
             raise
     except AttachmentIngestError as exc:
         db.rollback()

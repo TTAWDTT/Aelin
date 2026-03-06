@@ -7,6 +7,7 @@ import math
 import re
 import subprocess
 import tempfile
+import threading
 import zipfile
 from collections import Counter
 from dataclasses import dataclass
@@ -15,11 +16,17 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import AttachmentChunk, AttachmentDocument
 from app.settings import settings
 from app.services.aelin_utils import escape_sql_like, normalize_positive_ints
+
+try:
+    from defusedxml import ElementTree as _SAFE_ET  # type: ignore
+except Exception:
+    _SAFE_ET = ET
 
 _TEXT_FILE_EXTENSIONS = {
     "txt",
@@ -115,6 +122,16 @@ class AelinAttachmentService:
     @property
     def max_size_bytes(self) -> int:
         return int(self._max_size)
+
+    def normalize_workspace(self, raw: str) -> str:
+        return self._normalize_workspace(raw)
+
+    def normalize_session(self, raw: str) -> str:
+        return self._normalize_session(raw)
+
+    @staticmethod
+    def _xml_fromstring(raw: bytes | str) -> ET.Element:
+        return _SAFE_ET.fromstring(raw)
 
     def _tokenize(self, text: str) -> list[str]:
         lowered = str(text or "").lower()
@@ -217,7 +234,7 @@ class AelinAttachmentService:
             raise AttachmentIngestError("docx_missing_document_xml", f"DOCX 缺少主文档结构: {exc}") from exc
 
         try:
-            root = ET.fromstring(raw)
+            root = self._xml_fromstring(raw)
         except Exception as exc:
             raise AttachmentIngestError("docx_xml_parse_failed", f"DOCX XML 解析失败: {exc}") from exc
 
@@ -292,7 +309,7 @@ class AelinAttachmentService:
         for slide_no, slide_path in slide_entries:
             try:
                 raw = zf.read(slide_path)
-                root = ET.fromstring(raw)
+                root = self._xml_fromstring(raw)
             except Exception:
                 continue
             texts = [self._norm_text(node.text or "") for node in root.findall(".//a:t", _DRAWING_NS)]
@@ -304,7 +321,7 @@ class AelinAttachmentService:
             if notes_path in zf.namelist():
                 try:
                     notes_raw = zf.read(notes_path)
-                    notes_root = ET.fromstring(notes_raw)
+                    notes_root = self._xml_fromstring(notes_raw)
                     note_texts = [self._norm_text(node.text or "") for node in notes_root.findall(".//a:t", _DRAWING_NS)]
                     notes_joined = "\n".join(t for t in note_texts if t)
                     if notes_joined:
@@ -327,13 +344,12 @@ class AelinAttachmentService:
         }
         return full_text, blocks, metadata
 
-    @staticmethod
-    def _xlsx_shared_strings(zf: zipfile.ZipFile) -> list[str]:
+    def _xlsx_shared_strings(self, zf: zipfile.ZipFile) -> list[str]:
         path = "xl/sharedStrings.xml"
         if path not in zf.namelist():
             return []
         try:
-            root = ET.fromstring(zf.read(path))
+            root = self._xml_fromstring(zf.read(path))
         except Exception:
             return []
         values: list[str] = []
@@ -342,11 +358,10 @@ class AelinAttachmentService:
             values.append(_WS_RE.sub(" ", "".join(parts)).strip())
         return values
 
-    @staticmethod
-    def _xlsx_sheet_paths(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
+    def _xlsx_sheet_paths(self, zf: zipfile.ZipFile) -> list[tuple[str, str]]:
         try:
-            wb_root = ET.fromstring(zf.read("xl/workbook.xml"))
-            rels_root = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+            wb_root = self._xml_fromstring(zf.read("xl/workbook.xml"))
+            rels_root = self._xml_fromstring(zf.read("xl/_rels/workbook.xml.rels"))
         except Exception:
             return []
 
@@ -386,7 +401,7 @@ class AelinAttachmentService:
             if path not in zf.namelist():
                 continue
             try:
-                root = ET.fromstring(zf.read(path))
+                root = self._xml_fromstring(zf.read(path))
             except Exception:
                 continue
             for row in root.findall(".//main:sheetData/main:row", _XLSX_NS):
@@ -442,7 +457,10 @@ class AelinAttachmentService:
                 blocks.append(ParsedBlock(content=text, block_type="page", loc={"page": page_idx}))
         full_text = "\n".join(block.content for block in blocks).strip()
         if not full_text:
-            raise AttachmentIngestError("pdf_text_layer_empty", f"未提取到 PDF 文本层: {file_name}")
+            raise AttachmentIngestError(
+                "pdf_text_layer_empty",
+                f"PDF 为扫描件或不含可提取文本，当前版本暂不支持 OCR 兜底: {file_name}",
+            )
         metadata = {"parser": "pdf_text_layer", "page_count": len(reader.pages)}
         return full_text, blocks, metadata
 
@@ -630,7 +648,33 @@ class AelinAttachmentService:
                 metadata_json=self._safe_json(metadata),
             )
             db.add(row)
-            db.flush()
+            try:
+                db.flush()
+            except IntegrityError:
+                db.rollback()
+                existing = db.scalar(
+                    select(AttachmentDocument).where(
+                        AttachmentDocument.user_id == int(user_id),
+                        AttachmentDocument.workspace == workspace_norm,
+                        AttachmentDocument.sha256 == file_sha,
+                        AttachmentDocument.parse_status == "ready",
+                    )
+                )
+                if existing is None:
+                    raise AttachmentIngestError("attachment_target_busy", "target is busy,retry in a few seconds") from None
+                chunk_count = db.query(AttachmentChunk).filter(AttachmentChunk.attachment_id == int(existing.id)).count()
+                return {
+                    "attachment_id": int(existing.id),
+                    "file_name": str(existing.file_name or safe_name),
+                    "mime_type": str(existing.mime_type or mime_type or ""),
+                    "size_bytes": int(existing.size_bytes or size),
+                    "workspace": workspace_norm,
+                    "session_id": str(existing.session_id or session_norm),
+                    "status": "ready",
+                    "chunk_count": int(chunk_count),
+                    "summary": str(existing.summary or "")[:220],
+                    "deduplicated": True,
+                }
 
             for chunk in chunk_rows:
                 db.add(
@@ -655,14 +699,8 @@ class AelinAttachmentService:
                 "chunk_count": len(chunk_rows),
                 "summary": summary,
                 "deduplicated": False,
-                "_storage_path": str(storage_path),
             }
         except Exception:
-            if storage_path.exists():
-                try:
-                    storage_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
             raise
 
     @staticmethod
@@ -850,10 +888,13 @@ class AelinAttachmentService:
         }
 
 _ATTACHMENT_SERVICE_SINGLETON: AelinAttachmentService | None = None
+_ATTACHMENT_SERVICE_LOCK = threading.Lock()
 
 
 def get_aelin_attachment_service() -> AelinAttachmentService:
     global _ATTACHMENT_SERVICE_SINGLETON
     if _ATTACHMENT_SERVICE_SINGLETON is None:
-        _ATTACHMENT_SERVICE_SINGLETON = AelinAttachmentService()
+        with _ATTACHMENT_SERVICE_LOCK:
+            if _ATTACHMENT_SERVICE_SINGLETON is None:
+                _ATTACHMENT_SERVICE_SINGLETON = AelinAttachmentService()
     return _ATTACHMENT_SERVICE_SINGLETON
