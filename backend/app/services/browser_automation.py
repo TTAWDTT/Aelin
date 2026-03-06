@@ -206,6 +206,7 @@ class BrowserAutomationService:
         self._system_process_cache_ttl_seconds = float(
             getattr(settings, "browser_tool_system_process_cache_ttl_seconds", 2.0) or 2.0
         )
+        self._system_process_cache_lock = threading.RLock()
         self._system_process_cache: dict[tuple[int, bool], tuple[float, list[dict[str, Any]]]] = {}
         self._active_cdp_profile_key = ""
         self._active_cdp_user_data_dir = ""
@@ -1307,7 +1308,8 @@ class BrowserAutomationService:
             return []
         cache_key = (int(pid or 0), bool(include_details))
         now = time.time()
-        cached = self._system_process_cache.get(cache_key)
+        with self._system_process_cache_lock:
+            cached = self._system_process_cache.get(cache_key)
         if cached:
             ts, payload = cached
             if (now - float(ts)) <= max(0.2, float(self._system_process_cache_ttl_seconds)):
@@ -1318,7 +1320,8 @@ class BrowserAutomationService:
             self._fill_process_details(rows, max_probe=min(limit, 8))
         rows.sort(key=lambda it: (float(it.get("memory_mb") or 0.0), int(it.get("pid") or 0)), reverse=True)
         trimmed = rows[:limit]
-        self._system_process_cache[cache_key] = (now, list(trimmed))
+        with self._system_process_cache_lock:
+            self._system_process_cache[cache_key] = (now, list(trimmed))
         return trimmed
 
     def _has_system_browser_process(self, *, pid: int = 0) -> bool:
@@ -1464,13 +1467,32 @@ class BrowserAutomationService:
     def _has_cdp_conflict_process(self) -> bool:
         return bool(self._list_cdp_conflict_processes(max_items=1))
 
-    def _collect_sessions_by_mode(self, mode: str) -> list[BrowserSession]:
+    def _collect_sessions_by_mode(
+        self,
+        mode: str,
+        *,
+        user_id: int | None = None,
+        workspace: str = "",
+        profile_id: str = "",
+    ) -> list[BrowserSession]:
         target = str(mode or "").strip().lower()
+        target_workspace = _normalize_workspace(workspace) if str(workspace or "").strip() else ""
+        target_profile_id = (
+            self._resolved_profile_id(workspace=target_workspace or "default", profile_id=profile_id)
+            if str(profile_id or "").strip()
+            else ""
+        )
         out: list[BrowserSession] = []
         with self._lock:
             remove_keys: list[str] = []
             for key, session in self._sessions.items():
                 if str(getattr(session, "mode", "") or "").strip().lower() != target:
+                    continue
+                if user_id is not None and int(getattr(session, "user_id", 0) or 0) != int(user_id):
+                    continue
+                if target_workspace and _normalize_workspace(str(getattr(session, "workspace", "") or "")) != target_workspace:
+                    continue
+                if target_profile_id and str(getattr(session, "profile_id", "") or "").strip() != target_profile_id:
                     continue
                 remove_keys.append(key)
             for key in remove_keys:
@@ -1479,8 +1501,20 @@ class BrowserAutomationService:
                     out.append(session)
         return out
 
-    def _close_sessions_by_mode(self, mode: str) -> None:
-        sessions = self._collect_sessions_by_mode(mode)
+    def _close_sessions_by_mode(
+        self,
+        mode: str,
+        *,
+        user_id: int | None = None,
+        workspace: str = "",
+        profile_id: str = "",
+    ) -> None:
+        sessions = self._collect_sessions_by_mode(
+            mode,
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile_id,
+        )
         for session in sessions:
             try:
                 session.close()
@@ -1571,7 +1605,12 @@ class BrowserAutomationService:
             requested_timeout,
             effective_timeout,
         )
-        self._close_sessions_by_mode("cdp")
+        self._close_sessions_by_mode(
+            "cdp",
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=resolved_profile_id,
+        )
         conflicts = self._list_cdp_conflict_processes(max_items=200, endpoint=endpoint)
         pids = [int(row.get("pid") or 0) for row in conflicts if int(row.get("pid") or 0) > 0]
         terminate_report = self._terminate_processes(pids, wait_timeout_seconds=4.0)
@@ -2060,18 +2099,48 @@ class BrowserAutomationService:
             )
 
         if user_scope == "cdp":
+            if not self._cdp_enabled:
+                return "", "cdp_disabled", self._error_payload(
+                    error="cdp_disabled",
+                    scope="cdp",
+                    requires_cdp=True,
+                    hint="当前未启用受控浏览器（CDP），请先启用后再重试。",
+                )
+            if not self._cdp_endpoint:
+                return "", "cdp_endpoint_unconfigured", self._error_payload(
+                    error="cdp_endpoint_unconfigured",
+                    scope="cdp",
+                    requires_cdp=True,
+                    hint="当前未配置 CDP 端点，请先完成配置后再重试。",
+                )
             return "cdp", "", None
 
         if user_scope != "auto":
             return "", "", self._error_payload(error=f"unsupported_scope:{user_scope}", scope=user_scope)
 
         cdp_reachable = bool(
-            self._cdp_endpoint and self._probe_cdp_endpoint(self._cdp_endpoint, timeout_seconds=0.25)
+            self._cdp_enabled
+            and self._cdp_endpoint
+            and self._probe_cdp_endpoint(self._cdp_endpoint, timeout_seconds=0.25)
         )
         if cdp_reachable:
             return "cdp", "", None
 
         if include_dom or include_a11y:
+            if not self._cdp_enabled and not self._cdp_endpoint:
+                return "", "cdp_endpoint_unconfigured", self._error_payload(
+                    error="cdp_endpoint_unconfigured",
+                    scope="auto",
+                    requires_cdp=True,
+                    hint="当前已软下线 managed；请配置 CDP 端点后重试。",
+                )
+            if not self._cdp_enabled:
+                return "", "cdp_disabled", self._error_payload(
+                    error="cdp_disabled",
+                    scope="auto",
+                    requires_cdp=True,
+                    hint="DOM/A11y 读取需要受控浏览器（CDP），当前未启用。",
+                )
             if not self._cdp_endpoint:
                 return "", "cdp_endpoint_unconfigured", self._error_payload(
                     error="cdp_endpoint_unconfigured",
@@ -2082,7 +2151,10 @@ class BrowserAutomationService:
             # DOM/A11y 读取必须走 CDP，auto 模式下即使 probe 失败也先尝试一次 CDP bootstrap。
             return "cdp", "", None
 
-        fallback_reason = "cdp_probe_failed" if self._cdp_endpoint else "cdp_endpoint_unconfigured"
+        if not self._cdp_enabled:
+            fallback_reason = "cdp_disabled" if self._cdp_endpoint else "cdp_endpoint_unconfigured"
+        else:
+            fallback_reason = "cdp_probe_failed" if self._cdp_endpoint else "cdp_endpoint_unconfigured"
         if not include_dom and not include_a11y and proc_limit <= 0:
             fast_payload = {
                 "ok": True,
@@ -2090,7 +2162,7 @@ class BrowserAutomationService:
                 "system_processes": [],
                 "scope_note": "CDP 暂不可用，fast path 已返回 external 轻量状态。",
             }
-            if self._cdp_endpoint:
+            if fallback_reason:
                 fast_payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
             return "", fallback_reason, fast_payload
 
@@ -2252,7 +2324,7 @@ class BrowserAutomationService:
             }
 
         runtime_scope, fallback_reason, early_payload = self._resolve_state_runtime_scope(
-            user_scope="cdp" if user_scope == "auto" and sticky_scope == "cdp" else user_scope,
+            user_scope="cdp" if user_scope == "auto" and sticky_scope == "cdp" and self._cdp_enabled else user_scope,
             include_dom=bool(include_dom),
             include_a11y=bool(include_a11y),
             proc_limit=proc_limit,
@@ -2403,13 +2475,32 @@ class BrowserAutomationService:
 
         if runtime_scope == "auto":
             if act == "navigate":
-                prefer_existing_cdp = sticky_scope == "cdp" or self._has_reusable_cdp_session(
-                    user_id=int(user_id),
-                    workspace=workspace,
-                    profile_id=profile.profile_id,
+                prefer_existing_cdp = bool(self._cdp_enabled) and (
+                    sticky_scope == "cdp"
+                    or self._has_reusable_cdp_session(
+                        user_id=int(user_id),
+                        workspace=workspace,
+                        profile_id=profile.profile_id,
+                    )
                 )
                 runtime_scope = "cdp" if prefer_existing_cdp else "external"
             elif self._is_complex_auto_action(act):
+                if not self._cdp_enabled:
+                    return self._error_payload(
+                        error="cdp_disabled",
+                        action=act,
+                        scope="auto",
+                        requires_cdp=True,
+                        hint="该操作需要受控浏览器（CDP），当前未启用。",
+                    )
+                if not self._cdp_endpoint:
+                    return self._error_payload(
+                        error="cdp_endpoint_unconfigured",
+                        action=act,
+                        scope="auto",
+                        requires_cdp=True,
+                        hint="该操作需要受控浏览器（CDP），但当前未配置 CDP 端点。",
+                    )
                 has_system_browser = self._has_system_browser_process()
                 cdp_ready = bool(
                     self._cdp_endpoint
@@ -2435,18 +2526,68 @@ class BrowserAutomationService:
                         },
                     }
                 runtime_scope = "cdp"
-        elif runtime_scope == "external" and sticky_scope == "cdp":
+        elif runtime_scope == "external" and sticky_scope == "cdp" and self._cdp_enabled:
             runtime_scope = "cdp"
             prefer_existing_cdp = True
 
         if runtime_scope in {"system", "all"}:
             return self._error_payload(error="unsupported_scope_for_use", action=act, scope=runtime_scope)
 
+        if runtime_scope == "cdp":
+            if not self._cdp_enabled:
+                return self._error_payload(
+                    error="cdp_disabled",
+                    action=act,
+                    scope="cdp",
+                    requires_cdp=True,
+                    hint="当前未启用受控浏览器（CDP），无法执行该操作。",
+                )
+            if not self._cdp_endpoint:
+                return self._error_payload(
+                    error="cdp_endpoint_unconfigured",
+                    action=act,
+                    scope="cdp",
+                    requires_cdp=True,
+                    hint="当前未配置 CDP 端点，无法执行该操作。",
+                )
+
         if runtime_scope == "external":
             if act != "navigate":
                 if bool(args.get("confirm")):
+                    if not self._cdp_enabled:
+                        return self._error_payload(
+                            error="cdp_disabled",
+                            action=act,
+                            scope="external",
+                            requires_cdp=True,
+                            hint="当前外部浏览器模式仅支持打开链接；该操作需要先启用 CDP。",
+                        )
+                    if not self._cdp_endpoint:
+                        return self._error_payload(
+                            error="cdp_endpoint_unconfigured",
+                            action=act,
+                            scope="external",
+                            requires_cdp=True,
+                            hint="当前外部浏览器模式仅支持打开链接；该操作需要先配置 CDP 端点。",
+                        )
                     runtime_scope = "cdp"
                 else:
+                    if not self._cdp_enabled:
+                        return self._error_payload(
+                            error="cdp_disabled",
+                            action=act,
+                            scope="external",
+                            requires_cdp=True,
+                            hint="当前外部浏览器模式仅支持打开链接；该操作需要先启用 CDP。",
+                        )
+                    if not self._cdp_endpoint:
+                        return self._error_payload(
+                            error="cdp_endpoint_unconfigured",
+                            action=act,
+                            scope="external",
+                            requires_cdp=True,
+                            hint="当前外部浏览器模式仅支持打开链接；该操作需要先配置 CDP 端点。",
+                        )
                     next_args = dict(args or {})
                     next_args["scope"] = "cdp"
                     next_args["confirm"] = True

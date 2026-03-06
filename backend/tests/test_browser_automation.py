@@ -169,6 +169,8 @@ def test_use_navigate_can_open_external_browser(monkeypatch):
     page = _FakePage()
     session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
 
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     service._headless = False
     service._open_external_on_navigate = True
 
@@ -302,6 +304,7 @@ def test_state_get_external_with_dom_requires_cdp():
 
 def test_state_get_auto_dom_returns_confirmation_when_cdp_restart_needed(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
     service._cdp_endpoint = "http://127.0.0.1:9222"
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
     monkeypatch.setattr(service, "_get_session", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("cdp_launch_timeout")))
@@ -369,6 +372,8 @@ def test_state_get_all_propagates_confirmation_from_active_state(monkeypatch):
 
 def test_use_auto_complex_requires_restart_confirmation_when_browser_running(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: False)
     monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
 
@@ -396,6 +401,8 @@ def test_use_auto_complex_requires_restart_confirmation_when_browser_running(mon
 
 def test_use_auto_complex_with_browser_running_restarts_to_cdp_after_confirm(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: False)
     monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
 
@@ -438,6 +445,8 @@ def test_use_auto_complex_with_browser_running_restarts_to_cdp_after_confirm(mon
 
 def test_use_auto_complex_with_browser_running_returns_restart_failed_when_confirmed(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: False)
     monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
     monkeypatch.setattr(service, "_get_session", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("cdp_requires_browser_restart")))
@@ -466,6 +475,8 @@ def test_use_auto_complex_with_browser_running_returns_restart_failed_when_confi
 
 def test_use_auto_complex_without_browser_uses_cdp_when_enabled(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
     cdp_session.mode = "cdp"
@@ -493,6 +504,8 @@ def test_use_auto_complex_without_browser_uses_cdp_when_enabled(monkeypatch):
 
 def test_use_auto_complex_skips_restart_confirmation_when_cdp_already_ready(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
     cdp_session.mode = "cdp"
@@ -729,6 +742,8 @@ def test_use_auto_navigate_defaults_to_external_without_reusable_cdp(monkeypatch
 
 def test_use_auto_navigate_reuses_existing_cdp_session(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
     cdp_session.mode = "cdp"
@@ -782,6 +797,8 @@ def test_get_session_keeps_profiles_isolated(monkeypatch):
 
 def test_use_auto_navigate_prefers_sticky_cdp_without_same_thread_session(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     cdp_session = _FakeSessionWithPage(owner_thread_id=999999, page=page)
     cdp_session.mode = "cdp"
@@ -811,6 +828,8 @@ def test_use_auto_navigate_prefers_sticky_cdp_without_same_thread_session(monkey
 
 def test_use_explicit_external_is_coerced_to_cdp_when_sticky_scope_is_cdp(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
     cdp_session.mode = "cdp"
@@ -841,6 +860,8 @@ def test_use_explicit_external_is_coerced_to_cdp_when_sticky_scope_is_cdp(monkey
 
 def test_state_get_auto_prefers_sticky_cdp_scope(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     page.url = "https://x.com/home"
     cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
@@ -865,6 +886,8 @@ def test_state_get_auto_prefers_sticky_cdp_scope(monkeypatch):
 
 def test_use_external_scope_requests_confirmation_for_dom_actions():
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     out = service.use(
         user_id=1,
         workspace="default",
@@ -888,6 +911,8 @@ def test_use_external_scope_requests_confirmation_for_dom_actions():
 
 def test_use_external_scope_dom_action_with_confirm_switches_to_cdp(monkeypatch):
     service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
     page = _FakePage()
     cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
     cdp_session.mode = "cdp"
@@ -1023,3 +1048,88 @@ def test_force_restart_to_cdp_fallback_full_restart_can_recover(monkeypatch):
     assert out.get("fallback_full_restart") is True
     assert state["launch_calls"] == 2
     assert [1234] in terminated_calls
+
+
+def test_state_get_auto_dom_respects_cdp_disabled_even_when_endpoint_exists(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = False
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: True)
+
+    out = service.state_get(
+        user_id=1,
+        workspace="default",
+        scope="auto",
+        include_dom=True,
+        include_a11y=False,
+        max_targets=10,
+    )
+    assert out["ok"] is False
+    assert out["error"] == "cdp_disabled"
+    assert out.get("requires_cdp") is True
+
+
+def test_use_auto_complex_returns_cdp_disabled_without_restart_prompt(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = False
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    monkeypatch.setattr(service, "_has_system_browser_process", lambda **kwargs: True)
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda *args, **kwargs: True)
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="click",
+        args={"target": "登录", "confirm": False},
+        scope="auto",
+    )
+    assert out["ok"] is False
+    assert out["error"] == "cdp_disabled"
+    assert out.get("requires_confirmation") is not True
+
+
+def test_force_restart_to_cdp_only_closes_target_session_scope(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+
+    target_key = service._session_key(user_id=1, workspace="default", mode="cdp", profile_id="main")
+    other_workspace_key = service._session_key(user_id=1, workspace="other", mode="cdp", profile_id="main")
+    other_user_key = service._session_key(user_id=2, workspace="default", mode="cdp", profile_id="main")
+
+    target = _FakeSession(owner_thread_id=threading.get_ident())
+    target.mode = "cdp"
+    target.user_id = 1
+    target.workspace = "default"
+    target.profile_id = "main"
+
+    other_workspace = _FakeSession(owner_thread_id=threading.get_ident())
+    other_workspace.mode = "cdp"
+    other_workspace.user_id = 1
+    other_workspace.workspace = "other"
+    other_workspace.profile_id = "main"
+
+    other_user = _FakeSession(owner_thread_id=threading.get_ident())
+    other_user.mode = "cdp"
+    other_user.user_id = 2
+    other_user.workspace = "default"
+    other_user.profile_id = "main"
+
+    service._sessions[target_key] = target  # type: ignore[assignment]
+    service._sessions[other_workspace_key] = other_workspace  # type: ignore[assignment]
+    service._sessions[other_user_key] = other_user  # type: ignore[assignment]
+
+    monkeypatch.setattr(service, "_probe_cdp_endpoint", lambda endpoint, **kwargs: False)
+    monkeypatch.setattr(service, "_list_cdp_conflict_processes", lambda **kwargs: [])
+    monkeypatch.setattr(
+        service,
+        "_terminate_processes",
+        lambda pids, wait_timeout_seconds=4.0: {"terminated_pids": [], "killed_pids": [], "failed_pids": []},
+    )
+    monkeypatch.setattr(service, "_launch_cdp_browser", lambda endpoint, **kwargs: {"user_data_dir": "D:/tmp/profile"})
+    monkeypatch.setattr(service, "_wait_for_cdp_endpoint", lambda endpoint, **kwargs: (True, 1))
+
+    out = service.force_restart_to_cdp(timeout_seconds=2.0, user_id=1, workspace="default", profile_id="main")
+    assert out["ok"] is True
+    assert target.closed is True
+    assert other_workspace.closed is False
+    assert other_user.closed is False

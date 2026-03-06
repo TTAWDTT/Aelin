@@ -72,14 +72,15 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const token = localStorage.getItem('token')
   const BASE = import.meta.env.VITE_API_BASE || ''
+  const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_STREAM === 'true'
   const debugLog = (...args: unknown[]) => {
+    if (!debugEnabled) return
     // eslint-disable-next-line no-console
     console.info('[aelin-stream]', ...args)
   }
 
   debugLog('request_start', {
     url: `${BASE}/api/v1/aelin/chat/stream`,
-    queryPreview: String(body?.query || '').slice(0, 120),
     historyCount: Array.isArray(body?.history) ? body.history.length : 0,
     imageCount: Array.isArray(body?.images) ? body.images.length : 0,
   })
