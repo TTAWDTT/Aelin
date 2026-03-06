@@ -700,6 +700,89 @@ def test_use_auto_navigate_reuses_existing_cdp_session(monkeypatch):
     assert page.goto_calls == ["https://x.com/following"]
 
 
+def test_use_auto_navigate_prefers_sticky_cdp_without_same_thread_session(monkeypatch):
+    service = BrowserAutomationService()
+    page = _FakePage()
+    cdp_session = _FakeSessionWithPage(owner_thread_id=999999, page=page)
+    cdp_session.mode = "cdp"
+    service._set_preferred_scope(user_id=1, workspace="default", scope="cdp")
+    monkeypatch.setattr(service, "_open_external_url", lambda url: (_ for _ in ()).throw(AssertionError(f"unexpected external open: {url}")))
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
+
+    states = iter(
+        [
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "bs-test"},
+            {"ok": True, "url": "https://x.com/home", "title": "X", "session_id": "bs-test"},
+        ]
+    )
+    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://x.com", "confirm": False},
+        scope="auto",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
+    assert page.goto_calls == ["https://x.com"]
+
+
+def test_use_explicit_external_is_coerced_to_cdp_when_sticky_scope_is_cdp(monkeypatch):
+    service = BrowserAutomationService()
+    page = _FakePage()
+    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
+    cdp_session.mode = "cdp"
+    service._set_preferred_scope(user_id=1, workspace="default", scope="cdp")
+    monkeypatch.setattr(service, "_open_external_url", lambda url: (_ for _ in ()).throw(AssertionError(f"unexpected external open: {url}")))
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
+
+    states = iter(
+        [
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "bs-test"},
+            {"ok": True, "url": "https://x.com/following", "title": "Following", "session_id": "bs-test"},
+        ]
+    )
+    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://x.com/following", "confirm": False},
+        scope="external",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
+    assert out["external_opened"] is False
+    assert page.goto_calls == ["https://x.com/following"]
+
+
+def test_state_get_auto_prefers_sticky_cdp_scope(monkeypatch):
+    service = BrowserAutomationService()
+    page = _FakePage()
+    page.url = "https://x.com/home"
+    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
+    cdp_session.mode = "cdp"
+    service._set_preferred_scope(user_id=1, workspace="default", scope="cdp")
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
+
+    out = service.state_get(
+        user_id=1,
+        workspace="default",
+        scope="auto",
+        include_dom=False,
+        include_a11y=False,
+        max_targets=5,
+        max_items=5,
+        pid=0,
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
+    assert str(out.get("url") or "") == "https://x.com/home"
+
+
 def test_use_external_scope_requests_confirmation_for_dom_actions():
     service = BrowserAutomationService()
     out = service.use(

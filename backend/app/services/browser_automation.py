@@ -130,6 +130,7 @@ class BrowserAutomationService:
         self._sessions: dict[str, BrowserSession] = {}
         self._lock = threading.RLock()
         self._creation_locks: dict[str, threading.Lock] = {}
+        self._preferred_scope_by_workspace: dict[str, tuple[str, float]] = {}
         self._default_timeout_ms = _clamp_int(
             getattr(settings, "browser_tool_default_timeout_ms", 12000),
             12000,
@@ -180,6 +181,10 @@ class BrowserAutomationService:
         safe_mode = str(mode or "managed").strip().lower() or "managed"
         return f"{safe_mode}::{int(user_id)}::{_normalize_workspace(workspace)}"
 
+    @staticmethod
+    def _workspace_scope_key(*, user_id: int, workspace: str) -> str:
+        return f"{int(user_id)}::{_normalize_workspace(workspace)}"
+
     def _peek_session(self, *, user_id: int, workspace: str, mode: str) -> BrowserSession | None:
         key = self._session_key(user_id=user_id, workspace=workspace, mode=mode)
         thread_id = threading.get_ident()
@@ -190,6 +195,32 @@ class BrowserAutomationService:
             if int(getattr(session, "owner_thread_id", 0) or 0) != thread_id:
                 return None
             return session
+
+    def _set_preferred_scope(self, *, user_id: int, workspace: str, scope: str) -> None:
+        normalized = self._normalize_scope(scope)
+        if normalized not in {"cdp", "external"}:
+            return
+        key = self._workspace_scope_key(user_id=user_id, workspace=workspace)
+        with self._lock:
+            self._preferred_scope_by_workspace[key] = (normalized, time.time())
+
+    def _get_preferred_scope(self, *, user_id: int, workspace: str) -> str:
+        key = self._workspace_scope_key(user_id=user_id, workspace=workspace)
+        now = time.time()
+        with self._lock:
+            entry = self._preferred_scope_by_workspace.get(key)
+            if entry is None:
+                return ""
+            scope, ts = entry
+            if (now - float(ts or now)) > max(60.0, float(self._idle_ttl_seconds)):
+                self._preferred_scope_by_workspace.pop(key, None)
+                return ""
+            return str(scope or "")
+
+    def _clear_preferred_scope(self, *, user_id: int, workspace: str) -> None:
+        key = self._workspace_scope_key(user_id=user_id, workspace=workspace)
+        with self._lock:
+            self._preferred_scope_by_workspace.pop(key, None)
 
     def _pop_expired_sessions_locked(self, *, now: float | None = None) -> list[BrowserSession]:
         ts = float(now or time.time())
@@ -1666,6 +1697,7 @@ class BrowserAutomationService:
         user_scope = self._normalize_scope(scope)
         target_limit = _clamp_int(max_targets, 30, low=1, high=60)
         proc_limit = _clamp_int(max_items, 20, low=0, high=200)
+        sticky_scope = self._get_preferred_scope(user_id=int(user_id), workspace=workspace)
         if user_scope == "all":
             sessions = self.list_sessions(
                 user_id=user_id,
@@ -1701,7 +1733,7 @@ class BrowserAutomationService:
             }
 
         runtime_scope, fallback_reason, early_payload = self._resolve_state_runtime_scope(
-            user_scope=user_scope,
+            user_scope="cdp" if user_scope == "auto" and sticky_scope == "cdp" else user_scope,
             include_dom=bool(include_dom),
             include_a11y=bool(include_a11y),
             proc_limit=proc_limit,
@@ -1797,6 +1829,8 @@ class BrowserAutomationService:
             }
             if fallback_reason:
                 payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+            if runtime_scope == "cdp":
+                self._set_preferred_scope(user_id=int(user_id), workspace=workspace, scope="cdp")
             return payload
 
     @staticmethod
@@ -1841,10 +1875,11 @@ class BrowserAutomationService:
         user_scope = self._normalize_scope(scope)
         runtime_scope = user_scope
         prefer_existing_cdp = False
+        sticky_scope = self._get_preferred_scope(user_id=int(user_id), workspace=workspace)
 
         if runtime_scope == "auto":
             if act == "navigate":
-                prefer_existing_cdp = self._has_reusable_cdp_session(
+                prefer_existing_cdp = sticky_scope == "cdp" or self._has_reusable_cdp_session(
                     user_id=int(user_id),
                     workspace=workspace,
                 )
@@ -1875,6 +1910,9 @@ class BrowserAutomationService:
                         },
                     }
                 runtime_scope = "cdp"
+        elif runtime_scope == "external" and sticky_scope == "cdp":
+            runtime_scope = "cdp"
+            prefer_existing_cdp = True
 
         if runtime_scope in {"system", "all"}:
             return self._error_payload(error="unsupported_scope_for_use", action=act, scope=runtime_scope)
@@ -2101,6 +2139,10 @@ class BrowserAutomationService:
         }
         if fallback_reason:
             payload["scope_fallback"] = f"cdp_unavailable:{fallback_reason}"
+        if runtime_scope == "cdp":
+            self._set_preferred_scope(user_id=int(user_id), workspace=workspace, scope="cdp")
+        elif runtime_scope == "external" and act == "navigate":
+            self._set_preferred_scope(user_id=int(user_id), workspace=workspace, scope="external")
         return payload
 
 
