@@ -130,6 +130,7 @@ class Settings(BaseSettings):
     browser_tool_cdp_auto_launch: bool = True
     browser_tool_cdp_launch_timeout_seconds: float = 10.0
     browser_tool_cdp_browser_path: str = ""
+    browser_tool_cdp_profile_dir: str = ""
     browser_tool_default_timeout_ms: int = 12_000
     browser_tool_idle_ttl_seconds: int = 900
     browser_tool_profile_dir: str = "./browser_data/agent_browser"

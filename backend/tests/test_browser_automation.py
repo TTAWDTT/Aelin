@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 from app.services.browser_automation import BrowserAutomationService
 
@@ -509,6 +510,34 @@ def test_ensure_cdp_endpoint_ready_auto_launch_success(monkeypatch):
     service._ensure_cdp_endpoint_ready()
     assert launched == ["http://127.0.0.1:9222"]
     assert probe_calls["count"] >= 3
+
+
+def test_build_cdp_launch_command_uses_dedicated_profile_dir(tmp_path, monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_profile_dir = tmp_path / "cdp-profile"
+    monkeypatch.setattr(service, "_resolve_cdp_browser_executable", lambda: str(tmp_path / "chrome.exe"))
+
+    launch = service._build_cdp_launch_command("http://127.0.0.1:9222")
+
+    assert str(launch.get("exe") or "").endswith("chrome.exe")
+    assert Path(str(launch.get("user_data_dir") or "")).resolve() == (tmp_path / "cdp-profile").resolve()
+    cmd = [str(item) for item in list(launch.get("cmd") or [])]
+    assert any(item.startswith("--user-data-dir=") for item in cmd)
+    assert not any("Google/Chrome/User Data" in item for item in cmd)
+
+
+def test_resolve_cdp_browser_executable_prefers_cft_before_system(tmp_path, monkeypatch):
+    service = BrowserAutomationService()
+    cft = tmp_path / "chrome-for-testing" / "chrome.exe"
+    chrome = tmp_path / "chrome.exe"
+    cft.parent.mkdir(parents=True, exist_ok=True)
+    cft.write_text("", encoding="utf-8")
+    chrome.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(service, "_list_cft_browser_candidates", lambda: [str(cft)])
+    monkeypatch.setattr(service, "_list_system_browser_candidates", lambda: [str(chrome)])
+
+    assert service._resolve_cdp_browser_executable() == str(cft)
 
 
 def test_ensure_cdp_endpoint_ready_requires_restart_when_browser_running(monkeypatch):

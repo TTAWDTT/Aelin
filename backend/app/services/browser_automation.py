@@ -157,6 +157,11 @@ class BrowserAutomationService:
             str(getattr(settings, "browser_tool_profile_dir", "./browser_data/agent_browser") or "./browser_data/agent_browser")
         )
         self._profile_root.mkdir(parents=True, exist_ok=True)
+        cdp_profile_raw = str(getattr(settings, "browser_tool_cdp_profile_dir", "") or "").strip()
+        self._cdp_profile_dir = (
+            self._resolve_runtime_path(cdp_profile_raw) if cdp_profile_raw else (self._profile_root / "cdp")
+        )
+        self._cdp_profile_dir.mkdir(parents=True, exist_ok=True)
         self._system_process_cache_ttl_seconds = float(
             getattr(settings, "browser_tool_system_process_cache_ttl_seconds", 2.0) or 2.0
         )
@@ -321,13 +326,40 @@ class BrowserAutomationService:
             "listener_pids": [int(pid) for pid in listeners[:8]],
         }
 
-    def _resolve_cdp_browser_executable(self) -> str:
-        configured = str(self._cdp_browser_path or "").strip()
-        if configured:
-            candidate = Path(configured).expanduser()
-            if candidate.exists():
-                return str(candidate)
+    @staticmethod
+    def _select_first_existing_path(candidates: list[str]) -> str:
+        seen: set[str] = set()
+        for item in candidates:
+            norm = str(item or "").strip()
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            if Path(norm).exists():
+                return norm
+        return ""
 
+    def _list_cft_browser_candidates(self) -> list[str]:
+        candidates: list[str] = []
+        if os.name != "nt":
+            return candidates
+        local_app_data = str(os.environ.get("LOCALAPPDATA") or "").strip()
+        program_files = str(os.environ.get("ProgramFiles") or "").strip()
+        program_files_x86 = str(os.environ.get("ProgramFiles(x86)") or "").strip()
+        windows_paths = [
+            (local_app_data, "Google/Chrome for Testing/Application/chrome.exe"),
+            (program_files, "Google/Chrome for Testing/Application/chrome.exe"),
+            (program_files_x86, "Google/Chrome for Testing/Application/chrome.exe"),
+            (local_app_data, "GoogleChromeLabs/chrome-for-testing/chrome.exe"),
+            (program_files, "GoogleChromeLabs/chrome-for-testing/chrome.exe"),
+            (program_files_x86, "GoogleChromeLabs/chrome-for-testing/chrome.exe"),
+        ]
+        for base, suffix in windows_paths:
+            if not base:
+                continue
+            candidates.append(str(Path(base) / suffix))
+        return candidates
+
+    def _list_system_browser_candidates(self) -> list[str]:
         candidates: list[str] = []
         for name in ("chrome", "msedge", "chromium", "brave", "brave-browser"):
             resolved = shutil.which(name)
@@ -349,75 +381,98 @@ class BrowserAutomationService:
             for base, suffix in windows_paths:
                 if not base:
                     continue
-                full = Path(base) / suffix
-                candidates.append(str(full))
+                candidates.append(str(Path(base) / suffix))
+        return candidates
 
-        seen: set[str] = set()
-        for item in candidates:
-            norm = str(item or "").strip()
-            if not norm or norm in seen:
-                continue
-            seen.add(norm)
-            if Path(norm).exists():
-                return norm
-        return ""
+    def _resolve_cdp_browser_executable(self) -> str:
+        configured = str(self._cdp_browser_path or "").strip()
+        if configured:
+            candidate = Path(configured).expanduser()
+            if candidate.exists():
+                return str(candidate)
+        cft = self._select_first_existing_path(self._list_cft_browser_candidates())
+        if cft:
+            return cft
+        return self._select_first_existing_path(self._list_system_browser_candidates())
 
-    def _launch_cdp_browser(self, endpoint: str) -> None:
+    def _resolve_cdp_profile_dir(self) -> Path:
+        self._cdp_profile_dir.mkdir(parents=True, exist_ok=True)
+        return self._cdp_profile_dir
+
+    def _build_cdp_launch_command(self, endpoint: str) -> dict[str, Any]:
         exe = self._resolve_cdp_browser_executable()
         if not exe:
             raise RuntimeError("cdp_browser_not_found")
         port = self._parse_cdp_port(endpoint)
         if port <= 0:
             raise RuntimeError("cdp_endpoint_invalid")
-        exe_lower = str(exe or "").lower()
-        local_app_data = str(os.environ.get("LOCALAPPDATA") or "").strip()
-        user_data_dir = ""
-        if local_app_data:
-            if "chrome" in exe_lower:
-                candidate = Path(local_app_data) / "Google/Chrome/User Data"
-                if candidate.exists():
-                    user_data_dir = str(candidate)
-            elif "edge" in exe_lower or "msedge" in exe_lower:
-                candidate = Path(local_app_data) / "Microsoft/Edge/User Data"
-                if candidate.exists():
-                    user_data_dir = str(candidate)
-            elif "brave" in exe_lower:
-                candidate = Path(local_app_data) / "BraveSoftware/Brave-Browser/User Data"
-                if candidate.exists():
-                    user_data_dir = str(candidate)
-            elif "opera" in exe_lower:
-                candidate = Path(local_app_data) / "Opera Software/Opera Stable"
-                if candidate.exists():
-                    user_data_dir = str(candidate)
-
+        user_data_dir = self._resolve_cdp_profile_dir()
         cmd = [
             exe,
             f"--remote-debugging-port={port}",
             "--remote-debugging-address=127.0.0.1",
+            f"--user-data-dir={user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
             "--new-window",
             "about:blank",
         ]
-        if user_data_dir:
-            cmd.insert(1, f"--user-data-dir={user_data_dir}")
+        return {
+            "cmd": cmd,
+            "exe": exe,
+            "port": int(port),
+            "user_data_dir": str(user_data_dir),
+        }
+
+    def _launch_cdp_browser(self, endpoint: str) -> dict[str, Any]:
+        launch = self._build_cdp_launch_command(endpoint)
         _LOG.info(
             "cdp_launch command exe=%s port=%s user_data_dir=%s",
-            str(exe)[:180],
-            int(port),
-            str(user_data_dir or "-")[:220],
+            str(launch.get("exe") or "")[:180],
+            int(launch.get("port") or 0),
+            str(launch.get("user_data_dir") or "-")[:220],
         )
         try:
             child = subprocess.Popen(
-                cmd,
+                list(launch.get("cmd") or []),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            time.sleep(0.35)
+            exit_code = child.poll()
+            launch_meta = {
+                "pid": int(getattr(child, "pid", 0) or 0),
+                "endpoint": str(endpoint)[:160],
+                "alive": exit_code is None,
+                "exit_code": None if exit_code is None else int(exit_code),
+                "user_data_dir": str(launch.get("user_data_dir") or "")[:220],
+            }
             _LOG.info(
-                "cdp_launch spawned pid=%s endpoint=%s",
-                int(getattr(child, "pid", 0) or 0),
-                str(endpoint)[:160],
+                "cdp_launch spawned pid=%s endpoint=%s alive=%s exit_code=%s",
+                int(launch_meta.get("pid") or 0),
+                str(launch_meta.get("endpoint") or "")[:160],
+                "1" if bool(launch_meta.get("alive")) else "0",
+                "" if launch_meta.get("exit_code") is None else str(launch_meta.get("exit_code")),
             )
+            return launch_meta
         except Exception as exc:
             raise RuntimeError(f"cdp_launch_failed:{str(exc)[:120]}") from exc
+
+    def _wait_for_cdp_endpoint(
+        self,
+        endpoint: str,
+        *,
+        deadline: float,
+        probe_timeout_seconds: float = 0.35,
+        sleep_seconds: float = 0.2,
+    ) -> tuple[bool, int]:
+        attempts = 0
+        while time.time() < deadline:
+            attempts += 1
+            if self._probe_cdp_endpoint(endpoint, timeout_seconds=probe_timeout_seconds):
+                return True, attempts
+            time.sleep(sleep_seconds)
+        return False, attempts
 
     def _list_chromium_family_pids(self, *, max_items: int = 200) -> list[int]:
         if psutil is None:
@@ -447,6 +502,7 @@ class BrowserAutomationService:
     def _ensure_cdp_endpoint_ready(self) -> None:
         endpoint = str(self._cdp_endpoint or "").strip()
         probe_attempts = 0
+        launch_meta: dict[str, Any] | None = None
         if not endpoint:
             raise RuntimeError("cdp_endpoint_unconfigured")
         if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
@@ -457,31 +513,40 @@ class BrowserAutomationService:
         with self._cdp_bootstrap_lock:
             if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.25):
                 return
-            self._launch_cdp_browser(endpoint)
+            launch_meta = self._launch_cdp_browser(endpoint)
             deadline = time.time() + max(2.0, float(self._cdp_launch_timeout_seconds or 10.0))
-            while time.time() < deadline:
-                probe_attempts += 1
-                if self._probe_cdp_endpoint(endpoint):
-                    return
-                time.sleep(0.2)
+            ready, probe_attempts = self._wait_for_cdp_endpoint(
+                endpoint,
+                deadline=deadline,
+                probe_timeout_seconds=0.35,
+                sleep_seconds=0.2,
+            )
+            if ready:
+                return
             conflicts = self._list_cdp_conflict_processes(max_items=8, endpoint=endpoint)
             if conflicts:
                 diag = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
                 _LOG.warning(
-                    "ensure_cdp_endpoint_ready requires_restart endpoint=%s attempts=%s reason=%s listeners=%s",
+                    "ensure_cdp_endpoint_ready requires_restart endpoint=%s attempts=%s reason=%s listeners=%s launch_pid=%s launch_alive=%s launch_exit_code=%s",
                     str(endpoint)[:160],
                     int(probe_attempts),
                     str(diag.get("reason") or "unknown")[:120],
                     int(diag.get("listener_count") or 0),
+                    int((launch_meta or {}).get("pid") or 0),
+                    "1" if bool((launch_meta or {}).get("alive")) else "0",
+                    "" if (launch_meta or {}).get("exit_code") is None else str((launch_meta or {}).get("exit_code")),
                 )
                 raise RuntimeError("cdp_requires_browser_restart")
         diag = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
         _LOG.warning(
-            "ensure_cdp_endpoint_ready timeout endpoint=%s attempts=%s reason=%s listeners=%s",
+            "ensure_cdp_endpoint_ready timeout endpoint=%s attempts=%s reason=%s listeners=%s launch_pid=%s launch_alive=%s launch_exit_code=%s",
             str(endpoint)[:160],
             int(probe_attempts),
             str(diag.get("reason") or "unknown")[:120],
             int(diag.get("listener_count") or 0),
+            int((launch_meta or {}).get("pid") or 0),
+            "1" if bool((launch_meta or {}).get("alive")) else "0",
+            "" if (launch_meta or {}).get("exit_code") is None else str((launch_meta or {}).get("exit_code")),
         )
         raise RuntimeError("cdp_launch_timeout")
 
@@ -958,6 +1023,7 @@ class BrowserAutomationService:
     def force_restart_to_cdp(self, *, timeout_seconds: float = 12.0) -> dict[str, Any]:
         started = time.perf_counter()
         endpoint = str(self._cdp_endpoint or "").strip()
+        last_launch_meta: dict[str, Any] | None = None
         if not endpoint:
             _LOG.warning("force_restart_to_cdp failed: endpoint_unconfigured")
             return {"ok": False, "error": "cdp_endpoint_unconfigured"}
@@ -1029,7 +1095,7 @@ class BrowserAutomationService:
                 )
                 return {"ok": True, "endpoint": endpoint, "already_ready": True, **terminate_report}
             try:
-                self._launch_cdp_browser(endpoint)
+                last_launch_meta = self._launch_cdp_browser(endpoint)
             except Exception as exc:
                 _LOG.warning(
                     "force_restart_to_cdp launch_failed endpoint=%s error=%s latency_ms=%s",
@@ -1043,15 +1109,19 @@ class BrowserAutomationService:
                     "endpoint": endpoint,
                     **terminate_report,
                 }
-            while time.time() < deadline:
-                if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.35):
-                    _LOG.info(
-                        "force_restart_to_cdp success endpoint=%s latency_ms=%s",
-                        endpoint,
-                        int((time.perf_counter() - started) * 1000),
-                    )
-                    return {"ok": True, "endpoint": endpoint, **terminate_report}
-                time.sleep(0.2)
+            ready, _attempts = self._wait_for_cdp_endpoint(
+                endpoint,
+                deadline=deadline,
+                probe_timeout_seconds=0.35,
+                sleep_seconds=0.2,
+            )
+            if ready:
+                _LOG.info(
+                    "force_restart_to_cdp success endpoint=%s latency_ms=%s",
+                    endpoint,
+                    int((time.perf_counter() - started) * 1000),
+                )
+                return {"ok": True, "endpoint": endpoint, **terminate_report}
         # Fallback: if launch timed out without explicit port conflicts,
         # Chromium family processes may still be reusing an existing browser instance
         # and swallowing --remote-debugging-port flags.
@@ -1087,7 +1157,7 @@ class BrowserAutomationService:
                 "failed_pids": merged_failed,
             }
             try:
-                self._launch_cdp_browser(endpoint)
+                last_launch_meta = self._launch_cdp_browser(endpoint)
             except Exception as exc:
                 _LOG.warning(
                     "force_restart_to_cdp fallback_launch_failed endpoint=%s error=%s latency_ms=%s",
@@ -1102,15 +1172,19 @@ class BrowserAutomationService:
                     **terminate_report,
                 }
             second_deadline = time.time() + max(8.0, min(25.0, effective_timeout))
-            while time.time() < second_deadline:
-                if self._probe_cdp_endpoint(endpoint, timeout_seconds=0.35):
-                    _LOG.info(
-                        "force_restart_to_cdp success_after_fallback endpoint=%s latency_ms=%s",
-                        endpoint,
-                        int((time.perf_counter() - started) * 1000),
-                    )
-                    return {"ok": True, "endpoint": endpoint, "fallback_full_restart": True, **terminate_report}
-                time.sleep(0.2)
+            ready, _attempts = self._wait_for_cdp_endpoint(
+                endpoint,
+                deadline=second_deadline,
+                probe_timeout_seconds=0.35,
+                sleep_seconds=0.2,
+            )
+            if ready:
+                _LOG.info(
+                    "force_restart_to_cdp success_after_fallback endpoint=%s latency_ms=%s",
+                    endpoint,
+                    int((time.perf_counter() - started) * 1000),
+                )
+                return {"ok": True, "endpoint": endpoint, "fallback_full_restart": True, **terminate_report}
         remaining_after_launch = self._list_cdp_conflict_processes(max_items=20, endpoint=endpoint)
         if remaining_after_launch:
             _LOG.warning(
@@ -1137,11 +1211,14 @@ class BrowserAutomationService:
             }
         probe_snapshot = self._collect_cdp_probe_snapshot(endpoint, timeout_seconds=0.5)
         _LOG.warning(
-            "force_restart_to_cdp timeout endpoint=%s latency_ms=%s probe_reason=%s listeners=%s",
+            "force_restart_to_cdp timeout endpoint=%s latency_ms=%s probe_reason=%s listeners=%s launch_pid=%s launch_alive=%s launch_exit_code=%s",
             endpoint,
             int((time.perf_counter() - started) * 1000),
             str(probe_snapshot.get("reason") or "unknown")[:120],
             int(probe_snapshot.get("listener_count") or 0),
+            int((last_launch_meta or {}).get("pid") or 0),
+            "1" if bool((last_launch_meta or {}).get("alive")) else "0",
+            "" if (last_launch_meta or {}).get("exit_code") is None else str((last_launch_meta or {}).get("exit_code")),
         )
         return {
             "ok": False,
@@ -1150,6 +1227,9 @@ class BrowserAutomationService:
             "probe_reason": str(probe_snapshot.get("reason") or ""),
             "probe_listener_count": int(probe_snapshot.get("listener_count") or 0),
             "probe_listener_pids": list(probe_snapshot.get("listener_pids") or []),
+            "launch_pid": int((last_launch_meta or {}).get("pid") or 0),
+            "launch_alive": bool((last_launch_meta or {}).get("alive")),
+            "launch_exit_code": (last_launch_meta or {}).get("exit_code"),
             **terminate_report,
         }
 
