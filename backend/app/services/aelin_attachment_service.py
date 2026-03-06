@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -60,6 +61,11 @@ _XLSX_NS = {
 }
 _TOKEN_RE = re.compile(r"[a-z0-9_]{2,}|[\u4e00-\u9fff]{2,}")
 _WS_RE = re.compile(r"\s+")
+_LOGGER = logging.getLogger(__name__)
+_CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
+_ALNUM_CHAR_RE = re.compile(r"[A-Za-z0-9]")
+_PUNCT_CHAR_RE = re.compile(r"[，。！？、；：,.!?;:()（）【】\\[\\]{}<>《》“”‘’\"'\\-_/]")
+_OCR_PIPELINE_VERSION = "rapidocr_v1"
 
 
 class AttachmentIngestError(RuntimeError):
@@ -88,6 +94,35 @@ class AelinAttachmentService:
             10,
             int(getattr(settings, "aelin_attachment_legacy_convert_timeout_seconds", 30) or 30),
         )
+        self._pdf_ocr_fallback_enabled = bool(
+            getattr(settings, "aelin_attachment_pdf_ocr_fallback_enabled", True)
+        )
+        self._pdf_ocr_max_images_per_page = max(
+            1,
+            int(getattr(settings, "aelin_attachment_pdf_ocr_max_images_per_page", 4) or 4),
+        )
+        self._tesseract_cmd = str(getattr(settings, "aelin_attachment_tesseract_cmd", "") or "").strip()
+        if not self._tesseract_cmd:
+            default_tesseract = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+            if default_tesseract.exists():
+                self._tesseract_cmd = str(default_tesseract)
+        self._tessdata_dir = str(getattr(settings, "aelin_attachment_tessdata_dir", "") or "").strip()
+        if not self._tessdata_dir:
+            self._tessdata_dir = str(os.getenv("TESSDATA_PREFIX", "") or "").strip()
+        if self._tessdata_dir and Path(self._tessdata_dir).is_dir():
+            os.environ["TESSDATA_PREFIX"] = self._tessdata_dir
+        self._rapidocr_enabled = bool(getattr(settings, "aelin_attachment_rapidocr_enabled", True))
+        self._ocr_languages = str(getattr(settings, "aelin_attachment_ocr_languages", "chi_sim+eng") or "chi_sim+eng").strip() or "eng"
+        ocr_psm_modes_raw = str(getattr(settings, "aelin_attachment_ocr_psm_modes", "6,11,4") or "6,11,4")
+        parsed_modes = [int(item) for item in re.findall(r"\d+", ocr_psm_modes_raw)]
+        self._ocr_psm_modes = tuple(parsed_modes[:6]) if parsed_modes else (6, 11, 4)
+        self._pdf_ocr_render_dpi = max(
+            96,
+            int(getattr(settings, "aelin_attachment_pdf_ocr_render_dpi", 220) or 220),
+        )
+        self._ocr_min_chars = max(0, int(getattr(settings, "aelin_attachment_ocr_min_chars", 8) or 8))
+        self._rapidocr_engine: Any | None = None
+        self._rapidocr_lock = threading.Lock()
 
     @staticmethod
     def _normalize_workspace(raw: str) -> str:
@@ -119,6 +154,85 @@ class AelinAttachmentService:
     @staticmethod
     def _norm_text(text: str) -> str:
         return _WS_RE.sub(" ", str(text or "")).strip()
+
+    def _ocr_candidate_score(self, text: str) -> float:
+        normalized = self._norm_text(text)
+        if not normalized:
+            return -1_000_000.0
+        length = len(normalized)
+        cjk_count = len(_CJK_CHAR_RE.findall(normalized))
+        alnum_count = len(_ALNUM_CHAR_RE.findall(normalized))
+        punct_count = len(_PUNCT_CHAR_RE.findall(normalized))
+        space_count = normalized.count(" ")
+        known_count = cjk_count + alnum_count + punct_count + space_count
+        unknown_count = max(0, length - known_count)
+        useful_ratio = float(cjk_count + alnum_count) / float(max(1, length))
+        unknown_ratio = float(unknown_count) / float(max(1, length))
+
+        run_penalty = 0.0
+        current_run = 1
+        for i in range(1, length):
+            if normalized[i] == normalized[i - 1]:
+                current_run += 1
+            else:
+                if current_run >= 5:
+                    run_penalty += float(current_run - 4) * 6.0
+                current_run = 1
+        if current_run >= 5:
+            run_penalty += float(current_run - 4) * 6.0
+
+        score = 0.0
+        score += min(200.0, float(length))
+        score += useful_ratio * 200.0
+        score += float(cjk_count) * 2.4
+        score -= unknown_ratio * 180.0
+        score -= run_penalty
+        return score
+
+    def _is_garbled_ocr_text(self, text: str) -> bool:
+        normalized = self._norm_text(text)
+        if not normalized:
+            return True
+        if len(normalized) < max(6, int(self._ocr_min_chars)):
+            return True
+        cjk_count = len(_CJK_CHAR_RE.findall(normalized))
+        alnum_count = len(_ALNUM_CHAR_RE.findall(normalized))
+        punct_count = len(_PUNCT_CHAR_RE.findall(normalized))
+        known_count = cjk_count + alnum_count + punct_count + normalized.count(" ")
+        unknown_count = max(0, len(normalized) - known_count)
+        useful_ratio = float(cjk_count + alnum_count) / float(max(1, len(normalized)))
+        unknown_ratio = float(unknown_count) / float(max(1, len(normalized)))
+        cjk_ratio = float(cjk_count) / float(max(1, len(normalized)))
+        words = [piece for piece in normalized.split(" ") if piece]
+        single_char_words = sum(1 for piece in words if len(piece) == 1)
+        if useful_ratio < 0.38:
+            return True
+        if unknown_ratio > 0.35:
+            return True
+        if words and float(single_char_words) / float(len(words)) > 0.45 and (
+            alnum_count >= cjk_count or unknown_ratio > 0.12
+        ):
+            return True
+        if "chi_sim" in self._ocr_languages and len(normalized) >= 18 and cjk_ratio < 0.08:
+            return True
+        return False
+
+    def _pick_best_ocr_text(self, candidates: list[str]) -> str:
+        best_text = ""
+        best_score = -1_000_000.0
+        for candidate in candidates:
+            normalized = self._norm_text(candidate)
+            if not normalized:
+                continue
+            score = self._ocr_candidate_score(normalized)
+            if score > best_score:
+                best_score = score
+                best_text = normalized
+        if not best_text:
+            return ""
+        if self._is_garbled_ocr_text(best_text):
+            return ""
+        return best_text
 
     @property
     def max_size_bytes(self) -> int:
@@ -472,17 +586,39 @@ class AelinAttachmentService:
             raise AttachmentIngestError("pdf_open_failed", f"PDF 打开失败: {exc}") from exc
 
         blocks: list[ParsedBlock] = []
+        ocr_page_count = 0
+        text_page_count = 0
         for page_idx, page in enumerate(reader.pages, start=1):
             text = self._norm_text(page.extract_text() or "")
             if text:
                 blocks.append(ParsedBlock(content=text, block_type="page", loc={"page": page_idx}))
+                text_page_count += 1
+                continue
+            if self._pdf_ocr_fallback_enabled:
+                ocr_text = self._extract_pdf_page_ocr_text(page, pdf_bytes=content, page_index=page_idx)
+                if ocr_text:
+                    blocks.append(ParsedBlock(content=ocr_text, block_type="page_ocr", loc={"page": page_idx, "source": "ocr"}))
+                    ocr_page_count += 1
         full_text = "\n".join(block.content for block in blocks).strip()
         if not full_text:
             raise AttachmentIngestError(
                 "pdf_text_layer_empty",
-                f"PDF 为扫描件或不含可提取文本，当前版本暂不支持 OCR 兜底: {file_name}",
+                f"PDF 为扫描件或不含可提取文本，且 OCR 兜底未成功（或未启用）: {file_name}",
             )
-        metadata = {"parser": "pdf_text_layer", "page_count": len(reader.pages)}
+        parser = "pdf_text_layer"
+        if ocr_page_count > 0 and text_page_count > 0:
+            parser = "pdf_text_plus_ocr"
+        elif ocr_page_count > 0:
+            parser = "pdf_ocr_fallback"
+        metadata = {
+            "parser": parser,
+            "page_count": len(reader.pages),
+            "text_page_count": text_page_count,
+            "ocr_page_count": ocr_page_count,
+        }
+        if ocr_page_count > 0:
+            metadata["ocr_pipeline_version"] = _OCR_PIPELINE_VERSION
+            metadata["rapidocr_enabled"] = bool(self._rapidocr_enabled)
         return full_text, blocks, metadata
 
     def _parse_image(self, content: bytes, *, file_name: str) -> tuple[str, list[ParsedBlock], dict[str, Any]]:
@@ -494,12 +630,7 @@ class AelinAttachmentService:
 
             image = Image.open(io.BytesIO(content))
             width, height = int(image.width or 0), int(image.height or 0)
-            try:
-                import pytesseract  # type: ignore
-
-                ocr_text = self._norm_text(pytesseract.image_to_string(image) or "")
-            except Exception:
-                ocr_text = ""
+            ocr_text = self._ocr_text_from_image_obj(image)
         except Exception:
             width = 0
             height = 0
@@ -508,6 +639,193 @@ class AelinAttachmentService:
         blocks = [ParsedBlock(content=summary_text, block_type="image", loc={"page": 1})]
         metadata = {"parser": ("image_ocr" if ocr_text else "image_meta"), "width": width, "height": height}
         return summary_text, blocks, metadata
+
+    def _ocr_text_from_image_obj(self, image_obj: Any) -> str:
+        try:
+            from PIL import ImageFilter, ImageOps  # type: ignore
+        except Exception:
+            return ""
+        try:
+            import pytesseract  # type: ignore
+
+            if self._tesseract_cmd:
+                pytesseract.pytesseract.tesseract_cmd = self._tesseract_cmd
+
+            base = image_obj.convert("RGB")
+            gray = ImageOps.grayscale(base)
+            autocontrast = ImageOps.autocontrast(gray)
+            threshold = autocontrast.point(lambda p: 255 if p > 170 else 0)
+            sharpen = autocontrast.filter(ImageFilter.SHARPEN)
+            median = autocontrast.filter(ImageFilter.MedianFilter(size=3))
+            variants = [base, autocontrast, sharpen, threshold, median]
+            if max(base.size or (0, 0)) < 2200:
+                variants.extend(
+                    [
+                        autocontrast.resize((max(1, autocontrast.width * 2), max(1, autocontrast.height * 2))),
+                        threshold.resize((max(1, threshold.width * 2), max(1, threshold.height * 2))),
+                        median.resize((max(1, median.width * 2), max(1, median.height * 2))),
+                    ]
+                )
+
+            best_text = ""
+            best_score = -1_000_000.0
+            lang_candidates: list[str] = []
+            for candidate_lang in (self._ocr_languages, "chi_sim+eng", "eng"):
+                clean_lang = self._norm_text(candidate_lang).replace(" ", "")
+                if clean_lang and clean_lang not in lang_candidates:
+                    lang_candidates.append(clean_lang)
+
+            for variant in variants[:6]:
+                for lang in lang_candidates:
+                    for psm in self._ocr_psm_modes:
+                        cfg = f"--oem 1 --psm {int(psm)}"
+                        try:
+                            candidate = self._norm_text(
+                                pytesseract.image_to_string(variant, lang=lang, config=cfg) or ""
+                            )
+                        except Exception:
+                            continue
+                        score = self._ocr_candidate_score(candidate)
+                        if score > best_score:
+                            best_score = score
+                            best_text = candidate
+            if self._is_garbled_ocr_text(best_text):
+                return ""
+            return best_text
+        except Exception as exc:
+            _LOGGER.warning("attachment OCR fallback failed: %s", exc)
+            return ""
+
+    def _ocr_text_from_image_bytes(self, raw: bytes) -> str:
+        if not raw:
+            return ""
+        candidates: list[str] = []
+        try:
+            from PIL import Image  # type: ignore
+
+            image = Image.open(io.BytesIO(raw))
+        except Exception:
+            image = None
+        if image is not None:
+            tesseract_text = self._ocr_text_from_image_obj(image)
+            if tesseract_text:
+                candidates.append(tesseract_text)
+
+        if self._rapidocr_enabled:
+            rapid_text = self._rapidocr_text_from_image_bytes(raw)
+            if rapid_text:
+                candidates.append(rapid_text)
+        return self._pick_best_ocr_text(candidates)
+
+    def _rapidocr_text_from_image_bytes(self, raw: bytes) -> str:
+        if not raw:
+            return ""
+        try:
+            from rapidocr_onnxruntime import RapidOCR  # type: ignore
+        except Exception:
+            return ""
+
+        engine = self._rapidocr_engine
+        if engine is None:
+            with self._rapidocr_lock:
+                engine = self._rapidocr_engine
+                if engine is None:
+                    try:
+                        engine = RapidOCR()
+                    except Exception as exc:
+                        _LOGGER.warning("rapidocr init failed: %s", str(exc)[:180])
+                        return ""
+                    self._rapidocr_engine = engine
+        try:
+            result = engine(raw)
+        except Exception as exc:
+            _LOGGER.warning("rapidocr run failed: %s", str(exc)[:180])
+            return ""
+
+        lines: list[str] = []
+        data = result[0] if isinstance(result, tuple) and len(result) >= 1 else result
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    text = self._norm_text(str(item[1] or ""))
+                    if text:
+                        lines.append(text)
+        return self._norm_text("\n".join(lines))
+
+    @staticmethod
+    def _extract_pdf_page_image_bytes(image_obj: Any) -> bytes:
+        data = getattr(image_obj, "data", None)
+        if isinstance(data, (bytes, bytearray)):
+            return bytes(data)
+
+        maybe_image = getattr(image_obj, "image", None)
+        if maybe_image is not None:
+            try:
+                buff = io.BytesIO()
+                maybe_image.save(buff, format="PNG")
+                return buff.getvalue()
+            except Exception:
+                return b""
+        return b""
+
+    def _render_pdf_page_png_bytes(self, pdf_bytes: bytes, page_index: int) -> bytes:
+        if not pdf_bytes:
+            return b""
+        try:
+            import pypdfium2 as pdfium  # type: ignore
+        except Exception:
+            return b""
+
+        pdf_doc = None
+        pdf_page = None
+        try:
+            pdf_doc = pdfium.PdfDocument(io.BytesIO(pdf_bytes))
+            total = len(pdf_doc)
+            if page_index < 1 or page_index > total:
+                return b""
+            pdf_page = pdf_doc[page_index - 1]
+            scale = max(1.0, float(self._pdf_ocr_render_dpi) / 72.0)
+            bitmap = pdf_page.render(scale=scale)
+            pil_image = bitmap.to_pil()
+            buff = io.BytesIO()
+            pil_image.save(buff, format="PNG")
+            return buff.getvalue()
+        except Exception:
+            return b""
+        finally:
+            try:
+                if pdf_page is not None:
+                    pdf_page.close()
+            except Exception:
+                pass
+            try:
+                if pdf_doc is not None:
+                    pdf_doc.close()
+            except Exception:
+                pass
+
+    def _extract_pdf_page_ocr_text(self, page: Any, *, pdf_bytes: bytes, page_index: int) -> str:
+        try:
+            images = list(getattr(page, "images", []) or [])
+        except Exception:
+            images = []
+        pieces: list[str] = []
+        for image_obj in images[: self._pdf_ocr_max_images_per_page]:
+            raw = self._extract_pdf_page_image_bytes(image_obj)
+            if not raw:
+                continue
+            ocr_text = self._ocr_text_from_image_bytes(raw)
+            if ocr_text:
+                pieces.append(ocr_text)
+        if pieces:
+            return self._norm_text("\n".join(pieces))
+
+        rendered_page = self._render_pdf_page_png_bytes(pdf_bytes, page_index)
+        if rendered_page:
+            rendered_text = self._ocr_text_from_image_bytes(rendered_page)
+            if rendered_text:
+                pieces.append(rendered_text)
+        return self._norm_text("\n".join(pieces))
 
     def _convert_legacy_office(self, content: bytes, *, ext: str) -> tuple[bytes, str]:
         target_ext = _LEGACY_TO_MODERN.get(ext, "")
@@ -620,6 +938,65 @@ class AelinAttachmentService:
         )
         if existing is not None:
             chunk_count = db.query(AttachmentChunk).filter(AttachmentChunk.attachment_id == int(existing.id)).count()
+            existing_meta = self._safe_load_json(str(existing.metadata_json or "{}"))
+            existing_parser = str(existing_meta.get("parser") or "").strip().lower()
+            should_refresh_existing = bool(
+                str(ext or "").lower() == "pdf"
+                and (
+                    int(chunk_count or 0) <= 0
+                    or (
+                        existing_parser.startswith("pdf_ocr")
+                        and (
+                            str(existing_meta.get("ocr_pipeline_version") or "").strip() != _OCR_PIPELINE_VERSION
+                            or self._is_garbled_ocr_text(str(existing.summary or ""))
+                        )
+                    )
+                )
+            )
+            if should_refresh_existing:
+                try:
+                    parsed_text, blocks, metadata = self._parse_content(
+                        content=content,
+                        file_name=safe_name,
+                        ext=ext,
+                        mime_type=mime_type,
+                    )
+                    chunk_rows = self._build_chunk_rows(blocks=blocks, fallback_text=parsed_text)
+                    if chunk_rows:
+                        user_dir = self._root / f"user_{int(user_id)}"
+                        shard_dir = user_dir / file_sha[:2]
+                        shard_dir.mkdir(parents=True, exist_ok=True)
+                        storage_name = f"{file_sha}.{ext}"
+                        storage_path = shard_dir / storage_name
+                        if not storage_path.exists():
+                            self._write_storage_if_missing(storage_path, content)
+                        db.query(AttachmentChunk).filter(AttachmentChunk.attachment_id == int(existing.id)).delete(synchronize_session=False)
+                        existing.file_name = safe_name
+                        existing.file_ext = ext
+                        existing.mime_type = str(mime_type or "")[:160]
+                        existing.size_bytes = size
+                        existing.storage_path = str(storage_path.as_posix())[:1024]
+                        existing.parse_status = "ready"
+                        existing.parse_error = None
+                        existing.summary = self._norm_text(parsed_text)[:220]
+                        metadata = dict(metadata or {})
+                        metadata["reparsed"] = True
+                        existing.metadata_json = self._safe_json(metadata)
+                        for chunk in chunk_rows:
+                            db.add(
+                                AttachmentChunk(
+                                    attachment_id=int(existing.id),
+                                    chunk_index=int(chunk["chunk_index"]),
+                                    text=str(chunk["text"]),
+                                    token_count=int(chunk["token_count"]),
+                                    keyword_vector_json=str(chunk["keyword_vector_json"]),
+                                    loc_json=str(chunk["loc_json"]),
+                                )
+                            )
+                        db.flush()
+                        chunk_count = len(chunk_rows)
+                except Exception as exc:
+                    _LOGGER.warning("attachment reparse existing doc failed id=%s err=%s", int(existing.id), str(exc)[:180])
             return {
                 "attachment_id": int(existing.id),
                 "file_name": str(existing.file_name or safe_name),

@@ -15,7 +15,10 @@ imageio-ffmpeg>=0.5.1
 faster-whisper>=1.1.1
 requests>=2.32
 pypdf>=4.3.1
+pypdfium2>=4.30.0
 Pillow>=10.4.0
+pytesseract>=0.3.10
+rapidocr-onnxruntime>=1.4.4
 defusedxml>=0.7.1
 # optional semantic file-memory backend
 openviking>=0.1.18
