@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import User
 from app.schemas import AelinBrowserConfirmRequest, AelinChatRequest
-from app.services.browser_automation import browser_automation_service
+from app.services.browser_runtime_login import browser_runtime_login_service
 
 
 _LOG = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ def resolve_confirm_login_state(
     elif continuation_error:
         resolved_status = "continue_failed"
 
-    return browser_automation_service.resolve_login_pending(
+    return browser_runtime_login_service.resolve_login_pending(
         user_id=int(current_user.id),
         workspace=workspace,
         request_id=str(payload.login_request_id or ""),

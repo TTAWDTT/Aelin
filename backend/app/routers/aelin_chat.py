@@ -28,12 +28,29 @@ from app.schemas import (
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 from app.services.aelin_browser_confirm import confirm_browser_action_request, execute_confirmed_browser_call
-from app.services.browser_automation import browser_automation_service
+from app.services.browser_runtime import browser_runtime_service
+from app.services.browser_runtime_login import browser_runtime_login_service
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 _LOG = logging.getLogger(__name__)
 _execute_confirmed_browser_call = execute_confirmed_browser_call
+
+
+class _BrowserCompatFacade:
+    def __getattr__(self, name: str):
+        if hasattr(browser_runtime_service, name):
+            return getattr(browser_runtime_service, name)
+        return getattr(browser_runtime_login_service, name)
+
+    def __setattr__(self, name: str, value):
+        if hasattr(browser_runtime_service, name):
+            setattr(browser_runtime_service, name, value)
+            return
+        setattr(browser_runtime_login_service, name, value)
+
+
+browser_automation_service = _BrowserCompatFacade()
 
 
 def _preview(text: str, *, limit: int = 180) -> str:
@@ -269,7 +286,7 @@ def list_browser_login_checkpoints(
 ):
     normalized_workspace = str(workspace or "").strip()[:64] or "default"
     statuses = [str(item).strip().lower() for item in str(status or "").split(",") if str(item).strip()]
-    items = browser_automation_service.list_login_states(
+    items = browser_runtime_login_service.list_login_states(
         user_id=int(current_user.id),
         workspace=normalized_workspace,
         statuses=statuses,

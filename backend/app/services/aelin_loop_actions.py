@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from app.services.aelin_loop_types import AgentLoopToolRun
-from app.services.browser_automation import browser_automation_service
+from app.services.browser_runtime_login import browser_runtime_login_service
 
 
 def _payload_value(value: object) -> str:
@@ -55,7 +55,7 @@ def build_actions(
                 except Exception:
                     parsed_resume_request = {}
             if login_request_id:
-                browser_automation_service.attach_login_resume_context(
+                browser_runtime_login_service.attach_login_resume_context(
                     user_id=int(user_id),
                     workspace=str(workspace),
                     request_id=login_request_id,
