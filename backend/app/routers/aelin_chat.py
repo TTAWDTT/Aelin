@@ -75,6 +75,26 @@ def _build_browser_restart_meta(restart_meta: dict[str, Any] | None) -> dict[str
     }
 
 
+def _needs_restart_before_confirmed_call(*, tool_name: str, scope: str, clean_args: dict[str, Any]) -> bool:
+    if tool_name != "browser_state_get":
+        return False
+    if str(scope or "").strip().lower() != "cdp":
+        return False
+    return bool(clean_args.get("include_dom")) or bool(clean_args.get("include_a11y"))
+
+
+def _build_restart_failed_result(*, error: str, scope: str, restart_meta: dict[str, Any] | None) -> dict[str, Any]:
+    result = {
+        "ok": False,
+        "error": str(error or "cdp_launch_timeout")[:180] or "cdp_launch_timeout",
+        "scope": str(scope or "cdp")[:32] or "cdp",
+    }
+    if str(scope or "").strip().lower() == "cdp":
+        result["requires_cdp"] = True
+    result["restart"] = _build_browser_restart_meta(restart_meta)
+    return result
+
+
 def _normalize_confirm_browser_use(
     *, action: str, raw_args: dict[str, Any]
 ) -> tuple[str, str, dict[str, Any]]:
@@ -330,21 +350,12 @@ def confirm_browser_action(
         action, scope, clean_args = _normalize_confirm_browser_use(action=action, raw_args=args)
     else:
         action, scope, clean_args = _normalize_confirm_browser_state_get(args)
-    result = _execute_confirmed_browser_call(
-        tool_name=tool_name,
-        action=action,
-        scope=scope,
-        clean_args=clean_args,
-        user_id=int(current_user.id),
-        workspace=workspace,
-    )
-
     restart_meta: dict[str, Any] | None = None
-    pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
-    if (not bool(result.get("ok"))) and _is_cdp_restart_error(str(result.get("error") or "")):
+    pre_restart_meta: dict[str, Any] | None = None
+    if _needs_restart_before_confirmed_call(tool_name=tool_name, scope=scope, clean_args=clean_args):
         restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=24.0)
         if bool(restart_meta.get("ok")):
-            retry = _execute_confirmed_browser_call(
+            result = _execute_confirmed_browser_call(
                 tool_name=tool_name,
                 action=action,
                 scope="cdp",
@@ -352,12 +363,48 @@ def confirm_browser_action(
                 user_id=int(current_user.id),
                 workspace=workspace,
             )
-            if isinstance(retry, dict):
-                result = dict(retry)
+            if not isinstance(result, dict):
+                result = _build_restart_failed_result(
+                    error="browser_confirm_retry_invalid_payload",
+                    scope="cdp",
+                    restart_meta=restart_meta,
+                )
             else:
-                result = {"ok": False, "error": "browser_confirm_retry_invalid_payload"}
-        result = dict(result if isinstance(result, dict) else {})
-        result["restart"] = _build_browser_restart_meta(restart_meta)
+                result = dict(result)
+                result["restart"] = _build_browser_restart_meta(restart_meta)
+        else:
+            result = _build_restart_failed_result(
+                error=str(restart_meta.get("error") or "cdp_launch_timeout"),
+                scope="cdp",
+                restart_meta=restart_meta,
+            )
+    else:
+        result = _execute_confirmed_browser_call(
+            tool_name=tool_name,
+            action=action,
+            scope=scope,
+            clean_args=clean_args,
+            user_id=int(current_user.id),
+            workspace=workspace,
+        )
+        pre_restart_meta = result.get("restart") if isinstance(result.get("restart"), dict) else None
+        if (not bool(result.get("ok"))) and _is_cdp_restart_error(str(result.get("error") or "")):
+            restart_meta = browser_automation_service.force_restart_to_cdp(timeout_seconds=24.0)
+            if bool(restart_meta.get("ok")):
+                retry = _execute_confirmed_browser_call(
+                    tool_name=tool_name,
+                    action=action,
+                    scope="cdp",
+                    clean_args=clean_args,
+                    user_id=int(current_user.id),
+                    workspace=workspace,
+                )
+                if isinstance(retry, dict):
+                    result = dict(retry)
+                else:
+                    result = {"ok": False, "error": "browser_confirm_retry_invalid_payload"}
+            result = dict(result if isinstance(result, dict) else {})
+            result["restart"] = _build_browser_restart_meta(restart_meta)
     _LOG.info(
         "aelin_browser_confirm uid=%s workspace=%s action=%s scope=%s ok=%s error=%s restart=%s pre_restart=%s restart_error=%s remaining_pids=%s",
         int(current_user.id),

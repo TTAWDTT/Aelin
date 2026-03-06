@@ -565,8 +565,6 @@ def test_aelin_browser_confirm_supports_browser_state_get_and_retries_after_rest
     def _fake_state_get(*, user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid):
         _ = user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid
         calls["count"] += 1
-        if calls["count"] == 1:
-            return {"ok": False, "error": "cdp_unavailable:cdp_launch_timeout", "scope": "cdp", "requires_cdp": True}
         return {"ok": True, "scope": "cdp", "url": "https://x.com/home", "title": "X", "session_id": "bs-test"}
 
     monkeypatch.setattr(aelin_chat_router.browser_automation_service, "state_get", _fake_state_get)
@@ -599,13 +597,63 @@ def test_aelin_browser_confirm_supports_browser_state_get_and_retries_after_rest
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert bool(data.get("ok")) is True
-    assert calls["count"] == 2
+    assert calls["count"] == 1
     tool_result = data.get("tool_result") or {}
     assert str(tool_result.get("scope") or "") == "cdp"
     restart = tool_result.get("restart") or {}
     assert bool(restart.get("attempted")) is True
     assert bool(restart.get("ok")) is True
     assert str(restart.get("probe_reason") or "") == "missing_websocket_debugger_url"
+
+
+def test_aelin_browser_confirm_state_get_skips_initial_retry_when_restart_fails(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    calls = {"count": 0}
+
+    def _fake_state_get(*, user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid):
+        _ = user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid
+        calls["count"] += 1
+        return {"ok": True, "scope": "cdp", "url": "https://x.com/home", "title": "X", "session_id": "bs-test"}
+
+    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "state_get", _fake_state_get)
+    monkeypatch.setattr(
+        aelin_chat_router.browser_automation_service,
+        "force_restart_to_cdp",
+        lambda timeout_seconds=12.0: {
+            "ok": False,
+            "error": "cdp_launch_timeout",
+            "probe_reason": "url_error:timed out",
+            "terminated_pids": [],
+            "killed_pids": [],
+            "failed_pids": [],
+        },
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/agent/browser/confirm",
+        json={
+            "workspace": "default",
+            "action_kind": "confirm_browser_action",
+            "action": "state_get",
+            "next_call": {
+                "tool": "browser_state_get",
+                "action": "state_get",
+                "args": {"scope": "cdp", "include_dom": True, "include_a11y": False, "max_targets": 20},
+            },
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert bool(data.get("ok")) is False
+    assert calls["count"] == 0
+    tool_result = data.get("tool_result") or {}
+    assert str(tool_result.get("error") or "") == "cdp_launch_timeout"
+    restart = tool_result.get("restart") or {}
+    assert bool(restart.get("attempted")) is True
+    assert bool(restart.get("ok")) is False
 
 
 def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
