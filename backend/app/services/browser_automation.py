@@ -20,6 +20,7 @@ from app.settings import settings
 from app.services.browser_login_checkpoint import browser_login_checkpoint_service
 from app.services.browser_runtime_actions import BrowserActionRuntimeMixin
 from app.services.browser_runtime_cdp import BrowserCdpRuntimeMixin
+from app.services.browser_runtime_cdp_lifecycle import BrowserCdpLifecycleRuntimeMixin
 from app.services.browser_runtime_scope import BrowserScopeRuntimeMixin
 from app.services.browser_runtime_processes import BrowserProcessRuntimeMixin
 from app.services.browser_runtime_sessions import BrowserSessionRuntimeMixin
@@ -155,6 +156,7 @@ class BrowserLoginState:
 class BrowserAutomationService(
     BrowserActionRuntimeMixin,
     BrowserScopeRuntimeMixin,
+    BrowserCdpLifecycleRuntimeMixin,
     BrowserCdpRuntimeMixin,
     BrowserSessionRuntimeMixin,
     BrowserProcessRuntimeMixin,
