@@ -8,7 +8,12 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.services.aelin_agent_loop import AelinAgentLoop
-from app.services.aelin_loop_tools import _sanitize_for_log, _sanitize_tool_args_for_log, _serialize_tool_message_content
+from app.services.aelin_loop_tools import (
+    _sanitize_for_log,
+    _sanitize_tool_args_for_log,
+    _serialize_tool_message_content,
+    execute_tool_call,
+)
 from app.services.aelin_tool_policy import AelinToolPolicy
 
 
@@ -110,6 +115,35 @@ class _StateConfirmToolHub(_FakeToolHub):
                     "action": "state_get",
                     "args": {"scope": "cdp", "include_dom": True, "include_a11y": False, "max_targets": 30},
                 },
+            }
+        return super().execute(name, args)
+
+
+class _CaptureBrowserToolHub(_FakeToolHub):
+    def __init__(self) -> None:
+        super().__init__(sleep_seconds=0.0)
+        self.browser_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.browser_calls.append((str(name), dict(args or {})))
+        if str(name) == "browser_state_get":
+            return {
+                "ok": True,
+                "scope": "cdp",
+                "url": "https://x.com/following",
+                "session_id": "bs-test",
+                "session_scope": "cdp",
+            }
+        if str(name) == "browser_use":
+            return {
+                "ok": True,
+                "action": str(args.get("action") or ""),
+                "scope": str(args.get("scope") or "cdp"),
+                "effect_summary": f"navigated:{str(args.get('url') or '')}",
+                "after": {"url": str(args.get("url") or ""), "title": ""},
+                "before": {"url": "about:blank", "title": ""},
+                "external_opened": False,
+                "session_id": "bs-test",
             }
         return super().execute(name, args)
 
@@ -472,10 +506,66 @@ def test_agent_loop_stops_with_confirmation_when_browser_state_get_requires_it()
     assert str(resume_request.get("query") or "") == "读取当前页面并总结"
     next_call = json.loads(str(confirm_actions[0].get("next_call") or "{}"))
     assert str(next_call.get("tool") or "") == "browser_state_get"
-    assert str(next_call.get("action") or "") == "state_get"
-    next_args = next_call.get("args") if isinstance(next_call.get("args"), dict) else {}
-    assert str(next_args.get("scope") or "") == "cdp"
-    assert bool(next_args.get("include_dom")) is True
+
+
+def test_execute_tool_call_upgrades_browser_state_get_to_dom_after_cdp_entry():
+    tool_hub = _CaptureBrowserToolHub()
+
+    execute_tool_call(
+        tool_hub=tool_hub,
+        tool_name="browser_state_get",
+        args={"scope": "auto", "include_dom": True},
+    )
+    status, result, error, _latency = execute_tool_call(
+        tool_hub=tool_hub,
+        tool_name="browser_state_get",
+        args={"scope": "auto", "include_a11y": True, "max_items": 50},
+    )
+
+    assert status == "completed"
+    assert error == ""
+    assert result["ok"] is True
+    _name, sent_args = tool_hub.browser_calls[-1]
+    assert str(sent_args.get("scope") or "") == "cdp"
+    assert bool(sent_args.get("include_dom")) is True
+
+
+def test_execute_tool_call_short_circuits_repeated_navigate_when_already_at_target():
+    tool_hub = _CaptureBrowserToolHub()
+
+    execute_tool_call(
+        tool_hub=tool_hub,
+        tool_name="browser_use",
+        args={"action": "navigate", "url": "https://x.com/following", "scope": "auto"},
+    )
+    call_count = len(tool_hub.browser_calls)
+
+    status, result, error, _latency = execute_tool_call(
+        tool_hub=tool_hub,
+        tool_name="browser_use",
+        args={"action": "navigate", "url": "https://x.com/following", "scope": "auto"},
+    )
+
+    assert status == "completed"
+    assert error == ""
+    assert result["ok"] is True
+    assert str(result.get("effect_summary") or "") == "already_at:https://x.com/following"
+    assert len(tool_hub.browser_calls) == call_count
+
+
+def test_execute_tool_call_rejects_ambiguous_browser_click_target():
+    tool_hub = _CaptureBrowserToolHub()
+
+    status, result, error, _latency = execute_tool_call(
+        tool_hub=tool_hub,
+        tool_name="browser_use",
+        args={"action": "click", "target": "window", "scope": "cdp"},
+    )
+
+    assert status == "failed"
+    assert str(error or "") == "ambiguous_browser_target"
+    assert result["ok"] is False
+    assert tool_hub.browser_calls == []
 
 
 def test_serialize_tool_message_content_keeps_valid_json_when_truncated():

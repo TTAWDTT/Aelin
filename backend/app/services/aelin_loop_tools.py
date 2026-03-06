@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import logging
 import time
@@ -38,6 +39,25 @@ _SENSITIVE_KEY_TOKENS = (
 _MODEL_TOOL_RESULT_MAX_LEN = 1200
 _MODEL_LIST_PREVIEW_ITEMS = 3
 _MODEL_TEXT_PREVIEW_LEN = 220
+_BROWSER_AMBIGUOUS_CLICK_TARGETS = {
+    "window",
+    "browser window",
+    "浏览器窗口",
+    "窗口",
+    "当前窗口",
+    "window focus",
+    "个人资料头像或profile链接",
+    "profile链接",
+}
+
+
+@dataclass
+class _BrowserLoopState:
+    preferred_scope: str = ""
+    last_observed_url: str = ""
+    last_requested_navigate_url: str = ""
+    last_dom_url: str = ""
+    consecutive_same_navigate_count: int = 0
 
 
 def _normalized_key(key: str) -> str:
@@ -120,7 +140,147 @@ def _summarize_result_for_log(result: dict[str, Any]) -> dict[str, Any]:
         summary["error"] = _sanitize_for_log(result.get("error"))
     if result.get("message"):
         summary["message"] = _sanitize_for_log(result.get("message"))
+    if result.get("scope"):
+        summary["scope"] = _sanitize_for_log(result.get("scope"))
+    if result.get("effect_summary"):
+        summary["effect_summary"] = _sanitize_for_log(result.get("effect_summary"))
     return summary
+
+
+def _browser_loop_state(tool_hub: AelinToolHub) -> _BrowserLoopState:
+    state = getattr(tool_hub, "_browser_loop_state", None)
+    if isinstance(state, _BrowserLoopState):
+        return state
+    state = _BrowserLoopState()
+    setattr(tool_hub, "_browser_loop_state", state)
+    return state
+
+
+def _normalize_browser_url(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    return text.rstrip("/")
+
+
+def _is_ambiguous_browser_click_target(raw: Any) -> bool:
+    target = " ".join(str(raw or "").strip().lower().split())
+    if not target:
+        return True
+    if target in _BROWSER_AMBIGUOUS_CLICK_TARGETS:
+        return True
+    if "头像" in target and "profile" in target:
+        return True
+    return False
+
+
+def _browser_short_circuit_result(*, action: str, scope: str, effect_summary: str, url: str) -> dict[str, Any]:
+    normalized_url = _normalize_browser_url(url)
+    return {
+        "ok": True,
+        "action": action,
+        "scope": scope or "cdp",
+        "effect_summary": effect_summary,
+        "requires_confirmation": False,
+        "risk_level": "low",
+        "external_opened": False,
+        "before": {"url": normalized_url, "title": ""},
+        "after": {"url": normalized_url, "title": ""},
+        "session_id": "",
+    }
+
+
+def _optimize_browser_tool_call(
+    *,
+    tool_hub: AelinToolHub,
+    tool_name: str,
+    args: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    safe_tool = str(tool_name or "").strip().lower()
+    if safe_tool not in {"browser_use", "browser_state_get"}:
+        return args, None
+
+    state = _browser_loop_state(tool_hub)
+    rewritten = dict(args or {})
+
+    if safe_tool == "browser_state_get":
+        requested_scope = str(rewritten.get("scope") or "auto").strip().lower()
+        include_dom = bool(rewritten.get("include_dom", False))
+        include_a11y = bool(rewritten.get("include_a11y", False))
+        if state.preferred_scope == "cdp" and requested_scope in {"", "auto", "external"}:
+            rewritten["scope"] = "cdp"
+        if include_a11y and not include_dom and (state.preferred_scope == "cdp" or state.last_observed_url):
+            rewritten["include_dom"] = True
+        return rewritten, None
+
+    action = str(rewritten.get("action") or "").strip().lower()
+    requested_scope = str(rewritten.get("scope") or "auto").strip().lower()
+    if state.preferred_scope == "cdp" and requested_scope in {"", "auto", "external"}:
+        rewritten["scope"] = "cdp"
+
+    if action == "navigate":
+        target_url = _normalize_browser_url(rewritten.get("url"))
+        if target_url and target_url == state.last_observed_url:
+            return rewritten, _browser_short_circuit_result(
+                action="navigate",
+                scope=str(rewritten.get("scope") or state.preferred_scope or "cdp"),
+                effect_summary=f"already_at:{target_url}",
+                url=target_url,
+            )
+        return rewritten, None
+
+    if action == "click" and _is_ambiguous_browser_click_target(rewritten.get("target")):
+        return rewritten, {
+            "ok": False,
+            "error": "ambiguous_browser_target",
+            "action": "click",
+            "hint": "目标过于模糊。请先读取 DOM，再基于可见文本、selector 或 role 发起点击。",
+        }
+    return rewritten, None
+
+
+def _record_browser_tool_result(
+    *,
+    tool_hub: AelinToolHub,
+    tool_name: str,
+    args: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    safe_tool = str(tool_name or "").strip().lower()
+    if safe_tool not in {"browser_use", "browser_state_get"}:
+        return
+    if not isinstance(result, dict):
+        return
+    state = _browser_loop_state(tool_hub)
+    scope = str(result.get("scope") or args.get("scope") or "").strip().lower()
+    if scope == "cdp":
+        state.preferred_scope = "cdp"
+    elif scope == "external" and not state.preferred_scope:
+        state.preferred_scope = "external"
+
+    if safe_tool == "browser_state_get":
+        observed_url = _normalize_browser_url(result.get("url"))
+        if observed_url:
+            state.last_observed_url = observed_url
+        include_dom = bool(args.get("include_dom", False))
+        if include_dom and observed_url:
+            state.last_dom_url = observed_url
+        return
+
+    action = str(args.get("action") or result.get("action") or "").strip().lower()
+    if action != "navigate":
+        return
+    target_url = _normalize_browser_url(args.get("url"))
+    if target_url:
+        if target_url == state.last_requested_navigate_url:
+            state.consecutive_same_navigate_count += 1
+        else:
+            state.last_requested_navigate_url = target_url
+            state.consecutive_same_navigate_count = 1
+    observed_after = result.get("after") if isinstance(result.get("after"), dict) else {}
+    observed_url = _normalize_browser_url(observed_after.get("url") or target_url)
+    if observed_url:
+        state.last_observed_url = observed_url
 
 
 def _truncate_model_text(value: Any, *, limit: int = _MODEL_TEXT_PREVIEW_LEN) -> str:
@@ -319,14 +479,22 @@ def execute_tool_call(
     result: dict[str, Any] = {}
     error = ""
     safe_tool_name = str(tool_name or "").strip().lower()
+    effective_args, synthetic_result = _optimize_browser_tool_call(
+        tool_hub=tool_hub,
+        tool_name=safe_tool_name,
+        args=args,
+    )
     _LOG.info(
         "agent_loop tool_call_start tool=%s args=%s",
         safe_tool_name,
-        _dump_log_json(_sanitize_tool_args_for_log(safe_tool_name, args)),
+        _dump_log_json(_sanitize_tool_args_for_log(safe_tool_name, effective_args)),
     )
     started = time.perf_counter()
     try:
-        result = tool_hub.execute(safe_tool_name, args)
+        if isinstance(synthetic_result, dict):
+            result = dict(synthetic_result)
+        else:
+            result = tool_hub.execute(safe_tool_name, effective_args)
         if not bool(result.get("ok", True)):
             status = "failed"
             error = str(result.get("error") or "tool_not_ok")[:180]
@@ -335,6 +503,12 @@ def execute_tool_call(
         error = str(exc)[:180]
         result = {"ok": False, "error": error}
     latency_ms = int((time.perf_counter() - started) * 1000)
+    _record_browser_tool_result(
+        tool_hub=tool_hub,
+        tool_name=safe_tool_name,
+        args=effective_args,
+        result=result,
+    )
     _LOG.info(
         "agent_loop tool_call_end tool=%s status=%s latency_ms=%s result=%s",
         safe_tool_name,
