@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     crawler_playwright_poll_seconds: int = 10
 
     # Autonomous tracking scheduler.
-    tracking_scheduler_enabled: bool = False
+    tracking_scheduler_enabled: bool = True
     tracking_scheduler_tick_seconds: float = 1.0
     tracking_scheduler_batch_size: int = 80
     tracking_global_max_workers: int = 16

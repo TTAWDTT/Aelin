@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 
+import app.services.aelin_loop_tools as aelin_loop_tools
 import app.services.aelin_tools as aelin_tools
 from app.services.aelin_tools import AelinToolHub
 from app.services.web_search import WebSearchResult
@@ -265,3 +266,41 @@ def test_browser_use_tool_offloads_when_running_event_loop(monkeypatch):
     assert result["ok"] is True
     assert captured.get("scope") == "managed"
     assert int(captured.get("thread_id") or 0) != main_thread_id
+
+
+def test_browser_click_optimizer_allows_selector_without_target():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    rewritten, short_circuit = aelin_loop_tools._optimize_browser_tool_call(
+        tool_hub=hub,
+        tool_name="browser_use",
+        args={"action": "click", "selector": "[data-testid='SideNav_NewTweet_Button']"},
+    )
+
+    assert rewritten["selector"] == "[data-testid='SideNav_NewTweet_Button']"
+    assert short_circuit is None
+
+
+def test_browser_record_result_does_not_mark_failed_navigate_as_observed():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    aelin_loop_tools._record_browser_tool_result(
+        tool_hub=hub,
+        tool_name="browser_use",
+        args={"action": "navigate", "url": "https://x.com/following"},
+        result={"ok": False, "error": "timeout"},
+    )
+
+    state = aelin_loop_tools._browser_loop_state(hub)
+    assert state.last_observed_url == ""
+
+    rewritten, short_circuit = aelin_loop_tools._optimize_browser_tool_call(
+        tool_hub=hub,
+        tool_name="browser_use",
+        args={"action": "navigate", "url": "https://x.com/following"},
+    )
+
+    assert rewritten["url"] == "https://x.com/following"
+    assert short_circuit is None

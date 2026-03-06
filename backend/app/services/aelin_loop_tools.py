@@ -174,6 +174,16 @@ def _is_ambiguous_browser_click_target(raw: Any) -> bool:
     return False
 
 
+def _has_browser_click_locator(args: dict[str, Any]) -> bool:
+    if not isinstance(args, dict):
+        return False
+    for key in ("selector", "role", "text", "xpath"):
+        value = args.get(key)
+        if str(value or "").strip():
+            return True
+    return False
+
+
 def _browser_short_circuit_result(*, action: str, scope: str, effect_summary: str, url: str) -> dict[str, Any]:
     normalized_url = _normalize_browser_url(url)
     return {
@@ -229,7 +239,9 @@ def _optimize_browser_tool_call(
             )
         return rewritten, None
 
-    if action == "click" and _is_ambiguous_browser_click_target(rewritten.get("target")):
+    if action == "click" and not _has_browser_click_locator(rewritten) and _is_ambiguous_browser_click_target(
+        rewritten.get("target")
+    ):
         return rewritten, {
             "ok": False,
             "error": "ambiguous_browser_target",
@@ -270,6 +282,8 @@ def _record_browser_tool_result(
     action = str(args.get("action") or result.get("action") or "").strip().lower()
     if action != "navigate":
         return
+    if not bool(result.get("ok", False)):
+        return
     target_url = _normalize_browser_url(args.get("url"))
     if target_url:
         if target_url == state.last_requested_navigate_url:
@@ -278,7 +292,7 @@ def _record_browser_tool_result(
             state.last_requested_navigate_url = target_url
             state.consecutive_same_navigate_count = 1
     observed_after = result.get("after") if isinstance(result.get("after"), dict) else {}
-    observed_url = _normalize_browser_url(observed_after.get("url") or target_url)
+    observed_url = _normalize_browser_url(observed_after.get("url"))
     if observed_url:
         state.last_observed_url = observed_url
 
