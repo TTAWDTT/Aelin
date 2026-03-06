@@ -1,11 +1,14 @@
-﻿import { useRef, useCallback } from 'react'
-import { useChatStore, type ChatMessage } from '../stores/chatStore'
+import { useRef, useCallback, type MutableRefObject } from 'react'
+import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
 import { streamChat } from '@/shared/api/sse'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinAttachmentUploadResponse, AelinChatRequest, AelinToolStep } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 
 const MAX_QUERY_CHARS = 1200
+
+type PendingImage = { dataUrl: string; name: string }
+type ChatStoreState = ReturnType<typeof useChatStore.getState>
 
 function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep): AelinToolStep[] {
   const existing = [...(prev ?? [])]
@@ -36,6 +39,137 @@ function trimQueryForApi(text: string): string {
   return `${normalized.slice(0, MAX_QUERY_CHARS - 1)}…`
 }
 
+function normalizeAttachmentIds(attachmentIds?: number[]): number[] {
+  return Array.from(new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0))).slice(0, 20)
+}
+
+function buildHistory(session?: ChatSession): Array<{ role: ChatMessage['role']; content: string }> {
+  return (session?.messages ?? [])
+    .slice(-20)
+    .filter((message) => {
+      const role = String(message.role || '').trim()
+      const content = String(message.content || '').trim()
+      return (role === 'user' || role === 'assistant') && content.length > 0
+    })
+    .map((message) => ({ role: message.role, content: String(message.content || '').trim() }))
+}
+
+function buildUserMessage(text: string, images?: PendingImage[]): ChatMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: 'user',
+    content: text,
+    images,
+    timestamp: Date.now(),
+  }
+}
+
+function buildAssistantMessage(): ChatMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: 'assistant',
+    content: '',
+    timestamp: Date.now(),
+  }
+}
+
+function resolveSessionForSend(store: ChatStoreState): { sessionId: string; session?: ChatSession } {
+  let sessionId = store.activeSessionId
+  if (!sessionId) {
+    sessionId = store.createSession()
+  }
+  return {
+    sessionId,
+    session: store.sessions.find((item) => item.id === sessionId),
+  }
+}
+
+function maybeRenameFreshSession(
+  store: ChatStoreState,
+  sessionId: string,
+  session: ChatSession | undefined,
+  text: string,
+  images: PendingImage[] | undefined,
+  attachmentIds: number[],
+): void {
+  if ((session?.messages.length ?? 0) !== 0) return
+
+  const seed =
+    String(text || '').trim() || (images?.length || attachmentIds.length ? '附件分析' : '新对话')
+  const title = seed.length > 20 ? `${seed.slice(0, 20)}…` : seed
+  store.renameSession(sessionId, title)
+}
+
+function buildChatRequest(params: {
+  text: string
+  session: ChatSession | undefined
+  history: Array<{ role: ChatMessage['role']; content: string }>
+  images?: PendingImage[]
+  attachmentIds: number[]
+}): AelinChatRequest {
+  const normalizedQuery = trimQueryForApi(String(params.text || '').trim())
+  return {
+    query:
+      normalizedQuery ||
+      (params.images?.length || params.attachmentIds.length
+        ? '请先分析我上传的附件，然后给我结论和建议。'
+        : ''),
+    workspace: params.session?.workspace || 'default',
+    history: params.history,
+    images: params.images?.map((image) => ({ data_url: image.dataUrl, name: image.name })),
+    attachment_ids: params.attachmentIds,
+  }
+}
+
+function updateLatestAssistantToolTrace(sessionId: string, step: AelinToolStep): void {
+  const state = useChatStore.getState()
+  const targetSession = state.sessions.find((session) => session.id === sessionId)
+  const currentTrace = targetSession?.messages.findLast((message: ChatMessage) => message.role === 'assistant')?.toolTrace
+  state.updateLastAssistant(sessionId, {
+    toolTrace: mergeToolTrace(currentTrace, step),
+  })
+}
+
+function buildStreamCallbacks(params: {
+  store: ChatStoreState
+  sessionId: string
+  abortRef: MutableRefObject<(() => void) | null>
+  getCancel: () => () => void
+}) {
+  const finalize = () => {
+    if (params.abortRef.current === params.getCancel()) {
+      params.abortRef.current = null
+    }
+    params.store.setStreaming(false)
+    params.store.setStatusText('')
+  }
+
+  return {
+    onIntent: (data: { intent_type?: string }) => params.store.setStatusText(`意图: ${data.intent_type}`),
+    onPlan: (data: { steps?: unknown[] }) => params.store.setStatusText(`计划: ${data.steps?.length || 0} 步`),
+    onToolStep: (step: AelinToolStep) => {
+      params.store.setStatusText(`${step.stage}…`)
+      updateLatestAssistantToolTrace(params.sessionId, step)
+    },
+    onCitations: (citations: NonNullable<ChatMessage['citations']>) =>
+      params.store.updateLastAssistant(params.sessionId, { citations }),
+    onActions: (actions: NonNullable<ChatMessage['actions']>) =>
+      params.store.updateLastAssistant(params.sessionId, { actions }),
+    onReplyChunk: (chunk: string) => params.store.appendContent(params.sessionId, chunk),
+    onDone: (data: { expression?: string; memory_summary?: string }) => {
+      params.store.updateLastAssistant(params.sessionId, {
+        expression: data.expression,
+        memorySummary: data.memory_summary,
+      })
+      finalize()
+    },
+    onError: (error: { message: string }) => {
+      params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
+      finalize()
+    },
+  }
+}
+
 export function useChatStream() {
   const store = useChatStore()
   const abortRef = useRef<(() => void) | null>(null)
@@ -43,87 +177,41 @@ export function useChatStream() {
   const send = useCallback(
     (
       text: string,
-      images?: { dataUrl: string; name: string }[],
+      images?: PendingImage[],
       attachmentIds?: number[],
     ) => {
       abortRef.current?.()
       abortRef.current = null
 
-      let sessionId = store.activeSessionId
-      if (!sessionId) sessionId = store.createSession()
+      const { sessionId, session } = resolveSessionForSend(store)
+      const normalizedAttachmentIds = normalizeAttachmentIds(attachmentIds)
+      const history = buildHistory(session)
 
-      const session = store.sessions.find(s => s.id === sessionId)
-      const history = (session?.messages ?? [])
-        .slice(-20)
-        .filter(m => {
-          const role = String(m.role || '').trim()
-          const content = String(m.content || '').trim()
-          return (role === 'user' || role === 'assistant') && content.length > 0
-        })
-        .map(m => ({ role: m.role, content: String(m.content || '').trim() }))
-
-    // Add user message
-      const userMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: 'user', content: text,
-        images, timestamp: Date.now(),
-      }
-      store.addMessage(sessionId!, userMsg)
-
-    // Add empty assistant message
-      const assistantMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: 'assistant', content: '',
-        timestamp: Date.now(),
-      }
-      store.addMessage(sessionId!, assistantMsg)
+      store.addMessage(sessionId, buildUserMessage(text, images))
+      store.addMessage(sessionId, buildAssistantMessage())
       store.setStreaming(true)
       store.setStatusText('正在思考…')
 
-    // Auto-title from first message
-      const normalizedAttachmentIds = Array.from(new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0))).slice(0, 20)
+      maybeRenameFreshSession(store, sessionId, session, text, images, normalizedAttachmentIds)
 
-      if ((session?.messages.length ?? 0) === 0) {
-        const seed = String(text || '').trim() || (images?.length || normalizedAttachmentIds.length ? '附件分析' : '新对话')
-        const title = seed.length > 20 ? seed.slice(0, 20) + '…' : seed
-        store.renameSession(sessionId!, title)
-      }
-
-      const normalizedQuery = trimQueryForApi(String(text || '').trim())
-      const body: AelinChatRequest = {
-        query: normalizedQuery || (images?.length || normalizedAttachmentIds.length ? '请先分析我上传的附件，然后给我结论和建议。' : ''),
-        workspace: session?.workspace || 'default',
+      const body = buildChatRequest({
+        text,
+        session,
         history,
-        images: images?.map(i => ({ data_url: i.dataUrl, name: i.name })),
-        attachment_ids: normalizedAttachmentIds,
-      }
-
-      const cancel = streamChat(body, {
-        onIntent: (d) => store.setStatusText(`意图: ${d.intent_type}`),
-        onPlan: (d) => store.setStatusText(`计划: ${d.steps?.length || 0} 步`),
-        onToolStep: (step) => {
-          store.setStatusText(`${step.stage}…`)
-          const state = useChatStore.getState()
-          const targetSession = state.sessions.find((s) => s.id === sessionId)
-          const currentTrace = targetSession?.messages.findLast((m: ChatMessage) => m.role === 'assistant')?.toolTrace
-          store.updateLastAssistant(sessionId!, {
-            toolTrace: mergeToolTrace(currentTrace, step),
-          })
-        },
-        onCitations: (citations) => store.updateLastAssistant(sessionId!, { citations }),
-        onActions: (actions) => store.updateLastAssistant(sessionId!, { actions }),
-        onReplyChunk: (chunk) => store.appendContent(sessionId!, chunk),
-        onDone: (d) => {
-          store.updateLastAssistant(sessionId!, { expression: d.expression, memorySummary: d.memory_summary })
-          if (abortRef.current === cancel) abortRef.current = null
-          store.setStreaming(false)
-          store.setStatusText('')
-        },
-        onError: (err) => {
-          store.appendContent(sessionId!, `\n\n> ⚠️ 错误: ${err.message}`)
-          if (abortRef.current === cancel) abortRef.current = null
-          store.setStreaming(false)
-          store.setStatusText('')
-        },
+        images,
+        attachmentIds: normalizedAttachmentIds,
       })
+
+      let cancel = () => {}
+      cancel = streamChat(
+        body,
+        buildStreamCallbacks({
+          store,
+          sessionId,
+          abortRef,
+          getCancel: () => cancel,
+        }),
+      )
 
       abortRef.current = cancel
     },

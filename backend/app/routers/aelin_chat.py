@@ -208,6 +208,112 @@ def _build_followup_request(
     )
 
 
+def _resolve_confirm_controls(
+    *,
+    payload: AelinBrowserConfirmRequest,
+    stored_login_state: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], str, bool]:
+    next_call = payload.next_call if isinstance(payload.next_call, dict) and payload.next_call else {}
+    if (not next_call) and isinstance(stored_login_state.get("next_call"), dict):
+        next_call = dict(stored_login_state.get("next_call") or {})
+
+    resume_request = payload.resume_request if isinstance(payload.resume_request, dict) and payload.resume_request else {}
+    if (not resume_request) and isinstance(stored_login_state.get("resume_request"), dict):
+        resume_request = dict(stored_login_state.get("resume_request") or {})
+
+    resume_query = str(payload.resume_query or "").strip() or str(stored_login_state.get("resume_query") or "").strip()
+    payload_controls_resume = bool(payload.next_call) or bool(payload.resume_request) or bool(str(payload.resume_query or "").strip())
+    if payload.continue_after_confirm is False:
+        continue_after_confirm = False
+    elif payload_controls_resume:
+        continue_after_confirm = bool(payload.continue_after_confirm)
+    else:
+        continue_after_confirm = bool(stored_login_state.get("continue_after_confirm", payload.continue_after_confirm))
+
+    return next_call, resume_request, resume_query, continue_after_confirm
+
+
+def _continue_after_browser_confirm(
+    *,
+    ok: bool,
+    payload: AelinBrowserConfirmRequest,
+    next_call: dict[str, Any],
+    resume_request: dict[str, Any],
+    resume_query: str,
+    continue_after_confirm: bool,
+    workspace: str,
+    db: Session,
+    current_user: User,
+) -> tuple[bool, str, dict[str, Any]]:
+    if not ok or not continue_after_confirm:
+        return False, "", {}
+
+    try:
+        followup_payload = payload.model_copy(
+            update={
+                "next_call": next_call,
+                "resume_request": resume_request,
+                "resume_query": resume_query,
+                "continue_after_confirm": continue_after_confirm,
+            }
+        )
+        followup_request = _build_followup_request(payload=followup_payload, workspace=workspace)
+        followup = _dispatch_aelin_chat(
+            followup_request,
+            db,
+            current_user,
+            event_cb=None,
+        )
+        return True, "", followup.model_dump() if followup is not None else {}
+    except Exception as exc:
+        continuation_error = str(exc)[:200]
+        _LOG.warning(
+            "aelin_browser_confirm continuation_failed uid=%s workspace=%s error=%s",
+            int(current_user.id),
+            workspace,
+            continuation_error,
+        )
+        return False, continuation_error, {}
+
+
+def _resolve_confirm_login_state(
+    *,
+    ok: bool,
+    continued: bool,
+    continuation_error: str,
+    payload: AelinBrowserConfirmRequest,
+    workspace: str,
+    current_user: User,
+    profile_id: str,
+) -> dict[str, Any]:
+    if not ok or not str(payload.login_request_id or "").strip():
+        return {}
+
+    resolved_status = "confirmed"
+    if continued:
+        resolved_status = "continued"
+    elif continuation_error:
+        resolved_status = "continue_failed"
+
+    return browser_automation_service.resolve_login_pending(
+        user_id=int(current_user.id),
+        workspace=workspace,
+        request_id=str(payload.login_request_id or ""),
+        profile_id=profile_id,
+        status=resolved_status,
+    )
+
+
+def _build_confirm_message(*, ok: bool, continued: bool, continuation_error: str, result: dict[str, Any]) -> str:
+    if not ok:
+        return f"确认后执行失败：{str(result.get('error') or 'unknown')[:160]}"
+    if continued:
+        return "已确认并继续执行任务。"
+    if continuation_error:
+        return f"已确认并执行浏览器步骤，但自动继续失败：{continuation_error}"
+    return "已确认并执行浏览器步骤。"
+
+
 @router.post("/attachments/upload", response_model=AelinAttachmentUploadResponse)
 def aelin_attachment_upload(
     file: UploadFile = File(...),
@@ -431,9 +537,9 @@ def confirm_browser_action(
             request_id=str(payload.login_request_id or ""),
             profile_id=str(payload.profile_id or ""),
         )
-    next_call = payload.next_call if isinstance(payload.next_call, dict) and payload.next_call else {}
-    if (not next_call) and isinstance(stored_login_state.get("next_call"), dict):
-        next_call = dict(stored_login_state.get("next_call") or {})
+    next_call, effective_resume_request, effective_resume_query, effective_continue_after_confirm = (
+        _resolve_confirm_controls(payload=payload, stored_login_state=stored_login_state)
+    )
     tool_name = str(next_call.get("tool") or "").strip().lower()
     if tool_name not in {"browser_use", "browser_state_get"}:
         raise HTTPException(status_code=400, detail="unsupported_next_call_tool")
@@ -532,69 +638,32 @@ def confirm_browser_action(
         len(list((restart_meta or pre_restart_meta or {}).get("remaining_pids") or [])),
     )
     ok = bool(result.get("ok"))
-    effective_resume_request = payload.resume_request if isinstance(payload.resume_request, dict) and payload.resume_request else {}
-    if (not effective_resume_request) and isinstance(stored_login_state.get("resume_request"), dict):
-        effective_resume_request = dict(stored_login_state.get("resume_request") or {})
-    effective_resume_query = str(payload.resume_query or "").strip() or str(stored_login_state.get("resume_query") or "").strip()
-    payload_controls_resume = bool(payload.next_call) or bool(payload.resume_request) or bool(str(payload.resume_query or "").strip())
-    if payload.continue_after_confirm is False:
-        effective_continue_after_confirm = False
-    elif payload_controls_resume:
-        effective_continue_after_confirm = bool(payload.continue_after_confirm)
-    else:
-        effective_continue_after_confirm = bool(stored_login_state.get("continue_after_confirm", payload.continue_after_confirm))
-    continued = False
-    continuation_error = ""
-    followup_result: dict[str, Any] = {}
-    if ok and effective_continue_after_confirm:
-        try:
-            followup_payload = payload.model_copy(
-                update={
-                    "next_call": next_call,
-                    "resume_request": effective_resume_request,
-                    "resume_query": effective_resume_query,
-                    "continue_after_confirm": effective_continue_after_confirm,
-                }
-            )
-            followup_request = _build_followup_request(payload=followup_payload, workspace=workspace)
-            followup = _dispatch_aelin_chat(
-                followup_request,
-                db,
-                current_user,
-                event_cb=None,
-            )
-            followup_result = followup.model_dump() if followup is not None else {}
-            continued = True
-        except Exception as exc:
-            continuation_error = str(exc)[:200]
-            _LOG.warning(
-                "aelin_browser_confirm continuation_failed uid=%s workspace=%s error=%s",
-                int(current_user.id),
-                workspace,
-                continuation_error,
-            )
-    login_state: dict[str, Any] = {}
-    if ok and str(payload.login_request_id or "").strip():
-        resolved_status = "confirmed"
-        if effective_continue_after_confirm and continued:
-            resolved_status = "continued"
-        elif effective_continue_after_confirm and continuation_error:
-            resolved_status = "continue_failed"
-        login_state = browser_automation_service.resolve_login_pending(
-            user_id=int(current_user.id),
-            workspace=workspace,
-            request_id=str(payload.login_request_id or ""),
-            profile_id=str(payload.profile_id or ""),
-            status=resolved_status,
-        )
-    if ok:
-        message = "已确认并执行浏览器步骤。"
-        if continued:
-            message = "已确认并继续执行任务。"
-        elif continuation_error:
-            message = f"已确认并执行浏览器步骤，但自动继续失败：{continuation_error}"
-    else:
-        message = f"确认后执行失败：{str(result.get('error') or 'unknown')[:160]}"
+    continued, continuation_error, followup_result = _continue_after_browser_confirm(
+        ok=ok,
+        payload=payload,
+        next_call=next_call,
+        resume_request=effective_resume_request,
+        resume_query=effective_resume_query,
+        continue_after_confirm=effective_continue_after_confirm,
+        workspace=workspace,
+        db=db,
+        current_user=current_user,
+    )
+    login_state = _resolve_confirm_login_state(
+        ok=ok,
+        continued=continued,
+        continuation_error=continuation_error if effective_continue_after_confirm else "",
+        payload=payload,
+        workspace=workspace,
+        current_user=current_user,
+        profile_id=str(payload.profile_id or ""),
+    )
+    message = _build_confirm_message(
+        ok=ok,
+        continued=continued,
+        continuation_error=continuation_error,
+        result=result,
+    )
     requires_followup = bool(ok and effective_continue_after_confirm and not continued)
     return AelinBrowserConfirmResponse(
         ok=ok,
