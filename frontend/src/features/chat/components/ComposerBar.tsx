@@ -41,6 +41,7 @@ export function ComposerBar({
   const captureTriggerRef = useRef<HTMLButtonElement | null>(null)
   const captureMenuRef = useRef<HTMLDivElement | null>(null)
   const captureMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const inFlightUploadBatchesRef = useRef(0)
   const captureMenuId = useId()
   const hasProcessingAttachments = uploadingAttachments.length > 0
   const usedAttachmentSlots = pendingAttachments.length + uploadingAttachments.length
@@ -193,6 +194,7 @@ export function ComposerBar({
       name: file.name || `attachment-${index + 1}`,
     }))
     setUploadingAttachments((prev) => [...prev, ...uploadingItems].slice(0, MAX_PENDING_ATTACHMENTS))
+    inFlightUploadBatchesRef.current += 1
     setIsAttaching(true)
     void onUploadAttachments(picked)
       .then((uploaded) => {
@@ -204,7 +206,10 @@ export function ComposerBar({
       })
       .finally(() => {
         setUploadingAttachments((prev) => prev.filter((row) => !uploadingItems.some((item) => item.id === row.id)))
-        setIsAttaching(false)
+        inFlightUploadBatchesRef.current = Math.max(0, inFlightUploadBatchesRef.current - 1)
+        if (inFlightUploadBatchesRef.current === 0) {
+          setIsAttaching(false)
+        }
       })
   }
 

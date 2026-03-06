@@ -2820,7 +2820,10 @@ def _try_agent_loop_chat(
                 count=0,
             )
 
-    if attachment_ids:
+    def _run_attachment_prefetch() -> None:
+        nonlocal attachment_prefetch_result
+        if not attachment_ids:
+            return
         attachment_prefetch_args = {
             "query": str(payload.query or "请总结附件主要内容")[:500],
             "attachment_ids": attachment_ids[:20],
@@ -2853,6 +2856,7 @@ def _try_agent_loop_chat(
             )
 
     if not llm_available:
+        _run_attachment_prefetch()
         fallback_resp = _build_attachment_prefetch_fallback_response(
             payload=payload,
             memory_summary=memory_summary,
@@ -2863,6 +2867,8 @@ def _try_agent_loop_chat(
         if fallback_resp is not None:
             return fallback_resp
         return None
+
+    _run_attachment_prefetch()
 
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
     if forced_tracking_create and not force_disable_writes:

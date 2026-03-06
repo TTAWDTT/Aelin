@@ -1109,6 +1109,10 @@ class AelinAttachmentService:
                 )
                 if existing is None:
                     self.cleanup_storage_path(storage_path)
+            # NOTE:
+            # Transaction rollback is intentionally delegated to the caller/router
+            # because this service can be composed with broader request workflows.
+            # Callers must rollback the session after this exception.
             raise
 
     @staticmethod

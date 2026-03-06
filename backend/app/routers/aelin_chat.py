@@ -52,21 +52,20 @@ def aelin_attachment_upload(
             pass
         raise HTTPException(status_code=422, detail=f"附件过大（>{max_size} 字节）")
 
-    content_chunks: list[bytes] = []
-    read_size = 0
+    content_buffer = bytearray()
     while True:
         piece = file.file.read(1024 * 1024)
         if not piece:
             break
-        read_size += len(piece)
-        if read_size > max_size:
+        content_buffer.extend(piece)
+        if len(content_buffer) > max_size:
             try:
                 file.file.close()
             except Exception:
                 pass
             raise HTTPException(status_code=422, detail=f"附件过大（>{max_size} 字节）")
-        content_chunks.append(piece)
-    content = b"".join(content_chunks)
+    content = bytes(content_buffer)
+    del content_buffer
 
     try:
         result = service.ingest_bytes(
