@@ -652,6 +652,54 @@ def test_use_external_scope_navigate_skips_auth_guard_without_confirm(monkeypatc
     assert opened == ["https://github.com"]
 
 
+def test_use_auto_navigate_defaults_to_external_without_reusable_cdp(monkeypatch):
+    service = BrowserAutomationService()
+    opened: list[str] = []
+    monkeypatch.setattr(service, "_open_external_url", lambda url: opened.append(str(url)) or True)
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://x.com", "confirm": False},
+        scope="auto",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "external"
+    assert opened == ["https://x.com"]
+
+
+def test_use_auto_navigate_reuses_existing_cdp_session(monkeypatch):
+    service = BrowserAutomationService()
+    page = _FakePage()
+    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
+    cdp_session.mode = "cdp"
+    key = service._session_key(user_id=1, workspace="default", mode="cdp")
+    service._sessions[key] = cdp_session  # type: ignore[assignment]
+    monkeypatch.setattr(service, "_open_external_url", lambda url: (_ for _ in ()).throw(AssertionError(f"unexpected external open: {url}")))
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
+
+    states = iter(
+        [
+            {"ok": True, "url": "about:blank", "title": "", "session_id": "bs-test"},
+            {"ok": True, "url": "https://x.com/following", "title": "Following", "session_id": "bs-test"},
+        ]
+    )
+    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+
+    out = service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://x.com/following", "confirm": False},
+        scope="auto",
+    )
+    assert out["ok"] is True
+    assert out["scope"] == "cdp"
+    assert out["external_opened"] is False
+    assert page.goto_calls == ["https://x.com/following"]
+
+
 def test_use_external_scope_requests_confirmation_for_dom_actions():
     service = BrowserAutomationService()
     out = service.use(

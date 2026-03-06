@@ -180,6 +180,17 @@ class BrowserAutomationService:
         safe_mode = str(mode or "managed").strip().lower() or "managed"
         return f"{safe_mode}::{int(user_id)}::{_normalize_workspace(workspace)}"
 
+    def _peek_session(self, *, user_id: int, workspace: str, mode: str) -> BrowserSession | None:
+        key = self._session_key(user_id=user_id, workspace=workspace, mode=mode)
+        thread_id = threading.get_ident()
+        with self._lock:
+            session = self._sessions.get(key)
+            if session is None:
+                return None
+            if int(getattr(session, "owner_thread_id", 0) or 0) != thread_id:
+                return None
+            return session
+
     def _pop_expired_sessions_locked(self, *, now: float | None = None) -> list[BrowserSession]:
         ts = float(now or time.time())
         expired_sessions: list[BrowserSession] = []
@@ -842,6 +853,19 @@ class BrowserAutomationService:
             except Exception:
                 continue
         return False
+
+    def _has_reusable_cdp_session(self, *, user_id: int, workspace: str) -> bool:
+        session = self._peek_session(user_id=user_id, workspace=workspace, mode="cdp")
+        if session is None:
+            return False
+        try:
+            page = getattr(session, "page", None)
+            if page is None:
+                return False
+            _ = str(getattr(page, "url", "") or "")
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _is_cdp_conflict_row(row: dict[str, Any]) -> bool:
@@ -1816,10 +1840,15 @@ class BrowserAutomationService:
         url = str(args.get("url") or "").strip()
         user_scope = self._normalize_scope(scope)
         runtime_scope = user_scope
+        prefer_existing_cdp = False
 
         if runtime_scope == "auto":
             if act == "navigate":
-                runtime_scope = "external"
+                prefer_existing_cdp = self._has_reusable_cdp_session(
+                    user_id=int(user_id),
+                    workspace=workspace,
+                )
+                runtime_scope = "cdp" if prefer_existing_cdp else "external"
             elif self._is_complex_auto_action(act):
                 has_system_browser = self._has_system_browser_process()
                 cdp_ready = bool(
@@ -1893,7 +1922,12 @@ class BrowserAutomationService:
                     "session_id": "",
                 }
 
-        if act == "navigate" and self._is_sensitive_auth_domain(url) and not bool(args.get("confirm")):
+        if (
+            act == "navigate"
+            and self._is_sensitive_auth_domain(url)
+            and not bool(args.get("confirm"))
+            and not prefer_existing_cdp
+        ):
             next_args = dict(args or {})
             next_args["confirm"] = True
             return {
