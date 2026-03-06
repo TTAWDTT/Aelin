@@ -149,10 +149,22 @@ export function useChatStream() {
 
     store.setStatusText('附件处理中…')
     try {
-      const uploaded: AelinAttachmentUploadResponse[] = await Promise.all(
+      const settled = await Promise.allSettled(
         picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId }))
       )
+      const uploaded: AelinAttachmentUploadResponse[] = []
+      const failedNames: string[] = []
+      settled.forEach((item, index) => {
+        if (item.status === 'fulfilled') {
+          uploaded.push(item.value)
+          return
+        }
+        failedNames.push(picked[index]?.name || `attachment-${index + 1}`)
+      })
       store.setStatusText('')
+      if (uploaded.length === 0 && failedNames.length > 0) {
+        throw new Error(`附件上传失败：${failedNames.join('、')}`)
+      }
       return uploaded
     } catch (error) {
       store.setStatusText('')

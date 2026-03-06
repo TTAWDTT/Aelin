@@ -10,6 +10,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import time
 import zipfile
 from collections import Counter
 from dataclasses import dataclass
@@ -116,6 +117,18 @@ class AelinAttachmentService:
         ocr_psm_modes_raw = str(getattr(settings, "aelin_attachment_ocr_psm_modes", "6,11,4") or "6,11,4")
         parsed_modes = [int(item) for item in re.findall(r"\d+", ocr_psm_modes_raw)]
         self._ocr_psm_modes = tuple(parsed_modes[:6]) if parsed_modes else (6, 11, 4)
+        self._ocr_max_attempts_per_image = max(
+            3,
+            min(60, int(getattr(settings, "aelin_attachment_ocr_max_attempts_per_image", 18) or 18)),
+        )
+        self._ocr_image_timeout_seconds = max(
+            2,
+            int(getattr(settings, "aelin_attachment_ocr_image_timeout_seconds", 10) or 10),
+        )
+        self._ocr_page_timeout_seconds = max(
+            3,
+            int(getattr(settings, "aelin_attachment_ocr_page_timeout_seconds", 25) or 25),
+        )
         self._pdf_ocr_render_dpi = max(
             96,
             int(getattr(settings, "aelin_attachment_pdf_ocr_render_dpi", 220) or 220),
@@ -291,10 +304,23 @@ class AelinAttachmentService:
             fd = os.open(str(storage_path), flags)
         except FileExistsError:
             return False
+        handle = None
         try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(content)
+            handle = os.fdopen(fd, "wb")
+            handle.write(content)
+            handle.close()
+            handle = None
         except Exception:
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+            else:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
             try:
                 storage_path.unlink(missing_ok=True)
             except Exception:
@@ -640,7 +666,7 @@ class AelinAttachmentService:
         metadata = {"parser": ("image_ocr" if ocr_text else "image_meta"), "width": width, "height": height}
         return summary_text, blocks, metadata
 
-    def _ocr_text_from_image_obj(self, image_obj: Any) -> str:
+    def _ocr_text_from_image_obj(self, image_obj: Any, *, deadline: float | None = None) -> str:
         try:
             from PIL import ImageFilter, ImageOps  # type: ignore
         except Exception:
@@ -675,9 +701,23 @@ class AelinAttachmentService:
                 if clean_lang and clean_lang not in lang_candidates:
                     lang_candidates.append(clean_lang)
 
+            started_at = time.monotonic()
+            attempts = 0
+            stopped_early = False
             for variant in variants[:6]:
                 for lang in lang_candidates:
                     for psm in self._ocr_psm_modes:
+                        now = time.monotonic()
+                        if attempts >= self._ocr_max_attempts_per_image:
+                            stopped_early = True
+                            break
+                        if (now - started_at) >= float(self._ocr_image_timeout_seconds):
+                            stopped_early = True
+                            break
+                        if deadline is not None and now >= float(deadline):
+                            stopped_early = True
+                            break
+                        attempts += 1
                         cfg = f"--oem 1 --psm {int(psm)}"
                         try:
                             candidate = self._norm_text(
@@ -689,6 +729,16 @@ class AelinAttachmentService:
                         if score > best_score:
                             best_score = score
                             best_text = candidate
+                    if stopped_early:
+                        break
+                if stopped_early:
+                    break
+            if stopped_early:
+                _LOGGER.info(
+                    "attachment OCR stopped early attempts=%s timeout=%ss",
+                    attempts,
+                    self._ocr_image_timeout_seconds,
+                )
             if self._is_garbled_ocr_text(best_text):
                 return ""
             return best_text
@@ -696,7 +746,23 @@ class AelinAttachmentService:
             _LOGGER.warning("attachment OCR fallback failed: %s", exc)
             return ""
 
-    def _ocr_text_from_image_bytes(self, raw: bytes) -> str:
+    def _call_ocr_text_from_image_obj(self, image_obj: Any, *, deadline: float | None = None) -> str:
+        try:
+            return self._ocr_text_from_image_obj(image_obj, deadline=deadline)
+        except TypeError as exc:
+            if "deadline" not in str(exc):
+                raise
+            return self._ocr_text_from_image_obj(image_obj)
+
+    def _call_ocr_text_from_image_bytes(self, raw: bytes, *, deadline: float | None = None) -> str:
+        try:
+            return self._ocr_text_from_image_bytes(raw, deadline=deadline)
+        except TypeError as exc:
+            if "deadline" not in str(exc):
+                raise
+            return self._ocr_text_from_image_bytes(raw)
+
+    def _ocr_text_from_image_bytes(self, raw: bytes, *, deadline: float | None = None) -> str:
         if not raw:
             return ""
         candidates: list[str] = []
@@ -707,11 +773,11 @@ class AelinAttachmentService:
         except Exception:
             image = None
         if image is not None:
-            tesseract_text = self._ocr_text_from_image_obj(image)
+            tesseract_text = self._call_ocr_text_from_image_obj(image, deadline=deadline)
             if tesseract_text:
                 candidates.append(tesseract_text)
 
-        if self._rapidocr_enabled:
+        if self._rapidocr_enabled and (deadline is None or time.monotonic() < float(deadline)):
             rapid_text = self._rapidocr_text_from_image_bytes(raw)
             if rapid_text:
                 candidates.append(rapid_text)
@@ -810,19 +876,22 @@ class AelinAttachmentService:
         except Exception:
             images = []
         pieces: list[str] = []
+        deadline = time.monotonic() + float(self._ocr_page_timeout_seconds)
         for image_obj in images[: self._pdf_ocr_max_images_per_page]:
+            if time.monotonic() >= deadline:
+                break
             raw = self._extract_pdf_page_image_bytes(image_obj)
             if not raw:
                 continue
-            ocr_text = self._ocr_text_from_image_bytes(raw)
+            ocr_text = self._call_ocr_text_from_image_bytes(raw, deadline=deadline)
             if ocr_text:
                 pieces.append(ocr_text)
         if pieces:
             return self._norm_text("\n".join(pieces))
 
         rendered_page = self._render_pdf_page_png_bytes(pdf_bytes, page_index)
-        if rendered_page:
-            rendered_text = self._ocr_text_from_image_bytes(rendered_page)
+        if rendered_page and time.monotonic() < deadline:
+            rendered_text = self._call_ocr_text_from_image_bytes(rendered_page, deadline=deadline)
             if rendered_text:
                 pieces.append(rendered_text)
         return self._norm_text("\n".join(pieces))
@@ -835,9 +904,15 @@ class AelinAttachmentService:
             temp_path = Path(temp_dir)
             input_path = temp_path / f"input.{ext}"
             input_path.write_bytes(content)
+            # Keep soffice conversion in a constrained temp workspace and with minimal startup flags.
+            # Untrusted legacy office files should still be handled in sandboxed runtime environments.
             cmd = [
                 self._soffice_bin,
                 "--headless",
+                "--nologo",
+                "--nodefault",
+                "--norestore",
+                "--nolockcheck",
                 "--convert-to",
                 target_ext,
                 "--outdir",
@@ -1012,11 +1087,14 @@ class AelinAttachmentService:
 
         user_dir = self._root / f"user_{int(user_id)}"
         shard_dir = user_dir / file_sha[:2]
-        shard_dir.mkdir(parents=True, exist_ok=True)
         storage_name = f"{file_sha}.{ext}"
         storage_path = shard_dir / storage_name
         created_storage = False
+        created_shard_dir = False
         try:
+            if not shard_dir.exists():
+                created_shard_dir = True
+            shard_dir.mkdir(parents=True, exist_ok=True)
             parsed_text, blocks, metadata = self._parse_content(
                 content=content,
                 file_name=safe_name,
@@ -1109,6 +1187,11 @@ class AelinAttachmentService:
                 )
                 if existing is None:
                     self.cleanup_storage_path(storage_path)
+            if created_shard_dir:
+                try:
+                    shard_dir.rmdir()
+                except Exception:
+                    pass
             # NOTE:
             # Transaction rollback is intentionally delegated to the caller/router
             # because this service can be composed with broader request workflows.

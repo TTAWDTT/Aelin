@@ -199,10 +199,18 @@ export function ComposerBar({
     void onUploadAttachments(picked)
       .then((uploaded) => {
         setPendingAttachments((prev) => [...prev, ...uploaded].slice(0, MAX_PENDING_ATTACHMENTS))
+        if (uploaded.length < picked.length) {
+          const uploadedNames = new Set(uploaded.map((item) => String(item.file_name || '').trim()).filter(Boolean))
+          const failedNames = picked
+            .map((file) => file.name || '')
+            .filter((name) => name && !uploadedNames.has(name))
+          if (failedNames.length > 0) {
+            toast(`部分附件上传失败：${failedNames.join('、')}`)
+          }
+        }
       })
       .catch((error) => {
         console.error('Attachment upload failed:', error)
-        toast('附件上传失败，请重试')
       })
       .finally(() => {
         setUploadingAttachments((prev) => prev.filter((row) => !uploadingItems.some((item) => item.id === row.id)))
