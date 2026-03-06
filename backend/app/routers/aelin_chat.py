@@ -7,16 +7,18 @@ import threading
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import create_session, get_session
-from app.models import User
+from app.models import AttachmentDocument, User
 from app.routers.aelin import _dispatch_aelin_chat, _normalize_search_mode
 from app.routers.aelin_text_helpers import _now_ms, _sse_event
 from app.routers.auth import get_current_user
 from app.schemas import (
+    AelinAttachmentUploadResponse,
     AelinBrowserConfirmRequest,
     AelinBrowserConfirmResponse,
     AelinBrowserLoginCheckpointItem,
@@ -24,6 +26,7 @@ from app.schemas import (
     AelinChatRequest,
     AelinChatResponse,
 )
+from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 from app.services.browser_automation import browser_automation_service
 from app.services.browser_exec import run_sync_playwright_call
 
@@ -203,6 +206,82 @@ def _build_followup_request(
         history=[],
         images=[],
     )
+
+
+@router.post("/attachments/upload", response_model=AelinAttachmentUploadResponse)
+def aelin_attachment_upload(
+    file: UploadFile = File(...),
+    workspace: str = Form(default="default"),
+    session_id: str = Form(default=""),
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    service = get_aelin_attachment_service()
+    workspace_norm = service.normalize_workspace(workspace)
+    session_norm = service.normalize_session(session_id)
+    if session_norm:
+        existing_workspace = db.scalar(
+            select(AttachmentDocument.workspace)
+            .where(
+                AttachmentDocument.user_id == int(current_user.id),
+                AttachmentDocument.session_id == session_norm,
+            )
+            .order_by(AttachmentDocument.id.desc())
+        )
+        if existing_workspace:
+            workspace_norm = str(existing_workspace)
+
+    max_size = int(service.max_size_bytes)
+    if int(getattr(file, "size", 0) or 0) > max_size:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=422, detail=f"附件过大（>{max_size} 字节）")
+
+    content_buffer = bytearray()
+    while True:
+        piece = file.file.read(1024 * 1024)
+        if not piece:
+            break
+        content_buffer.extend(piece)
+        if len(content_buffer) > max_size:
+            try:
+                file.file.close()
+            except Exception:
+                pass
+            raise HTTPException(status_code=422, detail=f"附件过大（>{max_size} 字节）")
+    content = bytes(content_buffer)
+    del content_buffer
+
+    try:
+        result = service.ingest_bytes(
+            db,
+            user_id=int(current_user.id),
+            workspace=workspace_norm,
+            session_id=session_norm,
+            file_name=str(file.filename or "attachment"),
+            mime_type=str(file.content_type or ""),
+            content=content,
+        )
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+    except AttachmentIngestError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=exc.message) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"附件处理失败: {str(exc)[:160]}") from exc
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+    response_payload = {key: value for key, value in result.items() if not str(key).startswith("_")}
+    return AelinAttachmentUploadResponse(**response_payload)
 
 
 @router.post("/chat", response_model=AelinChatResponse)
