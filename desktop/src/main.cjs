@@ -2661,10 +2661,27 @@ function startFrontendServer() {
   }
 
   const web = express();
+  const proxyTimeoutMs = 10 * 60 * 1000;
   // Express strips the mount prefix (/api, /media) before handing to proxy.
   // So target must include the same prefix to avoid forwarding /v1/... by mistake.
-  web.use("/api", createProxyMiddleware({ target: `http://127.0.0.1:${backendPort}/api`, changeOrigin: true }));
-  web.use("/media", createProxyMiddleware({ target: `http://127.0.0.1:${backendPort}/media`, changeOrigin: true }));
+  web.use(
+    "/api",
+    createProxyMiddleware({
+      target: `http://127.0.0.1:${backendPort}/api`,
+      changeOrigin: true,
+      timeout: proxyTimeoutMs,
+      proxyTimeout: proxyTimeoutMs,
+    })
+  );
+  web.use(
+    "/media",
+    createProxyMiddleware({
+      target: `http://127.0.0.1:${backendPort}/media`,
+      changeOrigin: true,
+      timeout: proxyTimeoutMs,
+      proxyTimeout: proxyTimeoutMs,
+    })
+  );
   web.use(express.static(dist));
   web.get("*", (_req, res) => {
     res.sendFile(path.join(dist, "index.html"));

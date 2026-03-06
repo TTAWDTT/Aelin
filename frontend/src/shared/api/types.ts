@@ -130,6 +130,49 @@ export interface AelinTrackConfirmResponse {
   target_id?: number; next_run_at?: string
   actions: AelinAction[]; generated_at: string
 }
+export interface AelinBrowserConfirmRequest {
+  workspace?: string
+  action_kind?: string
+  action?: string
+  profile_id?: string
+  login_request_id?: string
+  resume_request?: Record<string, unknown>
+  resume_query?: string
+  continue_after_confirm?: boolean
+  next_call?: Record<string, unknown>
+}
+export interface AelinBrowserConfirmResponse {
+  ok: boolean
+  message: string
+  requires_followup: boolean
+  profile_id?: string
+  login_request_id?: string
+  login_state?: Record<string, unknown>
+  tool_result: Record<string, unknown>
+  continued: boolean
+  continuation_error: string
+  followup_result: Record<string, unknown>
+  generated_at: string
+}
+export interface AelinBrowserLoginCheckpointItem {
+  request_id: string
+  profile_id?: string
+  workspace?: string
+  domain?: string
+  reason?: string
+  status?: string
+  next_call?: Record<string, unknown>
+  resume_query?: string
+  resume_request?: Record<string, unknown>
+  continue_after_confirm?: boolean
+  created_at?: number
+  updated_at?: number
+}
+export interface AelinBrowserLoginCheckpointListResponse {
+  total: number
+  items: AelinBrowserLoginCheckpointItem[]
+  generated_at: string
+}
 export interface AelinTrackingItem {
   target_id?: number; target: string; source: string; query?: string
   workspace?: string; track_type?: string; description?: string

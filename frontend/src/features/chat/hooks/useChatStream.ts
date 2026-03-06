@@ -1,40 +1,22 @@
-﻿import { useRef, useCallback } from 'react'
-import { useChatStore, type ChatMessage } from '../stores/chatStore'
+import { useRef, useCallback } from 'react'
+import { useChatStore } from '../stores/chatStore'
 import { streamChat } from '@/shared/api/sse'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AelinAttachmentUploadResponse, AelinChatRequest, AelinToolStep } from '@/shared/api/types'
+import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
-
-const MAX_QUERY_CHARS = 1200
-
-function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep): AelinToolStep[] {
-  const existing = [...(prev ?? [])]
-  const stage = String(step.stage || '').trim()
-  if (!stage) return existing
-
-  const index = existing.findIndex((item) => String(item.stage || '').trim() === stage)
-  if (index === -1) return [...existing, step]
-
-  existing[index] = {
-    ...existing[index],
-    ...step,
-    stage,
-  }
-  return existing
-}
-
-function formatBytes(size: number): string {
-  const bytes = Number.isFinite(size) ? Math.max(0, size) : 0
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
-}
-
-function trimQueryForApi(text: string): string {
-  const normalized = String(text || '').trim()
-  if (normalized.length <= MAX_QUERY_CHARS) return normalized
-  return `${normalized.slice(0, MAX_QUERY_CHARS - 1)}…`
-}
+import {
+  buildAssistantMessage,
+  buildChatRequest,
+  buildHistory,
+  buildStreamCallbacks,
+  buildUserMessage,
+  formatBytes,
+  maybeRenameFreshSession,
+  normalizeAttachmentIds,
+  resolveSessionForSend,
+  trimQueryForApi,
+  type PendingImage,
+} from './chatStreamHelpers'
 
 export function useChatStream() {
   const store = useChatStore()
@@ -43,80 +25,41 @@ export function useChatStream() {
   const send = useCallback(
     (
       text: string,
-      images?: { dataUrl: string; name: string }[],
+      images?: PendingImage[],
       attachmentIds?: number[],
     ) => {
-      let sessionId = store.activeSessionId
-      if (!sessionId) sessionId = store.createSession()
+      abortRef.current?.()
+      abortRef.current = null
 
-      const session = store.sessions.find(s => s.id === sessionId)
-      const history = (session?.messages ?? [])
-        .slice(-20)
-        .filter(m => {
-          const role = String(m.role || '').trim()
-          const content = String(m.content || '').trim()
-          return (role === 'user' || role === 'assistant') && content.length > 0
-        })
-        .map(m => ({ role: m.role, content: String(m.content || '').trim() }))
+      const { sessionId, session } = resolveSessionForSend(store)
+      const normalizedAttachmentIds = normalizeAttachmentIds(attachmentIds)
+      const history = buildHistory(session)
 
-    // Add user message
-      const userMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: 'user', content: text,
-        images, timestamp: Date.now(),
-      }
-      store.addMessage(sessionId!, userMsg)
-
-    // Add empty assistant message
-      const assistantMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: 'assistant', content: '',
-        timestamp: Date.now(),
-      }
-      store.addMessage(sessionId!, assistantMsg)
+      store.addMessage(sessionId, buildUserMessage(text, images))
+      store.addMessage(sessionId, buildAssistantMessage())
       store.setStreaming(true)
       store.setStatusText('正在思考…')
 
-    // Auto-title from first message
-      const normalizedAttachmentIds = Array.from(new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0))).slice(0, 20)
+      maybeRenameFreshSession(store, sessionId, session, text, images, normalizedAttachmentIds)
 
-      if ((session?.messages.length ?? 0) === 0) {
-        const seed = String(text || '').trim() || (images?.length || normalizedAttachmentIds.length ? '附件分析' : '新对话')
-        const title = seed.length > 20 ? seed.slice(0, 20) + '…' : seed
-        store.renameSession(sessionId!, title)
-      }
-
-      const normalizedQuery = trimQueryForApi(String(text || '').trim())
-      const body: AelinChatRequest = {
-        query: normalizedQuery || (images?.length || normalizedAttachmentIds.length ? '请先分析我上传的附件，然后给我结论和建议。' : ''),
-        workspace: session?.workspace || 'default',
+      const body = buildChatRequest({
+        text,
+        session,
         history,
-        images: images?.map(i => ({ data_url: i.dataUrl, name: i.name })),
-        attachment_ids: normalizedAttachmentIds,
-      }
-
-      const cancel = streamChat(body, {
-        onIntent: (d) => store.setStatusText(`意图: ${d.intent_type}`),
-        onPlan: (d) => store.setStatusText(`计划: ${d.steps?.length || 0} 步`),
-        onToolStep: (step) => {
-          store.setStatusText(`${step.stage}…`)
-          const currentTrace = store.getActiveSession()?.messages.findLast((m: ChatMessage) => m.role === 'assistant')?.toolTrace
-          store.updateLastAssistant(sessionId!, {
-            toolTrace: mergeToolTrace(currentTrace, step),
-          })
-        },
-        onCitations: (citations) => store.updateLastAssistant(sessionId!, { citations }),
-        onActions: (actions) => store.updateLastAssistant(sessionId!, { actions }),
-        onReplyChunk: (chunk) => store.appendContent(sessionId!, chunk),
-        onDone: (d) => {
-          store.updateLastAssistant(sessionId!, { expression: d.expression, memorySummary: d.memory_summary })
-          store.setStreaming(false)
-          store.setStatusText('')
-        },
-        onError: (err) => {
-          store.appendContent(sessionId!, `\n\n> ⚠️ 错误: ${err.message}`)
-          store.setStreaming(false)
-          store.setStatusText('')
-        },
+        images,
+        attachmentIds: normalizedAttachmentIds,
       })
+
+      let cancel = () => {}
+      cancel = streamChat(
+        body,
+        buildStreamCallbacks({
+          store,
+          sessionId,
+          abortRef,
+          getCancel: () => cancel,
+        }),
+      )
 
       abortRef.current = cancel
     },
@@ -189,6 +132,7 @@ export function useChatStream() {
 
   const stop = useCallback(() => {
     abortRef.current?.()
+    abortRef.current = null
     store.setStreaming(false)
     store.setStatusText('')
   }, [store])

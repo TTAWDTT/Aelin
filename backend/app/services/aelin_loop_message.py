@@ -157,7 +157,7 @@ def build_initial_messages(
         },
         {
             "role": "system",
-            "content": f"memory_summary={str(memory_summary or '')[:1000]}",
+            "content": f"memory_summary={str(memory_summary or '')[:600]}",
         },
     ]
     if forced_intent:
@@ -208,11 +208,11 @@ def build_initial_messages(
                 )
 
     if history_turns:
-        for row in history_turns[-10:]:
+        for row in history_turns[-6:]:
             role = str(row.get("role") or "").strip().lower()
             content = str(row.get("content") or "").strip()
             if role in {"user", "assistant"} and content:
-                messages.append({"role": role, "content": content[:3000]})
+                messages.append({"role": role, "content": content[:1200]})
 
     query_text = str(query or "").strip()[:1200]
     query_fallback_text = query_text or ("请先分析我上传的图片，再继续执行工具流程。" if not normalized_attachment_ids else "请先检索并分析我上传的附件内容，再继续。")
@@ -225,4 +225,3 @@ def build_initial_messages(
     else:
         messages.append({"role": "user", "content": query_text})
     return messages
-

@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BellOff, CirclePower, Focus } from 'lucide-react'
+import { BellOff, CirclePower, Focus, RefreshCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
+import type { AelinBrowserLoginCheckpointItem } from '@/shared/api/types'
 import { PageScaffold } from '@/shared/components/PageScaffold'
 import { useLayoutStore } from '@/shared/stores/layoutStore'
 import { useNotifStore } from '@/shared/stores/notifStore'
@@ -11,6 +12,11 @@ export function FocusView() {
   const queryClient = useQueryClient()
   const { focusModeEnabled, setFocusModeEnabled } = useLayoutStore()
   const { notificationsMuted, setNotificationsMuted } = useNotifStore()
+  const [lastResumeSummary, setLastResumeSummary] = useState<{
+    requestId: string
+    message: string
+    answer: string
+  } | null>(null)
 
   const { data: modeState } = useQuery({
     queryKey: ['device-mode'],
@@ -29,6 +35,12 @@ export function FocusView() {
     queryFn: () => aelinApi.proactivePoll('default'),
     enabled: !notificationsMuted,
     refetchInterval: notificationsMuted ? false : 12_000,
+  })
+
+  const { data: loginCheckpoints, isFetching: loginCheckpointsFetching } = useQuery({
+    queryKey: ['browser-login-checkpoints', 'default'],
+    queryFn: () => aelinApi.browserLoginCheckpoints('default'),
+    refetchInterval: 20_000,
   })
 
   const liveTotal = useMemo(() => {
@@ -62,7 +74,38 @@ export function FocusView() {
     onError: () => toast.error('模式切换失败'),
   })
 
+  const resumeCheckpoint = useMutation({
+    mutationFn: (item: AelinBrowserLoginCheckpointItem) =>
+      aelinApi.confirmBrowserAction({
+        workspace: String(item.workspace || 'default').trim() || 'default',
+        action_kind: 'confirm_browser_action',
+        action: String((item.next_call || {}).action || '').trim(),
+        profile_id: String(item.profile_id || '').trim(),
+        login_request_id: String(item.request_id || '').trim(),
+        resume_request: item.resume_request || {},
+        resume_query: String(item.resume_query || '').trim(),
+        continue_after_confirm: item.continue_after_confirm !== false,
+      }),
+    onSuccess: (result, item) => {
+      const answer = String((result.followup_result || {}).answer || '').trim()
+      setLastResumeSummary({
+        requestId: String(item.request_id || ''),
+        message: String(result.message || '已恢复浏览器任务'),
+        answer,
+      })
+      toast.success(String(result.message || '已恢复浏览器任务'))
+      void queryClient.invalidateQueries({ queryKey: ['browser-login-checkpoints', 'default'] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications', 'global', 'default'] })
+      void queryClient.invalidateQueries({ queryKey: ['proactive', 'global', 'default'] })
+    },
+    onError: (error: any) => {
+      toast.error(String(error?.message || '恢复浏览器任务失败'))
+    },
+  })
+
   const activeMode = focusModeEnabled ? 'focus' : (modeState?.mode ?? 'normal')
+  const checkpointItems = loginCheckpoints?.items || []
+  const hasCheckpointItems = checkpointItems.length > 0
 
   return (
     <PageScaffold title="专注模式" subtitle="一键进入静默状态，暂停通知打扰">
@@ -93,6 +136,80 @@ export function FocusView() {
               恢复正常
             </button>
           </div>
+        </div>
+
+        <div className="aelin-card p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs text-[var(--color-text-muted)]">登录检查点</p>
+              <div className="mt-2 text-sm">
+                {hasCheckpointItems ? `有 ${checkpointItems.length} 个浏览器任务等待登录后恢复` : '当前没有待恢复的登录任务'}
+              </div>
+            </div>
+            <button
+              className="aelin-btn h-8 px-3 text-xs"
+              onClick={() => {
+                void queryClient.invalidateQueries({ queryKey: ['browser-login-checkpoints', 'default'] })
+                void queryClient.invalidateQueries({ queryKey: ['notifications', 'global', 'default'] })
+              }}
+              disabled={loginCheckpointsFetching}
+            >
+              <RefreshCcw size={14} />
+              刷新检查点
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+            首次登录完成后，这里可以直接恢复之前被登录拦下的自动任务。
+          </p>
+          {hasCheckpointItems ? (
+            <div className="mt-3 space-y-2.5">
+              {checkpointItems.map((item) => {
+                const requestId = String(item.request_id || '').trim()
+                const domain = String(item.domain || '受控浏览器').trim()
+                const resumeQuery = String(item.resume_query || '').trim()
+                const isBusy = resumeCheckpoint.isPending && resumeCheckpoint.variables?.request_id === requestId
+                return (
+                  <div key={requestId} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/55 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium">{domain} 登录已完成后可继续执行</div>
+                        <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                          profile: {String(item.profile_id || 'default').trim() || 'default'} · 状态: {String(item.status || 'awaiting_login').trim() || 'awaiting_login'}
+                        </div>
+                        {resumeQuery ? (
+                          <div className="mt-2 text-[12px] text-[var(--color-text-muted)] line-clamp-2">
+                            恢复后将继续: {resumeQuery}
+                          </div>
+                        ) : null}
+                      </div>
+                      <button
+                        className="aelin-btn aelin-btn-primary h-9 px-3 text-xs"
+                        onClick={() => resumeCheckpoint.mutate(item)}
+                        disabled={isBusy}
+                      >
+                        {isBusy ? '恢复中…' : '我已登录，继续'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">
+              没有发现待恢复的受控浏览器任务。
+            </div>
+          )}
+          {lastResumeSummary ? (
+            <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-3">
+              <div className="text-xs font-medium text-emerald-200">最近一次恢复结果</div>
+              <div className="mt-1 text-[12px] text-[var(--color-text)]">{lastResumeSummary.message}</div>
+              {lastResumeSummary.answer ? (
+                <div className="mt-2 text-[12px] text-[var(--color-text-muted)] whitespace-pre-wrap">
+                  {lastResumeSummary.answer}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="aelin-card p-4">

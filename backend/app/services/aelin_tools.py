@@ -19,6 +19,7 @@ from app.services.device_center import (
     device_capabilities as device_capabilities_info,
 )
 from app.services.browser_automation import browser_automation_service
+from app.services import browser_exec
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.tracking_autonomy import TrackingAutonomyService
@@ -97,6 +98,16 @@ def _result_error(message: str) -> dict[str, Any]:
 
 def _result_items(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
     return _result_ok(items=items, total=len(items), **extra)
+
+
+def _has_running_event_loop() -> bool:
+    return browser_exec.has_running_event_loop()
+
+
+def _run_sync_playwright_call(callable_obj, *args, **kwargs):
+    if not _has_running_event_loop():
+        return callable_obj(*args, **kwargs)
+    return browser_exec.run_in_browser_thread(callable_obj, *args, timeout=45, **kwargs)
 
 
 def should_attempt_aelin_tools(query: str) -> bool:
@@ -292,16 +303,16 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_state_get",
-                    "description": "读取浏览器状态。支持 scope=auto|managed|cdp|external|system|all。",
+                    "description": "读取浏览器状态。支持 scope=auto|cdp|external|system|all（managed 已软下线，不再建议使用）。默认轻量模式（include_dom=false, include_a11y=false）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external", "system", "all"]},
+                            "scope": {"type": "string", "enum": ["auto", "cdp", "external", "system", "all"]},
                             "include_dom": {"type": "boolean"},
                             "include_a11y": {"type": "boolean"},
                             "max_targets": {"type": "integer", "minimum": 1, "maximum": 60},
-                            "max_items": {"type": "integer", "minimum": 1, "maximum": 200},
-                            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                            "max_items": {"type": "integer", "minimum": 0, "maximum": 200},
+                            "pid": {"type": "integer", "minimum": 0, "maximum": 2147483647},
                         },
                         "required": [],
                     },
@@ -311,14 +322,16 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_use",
-                    "description": "执行浏览器动作（navigate/click/type/scroll/wait），高风险动作需 confirm=true。scope=external 仅支持 navigate（继承系统浏览器登录态）。",
+                    "description": "执行浏览器动作（navigate/click/type/scroll/wait）。scope=auto 下 navigate 优先 external；复杂动作在系统浏览器已打开时会先要求 confirm，并可能需要 CDP。scope=external 仅支持 navigate（继承系统浏览器登录态）。managed 已软下线，不再建议使用。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "wait"]},
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external"]},
+                            "scope": {"type": "string", "enum": ["auto", "cdp", "external"]},
                             "url": {"type": "string"},
                             "target": {"type": "string"},
+                            "selector": {"type": "string"},
+                            "text": {"type": "string"},
                             "value": {"type": "string"},
                             "strategy": {"type": "string", "enum": ["auto", "selector", "text", "role"]},
                             "role": {"type": "string"},
@@ -685,7 +698,8 @@ class AelinToolHub:
         max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = browser_automation_service.list_sessions(
+            result = _run_sync_playwright_call(
+                browser_automation_service.list_sessions,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -698,13 +712,14 @@ class AelinToolHub:
 
     def _tool_browser_state_get(self, args: dict[str, Any]) -> dict[str, Any]:
         scope = str(args.get("scope") or "auto").strip().lower()[:16]
-        include_dom = bool(args.get("include_dom", True))
+        include_dom = bool(args.get("include_dom", False))
         include_a11y = bool(args.get("include_a11y", False))
         max_targets = _safe_int(args.get("max_targets"), 30, low=1, high=60)
-        max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
+        max_items = _safe_int(args.get("max_items"), 0, low=0, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = browser_automation_service.state_get(
+            result = _run_sync_playwright_call(
+                browser_automation_service.state_get,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -726,6 +741,8 @@ class AelinToolHub:
         payload = {
             "url": str(args.get("url") or "").strip()[:1000],
             "target": str(args.get("target") or "").strip()[:240],
+            "selector": str(args.get("selector") or "").strip()[:1000],
+            "text": str(args.get("text") or "").strip()[:1000],
             "value": str(args.get("value") or "")[:1200],
             "strategy": str(args.get("strategy") or "auto").strip().lower()[:16],
             "role": str(args.get("role") or "").strip().lower()[:24],
@@ -737,7 +754,8 @@ class AelinToolHub:
             "confirm": bool(args.get("confirm", False)),
         }
         try:
-            result = browser_automation_service.use(
+            result = _run_sync_playwright_call(
+                browser_automation_service.use,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 action=action,

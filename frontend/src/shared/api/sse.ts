@@ -72,13 +72,25 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const token = localStorage.getItem('token')
   const BASE = import.meta.env.VITE_API_BASE || ''
+  const debugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG_STREAM === 'true'
+  const debugLog = (...args: unknown[]) => {
+    if (!debugEnabled) return
+    // eslint-disable-next-line no-console
+    console.info('[aelin-stream]', ...args)
+  }
 
+  debugLog('request_start', {
+    url: `${BASE}/api/v1/aelin/chat/stream`,
+    historyCount: Array.isArray(body?.history) ? body.history.length : 0,
+    imageCount: Array.isArray(body?.images) ? body.images.length : 0,
+  })
   fetch(`${BASE}/api/v1/aelin/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(body),
     signal: combined,
   }).then(async (res) => {
+    debugLog('response_open', { ok: res.ok, status: res.status })
     if (!res.ok) {
       let detail = ''
       try {
@@ -88,6 +100,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       }
       const trimmed = String(detail || '').trim()
       const suffix = trimmed ? `: ${trimmed.slice(0, 240)}` : ''
+      debugLog('response_error', { status: res.status, detail: trimmed.slice(0, 240) })
       callbacks.onError?.({ message: `HTTP ${res.status}${suffix}` })
       return
     }
@@ -119,6 +132,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       if (!payload) return
       const envelopeType = String(payload?.type || payload?.event || '').trim()
       const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
+      debugLog('event', { sseEvent, eventType })
 
       switch (eventType) {
         case 'intent':
@@ -142,6 +156,9 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
           callbacks.onReplyChunk?.(String(chunk))
           return
         }
+        case 'ping':
+          // Keepalive heartbeat from backend; no UI mutation needed.
+          return
         case 'final': {
           const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
           if (Array.isArray(result.tool_trace)) {
@@ -176,12 +193,27 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       buffer = parsed.rest
       for (const evt of parsed.events) {
         const payload = toEventPayload(evt.data)
-        dispatch(evt.event, payload)
+        try {
+          dispatch(evt.event, payload)
+        } catch (callbackError: any) {
+          // Callback exceptions should not be misreported as transport failures.
+          // eslint-disable-next-line no-console
+          console.error('[aelin-stream] callback_error', {
+            message: String(callbackError?.message || ''),
+            event: evt.event,
+          })
+        }
       }
     }
+    debugLog('stream_done')
     emitDone()
   }).catch((err) => {
-    if (!combined.aborted) callbacks.onError?.({ message: err.message })
+    const aborted = combined.aborted || String(err?.name || '') === 'AbortError'
+    if (!aborted) {
+      // eslint-disable-next-line no-console
+      console.error('[aelin-stream] network_error', { message: String(err?.message || ''), stack: String(err?.stack || '') })
+      callbacks.onError?.({ message: err.message })
+    }
   })
 
   return () => controller.abort()

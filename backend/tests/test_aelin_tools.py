@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+
+import app.services.aelin_loop_tools as aelin_loop_tools
 import app.services.aelin_tools as aelin_tools
 from app.services.aelin_tools import AelinToolHub
 from app.services.web_search import WebSearchResult
@@ -241,6 +244,28 @@ def test_browser_use_tool_supports_external_scope(monkeypatch):
     assert captured["scope"] == "external"
 
 
+def test_browser_use_tool_passes_confirm_flag(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    captured: dict[str, object] = {}
+
+    def _fake_use(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+
+    result = hub.execute(
+        "browser_use",
+        {"action": "navigate", "scope": "managed", "url": "https://example.com", "confirm": False},
+    )
+    assert result["ok"] is True
+    inner_args = captured.get("args")
+    assert isinstance(inner_args, dict)
+    assert inner_args.get("confirm") is False
+
+
 def test_tool_definitions_include_external_browser_scope():
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -250,6 +275,103 @@ def test_tool_definitions_include_external_browser_scope():
     )
     scope_enum = list(browser_use["parameters"]["properties"]["scope"]["enum"])
     assert "external" in scope_enum
+
+
+def test_tool_definitions_include_browser_selector_and_text():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+    defs = hub.tool_definitions()
+    browser_use = next(
+        item["function"] for item in defs if str(item.get("function", {}).get("name")) == "browser_use"
+    )
+    properties = browser_use["parameters"]["properties"]
+    assert "selector" in properties
+    assert "text" in properties
+
+
+def test_browser_use_tool_offloads_when_running_event_loop(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    main_thread_id = threading.get_ident()
+    captured: dict[str, object] = {}
+
+    def _fake_use(**kwargs):
+        captured["thread_id"] = threading.get_ident()
+        captured["scope"] = kwargs.get("scope")
+        return {"ok": True, "scope": kwargs.get("scope"), "action": kwargs.get("action")}
+
+    monkeypatch.setattr(aelin_tools, "_has_running_event_loop", lambda: True)
+    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+
+    result = hub.execute(
+        "browser_use",
+        {"action": "navigate", "scope": "managed", "url": "https://example.com", "confirm": True},
+    )
+    assert result["ok"] is True
+    assert captured.get("scope") == "managed"
+    assert int(captured.get("thread_id") or 0) != main_thread_id
+
+
+def test_browser_use_tool_forwards_selector_and_text(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    captured: dict[str, object] = {}
+
+    def _fake_use(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+
+    result = hub.execute(
+        "browser_use",
+        {"action": "click", "selector": "[data-testid='tweet']", "text": "Pinned", "confirm": True},
+    )
+    assert result["ok"] is True
+    inner_args = captured.get("args")
+    assert isinstance(inner_args, dict)
+    assert inner_args.get("selector") == "[data-testid='tweet']"
+    assert inner_args.get("text") == "Pinned"
+
+
+def test_browser_click_optimizer_allows_selector_without_target():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    rewritten, short_circuit = aelin_loop_tools._optimize_browser_tool_call(
+        tool_hub=hub,
+        tool_name="browser_use",
+        args={"action": "click", "selector": "[data-testid='SideNav_NewTweet_Button']"},
+    )
+
+    assert rewritten["selector"] == "[data-testid='SideNav_NewTweet_Button']"
+    assert short_circuit is None
+
+
+def test_browser_record_result_does_not_mark_failed_navigate_as_observed():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    aelin_loop_tools._record_browser_tool_result(
+        tool_hub=hub,
+        tool_name="browser_use",
+        args={"action": "navigate", "url": "https://x.com/following"},
+        result={"ok": False, "error": "timeout"},
+    )
+
+    state = aelin_loop_tools._browser_loop_state(hub)
+    assert state.last_observed_url == ""
+
+    rewritten, short_circuit = aelin_loop_tools._optimize_browser_tool_call(
+        tool_hub=hub,
+        tool_name="browser_use",
+        args={"action": "navigate", "url": "https://x.com/following"},
+    )
+
+    assert rewritten["url"] == "https://x.com/following"
+    assert short_circuit is None
 
 
 def test_attachment_search_uses_available_ids_fallback():

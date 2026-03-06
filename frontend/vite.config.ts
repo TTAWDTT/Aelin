@@ -11,8 +11,18 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
-      '/media': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        timeout: 10 * 60 * 1000,
+        proxyTimeout: 10 * 60 * 1000,
+      },
+      '/media': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        timeout: 10 * 60 * 1000,
+        proxyTimeout: 10 * 60 * 1000,
+      },
     },
   },
 })

@@ -31,6 +31,7 @@ export function ChatTimeline({ scrollRef, messages, isStreaming, statusText, com
               thinkingText={statusText}
               compact={compact}
               viewportWidth={viewportWidth}
+              onQuickPrompt={onQuickPrompt}
             />
           ))}
           {isStreaming && <div className="h-2" />}
