@@ -74,8 +74,6 @@ def build_actions(
                 "login_request_id": login_request_id,
                 "profile_id": _payload_value(result.get("profile_id")),
             }
-            if resume_request_json:
-                payload["resume_request"] = resume_request_json
             if next_call:
                 payload["next_call"] = _payload_json(next_call)
             out.append(

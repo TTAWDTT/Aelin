@@ -44,6 +44,49 @@ def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResul
     )
 
 
+def _summarize_resume_images(images: list[dict[str, str]] | None) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for raw in list(images or [])[:4]:
+        if not isinstance(raw, dict):
+            continue
+        data_url = str(raw.get("data_url") or "")
+        mime_type = ""
+        if data_url.startswith("data:"):
+            head = data_url[5:].split(",", 1)[0]
+            mime_type = head.split(";", 1)[0][:80]
+        byte_length = 0
+        if "base64," in data_url:
+            base64_payload = data_url.split("base64,", 1)[1]
+            byte_length = max(0, (len(base64_payload.rstrip("=")) * 3) // 4)
+        items.append(
+            {
+                "name": str(raw.get("name") or "")[:120],
+                "mime_type": mime_type,
+                "byte_length": byte_length,
+                "has_data_url": bool(data_url),
+            }
+        )
+    return items
+
+
+def _build_resume_request_payload(
+    *,
+    query: str,
+    workspace: str,
+    history_turns: list[dict[str, str]] | None,
+    images: list[dict[str, str]] | None,
+) -> dict[str, Any]:
+    return {
+        "query": str(query or "")[:1200],
+        "workspace": str(workspace or "default")[:64],
+        "use_memory": True,
+        "history": list(history_turns or [])[:20],
+        # The actual image binaries are not required for login resumption.
+        "images": [],
+        "image_summaries": _summarize_resume_images(images),
+    }
+
+
 def _extract_confirmation_request(
     *,
     tool_name: str,
@@ -106,13 +149,12 @@ class AelinAgentLoop:
     ) -> AelinAgentLoopResult:
         self._last_query = str(query or "")
         self._resume_request_json = json.dumps(
-            {
-                "query": str(query or "")[:1200],
-                "workspace": str(self._tool_hub.workspace or "default")[:64],
-                "use_memory": True,
-                "history": list(history_turns or [])[:20],
-                "images": list(images or [])[:4],
-            },
+            _build_resume_request_payload(
+                query=query,
+                workspace=str(self._tool_hub.workspace or "default"),
+                history_turns=history_turns,
+                images=images,
+            ),
             ensure_ascii=False,
             separators=(",", ":"),
         )

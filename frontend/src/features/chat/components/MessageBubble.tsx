@@ -123,7 +123,6 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
       const payload = action.payload || {}
       const rawNextCall = String(payload.next_call || '').trim()
       let nextCall: Record<string, unknown> = {}
-      let resumeRequest: Record<string, unknown> = {}
       if (rawNextCall) {
         try {
           const parsed = JSON.parse(rawNextCall)
@@ -131,17 +130,6 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           nextCall = parsed as Record<string, unknown>
         } catch {
           throw new Error('next_call 解析失败')
-        }
-      }
-      const rawResumeRequest = String(payload.resume_request || '').trim()
-      if (rawResumeRequest) {
-        try {
-          const parsedResume = JSON.parse(rawResumeRequest)
-          if (parsedResume && typeof parsedResume === 'object') {
-            resumeRequest = parsedResume as Record<string, unknown>
-          }
-        } catch {
-          throw new Error('resume_request 解析失败')
         }
       }
       const loginRequestId = String(payload.login_request_id || '').trim()
@@ -158,7 +146,6 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
         action: String(payload.action || '').trim(),
         profile_id: String(payload.profile_id || '').trim(),
         login_request_id: loginRequestId,
-        resume_request: resumeRequest,
         resume_query: String(payload.resume_query || '').trim(),
         continue_after_confirm: continueAfterConfirm,
         ...(rawNextCall ? { next_call: nextCall } : {}),

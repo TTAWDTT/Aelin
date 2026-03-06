@@ -296,6 +296,8 @@ class AelinToolHub:
                             "scope": {"type": "string", "enum": ["auto", "cdp", "external"]},
                             "url": {"type": "string"},
                             "target": {"type": "string"},
+                            "selector": {"type": "string"},
+                            "text": {"type": "string"},
                             "value": {"type": "string"},
                             "strategy": {"type": "string", "enum": ["auto", "selector", "text", "role"]},
                             "role": {"type": "string"},
@@ -669,6 +671,8 @@ class AelinToolHub:
         payload = {
             "url": str(args.get("url") or "").strip()[:1000],
             "target": str(args.get("target") or "").strip()[:240],
+            "selector": str(args.get("selector") or "").strip()[:1000],
+            "text": str(args.get("text") or "").strip()[:1000],
             "value": str(args.get("value") or "")[:1200],
             "strategy": str(args.get("strategy") or "auto").strip().lower()[:16],
             "role": str(args.get("role") or "").strip().lower()[:24],

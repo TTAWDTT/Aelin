@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+from app.services import aelin_agent_loop as aelin_agent_loop_module
 from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_loop_tools import (
     _sanitize_for_log,
@@ -461,14 +462,29 @@ def test_agent_loop_stops_with_confirmation_when_browser_use_requires_it():
     confirm_actions = [action for action in result.actions if str(action.get("kind") or "") == "confirm_browser_action"]
     assert confirm_actions
     assert str(confirm_actions[0].get("resume_query") or "") == "帮我打开并读取关注列表"
-    resume_request = json.loads(str(confirm_actions[0].get("resume_request") or "{}"))
-    assert str(resume_request.get("query") or "") == "帮我打开并读取关注列表"
-    assert str(resume_request.get("workspace") or "") == "default"
+    assert "resume_request" not in confirm_actions[0]
     next_call = json.loads(str(confirm_actions[0].get("next_call") or "{}"))
     assert str(next_call.get("tool") or "") == "browser_use"
     next_args = next_call.get("args") if isinstance(next_call.get("args"), dict) else {}
     assert str(next_args.get("scope") or "") == "cdp"
     assert bool(next_args.get("confirm")) is True
+
+
+def test_build_resume_request_payload_summarizes_images():
+    payload = aelin_agent_loop_module._build_resume_request_payload(
+        query="继续处理",
+        workspace="default",
+        history_turns=[{"role": "user", "content": "上一轮"}],
+        images=[{"data_url": "data:image/png;base64,QUFBQQ==", "name": "following.png"}],
+    )
+
+    assert payload["images"] == []
+    assert payload["history"] == [{"role": "user", "content": "上一轮"}]
+    summaries = payload.get("image_summaries") if isinstance(payload.get("image_summaries"), list) else []
+    assert summaries
+    assert str(summaries[0].get("name") or "") == "following.png"
+    assert str(summaries[0].get("mime_type") or "") == "image/png"
+    assert int(summaries[0].get("byte_length") or 0) > 0
 
 
 def test_agent_loop_stops_with_confirmation_when_browser_state_get_requires_it():
@@ -502,8 +518,7 @@ def test_agent_loop_stops_with_confirmation_when_browser_state_get_requires_it()
     assert len(service._completions.calls) == 1
     confirm_actions = [action for action in result.actions if str(action.get("kind") or "") == "confirm_browser_action"]
     assert confirm_actions
-    resume_request = json.loads(str(confirm_actions[0].get("resume_request") or "{}"))
-    assert str(resume_request.get("query") or "") == "读取当前页面并总结"
+    assert "resume_request" not in confirm_actions[0]
     next_call = json.loads(str(confirm_actions[0].get("next_call") or "{}"))
     assert str(next_call.get("tool") or "") == "browser_state_get"
 

@@ -227,7 +227,7 @@ def aelin_chat_stream(
         done_token = "__done__"
 
         def _push(event: str, data: dict[str, Any]) -> None:
-            _LOG.info(
+            _LOG.debug(
                 "aelin_stream event req=%s uid=%s event=%s keys=%s",
                 req_id,
                 int(current_user.id),

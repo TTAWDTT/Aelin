@@ -244,6 +244,18 @@ def test_tool_definitions_include_external_browser_scope():
     assert "external" in scope_enum
 
 
+def test_tool_definitions_include_browser_selector_and_text():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+    defs = hub.tool_definitions()
+    browser_use = next(
+        item["function"] for item in defs if str(item.get("function", {}).get("name")) == "browser_use"
+    )
+    properties = browser_use["parameters"]["properties"]
+    assert "selector" in properties
+    assert "text" in properties
+
+
 def test_browser_use_tool_offloads_when_running_event_loop(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -266,6 +278,29 @@ def test_browser_use_tool_offloads_when_running_event_loop(monkeypatch):
     assert result["ok"] is True
     assert captured.get("scope") == "managed"
     assert int(captured.get("thread_id") or 0) != main_thread_id
+
+
+def test_browser_use_tool_forwards_selector_and_text(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    captured: dict[str, object] = {}
+
+    def _fake_use(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+
+    result = hub.execute(
+        "browser_use",
+        {"action": "click", "selector": "[data-testid='tweet']", "text": "Pinned", "confirm": True},
+    )
+    assert result["ok"] is True
+    inner_args = captured.get("args")
+    assert isinstance(inner_args, dict)
+    assert inner_args.get("selector") == "[data-testid='tweet']"
+    assert inner_args.get("text") == "Pinned"
 
 
 def test_browser_click_optimizer_allows_selector_without_target():
