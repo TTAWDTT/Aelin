@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     aelin_attachment_ocr_languages: str = "chi_sim+eng"
     aelin_attachment_ocr_psm_modes: str = "6,11,4"
     aelin_attachment_ocr_min_chars: int = 8
+    aelin_attachment_ocr_max_attempts_per_image: int = 18
+    aelin_attachment_ocr_image_timeout_seconds: int = 10
+    aelin_attachment_ocr_page_timeout_seconds: int = 25
     aelin_attachment_tesseract_cmd: str = ""
     aelin_attachment_tessdata_dir: str = ""
     aelin_attachment_rapidocr_enabled: bool = True
