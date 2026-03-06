@@ -122,15 +122,16 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
     mutationFn: async (action: AelinAction) => {
       const payload = action.payload || {}
       const rawNextCall = String(payload.next_call || '').trim()
-      if (!rawNextCall) throw new Error('缺少 next_call 参数')
       let nextCall: Record<string, unknown> = {}
       let resumeRequest: Record<string, unknown> = {}
-      try {
-        const parsed = JSON.parse(rawNextCall)
-        if (!parsed || typeof parsed !== 'object') throw new Error('invalid_next_call')
-        nextCall = parsed as Record<string, unknown>
-      } catch {
-        throw new Error('next_call 解析失败')
+      if (rawNextCall) {
+        try {
+          const parsed = JSON.parse(rawNextCall)
+          if (!parsed || typeof parsed !== 'object') throw new Error('invalid_next_call')
+          nextCall = parsed as Record<string, unknown>
+        } catch {
+          throw new Error('next_call 解析失败')
+        }
       }
       const rawResumeRequest = String(payload.resume_request || '').trim()
       if (rawResumeRequest) {
@@ -143,15 +144,26 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           throw new Error('resume_request 解析失败')
         }
       }
-      return aelinApi.confirmBrowserAction({
+      const loginRequestId = String(payload.login_request_id || '').trim()
+      if (!rawNextCall && !loginRequestId) {
+        throw new Error('缺少 next_call 或 login_request_id 参数')
+      }
+      const rawContinueAfterConfirm = String(payload.continue_after_confirm || '').trim().toLowerCase()
+      const continueAfterConfirm = rawContinueAfterConfirm
+        ? rawContinueAfterConfirm !== 'false' && rawContinueAfterConfirm !== '0' && rawContinueAfterConfirm !== 'no'
+        : true
+      const body = {
         workspace: String(payload.workspace || 'default').trim() || 'default',
         action_kind: String(action.kind || '').trim() || 'confirm_browser_action',
         action: String(payload.action || '').trim(),
+        profile_id: String(payload.profile_id || '').trim(),
+        login_request_id: loginRequestId,
         resume_request: resumeRequest,
         resume_query: String(payload.resume_query || '').trim(),
-        continue_after_confirm: true,
-        next_call: nextCall,
-      })
+        continue_after_confirm: continueAfterConfirm,
+        ...(rawNextCall ? { next_call: nextCall } : {}),
+      }
+      return aelinApi.confirmBrowserAction(body)
     },
     onSuccess: (res) => {
       if (res.ok) {

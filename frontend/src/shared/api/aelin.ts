@@ -4,6 +4,7 @@ import type {
   AelinNotificationResponse, AelinProactivePollResponse,
   AelinTrackConfirmRequest, AelinTrackConfirmResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
+  AelinBrowserLoginCheckpointListResponse,
   AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
   AelinTrackingItem, AelinTrackingRunResponse,
   AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
@@ -31,6 +32,11 @@ export const aelinApi = {
 
   confirmBrowserAction: (body: AelinBrowserConfirmRequest) =>
     fetchJson<AelinBrowserConfirmResponse>('/api/v1/aelin/agent/browser/confirm', { method: 'POST', body: JSON.stringify(body) }),
+
+  browserLoginCheckpoints: (workspace = 'default', status = 'awaiting_login,continue_failed', limit = 20) =>
+    fetchJson<AelinBrowserLoginCheckpointListResponse>(
+      `/api/v1/aelin/agent/browser/login-checkpoints?workspace=${encodeURIComponent(workspace)}&status=${encodeURIComponent(status)}&limit=${limit}`,
+    ),
 
   trackingList: (params?: Record<string, string>) =>
     fetchJson<AelinTrackingListResponse>(`/api/v1/aelin/tracking${params ? '?' + new URLSearchParams(params) : ''}`),
