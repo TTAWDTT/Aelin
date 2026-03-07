@@ -479,7 +479,7 @@ class BrowserPlaneCheckpoint(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    request_id: Mapped[str] = mapped_column(String(64), index=True)
+    request_id: Mapped[str] = mapped_column(String(64))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
     profile_id: Mapped[str] = mapped_column(String(120), default="", index=True)

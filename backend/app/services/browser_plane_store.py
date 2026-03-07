@@ -42,6 +42,8 @@ def _as_utc_datetime(value: datetime | None, *, fallback_now: bool = False) -> d
 
 
 def _row_to_payload(row: BrowserPlaneCheckpoint) -> dict[str, Any]:
+    created_at = _as_utc_datetime(row.created_at, fallback_now=True) or datetime.fromtimestamp(0, tz=timezone.utc)
+    updated_at = _as_utc_datetime(row.updated_at, fallback_now=True) or datetime.fromtimestamp(0, tz=timezone.utc)
     return {
         "request_id": str(row.request_id or ""),
         "profile_id": str(row.profile_id or ""),
@@ -53,8 +55,8 @@ def _row_to_payload(row: BrowserPlaneCheckpoint) -> dict[str, Any]:
         "resume_query": str(row.resume_query or "")[:500],
         "resume_request": _safe_json_loads(row.resume_request_json or "{}"),
         "continue_after_confirm": bool(row.continue_after_confirm),
-        "created_at": _as_utc_datetime(row.created_at, fallback_now=True).timestamp() if row.created_at else 0.0,
-        "updated_at": _as_utc_datetime(row.updated_at, fallback_now=True).timestamp() if row.updated_at else 0.0,
+        "created_at": created_at.timestamp(),
+        "updated_at": updated_at.timestamp(),
     }
 
 
@@ -79,6 +81,7 @@ class BrowserPlaneStore:
         clean_request_id = str(request_id or "").strip()[:64]
         if not clean_request_id:
             return {}
+        normalized_workspace = _normalize_workspace(workspace)
         db = create_session()
         try:
             row = db.scalar(
@@ -88,11 +91,13 @@ class BrowserPlaneStore:
                 row = BrowserPlaneCheckpoint(
                     request_id=clean_request_id,
                     user_id=int(user_id),
-                    workspace=_normalize_workspace(workspace),
+                    workspace=normalized_workspace,
                 )
                 db.add(row)
+            elif int(row.user_id or 0) != int(user_id) or str(row.workspace or "") != normalized_workspace:
+                raise RuntimeError("checkpoint_request_id_collision")
             row.user_id = int(user_id)
-            row.workspace = _normalize_workspace(workspace)
+            row.workspace = normalized_workspace
             row.profile_id = str(profile_id or "")[:120]
             row.domain = str(domain or "")[:120]
             row.reason = str(reason or "")[:80]
@@ -212,11 +217,11 @@ class BrowserPlaneStore:
                 row.status = str(status or row.status)[:32]
             if resume_query is not None and str(resume_query).strip():
                 row.resume_query = str(resume_query or "")[:500]
-            if isinstance(resume_request, dict) and resume_request:
+            if isinstance(resume_request, dict):
                 row.resume_request_json = _safe_json_dumps(resume_request)
             if continue_after_confirm is not None:
                 row.continue_after_confirm = bool(continue_after_confirm)
-            if isinstance(next_call, dict) and next_call:
+            if isinstance(next_call, dict):
                 row.next_call_json = _safe_json_dumps(next_call)
             row.updated_at = datetime.now(timezone.utc)
             db.add(row)

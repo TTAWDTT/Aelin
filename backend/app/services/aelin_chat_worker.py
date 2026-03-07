@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Any, Callable
 
@@ -8,6 +9,16 @@ from app.models import User
 from app.schemas import AelinChatRequest, AelinChatResponse
 
 _CHAT_WORKER_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="aelin-chat-worker")
+
+
+def _shutdown_chat_worker_pool() -> None:
+    try:
+        _CHAT_WORKER_POOL.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
+
+
+atexit.register(_shutdown_chat_worker_pool)
 
 
 def run_aelin_chat_with_local_session(

@@ -36,6 +36,7 @@ def confirm_browser_action_request(
     db: Session,
     current_user: User,
 ) -> AelinBrowserConfirmResponse:
+    _ = db
     workspace = str(payload.workspace or "default").strip()[:64] or "default"
     stored_login_state: dict[str, Any] = {}
     if str(payload.login_request_id or "").strip():
