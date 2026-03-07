@@ -368,5 +368,57 @@ class BrowserPlaneAdapter:
             max_targets=max_targets,
         )
 
+    def tab_text(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        mode: str = "raw",
+        max_chars: int = 12000,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.tab_text,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            mode=mode,
+            max_chars=max_chars,
+        )
+
+    def tab_evaluate(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        script: str,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.tab_evaluate,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            script=script,
+        )
+
+    def tab_screenshot(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        format: str = "jpeg",
+        quality: int = 80,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.tab_screenshot,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            format=format,
+            quality=quality,
+        )
+
 
 browser_plane_adapter = BrowserPlaneAdapter()

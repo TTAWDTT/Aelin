@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -2091,7 +2092,19 @@ class BrowserAutomationService:
         if not self._cdp_enabled or not self._cdp_endpoint:
             return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
         profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
-        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile.profile_id)
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile.profile_id,
+            action="list_instances",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return session_error
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", scope="cdp", requires_cdp=True)
         with session.lock:
             session.touch()
             instance, tabs = self._sync_session_runtime_rows(session=session)
@@ -2116,7 +2129,19 @@ class BrowserAutomationService:
         if not self._cdp_enabled or not self._cdp_endpoint:
             return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
         profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
-        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile.profile_id)
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile.profile_id,
+            action="list_tabs",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return session_error
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", scope="cdp", requires_cdp=True)
         with session.lock:
             session.touch()
             instance, tabs = self._sync_session_runtime_rows(session=session)
@@ -2143,7 +2168,19 @@ class BrowserAutomationService:
         if not self._cdp_enabled or not self._cdp_endpoint:
             return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
         profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
-        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile.profile_id)
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile.profile_id,
+            action="open_tab",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return session_error
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", scope="cdp", requires_cdp=True)
         with session.lock:
             session.touch()
             page = session.context.new_page()
@@ -2204,6 +2241,157 @@ class BrowserAutomationService:
             "profile_id": str(tab.get("profile_id") or ""),
             "tabs_total": len(tabs),
             **snap,
+        }
+
+    def _resolve_tab_page(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+    ) -> tuple[BrowserSession | None, Any, dict[str, Any]]:
+        tab = browser_plane_runtime_store.get_tab(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        if not tab:
+            return None, None, {}
+        profile_id = str(tab.get("profile_id") or "").strip()
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile_id,
+            action="tab_access",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return None, None, tab
+        if session is None:
+            return None, None, tab
+        page_index = max(0, int(tab.get("page_index") or 0))
+        pages = list(getattr(getattr(session, "context", None), "pages", []) or [])
+        if not pages or page_index >= len(pages):
+            return session, None, tab
+        page = pages[page_index]
+        session.page = page
+        return session, page, tab
+
+    def tab_text(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        mode: str = "raw",
+        max_chars: int = 12000,
+    ) -> dict[str, Any]:
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        if session is None or not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        if page is None:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        text_mode = str(mode or "raw").strip().lower()
+        if text_mode not in {"raw", "readable"}:
+            text_mode = "raw"
+        limit = _clamp_int(max_chars, 12000, low=200, high=40000)
+        script = (
+            "() => { const root = document.querySelector('article, main, [role=\"main\"]') || document.body; "
+            "return String(root?.innerText || root?.textContent || '').trim(); }"
+            if text_mode == "readable"
+            else "() => String(document.body?.innerText || document.body?.textContent || '').trim();"
+        )
+        with session.lock:
+            session.touch()
+            try:
+                text = str(page.evaluate(script) or "").strip()
+            except Exception as exc:
+                return self._error_payload(error=str(exc)[:180], scope="cdp")
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "mode": text_mode,
+            "text": text[:limit],
+            "char_count": min(len(text), limit),
+            "tabs_total": len(tabs),
+            "url": str(tab.get("url") or ""),
+            "title": str(tab.get("title") or ""),
+        }
+
+    def tab_evaluate(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        script: str,
+    ) -> dict[str, Any]:
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        if session is None or not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        if page is None:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        snippet = str(script or "").strip()
+        if not snippet:
+            return self._error_payload(error="missing_script", scope="cdp")
+        with session.lock:
+            session.touch()
+            try:
+                value = page.evaluate(snippet)
+            except Exception as exc:
+                return self._error_payload(error=str(exc)[:180], scope="cdp")
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "value": value,
+            "tabs_total": len(tabs),
+        }
+
+    def tab_screenshot(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        format: str = "jpeg",
+        quality: int = 80,
+    ) -> dict[str, Any]:
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        if session is None or not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        if page is None:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        image_format = "png" if str(format or "").strip().lower() == "png" else "jpeg"
+        jpeg_quality = _clamp_int(quality, 80, low=35, high=95)
+        with session.lock:
+            session.touch()
+            try:
+                shot = page.screenshot(type=image_format, quality=jpeg_quality if image_format == "jpeg" else None)
+            except Exception as exc:
+                return self._error_payload(error=str(exc)[:180], scope="cdp")
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        encoded = base64.b64encode(bytes(shot or b"")).decode("ascii") if shot else ""
+        mime = "image/png" if image_format == "png" else "image/jpeg"
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "format": image_format,
+            "data_url": f"data:{mime};base64,{encoded}" if encoded else "",
+            "byte_length": len(bytes(shot or b"")),
+            "tabs_total": len(tabs),
         }
 
     def _snapshot_page(

@@ -27,9 +27,12 @@ from app.schemas import (
     AelinBrowserLoginCheckpointListResponse,
     AelinBrowserSnapshotResponse,
     AelinBrowserTabItem,
+    AelinBrowserTabEvaluateRequest,
+    AelinBrowserTabEvaluateResponse,
     AelinBrowserTabListResponse,
     AelinBrowserTabOpenRequest,
     AelinBrowserTabOpenResponse,
+    AelinBrowserTabTextResponse,
     AelinBrowserTaskCreateRequest,
     AelinBrowserTaskItem,
     AelinBrowserTaskResponse,
@@ -467,6 +470,83 @@ def get_browser_tab_snapshot(
         include_dom=bool(include_dom),
         include_a11y=bool(include_a11y),
         max_targets=max(1, min(60, int(max_targets or 30))),
+    )
+    snap = dict(payload or {}) if isinstance(payload, dict) else {}
+    return AelinBrowserSnapshotResponse(
+        ok=bool(snap.get("ok", False)),
+        scope=str(snap.get("scope") or "cdp"),
+        task_id="",
+        profile_id=str(snap.get("profile_id") or ""),
+        snapshot=snap,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tabs/{tab_id}/text", response_model=AelinBrowserTabTextResponse)
+def get_browser_tab_text(
+    tab_id: str,
+    workspace: str = "default",
+    mode: str = "raw",
+    max_chars: int = 12000,
+    current_user: User = Depends(get_current_user),
+):
+    payload = browser_plane_adapter.tab_text(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        tab_id=str(tab_id or ""),
+        mode=str(mode or "raw"),
+        max_chars=max(200, min(40000, int(max_chars or 12000))),
+    )
+    return AelinBrowserTabTextResponse(
+        ok=bool(payload.get("ok", False)),
+        scope=str(payload.get("scope") or "cdp"),
+        instance_id=str(payload.get("instance_id") or ""),
+        tab_id=str(payload.get("tab_id") or ""),
+        profile_id=str(payload.get("profile_id") or ""),
+        mode=str(payload.get("mode") or "raw"),
+        text=str(payload.get("text") or ""),
+        char_count=int(payload.get("char_count") or 0),
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tabs/{tab_id}/evaluate", response_model=AelinBrowserTabEvaluateResponse)
+def evaluate_browser_tab(
+    tab_id: str,
+    payload: AelinBrowserTabEvaluateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.tab_evaluate(
+        user_id=int(current_user.id),
+        workspace=str(payload.workspace or "default"),
+        tab_id=str(tab_id or ""),
+        script=str(payload.script or ""),
+    )
+    return AelinBrowserTabEvaluateResponse(
+        ok=bool(result.get("ok", False)),
+        scope=str(result.get("scope") or "cdp"),
+        instance_id=str(result.get("instance_id") or ""),
+        tab_id=str(result.get("tab_id") or ""),
+        profile_id=str(result.get("profile_id") or ""),
+        value=result.get("value"),
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tabs/{tab_id}/screenshot", response_model=AelinBrowserSnapshotResponse)
+def get_browser_tab_screenshot(
+    tab_id: str,
+    workspace: str = "default",
+    format: str = "jpeg",
+    quality: int = 80,
+    current_user: User = Depends(get_current_user),
+):
+    payload = browser_plane_adapter.tab_screenshot(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        tab_id=str(tab_id or ""),
+        format=str(format or "jpeg"),
+        quality=max(35, min(95, int(quality or 80))),
     )
     snap = dict(payload or {}) if isinstance(payload, dict) else {}
     return AelinBrowserSnapshotResponse(

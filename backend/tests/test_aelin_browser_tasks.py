@@ -252,3 +252,72 @@ def test_browser_open_tab_endpoint(monkeypatch):
     payload = opened.json()
     assert bool(payload.get("ok")) is True
     assert str((payload.get("item") or {}).get("tab_id") or "") == "btab-2"
+
+
+def test_browser_tab_text_evaluate_and_screenshot_endpoints(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "tab_text",
+        lambda **kwargs: {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": "binst-1",
+            "tab_id": "btab-1",
+            "profile_id": "default:default",
+            "mode": "readable",
+            "text": "Example Domain",
+            "char_count": 14,
+        },
+    )
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "tab_evaluate",
+        lambda **kwargs: {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": "binst-1",
+            "tab_id": "btab-1",
+            "profile_id": "default:default",
+            "value": {"href": "https://example.com"},
+        },
+    )
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "tab_screenshot",
+        lambda **kwargs: {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": "binst-1",
+            "tab_id": "btab-1",
+            "profile_id": "default:default",
+            "format": "png",
+            "data_url": "data:image/png;base64,ZmFrZQ==",
+            "byte_length": 4,
+        },
+    )
+
+    text_resp = client.get(
+        "/api/v1/aelin/agent/browser/tabs/btab-1/text?workspace=default&mode=readable",
+        headers=headers,
+    )
+    assert text_resp.status_code == 200, text_resp.text
+    assert str(text_resp.json().get("text") or "") == "Example Domain"
+
+    eval_resp = client.post(
+        "/api/v1/aelin/agent/browser/tabs/btab-1/evaluate",
+        json={"workspace": "default", "script": "() => window.location.href"},
+        headers=headers,
+    )
+    assert eval_resp.status_code == 200, eval_resp.text
+    assert str((eval_resp.json().get("value") or {}).get("href") or "") == "https://example.com"
+
+    shot_resp = client.get(
+        "/api/v1/aelin/agent/browser/tabs/btab-1/screenshot?workspace=default&format=png",
+        headers=headers,
+    )
+    assert shot_resp.status_code == 200, shot_resp.text
+    snap = shot_resp.json().get("snapshot") or {}
+    assert str(snap.get("data_url") or "").startswith("data:image/png;base64,")

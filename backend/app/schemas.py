@@ -565,6 +565,33 @@ class AelinBrowserTabOpenResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinBrowserTabTextResponse(BaseModel):
+    ok: bool = True
+    scope: str = "cdp"
+    instance_id: str = ""
+    tab_id: str = ""
+    profile_id: str = ""
+    mode: str = "raw"
+    text: str = ""
+    char_count: int = 0
+    generated_at: datetime
+
+
+class AelinBrowserTabEvaluateRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    script: str = Field(min_length=1, max_length=4000)
+
+
+class AelinBrowserTabEvaluateResponse(BaseModel):
+    ok: bool = True
+    scope: str = "cdp"
+    instance_id: str = ""
+    tab_id: str = ""
+    profile_id: str = ""
+    value: Any = None
+    generated_at: datetime
+
+
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None
