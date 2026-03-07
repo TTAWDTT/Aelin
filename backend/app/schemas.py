@@ -5,6 +5,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.services.aelin_utils import normalize_positive_ints
+
 
 class Token(BaseModel):
     access_token: str
@@ -169,6 +171,7 @@ class AelinChatRequest(BaseModel):
     max_citations: int = Field(default=6, ge=1, le=20)
     workspace: str = Field(default="default", min_length=1, max_length=64)
     images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=20)
     history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
     search_mode: str = Field(default="auto", min_length=1, max_length=16)
 
@@ -204,12 +207,22 @@ class AelinChatRequest(BaseModel):
             normalized.append({"role": role[:16], "content": content[:3000]})
         return normalized
 
+    @field_validator("attachment_ids", mode="before")
+    @classmethod
+    def _normalize_attachment_ids(cls, value: Any) -> list[int]:
+        if not isinstance(value, list):
+            return []
+        return normalize_positive_ints(value, cap=20)
+
     @model_validator(mode="after")
     def _finalize_query(self) -> "AelinChatRequest":
         if self.query:
             return self
         if self.images:
             self.query = "请结合这些图片给我一个简短说明。"
+            return self
+        if self.attachment_ids:
+            self.query = "请先基于我上传的附件内容给出结论和建议。"
             return self
         raise ValueError("query is empty")
 
@@ -222,6 +235,19 @@ class AelinChatHistoryTurn(BaseModel):
 class AelinImageInput(BaseModel):
     data_url: str = Field(min_length=20, max_length=3_000_000)
     name: str = Field(default="", max_length=120)
+
+
+class AelinAttachmentUploadResponse(BaseModel):
+    attachment_id: int
+    file_name: str
+    mime_type: str
+    size_bytes: int
+    workspace: str
+    session_id: str = ""
+    status: str = "ready"
+    chunk_count: int = 0
+    summary: str = ""
+    deduplicated: bool = False
 
 
 class AelinCitation(BaseModel):
@@ -392,6 +418,53 @@ class AelinTrackConfirmResponse(BaseModel):
     target_id: Optional[int] = None
     next_run_at: Optional[str] = None
     actions: list[AelinAction] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinBrowserConfirmRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    action_kind: str = Field(default="confirm_browser_action", max_length=64)
+    action: str = Field(default="", max_length=32)
+    profile_id: str = Field(default="", max_length=120)
+    login_request_id: str = Field(default="", max_length=64)
+    next_call: dict[str, Any] = Field(default_factory=dict)
+    resume_request: dict[str, Any] = Field(default_factory=dict)
+    resume_query: str = Field(default="", max_length=500)
+    continue_after_confirm: bool = True
+
+
+class AelinBrowserConfirmResponse(BaseModel):
+    ok: bool
+    message: str = ""
+    requires_followup: bool = False
+    profile_id: str = ""
+    login_request_id: str = ""
+    login_state: dict[str, Any] = Field(default_factory=dict)
+    tool_result: dict[str, Any] = Field(default_factory=dict)
+    continued: bool = False
+    continuation_error: str = ""
+    followup_result: dict[str, Any] = Field(default_factory=dict)
+    generated_at: datetime
+
+
+class AelinBrowserLoginCheckpointItem(BaseModel):
+    request_id: str
+    profile_id: str = ""
+    workspace: str = "default"
+    domain: str = ""
+    reason: str = ""
+    status: str = "awaiting_login"
+    next_call: dict[str, Any] = Field(default_factory=dict)
+    resume_query: str = ""
+    resume_request: dict[str, Any] = Field(default_factory=dict)
+    continue_after_confirm: bool = True
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+class AelinBrowserLoginCheckpointListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserLoginCheckpointItem] = Field(default_factory=list)
     generated_at: datetime
 
 
@@ -657,6 +730,15 @@ class AelinDeviceScreenCaptureResponse(BaseModel):
     source_display: str = ""
     captured_at: str = ""
     generated_at: datetime
+
+
+class AelinDeviceScreenCaptureRequest(BaseModel):
+    mode: str = Field(default="fullscreen", min_length=1, max_length=32)
+    display_id: str = Field(default="", max_length=64)
+    max_edge: int = Field(default=1280, ge=640, le=4096)
+    image_format: str = Field(default="jpeg", min_length=3, max_length=8)
+    quality: int = Field(default=72, ge=35, le=95)
+    selection_timeout_ms: int = Field(default=45000, ge=5000, le=180000)
 
 
 class AgentCardLayoutItem(BaseModel):

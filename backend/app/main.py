@@ -34,6 +34,27 @@ from app.services.tracking_autonomy import tracking_autonomy_service
 _log = logging.getLogger(__name__)
 
 
+def _configure_logging() -> None:
+    level_raw = str(getattr(settings, "backend_log_level", "INFO") or "INFO").strip().upper()
+    level = getattr(logging, level_raw, logging.INFO)
+    log_format = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(level=level, format=log_format)
+    else:
+        root.setLevel(level)
+        for handler in root.handlers:
+            try:
+                handler.setLevel(level)
+                handler.setFormatter(logging.Formatter(log_format))
+            except Exception:
+                continue
+    logging.getLogger("uvicorn").setLevel(level)
+    logging.getLogger("uvicorn.error").setLevel(level)
+    logging.getLogger("uvicorn.access").setLevel(level)
+    _log.info("logging configured level=%s", level_raw)
+
+
 def _add_missing_columns(engine: Engine) -> None:
     """Add columns that exist in the ORM model but not yet in the DB (simple SQLite migration)."""
     inspector = sa_inspect(engine)
@@ -58,7 +79,11 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     # Lightweight column migration for SQLite (add columns that don't exist yet)
     _add_missing_columns(engine)
-    tracking_autonomy_service.start()
+    if settings.tracking_scheduler_enabled:
+        tracking_autonomy_service.start()
+        _log.info("tracking scheduler enabled")
+    else:
+        _log.info("tracking scheduler disabled")
     try:
         yield
     finally:
@@ -66,6 +91,7 @@ async def lifespan(_app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    _configure_logging()
     app = FastAPI(title="MercuryDesk API", version="0.1.0", lifespan=lifespan)
 
     origins = {o.strip() for o in settings.cors_origins.split(",") if o.strip()}

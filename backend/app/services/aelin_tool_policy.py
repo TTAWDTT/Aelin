@@ -36,6 +36,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return action == "mode_apply"
     if tool == "web_search":
         return False
+    if tool == "attachment_search":
+        return False
     if tool == "screen_get":
         return False
     if tool == "browser_state_get":
@@ -77,6 +79,7 @@ class AelinToolPolicy:
             "tracking",
             "device",
             "web_search",
+            "attachment_search",
             "screen_get",
             "browser_session_list",
             "browser_state_get",

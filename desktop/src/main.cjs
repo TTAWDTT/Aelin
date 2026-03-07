@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer, clipboard } = require("electron");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const fs = require("fs");
@@ -455,12 +455,85 @@ function buildPetPluginStateSnapshot(forceRefresh = false) {
   };
 }
 
-function clampNumber(value, fallback, min, max) {
+function clampCaptureNumber(value, fallback, min, max) {
   const parsed = Number(value);
   const base = Number.isFinite(parsed) ? parsed : Number(fallback);
   const floor = Number.isFinite(Number(min)) ? Number(min) : Number.NEGATIVE_INFINITY;
   const ceil = Number.isFinite(Number(max)) ? Number(max) : Number.POSITIVE_INFINITY;
   return Math.max(floor, Math.min(ceil, base));
+}
+
+function waitMs(ms) {
+  const delay = Math.max(0, Math.floor(Number(ms || 0)));
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+function normalizeCaptureMode(raw) {
+  const mode = String(raw || "").trim().toLowerCase();
+  if (mode === "region" || mode === "custom" || mode === "custom_region") return "region";
+  return "fullscreen";
+}
+
+function shouldExcludeAelinWindows(payload = {}, mode = "fullscreen") {
+  const raw = payload?.exclude_aelin_windows ?? payload?.excludeAelinWindows;
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return raw !== 0;
+  if (typeof raw === "string" && raw.trim()) {
+    const normalized = raw.trim().toLowerCase();
+    if (["0", "false", "off", "no"].includes(normalized)) return false;
+    if (["1", "true", "on", "yes"].includes(normalized)) return true;
+  }
+  return mode === "fullscreen";
+}
+
+function buildCaptureEncodingOptions(payload = {}) {
+  const format = String(payload?.format || payload?.image_format || "jpeg").trim().toLowerCase() === "png"
+    ? "png"
+    : "jpeg";
+  const quality = Math.floor(clampCaptureNumber(payload?.quality, 78, 35, 95));
+  const maxEdge = Math.floor(clampCaptureNumber(payload?.max_edge || payload?.maxEdge, 1920, 640, 4096));
+  return { format, quality, maxEdge };
+}
+
+function collectAelinCaptureWindows() {
+  const windows = [];
+  for (const win of [mainWindow, petWindow]) {
+    if (!win || win.isDestroyed()) continue;
+    if (!win.isVisible()) continue;
+    windows.push(win);
+  }
+  return windows;
+}
+
+function setAelinWindowsContentProtection(windows = [], enabled = false) {
+  for (const win of windows) {
+    if (!win || win.isDestroyed()) continue;
+    if (typeof win.setContentProtection !== "function") continue;
+    try {
+      win.setContentProtection(Boolean(enabled));
+    } catch {
+      // ignore unsupported content protection calls
+    }
+  }
+}
+
+async function withAelinWindowsProtected(task) {
+  const windows = collectAelinCaptureWindows();
+  let protectedApplied = false;
+  try {
+    if (windows.length > 0) {
+      setAelinWindowsContentProtection(windows, true);
+      protectedApplied = true;
+    }
+    if (protectedApplied) {
+      await waitMs(80);
+    }
+    return await task();
+  } finally {
+    if (protectedApplied) {
+      setAelinWindowsContentProtection(windows, false);
+    }
+  }
 }
 
 function resolveCaptureDisplay(payload = {}) {
@@ -476,7 +549,264 @@ function resolveCaptureDisplay(payload = {}) {
   return screen.getPrimaryDisplay() || displays[0] || null;
 }
 
-async function captureScreenSnapshot(payload = {}) {
+function resizeImageToMaxEdge(image, maxEdge) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) return image;
+  const size = image.getSize();
+  const width = Math.max(1, Number(size?.width || 0));
+  const height = Math.max(1, Number(size?.height || 0));
+  const edge = Math.max(width, height);
+  if (edge <= maxEdge) return image;
+  const ratio = maxEdge / edge;
+  return image.resize({
+    width: Math.max(1, Math.floor(width * ratio)),
+    height: Math.max(1, Math.floor(height * ratio)),
+    quality: "good",
+  });
+}
+
+async function saveCaptureImage(buffer, name) {
+  try {
+    const picturesDir = app.getPath("pictures");
+    const captureDir = path.join(picturesDir, "Aelin", "captures");
+    const rawName = String(name || "").trim();
+    let safeName = path.basename(rawName).replace(/[\\/]+/g, "_");
+    safeName = safeName.replace(/[:*?"<>|]/g, "_");
+    if (!safeName || safeName === "." || safeName === "..") {
+      safeName = `screen-${Date.now()}.jpg`;
+    }
+    const savePath = path.join(captureDir, safeName);
+    await fs.promises.mkdir(captureDir, { recursive: true });
+    await fs.promises.writeFile(savePath, buffer);
+    return savePath;
+  } catch {
+    return "";
+  }
+}
+
+function buildImageSizeKey(image) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) return "";
+  try {
+    const size = image.getSize();
+    const width = Math.max(0, Number(size?.width || 0));
+    const height = Math.max(0, Number(size?.height || 0));
+    if (width <= 0 || height <= 0) return "";
+    return `${width}x${height}`;
+  } catch {
+    return "";
+  }
+}
+
+function buildImageClipSignal(image) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) return "";
+  try {
+    const size = image.getSize();
+    const width = Math.max(0, Number(size?.width || 0));
+    const height = Math.max(0, Number(size?.height || 0));
+    if (width <= 0 || height <= 0) return "";
+    const samplePoints = [
+      [0, 0],
+      [Math.max(0, Math.floor((width - 1) / 2)), Math.max(0, Math.floor((height - 1) / 2))],
+      [Math.max(0, width - 1), Math.max(0, height - 1)],
+    ];
+    const samples = [];
+    for (const [x, y] of samplePoints) {
+      try {
+        const pixel = image.crop({ x, y, width: 1, height: 1 }).toBitmap();
+        if (pixel && pixel.length >= 4) {
+          samples.push(`${pixel[0]}-${pixel[1]}-${pixel[2]}-${pixel[3]}`);
+        } else {
+          samples.push("empty");
+        }
+      } catch {
+        samples.push("err");
+      }
+    }
+    return `${width}x${height}:${samples.join("|")}`;
+  } catch {
+    return "";
+  }
+}
+
+function snapshotClipboardState() {
+  if (!clipboard) {
+    return null;
+  }
+  try {
+    const snapshot = {
+      text: "",
+      html: "",
+      rtf: "",
+      image: null,
+      bookmark: null,
+    };
+    if (typeof clipboard.readText === "function") {
+      snapshot.text = String(clipboard.readText() || "");
+    }
+    if (typeof clipboard.readHTML === "function") {
+      snapshot.html = String(clipboard.readHTML() || "");
+    }
+    if (typeof clipboard.readRTF === "function") {
+      snapshot.rtf = String(clipboard.readRTF() || "");
+    }
+    if (typeof clipboard.readImage === "function") {
+      const image = clipboard.readImage();
+      if (image && typeof image.isEmpty === "function" && !image.isEmpty()) {
+        snapshot.image = image;
+      }
+    }
+    if (typeof clipboard.readBookmark === "function") {
+      const bookmark = clipboard.readBookmark();
+      const title = String(bookmark?.title || "");
+      const url = String(bookmark?.url || "");
+      if (title || url) {
+        snapshot.bookmark = { title, url };
+      }
+    }
+    if (!snapshot.text && !snapshot.html && !snapshot.rtf && !snapshot.image && !snapshot.bookmark) {
+      return null;
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function restoreClipboardState(snapshot) {
+  if (!clipboard || typeof clipboard.clear !== "function") return;
+  if (!snapshot || typeof snapshot !== "object") return;
+  try {
+    clipboard.clear();
+  } catch {
+    // ignore clear failures in best-effort restore
+  }
+  try {
+    if (typeof clipboard.write === "function") {
+      const writePayload = {};
+      if (typeof snapshot.text === "string" && snapshot.text.length > 0) writePayload.text = snapshot.text;
+      if (typeof snapshot.html === "string" && snapshot.html.length > 0) writePayload.html = snapshot.html;
+      if (typeof snapshot.rtf === "string" && snapshot.rtf.length > 0) writePayload.rtf = snapshot.rtf;
+      if (snapshot.image && typeof snapshot.image.isEmpty === "function" && !snapshot.image.isEmpty()) {
+        writePayload.image = snapshot.image;
+      }
+      if (Object.keys(writePayload).length > 0) {
+        clipboard.write(writePayload);
+      }
+    }
+    const bookmarkTitle = String(snapshot?.bookmark?.title || "");
+    const bookmarkUrl = String(snapshot?.bookmark?.url || "");
+    if (bookmarkUrl && typeof clipboard.writeBookmark === "function") {
+      clipboard.writeBookmark(bookmarkTitle, bookmarkUrl);
+    }
+  } catch {
+    // ignore restore failures in best-effort restore
+  }
+}
+
+async function buildSnapshotFromImage(image, options = {}) {
+  if (!image || typeof image.isEmpty !== "function" || image.isEmpty()) {
+    throw new Error("screen_image_empty");
+  }
+  const format = options.format === "png" ? "png" : "jpeg";
+  const quality = Math.floor(clampCaptureNumber(options.quality, 78, 35, 95));
+  const mimeType = format === "png" ? "image/png" : "image/jpeg";
+  const ext = format === "png" ? "png" : "jpg";
+  const capturedAt = String(options.capturedAt || new Date().toISOString());
+  const safeStamp = capturedAt.replace(/[:.]/g, "-");
+  const fileName = `${String(options.prefix || "screen")}-${safeStamp}.${ext}`;
+  const imageBuffer = format === "png" ? image.toPNG() : image.toJPEG(quality);
+  if (!imageBuffer || !imageBuffer.length) {
+    throw new Error("screen_image_empty");
+  }
+  const size = image.getSize();
+  const savedPath = await saveCaptureImage(imageBuffer, fileName);
+  return {
+    data_url: `data:${mimeType};base64,${imageBuffer.toString("base64")}`,
+    name: fileName,
+    width: Number(size?.width || 0),
+    height: Number(size?.height || 0),
+    source_display: String(options.sourceDisplay || "unknown"),
+    captured_at: capturedAt,
+    mime_type: mimeType,
+    saved_path: savedPath,
+  };
+}
+
+async function captureCustomRegionSnapshot(payload = {}) {
+  if (process.platform !== "win32") {
+    throw new Error("custom_region_capture_unsupported_platform");
+  }
+  if (!clipboard || typeof clipboard.readImage !== "function") {
+    throw new Error("clipboard_unavailable");
+  }
+  const { format, quality, maxEdge } = buildCaptureEncodingOptions(payload);
+  const timeoutMs = Math.floor(
+    clampCaptureNumber(payload?.selection_timeout_ms || payload?.selectionTimeoutMs, 45_000, 5_000, 180_000)
+  );
+  const clipboardSnapshot = snapshotClipboardState();
+  const shouldRestoreClipboard = Boolean(clipboardSnapshot);
+  let clipboardCleared = false;
+  try {
+    if (shouldRestoreClipboard && typeof clipboard.clear === "function") {
+      clipboard.clear();
+      clipboardCleared = true;
+    }
+  } catch {
+    clipboardCleared = false;
+  }
+  const beforeImage = clipboardCleared ? null : clipboard.readImage();
+  const beforeSize = clipboardCleared ? "" : buildImageSizeKey(beforeImage);
+  const beforeSignal = clipboardCleared ? "" : buildImageClipSignal(beforeImage);
+
+  try {
+    try {
+      const launcher = spawn("cmd.exe", ["/d", "/s", "/c", "start", "", "ms-screenclip:"], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      launcher.unref();
+    } catch (error) {
+      throw new Error(`custom_region_capture_launch_failed:${error instanceof Error ? error.message : String(error || "unknown")}`);
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    let pollDelayMs = 180;
+    let signalProbeCount = 0;
+    while (Date.now() < deadline) {
+      const image = clipboard.readImage();
+      if (image && !image.isEmpty()) {
+        const currentSize = buildImageSizeKey(image);
+        let changed = clipboardCleared || Boolean(currentSize && currentSize !== beforeSize);
+        if (!changed) {
+          signalProbeCount += 1;
+          if (signalProbeCount % 3 === 0) {
+            const signal = buildImageClipSignal(image);
+            changed = Boolean(signal && signal !== beforeSignal);
+          }
+        }
+        if (changed) {
+          const resized = resizeImageToMaxEdge(image, maxEdge);
+          return await buildSnapshotFromImage(resized, {
+            format,
+            quality,
+            sourceDisplay: "custom-region",
+            prefix: "screen-region",
+            capturedAt: new Date().toISOString(),
+          });
+        }
+      }
+      await waitMs(pollDelayMs);
+      pollDelayMs = Math.min(420, pollDelayMs + 20);
+    }
+    throw new Error("custom_region_capture_timeout");
+  } finally {
+    if (shouldRestoreClipboard) {
+      restoreClipboardState(clipboardSnapshot);
+    }
+  }
+}
+
+async function captureFullScreenSnapshot(payload = {}) {
   if (!desktopCapturer || typeof desktopCapturer.getSources !== "function") {
     throw new Error("desktop_capturer_unavailable");
   }
@@ -488,7 +818,7 @@ async function captureScreenSnapshot(payload = {}) {
   const scaleFactor = Number.isFinite(Number(display.scaleFactor)) ? Number(display.scaleFactor) : 1;
   const displayWidth = Math.max(320, Math.floor(Number(display.size?.width || 1280) * scaleFactor));
   const displayHeight = Math.max(240, Math.floor(Number(display.size?.height || 720) * scaleFactor));
-  const maxEdge = Math.floor(clampNumber(payload?.max_edge || payload?.maxEdge, 1920, 640, 4096));
+  const { format, quality, maxEdge } = buildCaptureEncodingOptions(payload);
   const ratio = Math.min(1, maxEdge / Math.max(displayWidth, displayHeight));
   const thumbWidth = Math.max(320, Math.floor(displayWidth * ratio));
   const thumbHeight = Math.max(240, Math.floor(displayHeight * ratio));
@@ -511,28 +841,28 @@ async function captureScreenSnapshot(payload = {}) {
     throw new Error("screen_thumbnail_empty");
   }
 
-  const format = String(payload?.format || "jpeg").trim().toLowerCase() === "png" ? "png" : "jpeg";
-  const quality = Math.floor(clampNumber(payload?.quality, 78, 35, 95));
-  const imageBuffer = format === "png"
-    ? source.thumbnail.toPNG()
-    : source.thumbnail.toJPEG(quality);
-  if (!imageBuffer || !imageBuffer.length) {
-    throw new Error("screen_image_empty");
-  }
-  const mimeType = format === "png" ? "image/png" : "image/jpeg";
-  const size = source.thumbnail.getSize();
-  const capturedAt = new Date().toISOString();
-  const ext = format === "png" ? "png" : "jpg";
-  const safeStamp = capturedAt.replace(/[:.]/g, "-");
-  return {
-    data_url: `data:${mimeType};base64,${imageBuffer.toString("base64")}`,
-    name: `screen-${safeStamp}.${ext}`,
-    width: Number(size?.width || thumbWidth),
-    height: Number(size?.height || thumbHeight),
-    source_display: String(source.display_id || targetDisplayId || "unknown"),
-    captured_at: capturedAt,
-    mime_type: mimeType,
+  return await buildSnapshotFromImage(source.thumbnail, {
+    format,
+    quality,
+    sourceDisplay: String(source.display_id || targetDisplayId || "unknown"),
+    prefix: "screen-full",
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+async function captureScreenSnapshot(payload = {}) {
+  const mode = normalizeCaptureMode(payload?.mode);
+  const excludeAelinWindows = shouldExcludeAelinWindows(payload, mode);
+  const runCapture = async () => {
+    if (mode === "region") {
+      return await captureCustomRegionSnapshot(payload);
+    }
+    return await captureFullScreenSnapshot(payload);
   };
+  if (!excludeAelinWindows) {
+    return await runCapture();
+  }
+  return await withAelinWindowsProtected(runCapture);
 }
 
 function createPetPluginApiApp() {
@@ -2331,10 +2661,27 @@ function startFrontendServer() {
   }
 
   const web = express();
+  const proxyTimeoutMs = 10 * 60 * 1000;
   // Express strips the mount prefix (/api, /media) before handing to proxy.
   // So target must include the same prefix to avoid forwarding /v1/... by mistake.
-  web.use("/api", createProxyMiddleware({ target: `http://127.0.0.1:${backendPort}/api`, changeOrigin: true }));
-  web.use("/media", createProxyMiddleware({ target: `http://127.0.0.1:${backendPort}/media`, changeOrigin: true }));
+  web.use(
+    "/api",
+    createProxyMiddleware({
+      target: `http://127.0.0.1:${backendPort}/api`,
+      changeOrigin: true,
+      timeout: proxyTimeoutMs,
+      proxyTimeout: proxyTimeoutMs,
+    })
+  );
+  web.use(
+    "/media",
+    createProxyMiddleware({
+      target: `http://127.0.0.1:${backendPort}/media`,
+      changeOrigin: true,
+      timeout: proxyTimeoutMs,
+      proxyTimeout: proxyTimeoutMs,
+    })
+  );
   web.use(express.static(dist));
   web.get("*", (_req, res) => {
     res.sendFile(path.join(dist, "index.html"));

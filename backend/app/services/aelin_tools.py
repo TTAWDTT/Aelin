@@ -19,8 +19,11 @@ from app.services.device_center import (
     device_capabilities as device_capabilities_info,
 )
 from app.services.browser_automation import browser_automation_service
+from app.services import browser_exec
 from app.services.openviking_bridge import TrackingFileMemoryBridge
+from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.tracking_autonomy import TrackingAutonomyService
+from app.services.aelin_utils import normalize_positive_ints
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 
@@ -63,6 +66,12 @@ _TOOL_KEYWORDS = (
     "session",
     "标签页",
     "浏览器进程",
+    "附件",
+    "attachment",
+    "pdf",
+    "docx",
+    "pptx",
+    "xlsx",
 )
 
 
@@ -91,6 +100,16 @@ def _result_items(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
     return _result_ok(items=items, total=len(items), **extra)
 
 
+def _has_running_event_loop() -> bool:
+    return browser_exec.has_running_event_loop()
+
+
+def _run_sync_playwright_call(callable_obj, *args, **kwargs):
+    if not _has_running_event_loop():
+        return callable_obj(*args, **kwargs)
+    return browser_exec.run_in_browser_thread(callable_obj, *args, timeout=45, **kwargs)
+
+
 def should_attempt_aelin_tools(query: str) -> bool:
     text = str(query or "").strip().lower()
     if not text:
@@ -109,6 +128,8 @@ class AelinToolHub:
         tracking_service: TrackingAutonomyService,
         file_memory_bridge: TrackingFileMemoryBridge,
         web_search_service: WebSearchService | None = None,
+        attachment_service: AelinAttachmentService | None = None,
+        available_attachment_ids: list[int] | None = None,
     ) -> None:
         self.db = db
         self.user_id = int(user_id)
@@ -117,6 +138,8 @@ class AelinToolHub:
         self._tracking = tracking_service
         self._file_memory = file_memory_bridge
         self._web_search = web_search_service or WebSearchService()
+        self._attachments = attachment_service or get_aelin_attachment_service()
+        self._available_attachment_ids = normalize_positive_ints(available_attachment_ids, cap=20)
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         return [
@@ -224,6 +247,28 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
+                    "name": "attachment_search",
+                    "description": "在已上传附件中检索与问题最相关的片段，并返回可引用来源信息。若不传 attachment_ids，将默认使用 available_attachment_ids。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "attachment_ids": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "maxItems": 20,
+                                "description": "可选。默认使用 available_attachment_ids。",
+                            },
+                            "top_k": {"type": "integer", "minimum": 1, "maximum": 20},
+                            "mode": {"type": "string", "enum": ["keyword", "hybrid"]},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "screen_get",
                     "description": "抓取当前屏幕截图，供后续步骤进行视觉分析。",
                     "parameters": {
@@ -258,16 +303,16 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_state_get",
-                    "description": "读取浏览器状态。支持 scope=auto|managed|cdp|external|system|all。",
+                    "description": "读取浏览器状态。支持 scope=auto|cdp|external|system|all（managed 已软下线，不再建议使用）。默认轻量模式（include_dom=false, include_a11y=false）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external", "system", "all"]},
+                            "scope": {"type": "string", "enum": ["auto", "cdp", "external", "system", "all"]},
                             "include_dom": {"type": "boolean"},
                             "include_a11y": {"type": "boolean"},
                             "max_targets": {"type": "integer", "minimum": 1, "maximum": 60},
-                            "max_items": {"type": "integer", "minimum": 1, "maximum": 200},
-                            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                            "max_items": {"type": "integer", "minimum": 0, "maximum": 200},
+                            "pid": {"type": "integer", "minimum": 0, "maximum": 2147483647},
                         },
                         "required": [],
                     },
@@ -277,14 +322,16 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "browser_use",
-                    "description": "执行浏览器动作（navigate/click/type/scroll/wait），高风险动作需 confirm=true。scope=external 仅支持 navigate（继承系统浏览器登录态）。",
+                    "description": "执行浏览器动作（navigate/click/type/scroll/wait）。scope=auto 下 navigate 优先 external；复杂动作在系统浏览器已打开时会先要求 confirm，并可能需要 CDP。scope=external 仅支持 navigate（继承系统浏览器登录态）。managed 已软下线，不再建议使用。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "wait"]},
-                            "scope": {"type": "string", "enum": ["auto", "managed", "cdp", "external"]},
+                            "scope": {"type": "string", "enum": ["auto", "cdp", "external"]},
                             "url": {"type": "string"},
                             "target": {"type": "string"},
+                            "selector": {"type": "string"},
+                            "text": {"type": "string"},
                             "value": {"type": "string"},
                             "strategy": {"type": "string", "enum": ["auto", "selector", "text", "role"]},
                             "role": {"type": "string"},
@@ -315,6 +362,8 @@ class AelinToolHub:
             return self._tool_device(args)
         if tool == "web_search":
             return self._tool_web_search(args)
+        if tool == "attachment_search":
+            return self._tool_attachment_search(args)
         if tool == "screen_get":
             return self._tool_screen_get(args)
         if tool == "browser_session_list":
@@ -584,6 +633,40 @@ class AelinToolHub:
             fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
         )
 
+    def _tool_attachment_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        query = str(args.get("query") or "").strip()[:500]
+        if not query:
+            return _result_error("missing query")
+        raw_ids = args.get("attachment_ids")
+        attachment_ids: list[int] = normalize_positive_ints(raw_ids if isinstance(raw_ids, list) else [], cap=20)
+        if not attachment_ids:
+            attachment_ids = list(self._available_attachment_ids)
+        if not attachment_ids:
+            return _result_error("missing attachment_ids")
+        top_k = _safe_int(args.get("top_k"), 5, low=1, high=20)
+        mode = str(args.get("mode") or "keyword").strip().lower()
+        if mode not in {"keyword", "hybrid"}:
+            mode = "keyword"
+        result = self._attachments.search(
+            self.db,
+            user_id=self.user_id,
+            workspace=self.workspace,
+            query=query,
+            attachment_ids=attachment_ids,
+            top_k=top_k,
+            mode=mode,
+        )
+        if not bool(result.get("ok")):
+            return _result_error(str(result.get("error") or "attachment_search_failed"))
+        return _result_ok(
+            query=query,
+            mode=mode,
+            attachment_ids=list(result.get("attachment_ids") or []),
+            total=int(result.get("total") or 0),
+            content=str(result.get("content") or "")[:8000],
+            hits=list(result.get("hits") or []),
+        )
+
     def _tool_screen_get(self, args: dict[str, Any]) -> dict[str, Any]:
         display_id = str(args.get("display_id") or "").strip()[:64]
         max_edge = _safe_int(args.get("max_edge"), 1280, low=640, high=4096)
@@ -615,7 +698,8 @@ class AelinToolHub:
         max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = browser_automation_service.list_sessions(
+            result = _run_sync_playwright_call(
+                browser_automation_service.list_sessions,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -628,13 +712,14 @@ class AelinToolHub:
 
     def _tool_browser_state_get(self, args: dict[str, Any]) -> dict[str, Any]:
         scope = str(args.get("scope") or "auto").strip().lower()[:16]
-        include_dom = bool(args.get("include_dom", True))
+        include_dom = bool(args.get("include_dom", False))
         include_a11y = bool(args.get("include_a11y", False))
         max_targets = _safe_int(args.get("max_targets"), 30, low=1, high=60)
-        max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
+        max_items = _safe_int(args.get("max_items"), 0, low=0, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = browser_automation_service.state_get(
+            result = _run_sync_playwright_call(
+                browser_automation_service.state_get,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -656,6 +741,8 @@ class AelinToolHub:
         payload = {
             "url": str(args.get("url") or "").strip()[:1000],
             "target": str(args.get("target") or "").strip()[:240],
+            "selector": str(args.get("selector") or "").strip()[:1000],
+            "text": str(args.get("text") or "").strip()[:1000],
             "value": str(args.get("value") or "")[:1200],
             "strategy": str(args.get("strategy") or "auto").strip().lower()[:16],
             "role": str(args.get("role") or "").strip().lower()[:24],
@@ -667,7 +754,8 @@ class AelinToolHub:
             "confirm": bool(args.get("confirm", False)),
         }
         try:
-            result = browser_automation_service.use(
+            result = _run_sync_playwright_call(
+                browser_automation_service.use,
                 user_id=self.user_id,
                 workspace=self.workspace,
                 action=action,
@@ -732,7 +820,7 @@ def run_aelin_structured_tools(
             "role": "system",
             "content": (
                 "You are a tool planner for Aelin. "
-                "Only call tools when the user query clearly needs memory/profile/diary/tracking/device/screen/browser operations. "
+                "Only call tools when the user query clearly needs memory/profile/diary/tracking/device/screen/browser/attachment operations. "
                 "At most call 2 tools. If no tool is needed, respond directly without tool calls."
             ),
         },
@@ -796,6 +884,8 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
                 note = f"total={result.get('total')}"
         elif name == "web_search":
             note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
+        elif name == "attachment_search":
+            note = f"total={result.get('total')}, attachments={','.join([str(x) for x in list(result.get('attachment_ids') or [])[:6]])}"
         elif name in {"diary", "profile", "context_get", "device", "screen_get", "browser_session_list", "browser_state_get", "browser_use"}:
             if "total" in result:
                 note = f"total={result.get('total')}"

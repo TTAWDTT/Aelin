@@ -36,9 +36,22 @@ export interface SyncJobStatusResponse {
 export interface AelinChatRequest {
   query: string; use_memory?: boolean; max_citations?: number
   workspace?: string; images?: AelinImageInput[]
+  attachment_ids?: number[]
   history?: { role: string; content: string }[]
 }
 export interface AelinImageInput { data_url: string; name?: string }
+export interface AelinAttachmentUploadResponse {
+  attachment_id: number
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  workspace: string
+  session_id?: string
+  status: string
+  chunk_count: number
+  summary?: string
+  deduplicated?: boolean
+}
 export interface AelinCitation {
   message_id: number; source: string; source_label: string; sender: string
   sender_avatar_url?: string; title: string; received_at: string; score: number
@@ -116,6 +129,49 @@ export interface AelinTrackConfirmResponse {
   status: string; message: string; provider?: string
   target_id?: number; next_run_at?: string
   actions: AelinAction[]; generated_at: string
+}
+export interface AelinBrowserConfirmRequest {
+  workspace?: string
+  action_kind?: string
+  action?: string
+  profile_id?: string
+  login_request_id?: string
+  resume_request?: Record<string, unknown>
+  resume_query?: string
+  continue_after_confirm?: boolean
+  next_call?: Record<string, unknown>
+}
+export interface AelinBrowserConfirmResponse {
+  ok: boolean
+  message: string
+  requires_followup: boolean
+  profile_id?: string
+  login_request_id?: string
+  login_state?: Record<string, unknown>
+  tool_result: Record<string, unknown>
+  continued: boolean
+  continuation_error: string
+  followup_result: Record<string, unknown>
+  generated_at: string
+}
+export interface AelinBrowserLoginCheckpointItem {
+  request_id: string
+  profile_id?: string
+  workspace?: string
+  domain?: string
+  reason?: string
+  status?: string
+  next_call?: Record<string, unknown>
+  resume_query?: string
+  resume_request?: Record<string, unknown>
+  continue_after_confirm?: boolean
+  created_at?: number
+  updated_at?: number
+}
+export interface AelinBrowserLoginCheckpointListResponse {
+  total: number
+  items: AelinBrowserLoginCheckpointItem[]
+  generated_at: string
 }
 export interface AelinTrackingItem {
   target_id?: number; target: string; source: string; query?: string
@@ -198,6 +254,14 @@ export interface AelinDeviceScreenCaptureResponse {
   source_display: string
   captured_at: string
   generated_at: string
+}
+export interface AelinDeviceScreenCaptureRequest {
+  mode?: 'fullscreen' | 'region'
+  display_id?: string
+  max_edge?: number
+  image_format?: 'jpeg' | 'png'
+  quality?: number
+  selection_timeout_ms?: number
 }
 export interface AelinDeviceModeApplyResponse {
   mode: string; status: string; summary: string

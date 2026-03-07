@@ -98,9 +98,28 @@ class Settings(BaseSettings):
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
+    aelin_attachment_storage_dir: str = "./data/aelin_attachments"
+    aelin_attachment_max_size_bytes: int = 30 * 1024 * 1024
+    aelin_attachment_chunk_size: int = 700
+    aelin_attachment_chunk_overlap: int = 120
+    aelin_attachment_soffice_bin: str = "soffice"
+    aelin_attachment_legacy_convert_timeout_seconds: int = 30
+    aelin_attachment_pdf_ocr_fallback_enabled: bool = True
+    aelin_attachment_pdf_ocr_max_images_per_page: int = 4
+    aelin_attachment_pdf_ocr_render_dpi: int = 220
+    aelin_attachment_ocr_languages: str = "chi_sim+eng"
+    aelin_attachment_ocr_psm_modes: str = "6,11,4"
+    aelin_attachment_ocr_min_chars: int = 8
+    aelin_attachment_ocr_max_attempts_per_image: int = 18
+    aelin_attachment_ocr_image_timeout_seconds: int = 10
+    aelin_attachment_ocr_page_timeout_seconds: int = 25
+    aelin_attachment_tesseract_cmd: str = ""
+    aelin_attachment_tessdata_dir: str = ""
+    aelin_attachment_rapidocr_enabled: bool = True
 
     # LLM client runtime tuning.
     llm_request_timeout_seconds: float = 90.0
+    backend_log_level: str = "INFO"
 
     # Media ingest (yt-dlp) network/auth tuning.
     media_ingest_cookie_mode: str = "off"  # off | browser | file
@@ -126,6 +145,10 @@ class Settings(BaseSettings):
     browser_tool_mode_default: str = "auto"  # auto | managed | cdp
     browser_tool_cdp_enabled: bool = False
     browser_tool_cdp_endpoint: str = "http://127.0.0.1:9222"
+    browser_tool_cdp_auto_launch: bool = True
+    browser_tool_cdp_launch_timeout_seconds: float = 10.0
+    browser_tool_cdp_browser_path: str = ""
+    browser_tool_cdp_profile_dir: str = ""
     browser_tool_default_timeout_ms: int = 12_000
     browser_tool_idle_ttl_seconds: int = 900
     browser_tool_profile_dir: str = "./browser_data/agent_browser"

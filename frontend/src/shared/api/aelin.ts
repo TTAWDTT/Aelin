@@ -1,20 +1,33 @@
-import { fetchJson } from './client'
+import { fetchFormData, fetchJson } from './client'
 import type {
   AelinChatRequest, AelinChatResponse, AelinContextResponse,
   AelinNotificationResponse, AelinProactivePollResponse,
   AelinTrackConfirmRequest, AelinTrackConfirmResponse,
+  AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
+  AelinBrowserLoginCheckpointListResponse,
   AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
   AelinTrackingItem, AelinTrackingRunResponse,
   AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
   AelinTrackingFileMemorySearchResponse, AelinTrackingFileMemoryContentResponse, AelinDiaryTreeResponse,
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
-  AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureResponse,
+  AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
+  AelinAttachmentUploadResponse,
 } from './types'
 
 export const aelinApi = {
   chat: (body: AelinChatRequest) =>
     fetchJson<AelinChatResponse>('/api/v1/aelin/chat', { method: 'POST', body: JSON.stringify(body) }),
+
+  uploadAttachment: (file: File, params?: { workspace?: string; session_id?: string }) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('workspace', params?.workspace || 'default')
+    if (params?.session_id) {
+      fd.append('session_id', params.session_id)
+    }
+    return fetchFormData<AelinAttachmentUploadResponse>('/api/v1/aelin/attachments/upload', fd)
+  },
 
   context: (workspace = 'default') =>
     fetchJson<AelinContextResponse>(`/api/v1/aelin/context?workspace=${workspace}`),
@@ -27,6 +40,14 @@ export const aelinApi = {
 
   trackConfirm: (body: AelinTrackConfirmRequest) =>
     fetchJson<AelinTrackConfirmResponse>('/api/v1/aelin/track/confirm', { method: 'POST', body: JSON.stringify(body) }),
+
+  confirmBrowserAction: (body: AelinBrowserConfirmRequest) =>
+    fetchJson<AelinBrowserConfirmResponse>('/api/v1/aelin/agent/browser/confirm', { method: 'POST', body: JSON.stringify(body) }),
+
+  browserLoginCheckpoints: (workspace = 'default', status = 'awaiting_login,continue_failed', limit = 20) =>
+    fetchJson<AelinBrowserLoginCheckpointListResponse>(
+      `/api/v1/aelin/agent/browser/login-checkpoints?workspace=${encodeURIComponent(workspace)}&status=${encodeURIComponent(status)}&limit=${limit}`,
+    ),
 
   trackingList: (params?: Record<string, string>) =>
     fetchJson<AelinTrackingListResponse>(`/api/v1/aelin/tracking${params ? '?' + new URLSearchParams(params) : ''}`),
@@ -75,8 +96,11 @@ export const aelinApi = {
   deviceModeApply: (mode: string) =>
     fetchJson<AelinDeviceModeApplyResponse>('/api/v1/aelin/device/mode/apply', { method: 'POST', body: JSON.stringify({ mode }) }),
 
-  deviceScreenCapture: () =>
-    fetchJson<AelinDeviceScreenCaptureResponse>('/api/v1/aelin/device/screen/capture', { method: 'POST' }),
+  deviceScreenCapture: (body?: AelinDeviceScreenCaptureRequest) =>
+    fetchJson<AelinDeviceScreenCaptureResponse>('/api/v1/aelin/device/screen/capture', {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
 
   deskFeed: (params?: {
     tag?: string
