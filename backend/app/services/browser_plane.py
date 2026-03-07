@@ -5,6 +5,7 @@ from typing import Any
 
 from app.services.browser_automation import browser_automation_service
 from app.services.browser_exec import run_sync_playwright_call
+from app.services.browser_plane_lock_store import browser_plane_lock_store
 from app.services.browser_plane_task_store import browser_plane_task_store
 
 
@@ -220,6 +221,35 @@ class BrowserPlaneAdapter:
         action = str(task.get("action") or "").strip().lower()
         input_payload = task.get("input") if isinstance(task.get("input"), dict) else {}
         profile_id = str(task.get("profile_id") or "").strip()
+        tab_id = str(task.get("tab_id") or "").strip()
+        owner = f"task:{task_id}"
+
+        if tab_id:
+            current_lock = self.get_tab_lock(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+            )
+            lock_payload = current_lock.get("lock") if isinstance(current_lock.get("lock"), dict) else {}
+            if lock_payload and str(lock_payload.get("owner") or "") != owner:
+                result = {"ok": False, "error": "tab_locked", "lock": lock_payload}
+                return browser_plane_task_store.update_task(
+                    task_id=task_id,
+                    user_id=int(user_id),
+                    workspace=workspace,
+                    status="blocked",
+                    result_payload=result,
+                    checkpoint_request_id="",
+                    profile_id=profile_id,
+                )
+            self.acquire_tab_lock(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                owner=owner,
+                reason=f"resume:{kind}:{action}",
+                ttl_seconds=300,
+            )
 
         if kind == "browser_use":
             result = self.use(
@@ -418,6 +448,72 @@ class BrowserPlaneAdapter:
             tab_id=tab_id,
             format=format,
             quality=quality,
+        )
+
+    def get_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+    ) -> dict[str, Any]:
+        lock = browser_plane_lock_store.get_lock(
+            tab_id=tab_id,
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        return {"ok": bool(lock), "lock": lock}
+
+    def list_tab_locks(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.list_tab_locks,
+            user_id=user_id,
+            workspace=workspace,
+        )
+
+    def acquire_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        owner: str,
+        reason: str = "",
+        ttl_seconds: int = 300,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.acquire_tab_lock,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            owner=owner,
+            reason=reason,
+            ttl_seconds=ttl_seconds,
+            force=force,
+        )
+
+    def release_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        owner: str = "",
+        force: bool = False,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.release_tab_lock,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            owner=owner,
+            force=force,
         )
 
 

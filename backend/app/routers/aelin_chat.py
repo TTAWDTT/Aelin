@@ -29,10 +29,15 @@ from app.schemas import (
     AelinBrowserTabItem,
     AelinBrowserTabEvaluateRequest,
     AelinBrowserTabEvaluateResponse,
+    AelinBrowserTabLockItem,
+    AelinBrowserTabLockListResponse,
+    AelinBrowserTabLockRequest,
+    AelinBrowserTabLockResponse,
     AelinBrowserTabListResponse,
     AelinBrowserTabOpenRequest,
     AelinBrowserTabOpenResponse,
     AelinBrowserTabTextResponse,
+    AelinBrowserTabUnlockRequest,
     AelinBrowserTaskCreateRequest,
     AelinBrowserTaskItem,
     AelinBrowserTaskResponse,
@@ -555,5 +560,69 @@ def get_browser_tab_screenshot(
         task_id="",
         profile_id=str(snap.get("profile_id") or ""),
         snapshot=snap,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tabs/locks", response_model=AelinBrowserTabLockListResponse)
+def list_browser_tab_locks(
+    workspace: str = "default",
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.list_tab_locks(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserTabLockListResponse(
+        total=len(items),
+        items=[AelinBrowserTabLockItem(**item) for item in items],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tabs/{tab_id}/lock", response_model=AelinBrowserTabLockResponse)
+def acquire_browser_tab_lock(
+    tab_id: str,
+    payload: AelinBrowserTabLockRequest,
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.acquire_tab_lock(
+        user_id=int(current_user.id),
+        workspace=str(payload.workspace or "default"),
+        tab_id=str(tab_id or ""),
+        owner=str(payload.owner or ""),
+        reason=str(payload.reason or ""),
+        ttl_seconds=int(payload.ttl_seconds or 300),
+        force=bool(payload.force),
+    )
+    lock = result.get("lock") if isinstance(result, dict) and isinstance(result.get("lock"), dict) else None
+    return AelinBrowserTabLockResponse(
+        ok=bool(result.get("ok", False)) if isinstance(result, dict) else False,
+        error=str(result.get("error") or "") if isinstance(result, dict) else "",
+        lock=AelinBrowserTabLockItem(**lock) if lock else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tabs/{tab_id}/unlock", response_model=AelinBrowserTabLockResponse)
+def release_browser_tab_lock(
+    tab_id: str,
+    payload: AelinBrowserTabUnlockRequest,
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.release_tab_lock(
+        user_id=int(current_user.id),
+        workspace=str(payload.workspace or "default"),
+        tab_id=str(tab_id or ""),
+        owner=str(payload.owner or ""),
+        force=bool(payload.force),
+    )
+    lock = result.get("lock") if isinstance(result, dict) and isinstance(result.get("lock"), dict) else None
+    return AelinBrowserTabLockResponse(
+        ok=bool(result.get("ok", False)) if isinstance(result, dict) else False,
+        error=str(result.get("error") or "") if isinstance(result, dict) else "",
+        released=result.get("released") if isinstance(result, dict) else None,
+        lock=AelinBrowserTabLockItem(**lock) if lock else None,
         generated_at=datetime.now(timezone.utc),
     )

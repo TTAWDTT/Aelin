@@ -18,6 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.settings import settings
+from app.services.browser_plane_lock_store import browser_plane_lock_store
 from app.services.browser_plane_store import browser_plane_store
 from app.services.browser_plane_runtime_store import browser_plane_runtime_store
 
@@ -2207,24 +2208,22 @@ class BrowserAutomationService:
         include_dom: bool = False,
         include_a11y: bool = False,
         max_targets: int = 30,
+        owner: str = "",
     ) -> dict[str, Any]:
-        tab = browser_plane_runtime_store.get_tab(
-            tab_id=str(tab_id or ""),
-            user_id=int(user_id),
+        session, page, tab = self._resolve_tab_page(
+            user_id=user_id,
             workspace=workspace,
+            tab_id=tab_id,
+            owner=owner,
         )
-        if not tab:
+        if str(tab.get("_lock_error") or "") == "tab_locked":
+            return {"ok": False, "error": "tab_locked", "scope": "cdp", "lock": dict(tab.get("_lock") or {})}
+        if session is None or not tab:
             return self._error_payload(error="tab_not_found", scope="cdp")
-        profile_id = str(tab.get("profile_id") or "").strip()
-        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile_id)
-        page_index = max(0, int(tab.get("page_index") or 0))
+        if page is None:
+            return self._error_payload(error="tab_not_found", scope="cdp")
         with session.lock:
             session.touch()
-            pages = list(getattr(getattr(session, "context", None), "pages", []) or [])
-            if not pages or page_index >= len(pages):
-                return self._error_payload(error="tab_not_found", scope="cdp")
-            page = pages[page_index]
-            session.page = page
             instance, tabs = self._sync_session_runtime_rows(session=session)
             snap = self._snapshot_page(
                 page=page,
@@ -2249,6 +2248,7 @@ class BrowserAutomationService:
         user_id: int,
         workspace: str,
         tab_id: str,
+        owner: str = "",
     ) -> tuple[BrowserSession | None, Any, dict[str, Any]]:
         tab = browser_plane_runtime_store.get_tab(
             tab_id=str(tab_id or ""),
@@ -2257,6 +2257,16 @@ class BrowserAutomationService:
         )
         if not tab:
             return None, None, {}
+        lock = browser_plane_lock_store.get_lock(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        if lock and owner and str(lock.get("owner") or "") != str(owner or ""):
+            locked_tab = dict(tab)
+            locked_tab["_lock_error"] = "tab_locked"
+            locked_tab["_lock"] = lock
+            return None, None, locked_tab
         profile_id = str(tab.get("profile_id") or "").strip()
         session, session_error = self._acquire_cdp_session(
             user_id=user_id,
@@ -2287,8 +2297,11 @@ class BrowserAutomationService:
         tab_id: str,
         mode: str = "raw",
         max_chars: int = 12000,
+        owner: str = "",
     ) -> dict[str, Any]:
-        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id, owner=owner)
+        if str(tab.get("_lock_error") or "") == "tab_locked":
+            return {"ok": False, "error": "tab_locked", "scope": "cdp", "lock": dict(tab.get("_lock") or {})}
         if session is None or not tab:
             return self._error_payload(error="tab_not_found", scope="cdp")
         if page is None:
@@ -2331,8 +2344,11 @@ class BrowserAutomationService:
         workspace: str,
         tab_id: str,
         script: str,
+        owner: str = "",
     ) -> dict[str, Any]:
-        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id, owner=owner)
+        if str(tab.get("_lock_error") or "") == "tab_locked":
+            return {"ok": False, "error": "tab_locked", "scope": "cdp", "lock": dict(tab.get("_lock") or {})}
         if session is None or not tab:
             return self._error_payload(error="tab_not_found", scope="cdp")
         if page is None:
@@ -2365,8 +2381,11 @@ class BrowserAutomationService:
         tab_id: str,
         format: str = "jpeg",
         quality: int = 80,
+        owner: str = "",
     ) -> dict[str, Any]:
-        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id, owner=owner)
+        if str(tab.get("_lock_error") or "") == "tab_locked":
+            return {"ok": False, "error": "tab_locked", "scope": "cdp", "lock": dict(tab.get("_lock") or {})}
         if session is None or not tab:
             return self._error_payload(error="tab_not_found", scope="cdp")
         if page is None:
@@ -2392,6 +2411,63 @@ class BrowserAutomationService:
             "data_url": f"data:{mime};base64,{encoded}" if encoded else "",
             "byte_length": len(bytes(shot or b"")),
             "tabs_total": len(tabs),
+        }
+
+    def acquire_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        owner: str,
+        reason: str = "",
+        ttl_seconds: int = 300,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        tab = browser_plane_runtime_store.get_tab(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        if not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        return browser_plane_lock_store.acquire_lock(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+            owner=str(owner or ""),
+            reason=str(reason or ""),
+            ttl_seconds=max(30, min(3600, int(ttl_seconds or 300))),
+            force=bool(force),
+        )
+
+    def release_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        owner: str = "",
+        force: bool = False,
+    ) -> dict[str, Any]:
+        return browser_plane_lock_store.release_lock(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+            owner=str(owner or ""),
+            force=bool(force),
+        )
+
+    def list_tab_locks(self, *, user_id: int, workspace: str) -> dict[str, Any]:
+        items = browser_plane_lock_store.list_locks(
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        return {
+            "ok": True,
+            "workspace": _normalize_workspace(workspace),
+            "items": items,
+            "total": len(items),
         }
 
     def _snapshot_page(

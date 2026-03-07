@@ -366,6 +366,7 @@ def test_list_tabs_returns_active_cdp_pages(monkeypatch):
         "replace_tabs_for_instance",
         lambda **kwargs: [tab_rows.setdefault(str(item["tab_id"]), dict(item)) for item in kwargs["tabs"]],
     )
+    monkeypatch.setattr(browser_automation_module.browser_plane_lock_store, "get_lock", lambda **kwargs: {})
 
     out = service.list_tabs(user_id=1, workspace="tabs-test")
     assert out["ok"] is True
@@ -404,6 +405,7 @@ def test_open_tab_creates_new_active_page(monkeypatch):
         "replace_tabs_for_instance",
         lambda **kwargs: [dict(item) for item in kwargs["tabs"]],
     )
+    monkeypatch.setattr(browser_automation_module.browser_plane_lock_store, "get_lock", lambda **kwargs: {})
 
     out = service.open_tab(user_id=1, workspace="tabs-test", url="https://example.com/new")
     assert out["ok"] is True
@@ -449,6 +451,7 @@ def test_tab_snapshot_reads_target_tab(monkeypatch):
         "get_tab",
         lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
     )
+    monkeypatch.setattr(browser_automation_module.browser_plane_lock_store, "get_lock", lambda **kwargs: {})
 
     listed = service.list_tabs(user_id=1, workspace="tabs-test")
     items = listed.get("items") if isinstance(listed.get("items"), list) else []
@@ -458,6 +461,40 @@ def test_tab_snapshot_reads_target_tab(monkeypatch):
     assert snap["ok"] is True
     assert str(snap.get("tab_id") or "") == tab_id
     assert str(snap.get("url") or "") == "https://example.com/one"
+
+
+def test_tab_snapshot_respects_lock_owner(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    page = _FakePage(url="https://example.com/locked", title="Locked")
+    session = _FakeCdpSession(owner_thread_id=threading.get_ident(), pages=[page])
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: session)
+    tab_rows: dict[str, dict[str, object]] = {}
+    monkeypatch.setattr(browser_automation_module.browser_plane_runtime_store, "upsert_instance", lambda **kwargs: {"instance_id": kwargs["instance_id"]})
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "replace_tabs_for_instance",
+        lambda **kwargs: [tab_rows.setdefault(str(item["tab_id"]), dict(item)) for item in kwargs["tabs"]],
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "get_tab",
+        lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_lock_store,
+        "get_lock",
+        lambda **kwargs: {"tab_id": str(kwargs.get("tab_id") or ""), "owner": "other-owner", "workspace": "tabs-test"},
+    )
+
+    listed = service.list_tabs(user_id=1, workspace="tabs-test")
+    tab_id = str((listed.get("items") or [{}])[0].get("tab_id") or "")
+    snap = service.tab_snapshot(user_id=1, workspace="tabs-test", tab_id=tab_id, owner="my-owner")
+    assert snap["ok"] is False
+    assert snap["error"] == "tab_locked"
+    lock = snap.get("lock") if isinstance(snap.get("lock"), dict) else {}
+    assert str(lock.get("owner") or "") == "other-owner"
 
 
 def test_tab_text_reads_target_tab(monkeypatch):
@@ -480,6 +517,7 @@ def test_tab_text_reads_target_tab(monkeypatch):
         "get_tab",
         lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
     )
+    monkeypatch.setattr(browser_automation_module.browser_plane_lock_store, "get_lock", lambda **kwargs: {})
 
     listed = service.list_tabs(user_id=1, workspace="tabs-test")
     tab_id = str((listed.get("items") or [{}])[0].get("tab_id") or "")
@@ -509,6 +547,7 @@ def test_tab_evaluate_returns_value(monkeypatch):
         "get_tab",
         lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
     )
+    monkeypatch.setattr(browser_automation_module.browser_plane_lock_store, "get_lock", lambda **kwargs: {})
 
     listed = service.list_tabs(user_id=1, workspace="tabs-test")
     tab_id = str((listed.get("items") or [{}])[0].get("tab_id") or "")
@@ -537,6 +576,7 @@ def test_tab_screenshot_returns_data_url(monkeypatch):
         "get_tab",
         lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
     )
+    monkeypatch.setattr(browser_automation_module.browser_plane_lock_store, "get_lock", lambda **kwargs: {})
 
     listed = service.list_tabs(user_id=1, workspace="tabs-test")
     tab_id = str((listed.get("items") or [{}])[0].get("tab_id") or "")

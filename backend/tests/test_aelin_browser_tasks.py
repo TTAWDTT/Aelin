@@ -321,3 +321,125 @@ def test_browser_tab_text_evaluate_and_screenshot_endpoints(monkeypatch):
     assert shot_resp.status_code == 200, shot_resp.text
     snap = shot_resp.json().get("snapshot") or {}
     assert str(snap.get("data_url") or "").startswith("data:image/png;base64,")
+
+
+def test_browser_tab_lock_endpoints(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "acquire_tab_lock",
+        lambda **kwargs: {
+            "ok": True,
+            "lock": {
+                "tab_id": "btab-1",
+                "workspace": "default",
+                "owner": "agent-A",
+                "reason": "summary",
+                "expires_at": 300.0,
+                "created_at": 1.0,
+                "updated_at": 2.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "list_tab_locks",
+        lambda **kwargs: {
+            "ok": True,
+            "items": [
+                {
+                    "tab_id": "btab-1",
+                    "workspace": "default",
+                    "owner": "agent-A",
+                    "reason": "summary",
+                    "expires_at": 300.0,
+                    "created_at": 1.0,
+                    "updated_at": 2.0,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "release_tab_lock",
+        lambda **kwargs: {
+            "ok": True,
+            "released": True,
+            "lock": {
+                "tab_id": "btab-1",
+                "workspace": "default",
+                "owner": "agent-A",
+                "reason": "summary",
+                "expires_at": 300.0,
+                "created_at": 1.0,
+                "updated_at": 2.0,
+            },
+        },
+    )
+
+    locked = client.post(
+        "/api/v1/aelin/agent/browser/tabs/btab-1/lock",
+        json={"workspace": "default", "owner": "agent-A", "reason": "summary", "ttl_seconds": 300},
+        headers=headers,
+    )
+    assert locked.status_code == 200, locked.text
+    assert bool(locked.json().get("ok")) is True
+
+    listed = client.get("/api/v1/aelin/agent/browser/tabs/locks?workspace=default", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert int(listed.json().get("total") or 0) == 1
+
+    unlocked = client.post(
+        "/api/v1/aelin/agent/browser/tabs/btab-1/unlock",
+        json={"workspace": "default", "owner": "agent-A"},
+        headers=headers,
+    )
+    assert unlocked.status_code == 200, unlocked.text
+    assert bool(unlocked.json().get("released")) is True
+
+
+def test_browser_task_resume_blocks_when_tab_locked(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    created = client.post(
+        "/api/v1/aelin/agent/browser/tasks",
+        json={
+            "workspace": "default",
+            "kind": "browser_use",
+            "scope": "cdp",
+            "action": "click",
+            "tab_id": "btab-1",
+            "input": {"target": "Submit", "scope": "cdp"},
+        },
+        headers=headers,
+    )
+    task_id = str(((created.json() or {}).get("item") or {}).get("task_id") or "")
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "get_tab_lock",
+        lambda **kwargs: {
+            "ok": True,
+            "lock": {
+                "tab_id": "btab-1",
+                "workspace": "default",
+                "owner": "agent-B",
+                "reason": "other-agent",
+                "expires_at": 300.0,
+                "created_at": 1.0,
+                "updated_at": 2.0,
+            },
+        },
+    )
+
+    resumed = client.post(
+        f"/api/v1/aelin/agent/browser/tasks/{task_id}/resume?workspace=default",
+        headers=headers,
+    )
+    assert resumed.status_code == 200, resumed.text
+    item = (resumed.json() or {}).get("item") or {}
+    assert str(item.get("status") or "") == "blocked"
+    assert str(((item.get("result") or {}).get("error")) or "") == "tab_locked"
