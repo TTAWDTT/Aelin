@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -17,6 +18,8 @@ from typing import Any
 from uuid import uuid4
 
 from app.settings import settings
+from app.services.browser_plane_store import browser_plane_store
+from app.services.browser_plane_runtime_store import browser_plane_runtime_store
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore
@@ -338,7 +341,31 @@ class BrowserAutomationService:
         )
         with self._lock:
             self._login_states[request_id] = state
-        return self._login_state_payload(state)
+        payload = self._login_state_payload(state)
+        try:
+            browser_plane_store.upsert_checkpoint(
+                request_id=request_id,
+                user_id=int(user_id),
+                workspace=workspace,
+                profile_id=str(profile.profile_id or ""),
+                domain=str(domain or ""),
+                reason=str(reason or "auth_guard"),
+                status="awaiting_login",
+                next_call=dict(next_call or {}),
+                resume_query=str(resume_query or ""),
+                resume_request=dict(resume_request or {}),
+                continue_after_confirm=bool(continue_after_confirm),
+                created_at=float(now),
+                updated_at=float(now),
+            )
+        except Exception as exc:
+            _LOG.warning(
+                "browser_plane checkpoint upsert failed request_id=%s workspace=%s error=%s",
+                request_id,
+                _normalize_workspace(workspace),
+                str(exc)[:180],
+            )
+        return payload
 
     def get_login_state(
         self,
@@ -354,12 +381,28 @@ class BrowserAutomationService:
         with self._lock:
             state = self._login_states.get(clean_request_id)
             if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            return self._login_state_payload(state)
+                state = None
+            else:
+                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                    return {}
+                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                    return {}
+                return self._login_state_payload(state)
+        try:
+            return browser_plane_store.get_checkpoint(
+                request_id=clean_request_id,
+                user_id=int(user_id),
+                workspace=workspace,
+                profile_id=profile_id,
+            )
+        except Exception as exc:
+            _LOG.warning(
+                "browser_plane checkpoint get failed request_id=%s workspace=%s error=%s",
+                clean_request_id,
+                _normalize_workspace(workspace),
+                str(exc)[:180],
+            )
+            return {}
 
     def attach_login_resume_context(
         self,
@@ -377,20 +420,40 @@ class BrowserAutomationService:
             return {}
         with self._lock:
             state = self._login_states.get(clean_request_id)
-            if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            if str(resume_query or "").strip():
-                state.resume_query = str(resume_query or "")[:500]
-            if isinstance(resume_request, dict) and resume_request:
-                state.resume_request = dict(resume_request)
-            if continue_after_confirm is not None:
-                state.continue_after_confirm = bool(continue_after_confirm)
-            state.touch()
-            return self._login_state_payload(state)
+            if state is not None:
+                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                    return {}
+                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                    return {}
+                if str(resume_query or "").strip():
+                    state.resume_query = str(resume_query or "")[:500]
+                if isinstance(resume_request, dict) and resume_request:
+                    state.resume_request = dict(resume_request)
+                if continue_after_confirm is not None:
+                    state.continue_after_confirm = bool(continue_after_confirm)
+                state.touch()
+                payload = self._login_state_payload(state)
+            else:
+                payload = {}
+        try:
+            stored_payload = browser_plane_store.update_checkpoint(
+                request_id=clean_request_id,
+                user_id=int(user_id),
+                workspace=workspace,
+                profile_id=profile_id,
+                resume_query=str(resume_query or ""),
+                resume_request=resume_request if isinstance(resume_request, dict) else None,
+                continue_after_confirm=continue_after_confirm,
+            )
+        except Exception as exc:
+            _LOG.warning(
+                "browser_plane checkpoint resume update failed request_id=%s workspace=%s error=%s",
+                clean_request_id,
+                _normalize_workspace(workspace),
+                str(exc)[:180],
+            )
+            stored_payload = {}
+        return payload or stored_payload
 
     def list_login_states(
         self,
@@ -418,7 +481,37 @@ class BrowserAutomationService:
                     continue
                 rows.append(state)
         rows.sort(key=lambda item: float(item.updated_at or item.created_at or 0.0), reverse=True)
-        return [self._login_state_payload(item) for item in rows[:max_items]]
+        memory_payloads = [self._login_state_payload(item) for item in rows]
+        try:
+            stored_payloads = browser_plane_store.list_checkpoints(
+                user_id=int(user_id),
+                workspace=workspace,
+                statuses=list(allow_statuses) if allow_statuses else None,
+                limit=max_items,
+            )
+        except Exception as exc:
+            _LOG.warning(
+                "browser_plane checkpoint list failed user_id=%s workspace=%s error=%s",
+                int(user_id),
+                _normalize_workspace(workspace or "default") if str(workspace or "").strip() else "all",
+                str(exc)[:180],
+            )
+            stored_payloads = []
+        merged_by_id: dict[str, dict[str, Any]] = {}
+        for payload in stored_payloads:
+            request_id = str(payload.get("request_id") or "").strip()
+            if request_id:
+                merged_by_id[request_id] = payload
+        for payload in memory_payloads:
+            request_id = str(payload.get("request_id") or "").strip()
+            if request_id:
+                merged_by_id[request_id] = payload
+        merged = list(merged_by_id.values())
+        merged.sort(
+            key=lambda item: float(item.get("updated_at") or item.get("created_at") or 0.0),
+            reverse=True,
+        )
+        return merged[:max_items]
 
     def cancel_login_pending(
         self,
@@ -450,14 +543,32 @@ class BrowserAutomationService:
             return {}
         with self._lock:
             state = self._login_states.get(clean_request_id)
-            if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            state.touch(status=str(status or "resolved")[:32])
-            return self._login_state_payload(state)
+            if state is not None:
+                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                    return {}
+                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                    return {}
+                state.touch(status=str(status or "resolved")[:32])
+                payload = self._login_state_payload(state)
+            else:
+                payload = {}
+        try:
+            stored_payload = browser_plane_store.update_checkpoint(
+                request_id=clean_request_id,
+                user_id=int(user_id),
+                workspace=workspace,
+                profile_id=profile_id,
+                status=str(status or "resolved")[:32],
+            )
+        except Exception as exc:
+            _LOG.warning(
+                "browser_plane checkpoint resolve update failed request_id=%s workspace=%s error=%s",
+                clean_request_id,
+                _normalize_workspace(workspace),
+                str(exc)[:180],
+            )
+            stored_payload = {}
+        return payload or stored_payload
 
     def _peek_session(self, *, user_id: int, workspace: str, mode: str, profile_id: str = "") -> BrowserSession | None:
         key = self._session_key(user_id=user_id, workspace=workspace, mode=mode, profile_id=profile_id)
@@ -1893,6 +2004,396 @@ class BrowserAutomationService:
             )
         return out
 
+    def _browser_instance_id(self, *, user_id: int, workspace: str, profile_id: str, mode: str) -> str:
+        workspace_segment = self._sanitize_profile_segment(_normalize_workspace(workspace), default="default")
+        profile_segment = self._sanitize_profile_segment(profile_id or "default", default="default")
+        mode_segment = self._sanitize_profile_segment(mode or "cdp", default="cdp")
+        return f"binst-{int(user_id)}-{workspace_segment}-{profile_segment}-{mode_segment}"[:96]
+
+    def _browser_tab_id(self, *, instance_id: str, page_index: int) -> str:
+        return f"btab-{str(instance_id or '')[:96]}-{max(0, int(page_index or 0))}"[:120]
+
+    @staticmethod
+    def _page_brief(page: Any) -> tuple[str, str]:
+        url = str(getattr(page, "url", "") or "").strip()[:4000]
+        title = ""
+        try:
+            title = str(page.title() or "").strip()[:255]
+        except Exception:
+            title = ""
+        return url, title
+
+    def _collect_session_tabs(
+        self,
+        *,
+        session: BrowserSession,
+        instance_id: str,
+    ) -> list[dict[str, Any]]:
+        pages = list(getattr(getattr(session, "context", None), "pages", []) or [])
+        active_page = getattr(session, "page", None)
+        if not pages and active_page is not None:
+            pages = [active_page]
+        if active_page is None and pages:
+            active_page = pages[-1]
+        tabs: list[dict[str, Any]] = []
+        for idx, page in enumerate(pages):
+            url, title = self._page_brief(page)
+            tabs.append(
+                {
+                    "tab_id": self._browser_tab_id(instance_id=instance_id, page_index=idx),
+                    "page_index": int(idx),
+                    "url": url,
+                    "title": title,
+                    "is_active": bool(page is active_page),
+                    "status": "open",
+                }
+            )
+        return tabs
+
+    def _sync_session_runtime_rows(self, *, session: BrowserSession) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        instance_id = self._browser_instance_id(
+            user_id=int(getattr(session, "user_id", 0) or 0),
+            workspace=str(getattr(session, "workspace", "default") or "default"),
+            profile_id=str(getattr(session, "profile_id", "") or ""),
+            mode=str(getattr(session, "mode", "cdp") or "cdp"),
+        )
+        tabs = self._collect_session_tabs(session=session, instance_id=instance_id)
+        active_tab = next((item for item in tabs if bool(item.get("is_active"))), {})
+        instance = browser_plane_runtime_store.upsert_instance(
+            instance_id=instance_id,
+            user_id=int(getattr(session, "user_id", 0) or 0),
+            workspace=str(getattr(session, "workspace", "default") or "default"),
+            profile_id=str(getattr(session, "profile_id", "") or ""),
+            session_id=str(getattr(session, "session_id", "") or ""),
+            mode=str(getattr(session, "mode", "cdp") or "cdp"),
+            status="ready",
+            current_tab_id=str(active_tab.get("tab_id") or ""),
+        )
+        persisted_tabs = browser_plane_runtime_store.replace_tabs_for_instance(
+            instance_id=instance_id,
+            user_id=int(getattr(session, "user_id", 0) or 0),
+            workspace=str(getattr(session, "workspace", "default") or "default"),
+            profile_id=str(getattr(session, "profile_id", "") or ""),
+            session_id=str(getattr(session, "session_id", "") or ""),
+            tabs=tabs,
+        )
+        return instance, persisted_tabs
+
+    def list_instances(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        if str(mode or "cdp").strip().lower() != "cdp":
+            return self._error_payload(error="unsupported_instance_mode", scope=str(mode or ""))
+        if not self._cdp_enabled or not self._cdp_endpoint:
+            return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile.profile_id,
+            action="list_instances",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return session_error
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", scope="cdp", requires_cdp=True)
+        with session.lock:
+            session.touch()
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "workspace": _normalize_workspace(workspace),
+            "items": [instance],
+            "total": 1,
+            "tabs_total": len(tabs),
+        }
+
+    def list_tabs(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        if str(mode or "cdp").strip().lower() != "cdp":
+            return self._error_payload(error="unsupported_tab_mode", scope=str(mode or ""))
+        if not self._cdp_enabled or not self._cdp_endpoint:
+            return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile.profile_id,
+            action="list_tabs",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return session_error
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", scope="cdp", requires_cdp=True)
+        with session.lock:
+            session.touch()
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "workspace": _normalize_workspace(workspace),
+            "instance_id": str(instance.get("instance_id") or ""),
+            "profile_id": str(profile.profile_id or ""),
+            "items": tabs,
+            "total": len(tabs),
+        }
+
+    def open_tab(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        url: str = "",
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        if str(mode or "cdp").strip().lower() != "cdp":
+            return self._error_payload(error="unsupported_tab_mode", scope=str(mode or ""))
+        if not self._cdp_enabled or not self._cdp_endpoint:
+            return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile.profile_id,
+            action="open_tab",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return session_error
+        if session is None:
+            return self._error_payload(error="cdp_unavailable:session_missing", scope="cdp", requires_cdp=True)
+        with session.lock:
+            session.touch()
+            page = session.context.new_page()
+            page.set_default_timeout(self._default_timeout_ms)
+            if str(url or "").strip():
+                page.goto(str(url or "").strip(), wait_until="domcontentloaded", timeout=self._default_timeout_ms)
+            session.page = page
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        active_tab = next((item for item in tabs if bool(item.get("is_active"))), {})
+        return {
+            "ok": True,
+            "workspace": _normalize_workspace(workspace),
+            "instance_id": str(instance.get("instance_id") or ""),
+            "profile_id": str(profile.profile_id or ""),
+            "item": active_tab,
+        }
+
+    def tab_snapshot(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        include_dom: bool = False,
+        include_a11y: bool = False,
+        max_targets: int = 30,
+    ) -> dict[str, Any]:
+        tab = browser_plane_runtime_store.get_tab(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        if not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        profile_id = str(tab.get("profile_id") or "").strip()
+        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile_id)
+        page_index = max(0, int(tab.get("page_index") or 0))
+        with session.lock:
+            session.touch()
+            pages = list(getattr(getattr(session, "context", None), "pages", []) or [])
+            if not pages or page_index >= len(pages):
+                return self._error_payload(error="tab_not_found", scope="cdp")
+            page = pages[page_index]
+            session.page = page
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+            snap = self._snapshot_page(
+                page=page,
+                mode="cdp",
+                include_dom=bool(include_dom),
+                include_a11y=bool(include_a11y),
+                max_targets=_clamp_int(max_targets, 30, low=1, high=60),
+            )
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "tabs_total": len(tabs),
+            **snap,
+        }
+
+    def _resolve_tab_page(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+    ) -> tuple[BrowserSession | None, Any, dict[str, Any]]:
+        tab = browser_plane_runtime_store.get_tab(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        if not tab:
+            return None, None, {}
+        profile_id = str(tab.get("profile_id") or "").strip()
+        session, session_error = self._acquire_cdp_session(
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile_id,
+            action="tab_access",
+            allow_restart_confirmation=True,
+            confirmed=True,
+            next_args={},
+        )
+        if session_error:
+            return None, None, tab
+        if session is None:
+            return None, None, tab
+        page_index = max(0, int(tab.get("page_index") or 0))
+        pages = list(getattr(getattr(session, "context", None), "pages", []) or [])
+        if not pages or page_index >= len(pages):
+            return session, None, tab
+        page = pages[page_index]
+        session.page = page
+        return session, page, tab
+
+    def tab_text(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        mode: str = "raw",
+        max_chars: int = 12000,
+    ) -> dict[str, Any]:
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        if session is None or not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        if page is None:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        text_mode = str(mode or "raw").strip().lower()
+        if text_mode not in {"raw", "readable"}:
+            text_mode = "raw"
+        limit = _clamp_int(max_chars, 12000, low=200, high=40000)
+        script = (
+            "() => { const root = document.querySelector('article, main, [role=\"main\"]') || document.body; "
+            "return String(root?.innerText || root?.textContent || '').trim(); }"
+            if text_mode == "readable"
+            else "() => String(document.body?.innerText || document.body?.textContent || '').trim();"
+        )
+        with session.lock:
+            session.touch()
+            try:
+                text = str(page.evaluate(script) or "").strip()
+            except Exception as exc:
+                return self._error_payload(error=str(exc)[:180], scope="cdp")
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "mode": text_mode,
+            "text": text[:limit],
+            "char_count": min(len(text), limit),
+            "tabs_total": len(tabs),
+            "url": str(tab.get("url") or ""),
+            "title": str(tab.get("title") or ""),
+        }
+
+    def tab_evaluate(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        script: str,
+    ) -> dict[str, Any]:
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        if session is None or not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        if page is None:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        snippet = str(script or "").strip()
+        if not snippet:
+            return self._error_payload(error="missing_script", scope="cdp")
+        with session.lock:
+            session.touch()
+            try:
+                value = page.evaluate(snippet)
+            except Exception as exc:
+                return self._error_payload(error=str(exc)[:180], scope="cdp")
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "value": value,
+            "tabs_total": len(tabs),
+        }
+
+    def tab_screenshot(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        format: str = "jpeg",
+        quality: int = 80,
+    ) -> dict[str, Any]:
+        session, page, tab = self._resolve_tab_page(user_id=user_id, workspace=workspace, tab_id=tab_id)
+        if session is None or not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        if page is None:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        image_format = "png" if str(format or "").strip().lower() == "png" else "jpeg"
+        jpeg_quality = _clamp_int(quality, 80, low=35, high=95)
+        with session.lock:
+            session.touch()
+            try:
+                shot = page.screenshot(type=image_format, quality=jpeg_quality if image_format == "jpeg" else None)
+            except Exception as exc:
+                return self._error_payload(error=str(exc)[:180], scope="cdp")
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        encoded = base64.b64encode(bytes(shot or b"")).decode("ascii") if shot else ""
+        mime = "image/png" if image_format == "png" else "image/jpeg"
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "format": image_format,
+            "data_url": f"data:{mime};base64,{encoded}" if encoded else "",
+            "byte_length": len(bytes(shot or b"")),
+            "tabs_total": len(tabs),
+        }
+
     def _snapshot_page(
         self,
         *,
@@ -2526,10 +3027,6 @@ class BrowserAutomationService:
                         },
                     }
                 runtime_scope = "cdp"
-        elif runtime_scope == "external" and sticky_scope == "cdp" and self._cdp_enabled:
-            runtime_scope = "cdp"
-            prefer_existing_cdp = True
-
         if runtime_scope in {"system", "all"}:
             return self._error_payload(error="unsupported_scope_for_use", action=act, scope=runtime_scope)
 

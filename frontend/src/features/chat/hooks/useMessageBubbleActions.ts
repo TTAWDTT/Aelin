@@ -14,14 +14,13 @@ interface UseMessageBubbleActionsOptions {
   onQuickPrompt?: (text: string) => void
 }
 
-function appendFollowupMessage(response: AelinBrowserConfirmResponse) {
+function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId: string | null) {
   const followup = (response.followup_result || {}) as Record<string, unknown>
   const followupAnswer = String(followup.answer || '').trim()
   if (!response.continued || !followupAnswer) return
 
-  const store = useChatStore.getState()
-  const sessionId = store.activeSessionId
   if (!sessionId) return
+  const store = useChatStore.getState()
 
   store.addMessage(sessionId, {
     id: crypto.randomUUID(),
@@ -58,11 +57,15 @@ export function useMessageBubbleActions({ message, onQuickPrompt }: UseMessageBu
   })
 
   const confirmBrowser = useMutation({
-    mutationFn: async (action: AelinAction) => aelinApi.confirmBrowserAction(buildBrowserConfirmBody(action)),
-    onSuccess: (response) => {
+    mutationFn: async (action: AelinAction) => {
+      const originSessionId = useChatStore.getState().activeSessionId
+      const response = await aelinApi.confirmBrowserAction(buildBrowserConfirmBody(action))
+      return { response, originSessionId }
+    },
+    onSuccess: ({ response, originSessionId }) => {
       if (response.ok) {
         toast.success(String(response.message || '已确认并继续执行'))
-        appendFollowupMessage(response)
+        appendFollowupMessage(response, originSessionId)
         if (!response.continued && onQuickPrompt) {
           onQuickPrompt('我已确认，请继续完成刚才的浏览器任务并直接给我结果。')
         }

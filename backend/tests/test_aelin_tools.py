@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import threading
-
 import app.services.aelin_loop_tools as aelin_loop_tools
 import app.services.aelin_tools as aelin_tools
 from app.services.aelin_tools import AelinToolHub
@@ -154,7 +152,7 @@ def test_browser_state_get_tool_success(monkeypatch):
     hub = _hub(fake_web)
 
     monkeypatch.setattr(
-        aelin_tools.browser_automation_service,
+        aelin_tools.browser_plane_adapter,
         "state_get",
         lambda **kwargs: {
             "ok": True,
@@ -179,7 +177,7 @@ def test_browser_session_list_tool_success(monkeypatch):
     hub = _hub(fake_web)
 
     monkeypatch.setattr(
-        aelin_tools.browser_automation_service,
+        aelin_tools.browser_plane_adapter,
         "list_sessions",
         lambda **kwargs: {
             "ok": True,
@@ -203,7 +201,7 @@ def test_browser_use_tool_confirmation_required(monkeypatch):
     hub = _hub(fake_web)
 
     monkeypatch.setattr(
-        aelin_tools.browser_automation_service,
+        aelin_tools.browser_plane_adapter,
         "use",
         lambda **kwargs: {
             "ok": False,
@@ -233,7 +231,7 @@ def test_browser_use_tool_supports_external_scope(monkeypatch):
         captured.update(kwargs)
         return {"ok": True, "scope": kwargs.get("scope"), "action": kwargs.get("action")}
 
-    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
 
     result = hub.execute(
         "browser_use",
@@ -254,7 +252,7 @@ def test_browser_use_tool_passes_confirm_flag(monkeypatch):
         captured.update(kwargs)
         return {"ok": True}
 
-    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
 
     result = hub.execute(
         "browser_use",
@@ -289,20 +287,16 @@ def test_tool_definitions_include_browser_selector_and_text():
     assert "text" in properties
 
 
-def test_browser_use_tool_offloads_when_running_event_loop(monkeypatch):
+def test_browser_use_tool_calls_browser_plane_adapter(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
-
-    main_thread_id = threading.get_ident()
     captured: dict[str, object] = {}
 
     def _fake_use(**kwargs):
-        captured["thread_id"] = threading.get_ident()
-        captured["scope"] = kwargs.get("scope")
+        captured.update(kwargs)
         return {"ok": True, "scope": kwargs.get("scope"), "action": kwargs.get("action")}
 
-    monkeypatch.setattr(aelin_tools, "_has_running_event_loop", lambda: True)
-    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
 
     result = hub.execute(
         "browser_use",
@@ -310,7 +304,6 @@ def test_browser_use_tool_offloads_when_running_event_loop(monkeypatch):
     )
     assert result["ok"] is True
     assert captured.get("scope") == "managed"
-    assert int(captured.get("thread_id") or 0) != main_thread_id
 
 
 def test_browser_use_tool_forwards_selector_and_text(monkeypatch):
@@ -323,7 +316,7 @@ def test_browser_use_tool_forwards_selector_and_text(monkeypatch):
         captured.update(kwargs)
         return {"ok": True}
 
-    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
 
     result = hub.execute(
         "browser_use",

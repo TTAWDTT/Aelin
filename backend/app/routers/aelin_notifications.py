@@ -11,7 +11,7 @@ from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import AelinNotificationItem, AelinNotificationResponse
 from app.services.agent_memory import AgentMemoryService
-from app.services.browser_automation import browser_automation_service
+from app.services.browser_plane import browser_plane_adapter
 from app.services.tracking_autonomy import tracking_autonomy_service
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -29,7 +29,7 @@ def list_aelin_notifications(
     memory_items = [AelinNotificationItem(**item) for item in _memory.build_notifications(db, current_user.id, limit=limit)]
     tracking_rows, to_mark = _tracking.build_notification_items(db, user_id=current_user.id, limit=limit)
     tracking_items = [AelinNotificationItem(**item) for item in tracking_rows]
-    login_rows = browser_automation_service.list_login_states(
+    login_rows = browser_plane_adapter.list_login_states(
         user_id=int(current_user.id),
         statuses=["awaiting_login", "continue_failed"],
         limit=limit,

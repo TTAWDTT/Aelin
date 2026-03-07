@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.services import aelin_agent_loop as aelin_agent_loop_module
+import app.services.aelin_loop_tools as aelin_loop_tools_module
 from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_loop_tools import (
     _sanitize_for_log,
@@ -476,15 +477,45 @@ def test_build_resume_request_payload_summarizes_images():
         workspace="default",
         history_turns=[{"role": "user", "content": "上一轮"}],
         images=[{"data_url": "data:image/png;base64,QUFBQQ==", "name": "following.png"}],
+        attachment_ids=[7, 0, 9],
     )
 
     assert payload["images"] == []
     assert payload["history"] == [{"role": "user", "content": "上一轮"}]
+    assert payload["attachment_ids"] == [7, 9]
     summaries = payload.get("image_summaries") if isinstance(payload.get("image_summaries"), list) else []
     assert summaries
     assert str(summaries[0].get("name") or "") == "following.png"
     assert str(summaries[0].get("mime_type") or "") == "image/png"
     assert int(summaries[0].get("byte_length") or 0) > 0
+
+
+def test_compact_browser_state_result_keeps_dom_hints():
+    compact = aelin_loop_tools_module._compact_tool_result_for_model(
+        "browser_state_get",
+        {
+            "ok": True,
+            "scope": "cdp",
+            "url": "https://x.com/home",
+            "dom_digest": {"interactive_count": 2, "a11y_count": 1, "ready_state": "complete"},
+            "interactive_targets": [
+                {
+                    "tag": "button",
+                    "role": "button",
+                    "text": "Following",
+                    "selector_hint": "[data-testid='following']",
+                    "x": 120,
+                    "y": 260,
+                }
+            ],
+            "a11y_nodes": [{"role": "link", "name": "Profile"}],
+        },
+    )
+
+    assert compact["url"] == "https://x.com/home"
+    assert compact["dom_digest"]["interactive_count"] == 2
+    assert compact["interactive_targets"][0]["text"] == "Following"
+    assert compact["interactive_targets"][0]["selector_hint"] == "[data-testid='following']"
 
 
 def test_agent_loop_stops_with_confirmation_when_browser_state_get_requires_it():

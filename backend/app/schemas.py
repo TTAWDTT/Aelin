@@ -468,6 +468,130 @@ class AelinBrowserLoginCheckpointListResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinBrowserTaskCreateRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    kind: str = Field(default="browser_use", min_length=1, max_length=32)
+    scope: str = Field(default="auto", min_length=1, max_length=24)
+    action: str = Field(default="", max_length=32)
+    input: dict[str, Any] = Field(default_factory=dict)
+    profile_id: str = Field(default="", max_length=120)
+    tab_id: str = Field(default="", max_length=120)
+
+
+class AelinBrowserTaskItem(BaseModel):
+    task_id: str
+    profile_id: str = ""
+    tab_id: str = ""
+    workspace: str = "default"
+    kind: str = "browser_use"
+    status: str = "pending"
+    scope: str = "auto"
+    action: str = ""
+    input: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    checkpoint_request_id: str = ""
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+class AelinBrowserTaskResponse(BaseModel):
+    ok: bool = True
+    item: AelinBrowserTaskItem | None = None
+    generated_at: datetime
+
+
+class AelinBrowserSnapshotResponse(BaseModel):
+    ok: bool = True
+    scope: str = "auto"
+    task_id: str = ""
+    profile_id: str = ""
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+    generated_at: datetime
+
+
+class AelinBrowserInstanceItem(BaseModel):
+    instance_id: str
+    profile_id: str = ""
+    session_id: str = ""
+    workspace: str = "default"
+    mode: str = "cdp"
+    status: str = "ready"
+    current_tab_id: str = ""
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+class AelinBrowserInstanceListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserInstanceItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinBrowserTabItem(BaseModel):
+    tab_id: str
+    instance_id: str = ""
+    profile_id: str = ""
+    session_id: str = ""
+    workspace: str = "default"
+    page_index: int = 0
+    url: str = ""
+    title: str = ""
+    is_active: bool = False
+    status: str = "open"
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+class AelinBrowserTabListResponse(BaseModel):
+    total: int = 0
+    instance_id: str = ""
+    profile_id: str = ""
+    items: list[AelinBrowserTabItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinBrowserTabOpenRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    url: str = Field(default="", max_length=2000)
+    profile_id: str = Field(default="", max_length=120)
+    mode: str = Field(default="cdp", min_length=1, max_length=24)
+
+
+class AelinBrowserTabOpenResponse(BaseModel):
+    ok: bool = True
+    instance_id: str = ""
+    profile_id: str = ""
+    item: AelinBrowserTabItem | None = None
+    generated_at: datetime
+
+
+class AelinBrowserTabTextResponse(BaseModel):
+    ok: bool = True
+    scope: str = "cdp"
+    instance_id: str = ""
+    tab_id: str = ""
+    profile_id: str = ""
+    mode: str = "raw"
+    text: str = ""
+    char_count: int = 0
+    generated_at: datetime
+
+
+class AelinBrowserTabEvaluateRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    script: str = Field(min_length=1, max_length=4000)
+
+
+class AelinBrowserTabEvaluateResponse(BaseModel):
+    ok: bool = True
+    scope: str = "cdp"
+    instance_id: str = ""
+    tab_id: str = ""
+    profile_id: str = ""
+    value: Any = None
+    generated_at: datetime
+
+
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None

@@ -4,6 +4,7 @@ import threading
 import time
 from pathlib import Path
 
+import app.services.browser_automation as browser_automation_module
 from app.services.browser_automation import BrowserAutomationService
 
 
@@ -25,26 +26,35 @@ class _FakeSession:
 
 
 class _FakePage:
-    def __init__(self) -> None:
-        self.url = "about:blank"
+    def __init__(self, *, url: str = "about:blank", title: str = "") -> None:
+        self.url = str(url)
+        self._title = str(title)
         self.timeout_ms = 0
         self.goto_calls: list[str] = []
+        self.eval_payload = "complete"
+        self.screenshot_bytes = b"fake-image"
 
     def title(self) -> str:
-        return ""
+        return self._title
 
-    def evaluate(self, _script: str):
-        return "complete"
+    def evaluate(self, script: str):
+        if "document.readyState" in str(script):
+            return "complete"
+        return self.eval_payload
 
     def set_default_timeout(self, timeout_ms: int) -> None:
         self.timeout_ms = int(timeout_ms)
 
     def goto(self, url: str, **_kwargs) -> None:
         self.url = str(url)
+        self._title = f"title:{url}"
         self.goto_calls.append(str(url))
 
     def wait_for_timeout(self, _wait_ms: int) -> None:
         return None
+
+    def screenshot(self, **_kwargs):
+        return self.screenshot_bytes
 
 
 class _FakeSessionWithPage(_FakeSession):
@@ -52,6 +62,27 @@ class _FakeSessionWithPage(_FakeSession):
         super().__init__(owner_thread_id=owner_thread_id)
         self.page = page
         self.lock = threading.RLock()
+
+
+class _FakeContext:
+    def __init__(self, pages: list[_FakePage] | None = None) -> None:
+        self.pages = list(pages or [])
+
+    def new_page(self) -> _FakePage:
+        page = _FakePage()
+        self.pages.append(page)
+        return page
+
+
+class _FakeCdpSession(_FakeSessionWithPage):
+    def __init__(self, *, owner_thread_id: int, pages: list[_FakePage], profile_id: str = "default:default") -> None:
+        super().__init__(owner_thread_id=owner_thread_id, page=pages[-1] if pages else _FakePage())
+        self.context = _FakeContext(pages)
+        self.mode = "cdp"
+        self.profile_id = profile_id
+        self.workspace = "tabs-test"
+        self.user_id = 1
+        self.session_id = "bs-tabs"
 
 
 def test_get_session_reuses_same_thread_session(monkeypatch):
@@ -234,6 +265,284 @@ def test_use_sensitive_domain_auth_guard_emits_login_checkpoint():
     login_state = out.get("login_state") if isinstance(out.get("login_state"), dict) else {}
     assert login_state.get("status") == "awaiting_login"
     assert login_state.get("domain") == "x.com"
+
+
+def test_mark_login_pending_degrades_when_checkpoint_persist_fails(monkeypatch):
+    service = BrowserAutomationService()
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_store,
+        "upsert_checkpoint",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("db_write_failed")),
+    )
+
+    payload = service.mark_login_pending(
+        user_id=1,
+        workspace="default",
+        domain="x.com",
+        next_call={"tool": "browser_use", "action": "navigate", "args": {"url": "https://x.com/home"}},
+    )
+
+    assert str(payload.get("request_id") or "").startswith("blogin-")
+    assert payload.get("status") == "awaiting_login"
+    # The in-memory checkpoint should remain available even if persistence failed.
+    looked_up = service.get_login_state(
+        user_id=1,
+        workspace="default",
+        request_id=str(payload.get("request_id") or ""),
+    )
+    assert looked_up.get("request_id") == payload.get("request_id")
+
+
+def test_list_login_states_merges_before_truncating(monkeypatch):
+    service = BrowserAutomationService()
+    old_state = service.mark_login_pending(user_id=1, workspace="default", domain="old-1.example")
+    older_state = service.mark_login_pending(user_id=1, workspace="default", domain="old-2.example")
+
+    first_id = str(old_state.get("request_id") or "")
+    second_id = str(older_state.get("request_id") or "")
+    with service._lock:
+        service._login_states[first_id].updated_at = 100.0
+        service._login_states[first_id].created_at = 100.0
+        service._login_states[second_id].updated_at = 90.0
+        service._login_states[second_id].created_at = 90.0
+
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_store,
+        "list_checkpoints",
+        lambda **kwargs: [
+            {
+                "request_id": "persisted-newest",
+                "profile_id": "default:default",
+                "workspace": "default",
+                "domain": "persisted.example",
+                "reason": "auth_guard",
+                "status": "awaiting_login",
+                "next_call": {},
+                "resume_query": "",
+                "resume_request": {},
+                "continue_after_confirm": True,
+                "created_at": 200.0,
+                "updated_at": 200.0,
+            }
+        ],
+    )
+
+    items = service.list_login_states(user_id=1, workspace="default", limit=2)
+
+    assert [str(item.get("request_id") or "") for item in items] == [
+        "persisted-newest",
+        first_id,
+    ]
+
+
+def test_list_tabs_returns_active_cdp_pages(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    pages = [
+        _FakePage(url="https://example.com/one", title="One"),
+        _FakePage(url="https://example.com/two", title="Two"),
+    ]
+    session = _FakeCdpSession(owner_thread_id=threading.get_ident(), pages=pages)
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: session)
+    tab_rows: dict[str, dict[str, object]] = {}
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "upsert_instance",
+        lambda **kwargs: {
+            "instance_id": kwargs["instance_id"],
+            "profile_id": kwargs["profile_id"],
+            "session_id": kwargs["session_id"],
+            "workspace": kwargs["workspace"],
+            "mode": kwargs["mode"],
+            "status": kwargs["status"],
+            "current_tab_id": kwargs.get("current_tab_id", ""),
+            "created_at": 1.0,
+            "updated_at": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "replace_tabs_for_instance",
+        lambda **kwargs: [tab_rows.setdefault(str(item["tab_id"]), dict(item)) for item in kwargs["tabs"]],
+    )
+
+    out = service.list_tabs(user_id=1, workspace="tabs-test")
+    assert out["ok"] is True
+    assert int(out["total"] or 0) == 2
+    items = out.get("items") if isinstance(out.get("items"), list) else []
+    assert str(items[0]["url"]).startswith("https://example.com/one")
+    assert str(items[1]["title"]) == "Two"
+    assert bool(items[1]["is_active"]) is True
+    assert str(out.get("instance_id") or "").startswith("binst-")
+
+
+def test_open_tab_creates_new_active_page(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    pages = [_FakePage(url="https://example.com/one", title="One")]
+    session = _FakeCdpSession(owner_thread_id=threading.get_ident(), pages=pages)
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: session)
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "upsert_instance",
+        lambda **kwargs: {
+            "instance_id": kwargs["instance_id"],
+            "profile_id": kwargs["profile_id"],
+            "session_id": kwargs["session_id"],
+            "workspace": kwargs["workspace"],
+            "mode": kwargs["mode"],
+            "status": kwargs["status"],
+            "current_tab_id": kwargs.get("current_tab_id", ""),
+            "created_at": 1.0,
+            "updated_at": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "replace_tabs_for_instance",
+        lambda **kwargs: [dict(item) for item in kwargs["tabs"]],
+    )
+
+    out = service.open_tab(user_id=1, workspace="tabs-test", url="https://example.com/new")
+    assert out["ok"] is True
+    item = out.get("item") if isinstance(out.get("item"), dict) else {}
+    assert str(item.get("url") or "") == "https://example.com/new"
+    assert bool(item.get("is_active")) is True
+    assert len(session.context.pages) == 2
+
+
+def test_tab_snapshot_reads_target_tab(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    pages = [
+        _FakePage(url="https://example.com/one", title="One"),
+        _FakePage(url="https://example.com/two", title="Two"),
+    ]
+    session = _FakeCdpSession(owner_thread_id=threading.get_ident(), pages=pages)
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: session)
+    tab_rows: dict[str, dict[str, object]] = {}
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "upsert_instance",
+        lambda **kwargs: {
+            "instance_id": kwargs["instance_id"],
+            "profile_id": kwargs["profile_id"],
+            "session_id": kwargs["session_id"],
+            "workspace": kwargs["workspace"],
+            "mode": kwargs["mode"],
+            "status": kwargs["status"],
+            "current_tab_id": kwargs.get("current_tab_id", ""),
+            "created_at": 1.0,
+            "updated_at": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "replace_tabs_for_instance",
+        lambda **kwargs: [tab_rows.setdefault(str(item["tab_id"]), dict(item)) for item in kwargs["tabs"]],
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "get_tab",
+        lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
+    )
+
+    listed = service.list_tabs(user_id=1, workspace="tabs-test")
+    items = listed.get("items") if isinstance(listed.get("items"), list) else []
+    tab_id = str(items[0].get("tab_id") or "")
+
+    snap = service.tab_snapshot(user_id=1, workspace="tabs-test", tab_id=tab_id)
+    assert snap["ok"] is True
+    assert str(snap.get("tab_id") or "") == tab_id
+    assert str(snap.get("url") or "") == "https://example.com/one"
+
+
+def test_tab_text_reads_target_tab(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    page = _FakePage(url="https://example.com/read", title="Read")
+    page.eval_payload = "Readable content from tab"
+    session = _FakeCdpSession(owner_thread_id=threading.get_ident(), pages=[page])
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: session)
+    tab_rows: dict[str, dict[str, object]] = {}
+    monkeypatch.setattr(browser_automation_module.browser_plane_runtime_store, "upsert_instance", lambda **kwargs: {"instance_id": kwargs["instance_id"]})
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "replace_tabs_for_instance",
+        lambda **kwargs: [tab_rows.setdefault(str(item["tab_id"]), dict(item)) for item in kwargs["tabs"]],
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "get_tab",
+        lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
+    )
+
+    listed = service.list_tabs(user_id=1, workspace="tabs-test")
+    tab_id = str((listed.get("items") or [{}])[0].get("tab_id") or "")
+    out = service.tab_text(user_id=1, workspace="tabs-test", tab_id=tab_id, mode="readable")
+    assert out["ok"] is True
+    assert str(out.get("text") or "") == "Readable content from tab"
+    assert str(out.get("mode") or "") == "readable"
+
+
+def test_tab_evaluate_returns_value(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    page = _FakePage(url="https://example.com/eval", title="Eval")
+    page.eval_payload = {"answer": 42}
+    session = _FakeCdpSession(owner_thread_id=threading.get_ident(), pages=[page])
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: session)
+    tab_rows: dict[str, dict[str, object]] = {}
+    monkeypatch.setattr(browser_automation_module.browser_plane_runtime_store, "upsert_instance", lambda **kwargs: {"instance_id": kwargs["instance_id"]})
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "replace_tabs_for_instance",
+        lambda **kwargs: [tab_rows.setdefault(str(item["tab_id"]), dict(item)) for item in kwargs["tabs"]],
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "get_tab",
+        lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
+    )
+
+    listed = service.list_tabs(user_id=1, workspace="tabs-test")
+    tab_id = str((listed.get("items") or [{}])[0].get("tab_id") or "")
+    out = service.tab_evaluate(user_id=1, workspace="tabs-test", tab_id=tab_id, script="() => 42")
+    assert out["ok"] is True
+    assert out.get("value") == {"answer": 42}
+
+
+def test_tab_screenshot_returns_data_url(monkeypatch):
+    service = BrowserAutomationService()
+    service._cdp_enabled = True
+    service._cdp_endpoint = "http://127.0.0.1:9222"
+    page = _FakePage(url="https://example.com/shot", title="Shot")
+    page.screenshot_bytes = b"png-bits"
+    session = _FakeCdpSession(owner_thread_id=threading.get_ident(), pages=[page])
+    monkeypatch.setattr(service, "_get_session", lambda **kwargs: session)
+    tab_rows: dict[str, dict[str, object]] = {}
+    monkeypatch.setattr(browser_automation_module.browser_plane_runtime_store, "upsert_instance", lambda **kwargs: {"instance_id": kwargs["instance_id"]})
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "replace_tabs_for_instance",
+        lambda **kwargs: [tab_rows.setdefault(str(item["tab_id"]), dict(item)) for item in kwargs["tabs"]],
+    )
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_runtime_store,
+        "get_tab",
+        lambda **kwargs: dict(tab_rows.get(str(kwargs.get("tab_id") or ""), {})),
+    )
+
+    listed = service.list_tabs(user_id=1, workspace="tabs-test")
+    tab_id = str((listed.get("items") or [{}])[0].get("tab_id") or "")
+    out = service.tab_screenshot(user_id=1, workspace="tabs-test", tab_id=tab_id, format="png")
+    assert out["ok"] is True
+    assert str(out.get("data_url") or "").startswith("data:image/png;base64,")
 
 
 def test_state_get_auto_fallbacks_from_cdp_to_external(monkeypatch):
@@ -826,24 +1135,13 @@ def test_use_auto_navigate_prefers_sticky_cdp_without_same_thread_session(monkey
     assert page.goto_calls == ["https://x.com"]
 
 
-def test_use_explicit_external_is_coerced_to_cdp_when_sticky_scope_is_cdp(monkeypatch):
+def test_use_explicit_external_stays_external_when_sticky_scope_is_cdp(monkeypatch):
     service = BrowserAutomationService()
     service._cdp_enabled = True
     service._cdp_endpoint = "http://127.0.0.1:9222"
-    page = _FakePage()
-    cdp_session = _FakeSessionWithPage(owner_thread_id=threading.get_ident(), page=page)
-    cdp_session.mode = "cdp"
     service._set_preferred_scope(user_id=1, workspace="default", scope="cdp")
-    monkeypatch.setattr(service, "_open_external_url", lambda url: (_ for _ in ()).throw(AssertionError(f"unexpected external open: {url}")))
-    monkeypatch.setattr(service, "_get_session", lambda **kwargs: cdp_session)
-
-    states = iter(
-        [
-            {"ok": True, "url": "about:blank", "title": "", "session_id": "bs-test"},
-            {"ok": True, "url": "https://x.com/following", "title": "Following", "session_id": "bs-test"},
-        ]
-    )
-    monkeypatch.setattr(service, "state_get", lambda **kwargs: next(states))
+    opened: list[str] = []
+    monkeypatch.setattr(service, "_open_external_url", lambda url: opened.append(str(url)) or True)
 
     out = service.use(
         user_id=1,
@@ -853,9 +1151,9 @@ def test_use_explicit_external_is_coerced_to_cdp_when_sticky_scope_is_cdp(monkey
         scope="external",
     )
     assert out["ok"] is True
-    assert out["scope"] == "cdp"
-    assert out["external_opened"] is False
-    assert page.goto_calls == ["https://x.com/following"]
+    assert out["scope"] == "external"
+    assert out["external_opened"] is True
+    assert opened == ["https://x.com/following"]
 
 
 def test_state_get_auto_prefers_sticky_cdp_scope(monkeypatch):

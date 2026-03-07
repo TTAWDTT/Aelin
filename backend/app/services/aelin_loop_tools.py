@@ -217,7 +217,7 @@ def _optimize_browser_tool_call(
         requested_scope = str(rewritten.get("scope") or "auto").strip().lower()
         include_dom = bool(rewritten.get("include_dom", False))
         include_a11y = bool(rewritten.get("include_a11y", False))
-        if state.preferred_scope == "cdp" and requested_scope in {"", "auto", "external"}:
+        if state.preferred_scope == "cdp" and requested_scope in {"", "auto"}:
             rewritten["scope"] = "cdp"
         if include_a11y and not include_dom and (state.preferred_scope == "cdp" or state.last_observed_url):
             rewritten["include_dom"] = True
@@ -225,7 +225,7 @@ def _optimize_browser_tool_call(
 
     action = str(rewritten.get("action") or "").strip().lower()
     requested_scope = str(rewritten.get("scope") or "auto").strip().lower()
-    if state.preferred_scope == "cdp" and requested_scope in {"", "auto", "external"}:
+    if state.preferred_scope == "cdp" and requested_scope in {"", "auto"}:
         rewritten["scope"] = "cdp"
 
     if action == "navigate":
@@ -317,6 +317,20 @@ def _preview_item(item: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _preview_browser_target(item: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in ("tag", "role", "text", "selector_hint", "name", "url"):
+        raw = item.get(key)
+        if raw is None:
+            continue
+        out[key] = _truncate_model_text(raw, limit=120)
+    for key in ("x", "y"):
+        raw = item.get(key)
+        if isinstance(raw, (int, float)):
+            out[key] = raw
+    return out
+
+
 def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     tool = str(tool_name or "").strip().lower()
     if not isinstance(payload, dict):
@@ -365,16 +379,46 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
         return base
 
     if tool in {"context_get", "browser_state_get", "browser_session_list", "tracking", "diary", "profile", "device"}:
+        browser_state_payload = payload
+        if tool == "browser_state_get" and isinstance(payload.get("active_state"), dict):
+            browser_state_payload = payload.get("active_state") or payload
         if "summary" in payload:
             base["summary"] = _truncate_model_text(payload.get("summary"), limit=260)
-        if "url" in payload:
-            base["url"] = _truncate_model_text(payload.get("url"), limit=240)
-        if "title" in payload:
-            base["title"] = _truncate_model_text(payload.get("title"), limit=200)
+        if "url" in browser_state_payload:
+            base["url"] = _truncate_model_text(browser_state_payload.get("url"), limit=240)
+        if "title" in browser_state_payload:
+            base["title"] = _truncate_model_text(browser_state_payload.get("title"), limit=200)
         if "total" in payload:
             base["total"] = int(payload.get("total") or 0)
         if "next_call" in payload and isinstance(payload.get("next_call"), dict):
             base["next_call"] = _sanitize_for_log(payload.get("next_call"))
+        if tool == "browser_state_get":
+            for key in ("session_id", "profile_id", "session_scope", "visibility", "ready_state", "scope_note"):
+                if key in browser_state_payload:
+                    base[key] = _truncate_model_text(browser_state_payload.get(key), limit=220)
+            if "is_blank_page" in browser_state_payload:
+                base["is_blank_page"] = bool(browser_state_payload.get("is_blank_page"))
+            if isinstance(browser_state_payload.get("dom_digest"), dict):
+                digest = browser_state_payload.get("dom_digest") or {}
+                base["dom_digest"] = {
+                    "interactive_count": int(digest.get("interactive_count") or 0),
+                    "a11y_count": int(digest.get("a11y_count") or 0),
+                    "ready_state": _truncate_model_text(digest.get("ready_state"), limit=80),
+                }
+            interactive_targets = browser_state_payload.get("interactive_targets")
+            if isinstance(interactive_targets, list):
+                base["interactive_targets"] = [
+                    _preview_browser_target(row)
+                    for row in interactive_targets[:_MODEL_LIST_PREVIEW_ITEMS]
+                    if isinstance(row, dict)
+                ]
+            a11y_nodes = browser_state_payload.get("a11y_nodes")
+            if isinstance(a11y_nodes, list):
+                base["a11y_nodes"] = [
+                    _preview_browser_target(row)
+                    for row in a11y_nodes[:_MODEL_LIST_PREVIEW_ITEMS]
+                    if isinstance(row, dict)
+                ]
         items = payload.get("items")
         if isinstance(items, list):
             base["items"] = [

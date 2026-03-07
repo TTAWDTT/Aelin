@@ -3,11 +3,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy.orm import Session
-
-from app.models import User
 from app.schemas import AelinBrowserConfirmRequest, AelinChatRequest
-from app.services.browser_automation import browser_automation_service
+from app.services.aelin_chat_worker import run_aelin_chat_in_worker_thread
+from app.services.browser_plane import browser_plane_adapter
 
 
 _LOG = logging.getLogger(__name__)
@@ -15,12 +13,10 @@ _LOG = logging.getLogger(__name__)
 
 def dispatch_followup_chat(
     payload: AelinChatRequest,
-    db: Session,
-    current_user: User,
+    *,
+    user_id: int,
 ):
-    from app.routers import aelin_chat as aelin_chat_router
-
-    return aelin_chat_router._dispatch_aelin_chat(payload, db, current_user, event_cb=None)
+    return run_aelin_chat_in_worker_thread(payload, user_id=user_id)
 
 
 def build_followup_request(
@@ -80,8 +76,7 @@ def continue_after_browser_confirm(
     resume_query: str,
     continue_after_confirm: bool,
     workspace: str,
-    db: Session,
-    current_user: User,
+    current_user_id: int,
 ) -> tuple[bool, str, dict[str, Any]]:
     if not ok or not continue_after_confirm:
         return False, "", {}
@@ -98,15 +93,14 @@ def continue_after_browser_confirm(
         followup_request = build_followup_request(payload=followup_payload, workspace=workspace)
         followup = dispatch_followup_chat(
             followup_request,
-            db,
-            current_user,
+            user_id=int(current_user_id),
         )
         return True, "", followup.model_dump() if followup is not None else {}
     except Exception as exc:
         continuation_error = str(exc)[:200]
         _LOG.warning(
             "aelin_browser_confirm continuation_failed uid=%s workspace=%s error=%s",
-            int(current_user.id),
+            int(current_user_id),
             workspace,
             continuation_error,
         )
@@ -120,7 +114,7 @@ def resolve_confirm_login_state(
     continuation_error: str,
     payload: AelinBrowserConfirmRequest,
     workspace: str,
-    current_user: User,
+    current_user_id: int,
     profile_id: str,
 ) -> dict[str, Any]:
     if not ok or not str(payload.login_request_id or "").strip():
@@ -132,8 +126,8 @@ def resolve_confirm_login_state(
     elif continuation_error:
         resolved_status = "continue_failed"
 
-    return browser_automation_service.resolve_login_pending(
-        user_id=int(current_user.id),
+    return browser_plane_adapter.resolve_login_pending(
+        user_id=int(current_user_id),
         workspace=workspace,
         request_id=str(payload.login_request_id or ""),
         profile_id=profile_id,
