@@ -519,3 +519,50 @@ class BrowserPlaneTask(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BrowserPlaneInstance(Base):
+    __tablename__ = "browser_plane_instances"
+    __table_args__ = (
+        UniqueConstraint("instance_id", name="uq_browser_plane_instance_instance_id"),
+        Index("ix_browser_plane_instance_user_workspace_updated", "user_id", "workspace", "updated_at"),
+        Index("ix_browser_plane_instance_user_profile_updated", "user_id", "profile_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(96), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    profile_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    mode: Mapped[str] = mapped_column(String(24), default="cdp", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="ready", index=True)
+    current_tab_id: Mapped[str] = mapped_column(String(120), default="")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BrowserPlaneTab(Base):
+    __tablename__ = "browser_plane_tabs"
+    __table_args__ = (
+        UniqueConstraint("tab_id", name="uq_browser_plane_tab_tab_id"),
+        Index("ix_browser_plane_tab_instance_updated", "instance_id", "updated_at"),
+        Index("ix_browser_plane_tab_user_workspace_updated", "user_id", "workspace", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tab_id: Mapped[str] = mapped_column(String(120), index=True)
+    instance_id: Mapped[str] = mapped_column(String(96), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    profile_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    page_index: Mapped[int] = mapped_column(Integer, default=0)
+    url: Mapped[str] = mapped_column(Text, default="")
+    title: Mapped[str] = mapped_column(String(255), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

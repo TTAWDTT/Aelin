@@ -21,9 +21,15 @@ from app.schemas import (
     AelinAttachmentUploadResponse,
     AelinBrowserConfirmRequest,
     AelinBrowserConfirmResponse,
+    AelinBrowserInstanceItem,
+    AelinBrowserInstanceListResponse,
     AelinBrowserLoginCheckpointItem,
     AelinBrowserLoginCheckpointListResponse,
     AelinBrowserSnapshotResponse,
+    AelinBrowserTabItem,
+    AelinBrowserTabListResponse,
+    AelinBrowserTabOpenRequest,
+    AelinBrowserTabOpenResponse,
     AelinBrowserTaskCreateRequest,
     AelinBrowserTaskItem,
     AelinBrowserTaskResponse,
@@ -375,5 +381,99 @@ def get_browser_snapshot(
         task_id=str(payload.get("task_id") or task_id or ""),
         profile_id=str(payload.get("profile_id") or profile_id or ""),
         snapshot=payload,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/instances", response_model=AelinBrowserInstanceListResponse)
+def list_browser_instances(
+    workspace: str = "default",
+    profile_id: str = "",
+    mode: str = "cdp",
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.list_instances(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        profile_id=str(profile_id or ""),
+        mode=str(mode or "cdp"),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserInstanceListResponse(
+        total=len(items),
+        items=[AelinBrowserInstanceItem(**item) for item in items],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tabs", response_model=AelinBrowserTabListResponse)
+def list_browser_tabs(
+    workspace: str = "default",
+    profile_id: str = "",
+    mode: str = "cdp",
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.list_tabs(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        profile_id=str(profile_id or ""),
+        mode=str(mode or "cdp"),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserTabListResponse(
+        total=len(items),
+        instance_id=str(result.get("instance_id") or "") if isinstance(result, dict) else "",
+        profile_id=str(result.get("profile_id") or "") if isinstance(result, dict) else "",
+        items=[AelinBrowserTabItem(**item) for item in items],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tabs/open", response_model=AelinBrowserTabOpenResponse)
+def open_browser_tab(
+    payload: AelinBrowserTabOpenRequest,
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.open_tab(
+        user_id=int(current_user.id),
+        workspace=str(payload.workspace or "default"),
+        url=str(payload.url or ""),
+        profile_id=str(payload.profile_id or ""),
+        mode=str(payload.mode or "cdp"),
+    )
+    item = result.get("item") if isinstance(result, dict) and isinstance(result.get("item"), dict) else {}
+    return AelinBrowserTabOpenResponse(
+        ok=bool(result.get("ok", False)) if isinstance(result, dict) else False,
+        instance_id=str(result.get("instance_id") or "") if isinstance(result, dict) else "",
+        profile_id=str(result.get("profile_id") or "") if isinstance(result, dict) else "",
+        item=AelinBrowserTabItem(**item) if item else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tabs/{tab_id}/snapshot", response_model=AelinBrowserSnapshotResponse)
+def get_browser_tab_snapshot(
+    tab_id: str,
+    workspace: str = "default",
+    include_dom: bool = False,
+    include_a11y: bool = False,
+    max_targets: int = 30,
+    current_user: User = Depends(get_current_user),
+):
+    payload = browser_plane_adapter.tab_snapshot(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        tab_id=str(tab_id or ""),
+        include_dom=bool(include_dom),
+        include_a11y=bool(include_a11y),
+        max_targets=max(1, min(60, int(max_targets or 30))),
+    )
+    snap = dict(payload or {}) if isinstance(payload, dict) else {}
+    return AelinBrowserSnapshotResponse(
+        ok=bool(snap.get("ok", False)),
+        scope=str(snap.get("scope") or "cdp"),
+        task_id="",
+        profile_id=str(snap.get("profile_id") or ""),
+        snapshot=snap,
         generated_at=datetime.now(timezone.utc),
     )

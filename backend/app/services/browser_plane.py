@@ -298,5 +298,75 @@ class BrowserPlaneAdapter:
                 snap["task_id"] = str(task_id)
         return snap
 
+    def list_instances(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.list_instances,
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile_id,
+            mode=mode,
+        )
+
+    def list_tabs(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.list_tabs,
+            user_id=user_id,
+            workspace=workspace,
+            profile_id=profile_id,
+            mode=mode,
+        )
+
+    def open_tab(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        url: str = "",
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.open_tab,
+            user_id=user_id,
+            workspace=workspace,
+            url=url,
+            profile_id=profile_id,
+            mode=mode,
+        )
+
+    def tab_snapshot(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        include_dom: bool = False,
+        include_a11y: bool = False,
+        max_targets: int = 30,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.tab_snapshot,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            include_dom=include_dom,
+            include_a11y=include_a11y,
+            max_targets=max_targets,
+        )
+
 
 browser_plane_adapter = BrowserPlaneAdapter()

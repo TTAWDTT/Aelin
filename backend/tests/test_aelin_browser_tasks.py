@@ -152,3 +152,103 @@ def test_browser_snapshot_endpoint_uses_task_context(monkeypatch):
     assert bool(payload.get("ok")) is True
     assert str(payload.get("task_id") or "") == task_id
     assert str((payload.get("snapshot") or {}).get("url") or "") == "https://example.com"
+
+
+def test_browser_instances_and_tabs_endpoints(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "list_instances",
+        lambda **kwargs: {
+            "ok": True,
+            "items": [
+                {
+                    "instance_id": "binst-1",
+                    "profile_id": "default:default",
+                    "session_id": "bs-1",
+                    "workspace": "default",
+                    "mode": "cdp",
+                    "status": "ready",
+                    "current_tab_id": "btab-1",
+                    "created_at": 1.0,
+                    "updated_at": 2.0,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "list_tabs",
+        lambda **kwargs: {
+            "ok": True,
+            "instance_id": "binst-1",
+            "profile_id": "default:default",
+            "items": [
+                {
+                    "tab_id": "btab-1",
+                    "instance_id": "binst-1",
+                    "profile_id": "default:default",
+                    "session_id": "bs-1",
+                    "workspace": "default",
+                    "page_index": 0,
+                    "url": "https://example.com",
+                    "title": "Example",
+                    "is_active": True,
+                    "status": "open",
+                    "created_at": 1.0,
+                    "updated_at": 2.0,
+                }
+            ],
+            "total": 1,
+        },
+    )
+
+    instances = client.get("/api/v1/aelin/agent/browser/instances?workspace=default", headers=headers)
+    assert instances.status_code == 200, instances.text
+    assert int(instances.json().get("total") or 0) == 1
+
+    tabs = client.get("/api/v1/aelin/agent/browser/tabs?workspace=default", headers=headers)
+    assert tabs.status_code == 200, tabs.text
+    assert int(tabs.json().get("total") or 0) == 1
+    assert str((tabs.json().get("items") or [{}])[0].get("tab_id") or "") == "btab-1"
+
+
+def test_browser_open_tab_endpoint(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "open_tab",
+        lambda **kwargs: {
+            "ok": True,
+            "instance_id": "binst-1",
+            "profile_id": "default:default",
+            "item": {
+                "tab_id": "btab-2",
+                "instance_id": "binst-1",
+                "profile_id": "default:default",
+                "session_id": "bs-1",
+                "workspace": "default",
+                "page_index": 1,
+                "url": "https://example.com/new",
+                "title": "title:https://example.com/new",
+                "is_active": True,
+                "status": "open",
+                "created_at": 1.0,
+                "updated_at": 2.0,
+            },
+        },
+    )
+
+    opened = client.post(
+        "/api/v1/aelin/agent/browser/tabs/open",
+        json={"workspace": "default", "url": "https://example.com/new", "mode": "cdp"},
+        headers=headers,
+    )
+    assert opened.status_code == 200, opened.text
+    payload = opened.json()
+    assert bool(payload.get("ok")) is True
+    assert str((payload.get("item") or {}).get("tab_id") or "") == "btab-2"

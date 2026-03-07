@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from app.settings import settings
 from app.services.browser_plane_store import browser_plane_store
+from app.services.browser_plane_runtime_store import browser_plane_runtime_store
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore
@@ -2001,6 +2002,209 @@ class BrowserAutomationService:
                 include_details=False,
             )
         return out
+
+    def _browser_instance_id(self, *, user_id: int, workspace: str, profile_id: str, mode: str) -> str:
+        workspace_segment = self._sanitize_profile_segment(_normalize_workspace(workspace), default="default")
+        profile_segment = self._sanitize_profile_segment(profile_id or "default", default="default")
+        mode_segment = self._sanitize_profile_segment(mode or "cdp", default="cdp")
+        return f"binst-{int(user_id)}-{workspace_segment}-{profile_segment}-{mode_segment}"[:96]
+
+    def _browser_tab_id(self, *, instance_id: str, page_index: int) -> str:
+        return f"btab-{str(instance_id or '')[:96]}-{max(0, int(page_index or 0))}"[:120]
+
+    @staticmethod
+    def _page_brief(page: Any) -> tuple[str, str]:
+        url = str(getattr(page, "url", "") or "").strip()[:4000]
+        title = ""
+        try:
+            title = str(page.title() or "").strip()[:255]
+        except Exception:
+            title = ""
+        return url, title
+
+    def _collect_session_tabs(
+        self,
+        *,
+        session: BrowserSession,
+        instance_id: str,
+    ) -> list[dict[str, Any]]:
+        pages = list(getattr(getattr(session, "context", None), "pages", []) or [])
+        active_page = getattr(session, "page", None)
+        if not pages and active_page is not None:
+            pages = [active_page]
+        if active_page is None and pages:
+            active_page = pages[-1]
+        tabs: list[dict[str, Any]] = []
+        for idx, page in enumerate(pages):
+            url, title = self._page_brief(page)
+            tabs.append(
+                {
+                    "tab_id": self._browser_tab_id(instance_id=instance_id, page_index=idx),
+                    "page_index": int(idx),
+                    "url": url,
+                    "title": title,
+                    "is_active": bool(page is active_page),
+                    "status": "open",
+                }
+            )
+        return tabs
+
+    def _sync_session_runtime_rows(self, *, session: BrowserSession) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        instance_id = self._browser_instance_id(
+            user_id=int(getattr(session, "user_id", 0) or 0),
+            workspace=str(getattr(session, "workspace", "default") or "default"),
+            profile_id=str(getattr(session, "profile_id", "") or ""),
+            mode=str(getattr(session, "mode", "cdp") or "cdp"),
+        )
+        tabs = self._collect_session_tabs(session=session, instance_id=instance_id)
+        active_tab = next((item for item in tabs if bool(item.get("is_active"))), {})
+        instance = browser_plane_runtime_store.upsert_instance(
+            instance_id=instance_id,
+            user_id=int(getattr(session, "user_id", 0) or 0),
+            workspace=str(getattr(session, "workspace", "default") or "default"),
+            profile_id=str(getattr(session, "profile_id", "") or ""),
+            session_id=str(getattr(session, "session_id", "") or ""),
+            mode=str(getattr(session, "mode", "cdp") or "cdp"),
+            status="ready",
+            current_tab_id=str(active_tab.get("tab_id") or ""),
+        )
+        persisted_tabs = browser_plane_runtime_store.replace_tabs_for_instance(
+            instance_id=instance_id,
+            user_id=int(getattr(session, "user_id", 0) or 0),
+            workspace=str(getattr(session, "workspace", "default") or "default"),
+            profile_id=str(getattr(session, "profile_id", "") or ""),
+            session_id=str(getattr(session, "session_id", "") or ""),
+            tabs=tabs,
+        )
+        return instance, persisted_tabs
+
+    def list_instances(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        if str(mode or "cdp").strip().lower() != "cdp":
+            return self._error_payload(error="unsupported_instance_mode", scope=str(mode or ""))
+        if not self._cdp_enabled or not self._cdp_endpoint:
+            return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile.profile_id)
+        with session.lock:
+            session.touch()
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "workspace": _normalize_workspace(workspace),
+            "items": [instance],
+            "total": 1,
+            "tabs_total": len(tabs),
+        }
+
+    def list_tabs(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        if str(mode or "cdp").strip().lower() != "cdp":
+            return self._error_payload(error="unsupported_tab_mode", scope=str(mode or ""))
+        if not self._cdp_enabled or not self._cdp_endpoint:
+            return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile.profile_id)
+        with session.lock:
+            session.touch()
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        return {
+            "ok": True,
+            "workspace": _normalize_workspace(workspace),
+            "instance_id": str(instance.get("instance_id") or ""),
+            "profile_id": str(profile.profile_id or ""),
+            "items": tabs,
+            "total": len(tabs),
+        }
+
+    def open_tab(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        url: str = "",
+        profile_id: str = "",
+        mode: str = "cdp",
+    ) -> dict[str, Any]:
+        if str(mode or "cdp").strip().lower() != "cdp":
+            return self._error_payload(error="unsupported_tab_mode", scope=str(mode or ""))
+        if not self._cdp_enabled or not self._cdp_endpoint:
+            return self._error_payload(error="cdp_unavailable", scope="cdp", requires_cdp=True)
+        profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
+        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile.profile_id)
+        with session.lock:
+            session.touch()
+            page = session.context.new_page()
+            page.set_default_timeout(self._default_timeout_ms)
+            if str(url or "").strip():
+                page.goto(str(url or "").strip(), wait_until="domcontentloaded", timeout=self._default_timeout_ms)
+            session.page = page
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+        active_tab = next((item for item in tabs if bool(item.get("is_active"))), {})
+        return {
+            "ok": True,
+            "workspace": _normalize_workspace(workspace),
+            "instance_id": str(instance.get("instance_id") or ""),
+            "profile_id": str(profile.profile_id or ""),
+            "item": active_tab,
+        }
+
+    def tab_snapshot(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        include_dom: bool = False,
+        include_a11y: bool = False,
+        max_targets: int = 30,
+    ) -> dict[str, Any]:
+        tab = browser_plane_runtime_store.get_tab(
+            tab_id=str(tab_id or ""),
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        if not tab:
+            return self._error_payload(error="tab_not_found", scope="cdp")
+        profile_id = str(tab.get("profile_id") or "").strip()
+        session = self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=profile_id)
+        page_index = max(0, int(tab.get("page_index") or 0))
+        with session.lock:
+            session.touch()
+            pages = list(getattr(getattr(session, "context", None), "pages", []) or [])
+            if not pages or page_index >= len(pages):
+                return self._error_payload(error="tab_not_found", scope="cdp")
+            page = pages[page_index]
+            session.page = page
+            instance, tabs = self._sync_session_runtime_rows(session=session)
+            snap = self._snapshot_page(
+                page=page,
+                mode="cdp",
+                include_dom=bool(include_dom),
+                include_a11y=bool(include_a11y),
+                max_targets=_clamp_int(max_targets, 30, low=1, high=60),
+            )
+        return {
+            "ok": True,
+            "scope": "cdp",
+            "instance_id": str(instance.get("instance_id") or ""),
+            "tab_id": str(tab.get("tab_id") or ""),
+            "profile_id": str(tab.get("profile_id") or ""),
+            "tabs_total": len(tabs),
+            **snap,
+        }
 
     def _snapshot_page(
         self,
