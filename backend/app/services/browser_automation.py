@@ -17,6 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.settings import settings
+from app.services.browser_plane_store import browser_plane_store
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore
@@ -338,7 +339,23 @@ class BrowserAutomationService:
         )
         with self._lock:
             self._login_states[request_id] = state
-        return self._login_state_payload(state)
+        payload = self._login_state_payload(state)
+        browser_plane_store.upsert_checkpoint(
+            request_id=request_id,
+            user_id=int(user_id),
+            workspace=workspace,
+            profile_id=str(profile.profile_id or ""),
+            domain=str(domain or ""),
+            reason=str(reason or "auth_guard"),
+            status="awaiting_login",
+            next_call=dict(next_call or {}),
+            resume_query=str(resume_query or ""),
+            resume_request=dict(resume_request or {}),
+            continue_after_confirm=bool(continue_after_confirm),
+            created_at=float(now),
+            updated_at=float(now),
+        )
+        return payload
 
     def get_login_state(
         self,
@@ -354,12 +371,19 @@ class BrowserAutomationService:
         with self._lock:
             state = self._login_states.get(clean_request_id)
             if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            return self._login_state_payload(state)
+                state = None
+            else:
+                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                    return {}
+                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                    return {}
+                return self._login_state_payload(state)
+        return browser_plane_store.get_checkpoint(
+            request_id=clean_request_id,
+            user_id=int(user_id),
+            workspace=workspace,
+            profile_id=profile_id,
+        )
 
     def attach_login_resume_context(
         self,
@@ -377,20 +401,31 @@ class BrowserAutomationService:
             return {}
         with self._lock:
             state = self._login_states.get(clean_request_id)
-            if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            if str(resume_query or "").strip():
-                state.resume_query = str(resume_query or "")[:500]
-            if isinstance(resume_request, dict) and resume_request:
-                state.resume_request = dict(resume_request)
-            if continue_after_confirm is not None:
-                state.continue_after_confirm = bool(continue_after_confirm)
-            state.touch()
-            return self._login_state_payload(state)
+            if state is not None:
+                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                    return {}
+                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                    return {}
+                if str(resume_query or "").strip():
+                    state.resume_query = str(resume_query or "")[:500]
+                if isinstance(resume_request, dict) and resume_request:
+                    state.resume_request = dict(resume_request)
+                if continue_after_confirm is not None:
+                    state.continue_after_confirm = bool(continue_after_confirm)
+                state.touch()
+                payload = self._login_state_payload(state)
+            else:
+                payload = {}
+        stored_payload = browser_plane_store.update_checkpoint(
+            request_id=clean_request_id,
+            user_id=int(user_id),
+            workspace=workspace,
+            profile_id=profile_id,
+            resume_query=str(resume_query or ""),
+            resume_request=resume_request if isinstance(resume_request, dict) else None,
+            continue_after_confirm=continue_after_confirm,
+        )
+        return payload or stored_payload
 
     def list_login_states(
         self,
@@ -418,7 +453,24 @@ class BrowserAutomationService:
                     continue
                 rows.append(state)
         rows.sort(key=lambda item: float(item.updated_at or item.created_at or 0.0), reverse=True)
-        return [self._login_state_payload(item) for item in rows[:max_items]]
+        memory_payloads = [self._login_state_payload(item) for item in rows[:max_items]]
+        stored_payloads = browser_plane_store.list_checkpoints(
+            user_id=int(user_id),
+            workspace=workspace,
+            statuses=list(allow_statuses) if allow_statuses else None,
+            limit=max_items,
+        )
+        merged: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for payload in [*memory_payloads, *stored_payloads]:
+            request_id = str(payload.get("request_id") or "").strip()
+            if not request_id or request_id in seen_ids:
+                continue
+            seen_ids.add(request_id)
+            merged.append(payload)
+            if len(merged) >= max_items:
+                break
+        return merged
 
     def cancel_login_pending(
         self,
@@ -450,14 +502,23 @@ class BrowserAutomationService:
             return {}
         with self._lock:
             state = self._login_states.get(clean_request_id)
-            if state is None:
-                return {}
-            if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                return {}
-            if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                return {}
-            state.touch(status=str(status or "resolved")[:32])
-            return self._login_state_payload(state)
+            if state is not None:
+                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
+                    return {}
+                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
+                    return {}
+                state.touch(status=str(status or "resolved")[:32])
+                payload = self._login_state_payload(state)
+            else:
+                payload = {}
+        stored_payload = browser_plane_store.update_checkpoint(
+            request_id=clean_request_id,
+            user_id=int(user_id),
+            workspace=workspace,
+            profile_id=profile_id,
+            status=str(status or "resolved")[:32],
+        )
+        return payload or stored_payload
 
     def _peek_session(self, *, user_id: int, workspace: str, mode: str, profile_id: str = "") -> BrowserSession | None:
         key = self._session_key(user_id=user_id, workspace=workspace, mode=mode, profile_id=profile_id)

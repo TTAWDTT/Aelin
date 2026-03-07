@@ -468,3 +468,28 @@ class AttachmentChunk(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     attachment: Mapped["AttachmentDocument"] = relationship(back_populates="chunks")
+
+
+class BrowserPlaneCheckpoint(Base):
+    __tablename__ = "browser_plane_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("request_id", name="uq_browser_plane_checkpoint_request"),
+        Index("ix_browser_plane_checkpoint_user_workspace_status_updated", "user_id", "workspace", "status", "updated_at"),
+        Index("ix_browser_plane_checkpoint_user_updated", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    profile_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    domain: Mapped[str] = mapped_column(String(120), default="")
+    reason: Mapped[str] = mapped_column(String(80), default="")
+    status: Mapped[str] = mapped_column(String(32), default="awaiting_login", index=True)
+    next_call_json: Mapped[str] = mapped_column(Text, default="{}")
+    resume_query: Mapped[str] = mapped_column(Text, default="")
+    resume_request_json: Mapped[str] = mapped_column(Text, default="{}")
+    continue_after_confirm: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
