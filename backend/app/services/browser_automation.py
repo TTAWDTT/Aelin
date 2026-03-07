@@ -2526,10 +2526,6 @@ class BrowserAutomationService:
                         },
                     }
                 runtime_scope = "cdp"
-        elif runtime_scope == "external" and sticky_scope == "cdp" and self._cdp_enabled:
-            runtime_scope = "cdp"
-            prefer_existing_cdp = True
-
         if runtime_scope in {"system", "all"}:
             return self._error_payload(error="unsupported_scope_for_use", action=act, scope=runtime_scope)
 

@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import create_session, get_session
+from app.db import get_session
 from app.models import AttachmentDocument, User
 from app.routers.aelin import _dispatch_aelin_chat, _normalize_search_mode
 from app.routers.aelin_text_helpers import _now_ms, _sse_event
@@ -28,7 +28,8 @@ from app.schemas import (
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 from app.services.aelin_browser_confirm import confirm_browser_action_request, execute_confirmed_browser_call
-from app.services.browser_automation import browser_automation_service
+from app.services.aelin_chat_worker import run_aelin_chat_with_local_session
+from app.services.browser_plane import browser_plane_adapter
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -151,7 +152,6 @@ def aelin_chat_stream(
             event_queue.put((event, data))
 
         def _worker() -> None:
-            local_db = create_session()
             try:
                 _LOG.info(
                     "aelin_stream worker_start req=%s uid=%s workspace=%s query=%s",
@@ -160,8 +160,11 @@ def aelin_chat_stream(
                     str(payload.workspace or "default")[:64],
                     _preview(str(payload.query or "")),
                 )
-                user = local_db.get(User, int(current_user.id)) or current_user
-                result = _dispatch_aelin_chat(payload, local_db, user, event_cb=_push)
+                result = run_aelin_chat_with_local_session(
+                    payload,
+                    user_id=int(current_user.id),
+                    event_cb=_push,
+                )
                 _LOG.info(
                     "aelin_stream worker_final req=%s uid=%s answer_len=%s actions=%s traces=%s",
                     req_id,
@@ -180,10 +183,6 @@ def aelin_chat_stream(
                 )
                 _push("error", {"message": str(e)[:500] or "stream error"})
             finally:
-                try:
-                    local_db.close()
-                except Exception:
-                    pass
                 _push("done", {"ts": _now_ms(), "status": done_token})
                 _LOG.info(
                     "aelin_stream worker_done req=%s uid=%s duration_ms=%s",
@@ -269,7 +268,7 @@ def list_browser_login_checkpoints(
 ):
     normalized_workspace = str(workspace or "").strip()[:64] or "default"
     statuses = [str(item).strip().lower() for item in str(status or "").split(",") if str(item).strip()]
-    items = browser_automation_service.list_login_states(
+    items = browser_plane_adapter.list_login_states(
         user_id=int(current_user.id),
         workspace=normalized_workspace,
         statuses=statuses,

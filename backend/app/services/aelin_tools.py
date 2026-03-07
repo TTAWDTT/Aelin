@@ -18,8 +18,7 @@ from app.services.device_center import (
     DeviceScreenCaptureError,
     device_capabilities as device_capabilities_info,
 )
-from app.services.browser_automation import browser_automation_service
-from app.services import browser_exec
+from app.services.browser_plane import browser_plane_adapter
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.tracking_autonomy import TrackingAutonomyService
@@ -98,16 +97,6 @@ def _result_error(message: str) -> dict[str, Any]:
 
 def _result_items(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
     return _result_ok(items=items, total=len(items), **extra)
-
-
-def _has_running_event_loop() -> bool:
-    return browser_exec.has_running_event_loop()
-
-
-def _run_sync_playwright_call(callable_obj, *args, **kwargs):
-    if not _has_running_event_loop():
-        return callable_obj(*args, **kwargs)
-    return browser_exec.run_in_browser_thread(callable_obj, *args, timeout=45, **kwargs)
 
 
 def should_attempt_aelin_tools(query: str) -> bool:
@@ -698,8 +687,7 @@ class AelinToolHub:
         max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = _run_sync_playwright_call(
-                browser_automation_service.list_sessions,
+            result = browser_plane_adapter.list_sessions(
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -718,8 +706,7 @@ class AelinToolHub:
         max_items = _safe_int(args.get("max_items"), 0, low=0, high=200)
         pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
         try:
-            result = _run_sync_playwright_call(
-                browser_automation_service.state_get,
+            result = browser_plane_adapter.state_get(
                 user_id=self.user_id,
                 workspace=self.workspace,
                 scope=scope,
@@ -754,8 +741,7 @@ class AelinToolHub:
             "confirm": bool(args.get("confirm", False)),
         }
         try:
-            result = _run_sync_playwright_call(
-                browser_automation_service.use,
+            result = browser_plane_adapter.use(
                 user_id=self.user_id,
                 workspace=self.workspace,
                 action=action,

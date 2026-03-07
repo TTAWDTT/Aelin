@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.browser_automation import browser_automation_service
-from app.services.browser_exec import run_sync_playwright_call
+from app.services.browser_plane import browser_plane_adapter
 
 
 def is_cdp_restart_error(error: str) -> bool:
@@ -123,26 +122,22 @@ def execute_confirmed_browser_call(
 ) -> dict[str, Any]:
     profile_value = str(profile_id or "").strip()
     if tool_name == "browser_use":
-        kwargs: dict[str, Any] = {
-            "user_id": user_id,
-            "workspace": workspace,
-            "action": action,
-            "args": clean_args,
-            "scope": scope,
-        }
-        if profile_value:
-            kwargs["profile_id"] = profile_value
-        return run_sync_playwright_call(browser_automation_service.use, **kwargs)
-    kwargs = {
-        "user_id": user_id,
-        "workspace": workspace,
-        "scope": scope,
-        "include_dom": bool(clean_args.get("include_dom", False)),
-        "include_a11y": bool(clean_args.get("include_a11y", False)),
-        "max_targets": int(clean_args.get("max_targets") or 30),
-        "max_items": int(clean_args.get("max_items") or 20),
-        "pid": int(clean_args.get("pid") or 0),
-    }
-    if profile_value:
-        kwargs["profile_id"] = profile_value
-    return run_sync_playwright_call(browser_automation_service.state_get, **kwargs)
+        return browser_plane_adapter.use(
+            user_id=user_id,
+            workspace=workspace,
+            action=action,
+            args=clean_args,
+            scope=scope,
+            profile_id=profile_value,
+        )
+    return browser_plane_adapter.state_get(
+        user_id=user_id,
+        workspace=workspace,
+        scope=scope,
+        include_dom=bool(clean_args.get("include_dom", False)),
+        include_a11y=bool(clean_args.get("include_a11y", False)),
+        max_targets=int(clean_args.get("max_targets") or 30),
+        max_items=int(clean_args.get("max_items") or 20),
+        pid=int(clean_args.get("pid") or 0),
+        profile_id=profile_value,
+    )

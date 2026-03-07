@@ -75,12 +75,14 @@ def _build_resume_request_payload(
     workspace: str,
     history_turns: list[dict[str, str]] | None,
     images: list[dict[str, str]] | None,
+    attachment_ids: list[int] | None,
 ) -> dict[str, Any]:
     return {
         "query": str(query or "")[:1200],
         "workspace": str(workspace or "default")[:64],
         "use_memory": True,
         "history": list(history_turns or [])[:20],
+        "attachment_ids": [int(item) for item in list(attachment_ids or [])[:20] if int(item) > 0],
         # The actual image binaries are not required for login resumption.
         "images": [],
         "image_summaries": _summarize_resume_images(images),
@@ -155,6 +157,7 @@ class AelinAgentLoop:
                 workspace=str(self._tool_hub.workspace or "default"),
                 history_turns=history_turns,
                 images=images,
+                attachment_ids=attachment_ids,
             ),
             ensure_ascii=False,
             separators=(",", ":"),
