@@ -4,6 +4,7 @@ from uuid import uuid4
 from typing import Any
 
 from app.services.browser_automation import browser_automation_service
+from app.services.browser_plane_artifact_store import browser_plane_artifact_store
 from app.services.browser_exec import run_sync_playwright_call
 from app.services.browser_plane_lock_store import browser_plane_lock_store
 from app.services.browser_plane_task_store import browser_plane_task_store
@@ -288,6 +289,17 @@ class BrowserPlaneAdapter:
             checkpoint_request_id=checkpoint_request_id,
             profile_id=str(result.get("profile_id") or profile_id or ""),
         )
+        browser_plane_artifact_store.create_artifact(
+            user_id=int(user_id),
+            workspace=workspace,
+            task_id=task_id,
+            tab_id=tab_id,
+            profile_id=str(result.get("profile_id") or profile_id or ""),
+            kind="task_result",
+            title=f"{kind}:{action}:{status}",
+            text_content=str(result.get("effect_summary") or result.get("error") or "")[:4000],
+            data=result if isinstance(result, dict) else {},
+        )
         return updated
 
     def snapshot_get(
@@ -407,7 +419,7 @@ class BrowserPlaneAdapter:
         mode: str = "raw",
         max_chars: int = 12000,
     ) -> dict[str, Any]:
-        return run_sync_playwright_call(
+        result = run_sync_playwright_call(
             browser_automation_service.tab_text,
             user_id=user_id,
             workspace=workspace,
@@ -415,6 +427,18 @@ class BrowserPlaneAdapter:
             mode=mode,
             max_chars=max_chars,
         )
+        if isinstance(result, dict) and bool(result.get("ok")):
+            browser_plane_artifact_store.create_artifact(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                profile_id=str(result.get("profile_id") or ""),
+                kind="tab_text",
+                title=f"text:{str(result.get('mode') or mode)}",
+                text_content=str(result.get("text") or "")[:12000],
+                data=result,
+            )
+        return result
 
     def tab_evaluate(
         self,
@@ -424,13 +448,25 @@ class BrowserPlaneAdapter:
         tab_id: str,
         script: str,
     ) -> dict[str, Any]:
-        return run_sync_playwright_call(
+        result = run_sync_playwright_call(
             browser_automation_service.tab_evaluate,
             user_id=user_id,
             workspace=workspace,
             tab_id=tab_id,
             script=script,
         )
+        if isinstance(result, dict) and bool(result.get("ok")):
+            browser_plane_artifact_store.create_artifact(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                profile_id=str(result.get("profile_id") or ""),
+                kind="tab_eval",
+                title="evaluate",
+                text_content="",
+                data=result,
+            )
+        return result
 
     def tab_screenshot(
         self,
@@ -441,7 +477,7 @@ class BrowserPlaneAdapter:
         format: str = "jpeg",
         quality: int = 80,
     ) -> dict[str, Any]:
-        return run_sync_playwright_call(
+        result = run_sync_playwright_call(
             browser_automation_service.tab_screenshot,
             user_id=user_id,
             workspace=workspace,
@@ -449,6 +485,38 @@ class BrowserPlaneAdapter:
             format=format,
             quality=quality,
         )
+        if isinstance(result, dict) and bool(result.get("ok")):
+            browser_plane_artifact_store.create_artifact(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                profile_id=str(result.get("profile_id") or ""),
+                kind="tab_screenshot",
+                title=f"screenshot:{str(result.get('format') or format)}",
+                text_content="",
+                data=result,
+            )
+        return result
+
+    def list_artifacts(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        task_id: str = "",
+        tab_id: str = "",
+        kinds: list[str] | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        items = browser_plane_artifact_store.list_artifacts(
+            user_id=int(user_id),
+            workspace=workspace,
+            task_id=task_id,
+            tab_id=tab_id,
+            kinds=kinds,
+            limit=limit,
+        )
+        return {"ok": True, "workspace": workspace, "items": items, "total": len(items)}
 
     def get_tab_lock(
         self,

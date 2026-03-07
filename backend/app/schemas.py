@@ -630,6 +630,25 @@ class AelinBrowserTabLockListResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinBrowserArtifactItem(BaseModel):
+    artifact_id: int
+    workspace: str = "default"
+    task_id: str = ""
+    tab_id: str = ""
+    profile_id: str = ""
+    kind: str = "result"
+    title: str = ""
+    text_content: str = ""
+    data: dict[str, Any] = Field(default_factory=dict)
+    created_at: float = 0.0
+
+
+class AelinBrowserArtifactListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserArtifactItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None

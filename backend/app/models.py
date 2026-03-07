@@ -586,3 +586,26 @@ class BrowserPlaneTabLock(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BrowserPlaneArtifact(Base):
+    __tablename__ = "browser_plane_artifacts"
+    __table_args__ = (
+        Index("ix_browser_plane_artifact_user_workspace_created", "user_id", "workspace", "created_at"),
+        Index("ix_browser_plane_artifact_task_created", "task_id", "created_at"),
+        Index("ix_browser_plane_artifact_tab_created", "tab_id", "created_at"),
+        Index("ix_browser_plane_artifact_kind_created", "kind", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    task_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    tab_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    profile_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="result", index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    text_content: Mapped[str] = mapped_column(Text, default="")
+    data_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

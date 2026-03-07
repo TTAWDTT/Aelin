@@ -33,6 +33,8 @@ from app.schemas import (
     AelinBrowserTabLockListResponse,
     AelinBrowserTabLockRequest,
     AelinBrowserTabLockResponse,
+    AelinBrowserArtifactItem,
+    AelinBrowserArtifactListResponse,
     AelinBrowserTabListResponse,
     AelinBrowserTabOpenRequest,
     AelinBrowserTabOpenResponse,
@@ -624,5 +626,31 @@ def release_browser_tab_lock(
         error=str(result.get("error") or "") if isinstance(result, dict) else "",
         released=result.get("released") if isinstance(result, dict) else None,
         lock=AelinBrowserTabLockItem(**lock) if lock else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/artifacts", response_model=AelinBrowserArtifactListResponse)
+def list_browser_artifacts(
+    workspace: str = "default",
+    task_id: str = "",
+    tab_id: str = "",
+    kind: str = "",
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    kinds = [str(item).strip() for item in str(kind or "").split(",") if str(item).strip()]
+    result = browser_plane_adapter.list_artifacts(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        task_id=str(task_id or ""),
+        tab_id=str(tab_id or ""),
+        kinds=kinds,
+        limit=max(1, min(200, int(limit or 20))),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserArtifactListResponse(
+        total=len(items),
+        items=[AelinBrowserArtifactItem(**item) for item in items],
         generated_at=datetime.now(timezone.utc),
     )

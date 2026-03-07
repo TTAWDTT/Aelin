@@ -74,6 +74,48 @@ def test_browser_task_resume_marks_completed(monkeypatch):
     assert str(((item.get("result") or {}).get("effect_summary")) or "") == "opened_external:https://example.com"
 
 
+def test_browser_task_resume_records_artifact(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    created = client.post(
+        "/api/v1/aelin/agent/browser/tasks",
+        json={
+            "workspace": "default",
+            "kind": "browser_use",
+            "scope": "external",
+            "action": "navigate",
+            "input": {"url": "https://example.com", "scope": "external"},
+        },
+        headers=headers,
+    )
+    task_id = str(((created.json() or {}).get("item") or {}).get("task_id") or "")
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "use",
+        lambda **kwargs: {
+            "ok": True,
+            "scope": "external",
+            "effect_summary": "opened_external:https://example.com",
+        },
+    )
+
+    client.post(
+        f"/api/v1/aelin/agent/browser/tasks/{task_id}/resume?workspace=default",
+        headers=headers,
+    )
+    artifacts = client.get(
+        f"/api/v1/aelin/agent/browser/artifacts?workspace=default&task_id={task_id}",
+        headers=headers,
+    )
+    assert artifacts.status_code == 200, artifacts.text
+    payload = artifacts.json()
+    assert int(payload.get("total") or 0) >= 1
+    items = payload.get("items") or []
+    assert str(items[0].get("kind") or "") == "task_result"
+
+
 def test_browser_task_resume_marks_blocked_on_login_checkpoint(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -321,6 +363,42 @@ def test_browser_tab_text_evaluate_and_screenshot_endpoints(monkeypatch):
     assert shot_resp.status_code == 200, shot_resp.text
     snap = shot_resp.json().get("snapshot") or {}
     assert str(snap.get("data_url") or "").startswith("data:image/png;base64,")
+
+
+def test_browser_artifact_list_endpoint(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "list_artifacts",
+        lambda **kwargs: {
+            "ok": True,
+            "items": [
+                {
+                    "artifact_id": 1,
+                    "workspace": "default",
+                    "task_id": "btask-1",
+                    "tab_id": "btab-1",
+                    "profile_id": "default:default",
+                    "kind": "tab_text",
+                    "title": "text:readable",
+                    "text_content": "Example Domain",
+                    "data": {"char_count": 14},
+                    "created_at": 1.0,
+                }
+            ],
+        },
+    )
+
+    resp = client.get(
+        "/api/v1/aelin/agent/browser/artifacts?workspace=default&task_id=btask-1&kind=tab_text",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert int(payload.get("total") or 0) == 1
+    assert str((payload.get("items") or [{}])[0].get("kind") or "") == "tab_text"
 
 
 def test_browser_tab_lock_endpoints(monkeypatch):
