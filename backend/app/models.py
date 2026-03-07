@@ -493,3 +493,29 @@ class BrowserPlaneCheckpoint(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BrowserPlaneTask(Base):
+    __tablename__ = "browser_plane_tasks"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_browser_plane_task_task_id"),
+        Index("ix_browser_plane_task_user_workspace_status_updated", "user_id", "workspace", "status", "updated_at"),
+        Index("ix_browser_plane_task_user_kind_updated", "user_id", "kind", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    profile_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    tab_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="browser_use", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    scope: Mapped[str] = mapped_column(String(24), default="auto")
+    action: Mapped[str] = mapped_column(String(32), default="")
+    input_json: Mapped[str] = mapped_column(Text, default="{}")
+    result_json: Mapped[str] = mapped_column(Text, default="{}")
+    checkpoint_request_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

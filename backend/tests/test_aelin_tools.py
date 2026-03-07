@@ -252,7 +252,7 @@ def test_browser_use_tool_passes_confirm_flag(monkeypatch):
         captured.update(kwargs)
         return {"ok": True}
 
-    monkeypatch.setattr(aelin_tools.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
 
     result = hub.execute(
         "browser_use",

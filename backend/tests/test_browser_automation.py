@@ -4,6 +4,7 @@ import threading
 import time
 from pathlib import Path
 
+import app.services.browser_automation as browser_automation_module
 from app.services.browser_automation import BrowserAutomationService
 
 
@@ -234,6 +235,74 @@ def test_use_sensitive_domain_auth_guard_emits_login_checkpoint():
     login_state = out.get("login_state") if isinstance(out.get("login_state"), dict) else {}
     assert login_state.get("status") == "awaiting_login"
     assert login_state.get("domain") == "x.com"
+
+
+def test_mark_login_pending_degrades_when_checkpoint_persist_fails(monkeypatch):
+    service = BrowserAutomationService()
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_store,
+        "upsert_checkpoint",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("db_write_failed")),
+    )
+
+    payload = service.mark_login_pending(
+        user_id=1,
+        workspace="default",
+        domain="x.com",
+        next_call={"tool": "browser_use", "action": "navigate", "args": {"url": "https://x.com/home"}},
+    )
+
+    assert str(payload.get("request_id") or "").startswith("blogin-")
+    assert payload.get("status") == "awaiting_login"
+    # The in-memory checkpoint should remain available even if persistence failed.
+    looked_up = service.get_login_state(
+        user_id=1,
+        workspace="default",
+        request_id=str(payload.get("request_id") or ""),
+    )
+    assert looked_up.get("request_id") == payload.get("request_id")
+
+
+def test_list_login_states_merges_before_truncating(monkeypatch):
+    service = BrowserAutomationService()
+    old_state = service.mark_login_pending(user_id=1, workspace="default", domain="old-1.example")
+    older_state = service.mark_login_pending(user_id=1, workspace="default", domain="old-2.example")
+
+    first_id = str(old_state.get("request_id") or "")
+    second_id = str(older_state.get("request_id") or "")
+    with service._lock:
+        service._login_states[first_id].updated_at = 100.0
+        service._login_states[first_id].created_at = 100.0
+        service._login_states[second_id].updated_at = 90.0
+        service._login_states[second_id].created_at = 90.0
+
+    monkeypatch.setattr(
+        browser_automation_module.browser_plane_store,
+        "list_checkpoints",
+        lambda **kwargs: [
+            {
+                "request_id": "persisted-newest",
+                "profile_id": "default:default",
+                "workspace": "default",
+                "domain": "persisted.example",
+                "reason": "auth_guard",
+                "status": "awaiting_login",
+                "next_call": {},
+                "resume_query": "",
+                "resume_request": {},
+                "continue_after_confirm": True,
+                "created_at": 200.0,
+                "updated_at": 200.0,
+            }
+        ],
+    )
+
+    items = service.list_login_states(user_id=1, workspace="default", limit=2)
+
+    assert [str(item.get("request_id") or "") for item in items] == [
+        "persisted-newest",
+        first_id,
+    ]
 
 
 def test_state_get_auto_fallbacks_from_cdp_to_external(monkeypatch):

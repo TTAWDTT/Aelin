@@ -6,6 +6,10 @@ from typing import Any
 
 import app.routers.aelin as aelin_router
 import app.routers.aelin_chat as aelin_chat_router
+import app.services.aelin_browser_confirm_followup as confirm_followup
+import app.services.browser_plane as browser_plane_module
+from app.services.browser_automation import browser_automation_service
+from app.services.browser_plane import browser_plane_adapter
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 def test_aelin_browser_confirm_restarts_and_retries_when_cdp_restart_required(monkeypatch):
@@ -14,16 +18,16 @@ def test_aelin_browser_confirm_restarts_and_retries_when_cdp_restart_required(mo
 
     calls = {"count": 0}
 
-    def _fake_use(*, user_id, workspace, action, args, scope):
-        _ = user_id, workspace, action, args, scope
+    def _fake_use(*, user_id, workspace, action, args, scope, profile_id=""):
+        _ = user_id, workspace, action, args, scope, profile_id
         calls["count"] += 1
         if calls["count"] == 1:
             return {"ok": False, "error": "browser_restart_required_for_cdp"}
         return {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked:Profile"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(browser_plane_adapter, "use", _fake_use)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -63,15 +67,16 @@ def test_aelin_browser_confirm_preserves_selector_args(monkeypatch):
 
     captured: dict[str, Any] = {}
 
-    def _fake_use(*, user_id, workspace, action, args, scope):
+    def _fake_use(*, user_id, workspace, action, args, scope, profile_id=""):
         captured["user_id"] = user_id
         captured["workspace"] = workspace
         captured["action"] = action
         captured["args"] = dict(args or {})
         captured["scope"] = scope
+        captured["profile_id"] = profile_id
         return {"ok": True, "action": action, "scope": scope, "effect_summary": "typed"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(browser_plane_adapter, "use", _fake_use)
 
     resp = client.post(
         "/api/v1/aelin/agent/browser/confirm",
@@ -97,15 +102,15 @@ def test_aelin_browser_confirm_preserves_selector_args(monkeypatch):
     assert bool(sent_args.get("confirm")) is True
 
 def test_confirmed_browser_call_uses_safe_executor_inside_running_loop(monkeypatch):
-    def _fake_use(*, user_id, workspace, action, args, scope):
-        _ = user_id, workspace, action, args, scope
+    def _fake_use(*, user_id, workspace, action, args, scope, profile_id=""):
+        _ = user_id, workspace, action, args, scope, profile_id
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             return {"ok": True, "action": action, "scope": scope, "effect_summary": "clicked"}
         raise RuntimeError("should_not_run_on_event_loop_thread")
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(browser_plane_module.browser_automation_service, "use", _fake_use)
 
     async def _run():
         return aelin_chat_router._execute_confirmed_browser_call(
@@ -125,7 +130,7 @@ def test_aelin_browser_confirm_resolves_login_state(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    login_state = aelin_chat_router.browser_automation_service.mark_login_pending(
+    login_state = browser_automation_service.mark_login_pending(
         user_id=1,
         workspace="default",
         domain="x.com",
@@ -133,7 +138,7 @@ def test_aelin_browser_confirm_resolves_login_state(monkeypatch):
     )
 
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "use",
         lambda **kwargs: {"ok": True, "action": "navigate", "scope": "cdp", "effect_summary": "navigated", "profile_id": "default:browser"},
     )
@@ -164,13 +169,13 @@ def test_aelin_browser_login_checkpoints_endpoint_lists_pending_items():
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    state = aelin_chat_router.browser_automation_service.mark_login_pending(
+    state = browser_automation_service.mark_login_pending(
         user_id=1,
         workspace="default",
         domain="x.com",
         next_call={"tool": "browser_use", "action": "navigate", "args": {"url": "https://x.com/following", "scope": "cdp"}},
     )
-    aelin_chat_router.browser_automation_service.attach_login_resume_context(
+    browser_automation_service.attach_login_resume_context(
         user_id=1,
         workspace="default",
         request_id=str(state.get("request_id") or ""),
@@ -193,13 +198,13 @@ def test_aelin_browser_confirm_can_resume_from_stored_login_checkpoint(monkeypat
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    state = aelin_chat_router.browser_automation_service.mark_login_pending(
+    state = browser_automation_service.mark_login_pending(
         user_id=1,
         workspace="default",
         domain="x.com",
         next_call={"tool": "browser_use", "action": "navigate", "args": {"url": "https://x.com/following", "scope": "cdp"}},
     )
-    aelin_chat_router.browser_automation_service.attach_login_resume_context(
+    browser_automation_service.attach_login_resume_context(
         user_id=1,
         workspace="default",
         request_id=str(state.get("request_id") or ""),
@@ -210,15 +215,16 @@ def test_aelin_browser_confirm_can_resume_from_stored_login_checkpoint(monkeypat
 
     captured: dict[str, Any] = {}
 
-    def _fake_use(*, user_id, workspace, action, args, scope):
+    def _fake_use(*, user_id, workspace, action, args, scope, profile_id=""):
         captured["user_id"] = user_id
         captured["workspace"] = workspace
         captured["action"] = action
         captured["args"] = dict(args or {})
         captured["scope"] = scope
+        captured["profile_id"] = profile_id
         return {"ok": True, "action": action, "scope": scope, "effect_summary": "navigated"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(browser_plane_adapter, "use", _fake_use)
 
     resp = client.post(
         "/api/v1/aelin/agent/browser/confirm",
@@ -244,8 +250,8 @@ def test_aelin_browser_confirm_retries_when_first_result_is_restart_failed(monke
 
     calls = {"count": 0}
 
-    def _fake_use(*, user_id, workspace, action, args, scope):
-        _ = user_id, workspace, action, args, scope
+    def _fake_use(*, user_id, workspace, action, args, scope, profile_id=""):
+        _ = user_id, workspace, action, args, scope, profile_id
         calls["count"] += 1
         if calls["count"] == 1:
             return {
@@ -260,9 +266,9 @@ def test_aelin_browser_confirm_retries_when_first_result_is_restart_failed(monke
             }
         return {"ok": True, "action": "scroll", "scope": "cdp", "effect_summary": "scrolled"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(browser_plane_adapter, "use", _fake_use)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -302,16 +308,16 @@ def test_aelin_browser_confirm_retries_when_first_result_is_cdp_unavailable_laun
 
     calls = {"count": 0}
 
-    def _fake_use(*, user_id, workspace, action, args, scope):
-        _ = user_id, workspace, action, args, scope
+    def _fake_use(*, user_id, workspace, action, args, scope, profile_id=""):
+        _ = user_id, workspace, action, args, scope, profile_id
         calls["count"] += 1
         if calls["count"] == 1:
             return {"ok": False, "error": "cdp_unavailable:cdp_launch_timeout"}
         return {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "use", _fake_use)
+    monkeypatch.setattr(browser_plane_adapter, "use", _fake_use)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -349,7 +355,7 @@ def test_aelin_browser_confirm_auto_continues_with_resume_query(monkeypatch):
     headers = _auth_headers(client)
 
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "use",
         lambda **kwargs: {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"},
     )
@@ -369,7 +375,7 @@ def test_aelin_browser_confirm_auto_continues_with_resume_query(monkeypatch):
             generated_at=datetime.now(timezone.utc),
         )
 
-    monkeypatch.setattr(aelin_chat_router, "_dispatch_aelin_chat", _fake_dispatch)
+    monkeypatch.setattr(confirm_followup, "dispatch_followup_chat", lambda payload, user_id: _fake_dispatch(payload, None, None))
 
     resp = client.post(
         "/api/v1/aelin/agent/browser/confirm",
@@ -401,7 +407,7 @@ def test_aelin_browser_confirm_skips_followup_when_auto_continue_is_disabled(mon
     headers = _auth_headers(client)
 
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "use",
         lambda **kwargs: {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"},
     )
@@ -433,13 +439,13 @@ def test_aelin_browser_confirm_marks_followup_pending_when_auto_continue_fails(m
     headers = _auth_headers(client)
 
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "use",
         lambda **kwargs: {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"},
     )
     monkeypatch.setattr(
-        aelin_chat_router,
-        "_dispatch_aelin_chat",
+        confirm_followup,
+        "dispatch_followup_chat",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("resume failed")),
     )
 
@@ -471,7 +477,7 @@ def test_aelin_browser_confirm_auto_continues_with_resume_request(monkeypatch):
     headers = _auth_headers(client)
 
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "use",
         lambda **kwargs: {"ok": True, "action": "click", "scope": "cdp", "effect_summary": "clicked"},
     )
@@ -493,7 +499,7 @@ def test_aelin_browser_confirm_auto_continues_with_resume_request(monkeypatch):
             generated_at=datetime.now(timezone.utc),
         )
 
-    monkeypatch.setattr(aelin_chat_router, "_dispatch_aelin_chat", _fake_dispatch)
+    monkeypatch.setattr(confirm_followup, "dispatch_followup_chat", lambda payload, user_id: _fake_dispatch(payload, None, None))
 
     resp = client.post(
         "/api/v1/aelin/agent/browser/confirm",
@@ -531,14 +537,14 @@ def test_aelin_browser_confirm_supports_browser_state_get_and_retries_after_rest
 
     calls = {"count": 0}
 
-    def _fake_state_get(*, user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid):
-        _ = user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid
+    def _fake_state_get(*, user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid, profile_id=""):
+        _ = user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid, profile_id
         calls["count"] += 1
         return {"ok": True, "scope": "cdp", "url": "https://x.com/home", "title": "X", "session_id": "bs-test"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "state_get", _fake_state_get)
+    monkeypatch.setattr(browser_plane_adapter, "state_get", _fake_state_get)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": True,
@@ -580,14 +586,14 @@ def test_aelin_browser_confirm_state_get_skips_initial_retry_when_restart_fails(
 
     calls = {"count": 0}
 
-    def _fake_state_get(*, user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid):
-        _ = user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid
+    def _fake_state_get(*, user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid, profile_id=""):
+        _ = user_id, workspace, scope, include_dom, include_a11y, max_targets, max_items, pid, profile_id
         calls["count"] += 1
         return {"ok": True, "scope": "cdp", "url": "https://x.com/home", "title": "X", "session_id": "bs-test"}
 
-    monkeypatch.setattr(aelin_chat_router.browser_automation_service, "state_get", _fake_state_get)
+    monkeypatch.setattr(browser_plane_adapter, "state_get", _fake_state_get)
     monkeypatch.setattr(
-        aelin_chat_router.browser_automation_service,
+        browser_plane_adapter,
         "force_restart_to_cdp",
         lambda timeout_seconds=12.0, **kwargs: {
             "ok": False,
@@ -627,13 +633,13 @@ def test_aelin_notifications_include_pending_browser_login_item():
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    state = aelin_chat_router.browser_automation_service.mark_login_pending(
+    state = browser_automation_service.mark_login_pending(
         user_id=1,
         workspace="default",
         domain="x.com",
         next_call={"tool": "browser_use", "action": "navigate", "args": {"url": "https://x.com/following", "scope": "cdp"}},
     )
-    aelin_chat_router.browser_automation_service.attach_login_resume_context(
+    browser_automation_service.attach_login_resume_context(
         user_id=1,
         workspace="default",
         request_id=str(state.get("request_id") or ""),
@@ -651,4 +657,3 @@ def test_aelin_notifications_include_pending_browser_login_item():
     assert str(browser_item.get("action_kind") or "") == "confirm_browser_action"
     payload = browser_item.get("action_payload") if isinstance(browser_item.get("action_payload"), dict) else {}
     assert str(payload.get("login_request_id") or "") == str(state.get("request_id") or "")
-

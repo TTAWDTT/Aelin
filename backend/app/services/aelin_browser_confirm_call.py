@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.browser_exec import run_sync_playwright_call
 from app.services.browser_plane import browser_plane_adapter
 
 
@@ -122,7 +123,8 @@ def execute_confirmed_browser_call(
 ) -> dict[str, Any]:
     profile_value = str(profile_id or "").strip()
     if tool_name == "browser_use":
-        return browser_plane_adapter.use(
+        return run_sync_playwright_call(
+            browser_plane_adapter.use,
             user_id=user_id,
             workspace=workspace,
             action=action,
@@ -130,7 +132,8 @@ def execute_confirmed_browser_call(
             scope=scope,
             profile_id=profile_value,
         )
-    return browser_plane_adapter.state_get(
+    return run_sync_playwright_call(
+        browser_plane_adapter.state_get,
         user_id=user_id,
         workspace=workspace,
         scope=scope,

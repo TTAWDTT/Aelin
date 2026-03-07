@@ -468,6 +468,47 @@ class AelinBrowserLoginCheckpointListResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinBrowserTaskCreateRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    kind: str = Field(default="browser_use", min_length=1, max_length=32)
+    scope: str = Field(default="auto", min_length=1, max_length=24)
+    action: str = Field(default="", max_length=32)
+    input: dict[str, Any] = Field(default_factory=dict)
+    profile_id: str = Field(default="", max_length=120)
+    tab_id: str = Field(default="", max_length=120)
+
+
+class AelinBrowserTaskItem(BaseModel):
+    task_id: str
+    profile_id: str = ""
+    tab_id: str = ""
+    workspace: str = "default"
+    kind: str = "browser_use"
+    status: str = "pending"
+    scope: str = "auto"
+    action: str = ""
+    input: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    checkpoint_request_id: str = ""
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+class AelinBrowserTaskResponse(BaseModel):
+    ok: bool = True
+    item: AelinBrowserTaskItem | None = None
+    generated_at: datetime
+
+
+class AelinBrowserSnapshotResponse(BaseModel):
+    ok: bool = True
+    scope: str = "auto"
+    task_id: str = ""
+    profile_id: str = ""
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+    generated_at: datetime
+
+
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None

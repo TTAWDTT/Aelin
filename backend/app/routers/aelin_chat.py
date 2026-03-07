@@ -23,6 +23,10 @@ from app.schemas import (
     AelinBrowserConfirmResponse,
     AelinBrowserLoginCheckpointItem,
     AelinBrowserLoginCheckpointListResponse,
+    AelinBrowserSnapshotResponse,
+    AelinBrowserTaskCreateRequest,
+    AelinBrowserTaskItem,
+    AelinBrowserTaskResponse,
     AelinChatRequest,
     AelinChatResponse,
 )
@@ -277,5 +281,99 @@ def list_browser_login_checkpoints(
     return AelinBrowserLoginCheckpointListResponse(
         total=len(items),
         items=[AelinBrowserLoginCheckpointItem(**item) for item in items],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tasks", response_model=AelinBrowserTaskResponse)
+def create_browser_task(
+    payload: AelinBrowserTaskCreateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    item = browser_plane_adapter.task_create(
+        user_id=int(current_user.id),
+        workspace=str(payload.workspace or "default"),
+        kind=str(payload.kind or "browser_use"),
+        scope=str(payload.scope or "auto"),
+        action=str(payload.action or ""),
+        input_payload=dict(payload.input or {}),
+        profile_id=str(payload.profile_id or ""),
+        tab_id=str(payload.tab_id or ""),
+    )
+    return AelinBrowserTaskResponse(
+        ok=bool(item),
+        item=AelinBrowserTaskItem(**item) if item else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tasks/{task_id}", response_model=AelinBrowserTaskResponse)
+def get_browser_task(
+    task_id: str,
+    workspace: str = "default",
+    current_user: User = Depends(get_current_user),
+):
+    item = browser_plane_adapter.task_get(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        task_id=str(task_id or ""),
+    )
+    return AelinBrowserTaskResponse(
+        ok=bool(item),
+        item=AelinBrowserTaskItem(**item) if item else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tasks/{task_id}/resume", response_model=AelinBrowserTaskResponse)
+def resume_browser_task(
+    task_id: str,
+    workspace: str = "default",
+    current_user: User = Depends(get_current_user),
+):
+    item = browser_plane_adapter.task_resume(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        task_id=str(task_id or ""),
+    )
+    return AelinBrowserTaskResponse(
+        ok=bool(item),
+        item=AelinBrowserTaskItem(**item) if item else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/snapshot", response_model=AelinBrowserSnapshotResponse)
+def get_browser_snapshot(
+    workspace: str = "default",
+    task_id: str = "",
+    scope: str = "auto",
+    include_dom: bool = False,
+    include_a11y: bool = False,
+    max_targets: int = 30,
+    max_items: int = 20,
+    pid: int = 0,
+    profile_id: str = "",
+    current_user: User = Depends(get_current_user),
+):
+    snap = browser_plane_adapter.snapshot_get(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        task_id=str(task_id or ""),
+        scope=str(scope or "auto"),
+        include_dom=bool(include_dom),
+        include_a11y=bool(include_a11y),
+        max_targets=max(1, min(60, int(max_targets or 30))),
+        max_items=max(0, min(200, int(max_items or 20))),
+        pid=max(0, int(pid or 0)),
+        profile_id=str(profile_id or ""),
+    )
+    payload = dict(snap or {}) if isinstance(snap, dict) else {}
+    return AelinBrowserSnapshotResponse(
+        ok=bool(payload.get("ok", True)),
+        scope=str(payload.get("scope") or scope or "auto"),
+        task_id=str(payload.get("task_id") or task_id or ""),
+        profile_id=str(payload.get("profile_id") or profile_id or ""),
+        snapshot=payload,
         generated_at=datetime.now(timezone.utc),
     )
