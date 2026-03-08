@@ -173,6 +173,12 @@ class BrowserAutomationService:
         self._profiles: dict[str, BrowserProfile] = {}
         self._login_states: dict[str, BrowserLoginState] = {}
         self._lock = threading.RLock()
+        # Trusted auth domains per (user_id, workspace, profile_id). When a sensitive
+        # Trusted auth domains per (user_id, workspace, profile_id). When a sensitive
+        # domain login flow has been completed for a given CDP profile, we record it
+        # here so subsequent navigations to the same domain in CDP scope do not
+        # repeatedly trigger auth_guard.
+        self._trusted_auth_domains: dict[tuple[int, str, str], set[str]] = {}
         self._creation_locks: dict[str, threading.Lock] = {}
         self._preferred_scope_by_workspace: dict[str, tuple[str, float]] = {}
         self._default_timeout_ms = _clamp_int(
@@ -569,7 +575,25 @@ class BrowserAutomationService:
                 str(exc)[:180],
             )
             stored_payload = {}
-        return payload or stored_payload
+        resolved = payload or stored_payload
+        # When a login flow has been marked as resolved for a given domain, remember
+        # that this (user, workspace, profile) has an authenticated session for that
+        # domain so subsequent CDP navigations do not repeatedly trigger auth_guard.
+        try:
+            domain = str((resolved or {}).get("domain") or "").strip()
+            profile_key = str((resolved or {}).get("profile_id") or "").strip()
+            if domain and profile_key:
+                key = (int(user_id), _normalize_workspace(workspace), profile_key)
+                with self._lock:
+                    trusted = self._trusted_auth_domains.get(key)
+                    if trusted is None:
+                        trusted = set()
+                        self._trusted_auth_domains[key] = trusted
+                    trusted.add(domain.lower())
+        except Exception:
+            # Trust cache is best-effort; failures here should not affect API semantics.
+            pass
+        return resolved
 
     def _peek_session(self, *, user_id: int, workspace: str, mode: str, profile_id: str = "") -> BrowserSession | None:
         key = self._session_key(user_id=user_id, workspace=workspace, mode=mode, profile_id=profile_id)
@@ -2900,8 +2924,21 @@ class BrowserAutomationService:
                 "requires_cdp": bool(active_state.get("requires_cdp", False)),
             }
 
+        # Prefer an existing CDP session when scope=auto so that transient endpoint
+        # probe failures do not immediately downgrade the view to external-only state.
+        effective_user_scope = user_scope
+        if user_scope == "auto":
+            if sticky_scope == "cdp" and self._cdp_enabled:
+                effective_user_scope = "cdp"
+            elif self._has_reusable_cdp_session(
+                user_id=int(user_id),
+                workspace=workspace,
+                profile_id=profile.profile_id,
+            ):
+                effective_user_scope = "cdp"
+
         runtime_scope, fallback_reason, early_payload = self._resolve_state_runtime_scope(
-            user_scope="cdp" if user_scope == "auto" and sticky_scope == "cdp" and self._cdp_enabled else user_scope,
+            user_scope=effective_user_scope,
             include_dom=bool(include_dom),
             include_a11y=bool(include_a11y),
             proc_limit=proc_limit,
@@ -3205,42 +3242,53 @@ class BrowserAutomationService:
             act == "navigate"
             and self._is_sensitive_auth_domain(url)
             and not bool(args.get("confirm"))
-            and not prefer_existing_cdp
         ):
-            next_args = dict(args or {})
-            next_args["confirm"] = True
-            login_state = self.mark_login_pending(
-                user_id=user_id,
-                workspace=workspace,
-                domain=self._extract_hostname(url),
-                next_call={"tool": "browser_use", "action": act, "args": next_args},
-                profile_id=profile.profile_id,
-                reason="auth_guard",
-            )
-            return {
-                "ok": False,
-                "error": "auth_permission_required",
-                "requires_confirmation": True,
-                "confirm_kind": "auth_guard",
-                "risk_level": "auth_guard",
-                "action": act,
-                "domain": self._extract_hostname(url),
-                "profile_id": profile.profile_id,
-                "profile": self._profile_payload(profile),
-                "login_request_id": str(login_state.get("request_id") or ""),
-                "login_state": login_state,
-                "fallback_scope": "external",
-                "supported_scopes": ["auto", "cdp", "external"],
-                "hint": (
-                    "使用 confirm=true 可继续受控浏览器导航；"
-                    "若需要继承用户登录态，可改用 scope=external。"
-                ),
-                "next_call": {
-                    "tool": "browser_use",
+            # Skip auth_guard when we have an existing trusted CDP session for this
+            # domain under the current profile. This allows follow-up navigations in
+            # CDP scope after the user has completed the login flow without repeatedly
+            # prompting for confirmation.
+            hostname = self._extract_hostname(url)
+            trusted = False
+            if hostname:
+                key = (int(user_id), _normalize_workspace(workspace), profile.profile_id)
+                with self._lock:
+                    domains = self._trusted_auth_domains.get(key) or set()
+                    trusted = hostname.lower() in domains
+            if not trusted and not prefer_existing_cdp:
+                next_args = dict(args or {})
+                next_args["confirm"] = True
+                login_state = self.mark_login_pending(
+                    user_id=user_id,
+                    workspace=workspace,
+                    domain=hostname,
+                    next_call={"tool": "browser_use", "action": act, "args": next_args},
+                    profile_id=profile.profile_id,
+                    reason="auth_guard",
+                )
+                return {
+                    "ok": False,
+                    "error": "auth_permission_required",
+                    "requires_confirmation": True,
+                    "confirm_kind": "auth_guard",
+                    "risk_level": "auth_guard",
                     "action": act,
-                    "args": next_args,
-                },
-            }
+                    "domain": hostname,
+                    "profile_id": profile.profile_id,
+                    "profile": self._profile_payload(profile),
+                    "login_request_id": str(login_state.get("request_id") or ""),
+                    "login_state": login_state,
+                    "fallback_scope": "external",
+                    "supported_scopes": ["auto", "cdp", "external"],
+                    "hint": (
+                        "使用 confirm=true 可继续受控浏览器导航；"
+                        "若需要继承用户登录态，可改用 scope=external。"
+                    ),
+                    "next_call": {
+                        "tool": "browser_use",
+                        "action": act,
+                        "args": next_args,
+                    },
+                }
         if self._is_high_risk(act, target=target, value=value, url=url) and not bool(args.get("confirm")):
             next_args = dict(args or {})
             next_args["confirm"] = True
