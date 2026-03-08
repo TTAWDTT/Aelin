@@ -21,6 +21,8 @@ from app.settings import settings
 from app.services.browser_plane_lock_store import browser_plane_lock_store
 from app.services.browser_plane_store import browser_plane_store
 from app.services.browser_plane_runtime_store import browser_plane_runtime_store
+from app.services.browser_runtime_auth_guard import BrowserAuthGuard, BrowserLoginState
+from app.services.browser_runtime_risk_guard import BrowserRiskGuard
 
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # type: ignore
@@ -33,23 +35,6 @@ try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional runtime dependency
     psutil = None
-
-_RISK_KEYWORDS = (
-    "delete",
-    "remove",
-    "submit",
-    "send",
-    "confirm",
-    "pay",
-    "payment",
-    "checkout",
-    "购买",
-    "支付",
-    "提交",
-    "发送",
-    "删除",
-    "确认",
-)
 
 _SENSITIVE_AUTH_DOMAINS = (
     "github.com",
@@ -145,35 +130,12 @@ class BrowserProfile:
         self.last_used = time.time()
 
 
-@dataclass
-class BrowserLoginState:
-    request_id: str
-    profile_id: str
-    user_id: int
-    workspace: str
-    domain: str
-    reason: str
-    status: str
-    next_call: dict[str, Any]
-    resume_query: str
-    resume_request: dict[str, Any]
-    continue_after_confirm: bool
-    created_at: float
-    updated_at: float
-
-    def touch(self, *, status: str = "") -> None:
-        self.updated_at = time.time()
-        if status:
-            self.status = str(status or self.status)
-
-
 class BrowserAutomationService:
     def __init__(self) -> None:
         self._sessions: dict[str, BrowserSession] = {}
         self._profiles: dict[str, BrowserProfile] = {}
         self._login_states: dict[str, BrowserLoginState] = {}
         self._lock = threading.RLock()
-        # Trusted auth domains per (user_id, workspace, profile_id). When a sensitive
         # Trusted auth domains per (user_id, workspace, profile_id). When a sensitive
         # domain login flow has been completed for a given CDP profile, we record it
         # here so subsequent navigations to the same domain in CDP scope do not
@@ -220,6 +182,12 @@ class BrowserAutomationService:
         self._system_process_cache: dict[tuple[int, bool], tuple[float, list[dict[str, Any]]]] = {}
         self._active_cdp_profile_key = ""
         self._active_cdp_user_data_dir = ""
+        self._auth_guard = BrowserAuthGuard(
+            login_states=self._login_states,
+            trusted_auth_domains=self._trusted_auth_domains,
+            lock=self._lock,
+        )
+        self._risk_guard = BrowserRiskGuard()
 
     @staticmethod
     def _resolve_runtime_path(raw: str) -> Path:
@@ -296,25 +264,6 @@ class BrowserAutomationService:
             "kind": str(profile.kind or "")[:32],
         }
 
-    @staticmethod
-    def _login_state_payload(state: BrowserLoginState | None) -> dict[str, Any]:
-        if state is None:
-            return {}
-        return {
-            "request_id": str(state.request_id or ""),
-            "profile_id": str(state.profile_id or ""),
-            "workspace": str(state.workspace or "")[:64],
-            "domain": str(state.domain or "")[:120],
-            "reason": str(state.reason or "")[:80],
-            "status": str(state.status or "")[:32],
-            "next_call": dict(state.next_call or {}),
-            "resume_query": str(state.resume_query or "")[:500],
-            "resume_request": dict(state.resume_request or {}),
-            "continue_after_confirm": bool(state.continue_after_confirm),
-            "created_at": float(state.created_at or 0.0),
-            "updated_at": float(state.updated_at or 0.0),
-        }
-
     def mark_login_pending(
         self,
         *,
@@ -329,50 +278,17 @@ class BrowserAutomationService:
         continue_after_confirm: bool = True,
     ) -> dict[str, Any]:
         profile = self._ensure_profile(user_id=user_id, workspace=workspace, profile_id=profile_id)
-        request_id = f"blogin-{uuid4().hex[:12]}"
-        now = time.time()
-        state = BrowserLoginState(
-            request_id=request_id,
+        return self._auth_guard.mark_login_pending(
+            user_id=user_id,
+            workspace=workspace,
+            domain=domain,
+            next_call=next_call,
             profile_id=profile.profile_id,
-            user_id=int(user_id),
-            workspace=_normalize_workspace(workspace),
-            domain=str(domain or "")[:120],
-            reason=str(reason or "auth_guard")[:80],
-            status="awaiting_login",
-            next_call=dict(next_call or {}),
-            resume_query=str(resume_query or "")[:500],
-            resume_request=dict(resume_request or {}),
-            continue_after_confirm=bool(continue_after_confirm),
-            created_at=now,
-            updated_at=now,
+            reason=reason,
+            resume_query=resume_query,
+            resume_request=resume_request,
+            continue_after_confirm=continue_after_confirm,
         )
-        with self._lock:
-            self._login_states[request_id] = state
-        payload = self._login_state_payload(state)
-        try:
-            browser_plane_store.upsert_checkpoint(
-                request_id=request_id,
-                user_id=int(user_id),
-                workspace=workspace,
-                profile_id=str(profile.profile_id or ""),
-                domain=str(domain or ""),
-                reason=str(reason or "auth_guard"),
-                status="awaiting_login",
-                next_call=dict(next_call or {}),
-                resume_query=str(resume_query or ""),
-                resume_request=dict(resume_request or {}),
-                continue_after_confirm=bool(continue_after_confirm),
-                created_at=float(now),
-                updated_at=float(now),
-            )
-        except Exception as exc:
-            _LOG.warning(
-                "browser_plane checkpoint upsert failed request_id=%s workspace=%s error=%s",
-                request_id,
-                _normalize_workspace(workspace),
-                str(exc)[:180],
-            )
-        return payload
 
     def get_login_state(
         self,
@@ -382,34 +298,12 @@ class BrowserAutomationService:
         request_id: str,
         profile_id: str = "",
     ) -> dict[str, Any]:
-        clean_request_id = str(request_id or "").strip()
-        if not clean_request_id:
-            return {}
-        with self._lock:
-            state = self._login_states.get(clean_request_id)
-            if state is None:
-                state = None
-            else:
-                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                    return {}
-                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                    return {}
-                return self._login_state_payload(state)
-        try:
-            return browser_plane_store.get_checkpoint(
-                request_id=clean_request_id,
-                user_id=int(user_id),
-                workspace=workspace,
-                profile_id=profile_id,
-            )
-        except Exception as exc:
-            _LOG.warning(
-                "browser_plane checkpoint get failed request_id=%s workspace=%s error=%s",
-                clean_request_id,
-                _normalize_workspace(workspace),
-                str(exc)[:180],
-            )
-            return {}
+        return self._auth_guard.get_login_state(
+            user_id=user_id,
+            workspace=workspace,
+            request_id=request_id,
+            profile_id=profile_id,
+        )
 
     def attach_login_resume_context(
         self,
@@ -422,45 +316,15 @@ class BrowserAutomationService:
         resume_request: dict[str, Any] | None = None,
         continue_after_confirm: bool | None = None,
     ) -> dict[str, Any]:
-        clean_request_id = str(request_id or "").strip()
-        if not clean_request_id:
-            return {}
-        with self._lock:
-            state = self._login_states.get(clean_request_id)
-            if state is not None:
-                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                    return {}
-                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                    return {}
-                if str(resume_query or "").strip():
-                    state.resume_query = str(resume_query or "")[:500]
-                if isinstance(resume_request, dict) and resume_request:
-                    state.resume_request = dict(resume_request)
-                if continue_after_confirm is not None:
-                    state.continue_after_confirm = bool(continue_after_confirm)
-                state.touch()
-                payload = self._login_state_payload(state)
-            else:
-                payload = {}
-        try:
-            stored_payload = browser_plane_store.update_checkpoint(
-                request_id=clean_request_id,
-                user_id=int(user_id),
-                workspace=workspace,
-                profile_id=profile_id,
-                resume_query=str(resume_query or ""),
-                resume_request=resume_request if isinstance(resume_request, dict) else None,
-                continue_after_confirm=continue_after_confirm,
-            )
-        except Exception as exc:
-            _LOG.warning(
-                "browser_plane checkpoint resume update failed request_id=%s workspace=%s error=%s",
-                clean_request_id,
-                _normalize_workspace(workspace),
-                str(exc)[:180],
-            )
-            stored_payload = {}
-        return payload or stored_payload
+        return self._auth_guard.attach_login_resume_context(
+            user_id=user_id,
+            workspace=workspace,
+            request_id=request_id,
+            profile_id=profile_id,
+            resume_query=resume_query,
+            resume_request=resume_request,
+            continue_after_confirm=continue_after_confirm,
+        )
 
     def list_login_states(
         self,
@@ -470,55 +334,12 @@ class BrowserAutomationService:
         statuses: list[str] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        normalized_workspace = _normalize_workspace(workspace) if str(workspace or "").strip() else ""
-        allow_statuses = {
-            str(item or "").strip().lower()
-            for item in list(statuses or [])
-            if str(item or "").strip()
-        }
-        max_items = max(1, min(100, int(limit or 20)))
-        rows: list[BrowserLoginState] = []
-        with self._lock:
-            for state in self._login_states.values():
-                if int(state.user_id) != int(user_id):
-                    continue
-                if normalized_workspace and str(state.workspace or "") != normalized_workspace:
-                    continue
-                if allow_statuses and str(state.status or "").strip().lower() not in allow_statuses:
-                    continue
-                rows.append(state)
-        rows.sort(key=lambda item: float(item.updated_at or item.created_at or 0.0), reverse=True)
-        memory_payloads = [self._login_state_payload(item) for item in rows]
-        try:
-            stored_payloads = browser_plane_store.list_checkpoints(
-                user_id=int(user_id),
-                workspace=workspace,
-                statuses=list(allow_statuses) if allow_statuses else None,
-                limit=max_items,
-            )
-        except Exception as exc:
-            _LOG.warning(
-                "browser_plane checkpoint list failed user_id=%s workspace=%s error=%s",
-                int(user_id),
-                _normalize_workspace(workspace or "default") if str(workspace or "").strip() else "all",
-                str(exc)[:180],
-            )
-            stored_payloads = []
-        merged_by_id: dict[str, dict[str, Any]] = {}
-        for payload in stored_payloads:
-            request_id = str(payload.get("request_id") or "").strip()
-            if request_id:
-                merged_by_id[request_id] = payload
-        for payload in memory_payloads:
-            request_id = str(payload.get("request_id") or "").strip()
-            if request_id:
-                merged_by_id[request_id] = payload
-        merged = list(merged_by_id.values())
-        merged.sort(
-            key=lambda item: float(item.get("updated_at") or item.get("created_at") or 0.0),
-            reverse=True,
+        return self._auth_guard.list_login_states(
+            user_id=user_id,
+            workspace=workspace,
+            statuses=statuses,
+            limit=limit,
         )
-        return merged[:max_items]
 
     def cancel_login_pending(
         self,
@@ -528,12 +349,11 @@ class BrowserAutomationService:
         request_id: str,
         profile_id: str = "",
     ) -> dict[str, Any]:
-        return self.resolve_login_pending(
+        return self._auth_guard.cancel_login_pending(
             user_id=user_id,
             workspace=workspace,
             request_id=request_id,
             profile_id=profile_id,
-            status="cancelled",
         )
 
     def resolve_login_pending(
@@ -545,55 +365,13 @@ class BrowserAutomationService:
         profile_id: str = "",
         status: str = "resolved",
     ) -> dict[str, Any]:
-        clean_request_id = str(request_id or "").strip()
-        if not clean_request_id:
-            return {}
-        with self._lock:
-            state = self._login_states.get(clean_request_id)
-            if state is not None:
-                if int(state.user_id) != int(user_id) or str(state.workspace or "") != _normalize_workspace(workspace):
-                    return {}
-                if profile_id and str(state.profile_id or "") != str(profile_id or ""):
-                    return {}
-                state.touch(status=str(status or "resolved")[:32])
-                payload = self._login_state_payload(state)
-            else:
-                payload = {}
-        try:
-            stored_payload = browser_plane_store.update_checkpoint(
-                request_id=clean_request_id,
-                user_id=int(user_id),
-                workspace=workspace,
-                profile_id=profile_id,
-                status=str(status or "resolved")[:32],
-            )
-        except Exception as exc:
-            _LOG.warning(
-                "browser_plane checkpoint resolve update failed request_id=%s workspace=%s error=%s",
-                clean_request_id,
-                _normalize_workspace(workspace),
-                str(exc)[:180],
-            )
-            stored_payload = {}
-        resolved = payload or stored_payload
-        # When a login flow has been marked as resolved for a given domain, remember
-        # that this (user, workspace, profile) has an authenticated session for that
-        # domain so subsequent CDP navigations do not repeatedly trigger auth_guard.
-        try:
-            domain = str((resolved or {}).get("domain") or "").strip()
-            profile_key = str((resolved or {}).get("profile_id") or "").strip()
-            if domain and profile_key:
-                key = (int(user_id), _normalize_workspace(workspace), profile_key)
-                with self._lock:
-                    trusted = self._trusted_auth_domains.get(key)
-                    if trusted is None:
-                        trusted = set()
-                        self._trusted_auth_domains[key] = trusted
-                    trusted.add(domain.lower())
-        except Exception:
-            # Trust cache is best-effort; failures here should not affect API semantics.
-            pass
-        return resolved
+        return self._auth_guard.resolve_login_pending(
+            user_id=user_id,
+            workspace=workspace,
+            request_id=request_id,
+            profile_id=profile_id,
+            status=status,
+        )
 
     def _peek_session(self, *, user_id: int, workspace: str, mode: str, profile_id: str = "") -> BrowserSession | None:
         key = self._session_key(user_id=user_id, workspace=workspace, mode=mode, profile_id=profile_id)
@@ -1199,7 +977,34 @@ class BrowserAutomationService:
         resolved_mode = self._resolve_mode(mode)
         resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
         if resolved_mode == "auto":
-            if self._cdp_enabled and self._cdp_endpoint:
+            # When choosing a session automatically, prefer any existing session
+            # for the current thread (CDP or managed) before creating a new one,
+            # and keep using the previously established mode for this workspace.
+            thread_id = threading.get_ident()
+            has_managed_session = False
+            with self._lock:
+                # Reuse same-thread sessions first.
+                for candidate_mode in ("cdp", "managed"):
+                    key = self._session_key(
+                        user_id=user_id,
+                        workspace=workspace,
+                        mode=candidate_mode,
+                        profile_id=resolved_profile_id,
+                    )
+                    session = self._sessions.get(key)
+                    if session is not None and int(getattr(session, "owner_thread_id", 0) or 0) == thread_id:
+                        session.touch()
+                        return session
+                # If there is any managed session for this workspace/profile, prefer
+                # creating another managed session even when CDP is enabled.
+                managed_key = self._session_key(
+                    user_id=user_id,
+                    workspace=workspace,
+                    mode="managed",
+                    profile_id=resolved_profile_id,
+                )
+                has_managed_session = managed_key in self._sessions
+            if self._cdp_enabled and self._cdp_endpoint and not has_managed_session:
                 try:
                     return self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=resolved_profile_id)
                 except Exception:
@@ -1285,18 +1090,6 @@ class BrowserAutomationService:
         return value.startswith(("#", ".", "[", "//", "xpath=", "css=")) or any(
             token in value for token in (">", ":", "=", "(", ")")
         )
-
-    @staticmethod
-    def _is_high_risk(action: str, *, target: str = "", value: str = "", url: str = "") -> bool:
-        corpus = " ".join(
-            (
-                str(action or ""),
-                str(target or ""),
-                str(value or ""),
-                str(url or ""),
-            )
-        ).lower()
-        return any(token in corpus for token in _RISK_KEYWORDS)
 
     @staticmethod
     def _open_external_url(url: str) -> bool:
@@ -2924,21 +2717,8 @@ class BrowserAutomationService:
                 "requires_cdp": bool(active_state.get("requires_cdp", False)),
             }
 
-        # Prefer an existing CDP session when scope=auto so that transient endpoint
-        # probe failures do not immediately downgrade the view to external-only state.
-        effective_user_scope = user_scope
-        if user_scope == "auto":
-            if sticky_scope == "cdp" and self._cdp_enabled:
-                effective_user_scope = "cdp"
-            elif self._has_reusable_cdp_session(
-                user_id=int(user_id),
-                workspace=workspace,
-                profile_id=profile.profile_id,
-            ):
-                effective_user_scope = "cdp"
-
         runtime_scope, fallback_reason, early_payload = self._resolve_state_runtime_scope(
-            user_scope=effective_user_scope,
+            user_scope="cdp" if user_scope == "auto" and sticky_scope == "cdp" and self._cdp_enabled else user_scope,
             include_dom=bool(include_dom),
             include_a11y=bool(include_a11y),
             proc_limit=proc_limit,
@@ -3289,22 +3069,9 @@ class BrowserAutomationService:
                         "args": next_args,
                     },
                 }
-        if self._is_high_risk(act, target=target, value=value, url=url) and not bool(args.get("confirm")):
-            next_args = dict(args or {})
-            next_args["confirm"] = True
-            return {
-                "ok": False,
-                "error": "confirmation_required",
-                "requires_confirmation": True,
-                "confirm_kind": "high_risk_action",
-                "risk_level": "high",
-                "action": act,
-                "next_call": {
-                    "tool": "browser_use",
-                    "action": act,
-                    "args": next_args,
-                },
-            }
+        risk_payload = self._risk_guard.check_high_risk(action=act, args=args)
+        if risk_payload is not None:
+            return risk_payload
 
         timeout_ms = _clamp_int(args.get("timeout_ms"), self._default_timeout_ms, low=500, high=120000)
         strategy = str(args.get("strategy") or "auto").strip().lower()

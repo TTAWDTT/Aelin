@@ -3036,12 +3036,14 @@ def _dispatch_aelin_chat(
     current_user: User,
     *,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+    cancel_token: Any | None = None,
 ) -> AelinChatResponse:
     return _dispatch_aelin_chat_service(
         payload,
         db,
         current_user,
         event_cb=event_cb,
+        cancel_token=cancel_token,
         detect_forced_tracking_create=_detect_forced_tracking_create,
         try_agent_loop_chat=_try_agent_loop_chat,
         pick_expression=_pick_expression,

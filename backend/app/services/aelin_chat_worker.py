@@ -26,6 +26,7 @@ def run_aelin_chat_with_local_session(
     *,
     user_id: int,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+    cancel_token: Any | None = None,
 ) -> AelinChatResponse:
     from app.routers import aelin as aelin_router
 
@@ -34,7 +35,13 @@ def run_aelin_chat_with_local_session(
         user = local_db.get(User, int(user_id))
         if user is None:
             raise RuntimeError("chat_worker_user_not_found")
-        return aelin_router._dispatch_aelin_chat(payload, local_db, user, event_cb=event_cb)
+        return aelin_router._dispatch_aelin_chat(
+            payload,
+            local_db,
+            user,
+            event_cb=event_cb,
+            cancel_token=cancel_token,
+        )
     finally:
         try:
             local_db.close()
