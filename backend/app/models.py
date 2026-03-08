@@ -566,3 +566,46 @@ class BrowserPlaneTab(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BrowserPlaneTabLock(Base):
+    __tablename__ = "browser_plane_tab_locks"
+    __table_args__ = (
+        UniqueConstraint("tab_id", name="uq_browser_plane_tab_lock_tab_id"),
+        Index("ix_browser_plane_tab_lock_user_workspace_updated", "user_id", "workspace", "updated_at"),
+        Index("ix_browser_plane_tab_lock_expires", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tab_id: Mapped[str] = mapped_column(String(120), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    owner: Mapped[str] = mapped_column(String(120), default="", index=True)
+    reason: Mapped[str] = mapped_column(String(255), default="")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class BrowserPlaneArtifact(Base):
+    __tablename__ = "browser_plane_artifacts"
+    __table_args__ = (
+        Index("ix_browser_plane_artifact_user_workspace_created", "user_id", "workspace", "created_at"),
+        Index("ix_browser_plane_artifact_task_created", "task_id", "created_at"),
+        Index("ix_browser_plane_artifact_tab_created", "tab_id", "created_at"),
+        Index("ix_browser_plane_artifact_kind_created", "kind", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    task_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    tab_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    profile_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="result", index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    text_content: Mapped[str] = mapped_column(Text, default="")
+    data_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

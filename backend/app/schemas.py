@@ -592,6 +592,77 @@ class AelinBrowserTabEvaluateResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinBrowserTabLockItem(BaseModel):
+    tab_id: str
+    workspace: str = "default"
+    owner: str = ""
+    reason: str = ""
+    expires_at: float = 0.0
+    created_at: float = 0.0
+    updated_at: float = 0.0
+
+
+class AelinBrowserTabLockRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    owner: str = Field(min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=255)
+    ttl_seconds: int = Field(default=300, ge=30, le=3600)
+    force: bool = False
+
+
+class AelinBrowserTabUnlockRequest(BaseModel):
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    owner: str = Field(default="", max_length=120)
+    force: bool = False
+
+
+class AelinBrowserTabLockResponse(BaseModel):
+    ok: bool = True
+    error: str = ""
+    released: bool | None = None
+    lock: AelinBrowserTabLockItem | None = None
+    generated_at: datetime
+
+
+class AelinBrowserTabLockListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserTabLockItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinBrowserArtifactItem(BaseModel):
+    artifact_id: int
+    workspace: str = "default"
+    task_id: str = ""
+    tab_id: str = ""
+    profile_id: str = ""
+    kind: str = "result"
+    title: str = ""
+    text_content: str = ""
+    data: dict[str, Any] = Field(default_factory=dict)
+    created_at: float = 0.0
+
+
+class AelinBrowserArtifactListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserArtifactItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinBrowserTaskListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserTaskItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinBrowserTaskReplayResponse(BaseModel):
+    ok: bool = True
+    task: AelinBrowserTaskItem | None = None
+    artifacts: list[AelinBrowserArtifactItem] = Field(default_factory=list)
+    total_artifacts: int = 0
+    generated_at: datetime
+
+
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None
