@@ -66,3 +66,6 @@ nul
 # Local PPT draft artifacts
 /aelin-ppt/
 /aelin-ppt.html
+
+# Local PinchTab checkout for multi-plane PoC
+backend/.pinchtab/
