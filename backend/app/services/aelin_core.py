@@ -2741,6 +2741,7 @@ def _try_agent_loop_chat(
     persist_memory: bool = True,
     force_disable_writes: bool = False,
     forced_tracking_create: dict[str, str] | None = None,
+    cancel_token: Any | None = None,
 ) -> AelinChatResponse | None:
     pre_loop_started = time.perf_counter()
     query_preview = " ".join(str(payload.query or "").split())[:120]
@@ -2944,6 +2945,7 @@ def _try_agent_loop_chat(
         attachment_ids=attachment_ids,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
+        cancel_token=cancel_token,
     )
 
     trace_steps: list[AelinToolStep] = [*prefixed_traces]

@@ -162,6 +162,13 @@ def aelin_chat_stream(
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         done_token = "__done__"
+        # Simple cancellation token shared with the agent loop. When the SSE
+        # connection is interrupted, this flag is set to True so the loop can
+        # stop at the next safe checkpoint.
+        class _CancelToken:
+            cancelled: bool = False
+
+        cancel_token = _CancelToken()
 
         def _push(event: str, data: dict[str, Any]) -> None:
             _LOG.debug(
@@ -186,6 +193,7 @@ def aelin_chat_stream(
                     payload,
                     user_id=int(current_user.id),
                     event_cb=_push,
+                    cancel_token=cancel_token,
                 )
                 _LOG.info(
                     "aelin_stream worker_final req=%s uid=%s answer_len=%s actions=%s traces=%s",
@@ -244,6 +252,7 @@ def aelin_chat_stream(
                 if event == "done":
                     break
         except BaseException as exc:
+            cancel_token.cancelled = True
             _LOG.warning(
                 "aelin_stream interrupted req=%s uid=%s type=%s msg=%s",
                 req_id,

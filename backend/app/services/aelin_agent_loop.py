@@ -149,6 +149,7 @@ class AelinAgentLoop:
         attachment_ids: list[int] | None = None,
         forced_intent: str = "",
         forced_tool_runs: list[dict[str, Any]] | None = None,
+        cancel_token: Any | None = None,
     ) -> AelinAgentLoopResult:
         self._last_query = str(query or "")
         self._resume_request_json = json.dumps(
@@ -203,6 +204,17 @@ class AelinAgentLoop:
         loop_started = time.perf_counter()
         idle_rounds = 0
         for round_index in range(1, self._max_rounds + 1):
+            if cancel_token is not None and getattr(cancel_token, "cancelled", False):
+                stop_reason = "client_disconnected"
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_round",
+                        status="failed",
+                        detail=f"round={round_index}; stop=client_disconnected",
+                        count=0,
+                    )
+                )
+                break
             elapsed_total = time.perf_counter() - loop_started
             if elapsed_total >= self._total_timeout_seconds:
                 stop_reason = "total_timeout"
