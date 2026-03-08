@@ -19,6 +19,70 @@ interface Props {
 interface UploadingAttachmentItem {
   id: string
   name: string
+  mimeType: string
+  sizeBytes: number
+}
+
+type AttachmentVisual = {
+  badgeText: string
+  badgeFrom: string
+  badgeTo: string
+  badgeTextColor: string
+  badgeTextClass: string
+  previewFrom: string
+  previewTo: string
+  typeLabel: string
+  sizeLabel: string
+}
+
+const ATTACHMENT_BADGE_STYLES: Record<string, { text: string; textClass: string; badgeFrom: string; badgeTo: string; badgeTextColor: string; previewFrom: string; previewTo: string; type: string }> = {
+  word: { text: 'W', textClass: 'text-[21px] font-black', badgeFrom: '#2f76f8', badgeTo: '#153eb9', badgeTextColor: '#ffffff', previewFrom: '#53cde8', previewTo: '#2661e8', type: 'Word' },
+  ppt: { text: 'P', textClass: 'text-[21px] font-black', badgeFrom: '#ff846b', badgeTo: '#cf3f2b', badgeTextColor: '#ffffff', previewFrom: '#ffb29d', previewTo: '#f1634a', type: 'PPT' },
+  excel: { text: 'X', textClass: 'text-[21px] font-black', badgeFrom: '#42bf7e', badgeTo: '#1b7e4c', badgeTextColor: '#ffffff', previewFrom: '#9de8bc', previewTo: '#35a967', type: 'Excel' },
+  pdf: { text: 'PDF', textClass: 'text-[9px] font-black tracking-[0.02em]', badgeFrom: '#ff7b62', badgeTo: '#d44a35', badgeTextColor: '#ffffff', previewFrom: '#ffc2b1', previewTo: '#ff6d52', type: 'PDF' },
+  image: { text: 'IMG', textClass: 'text-[8px] font-black', badgeFrom: '#8d7de5', badgeTo: '#5a49bd', badgeTextColor: '#ffffff', previewFrom: '#b9cbff', previewTo: '#7e95f4', type: 'Image' },
+  text: { text: 'TXT', textClass: 'text-[8px] font-black', badgeFrom: '#7aa8f5', badgeTo: '#3d6fd8', badgeTextColor: '#ffffff', previewFrom: '#c4d9ff', previewTo: '#8eb0ff', type: 'Text' },
+  code: { text: '</>', textClass: 'text-[8px] font-black', badgeFrom: '#6fca8c', badgeTo: '#2f8e53', badgeTextColor: '#ffffff', previewFrom: '#b8f0cb', previewTo: '#74cf96', type: 'Code' },
+  archive: { text: 'ZIP', textClass: 'text-[8px] font-black', badgeFrom: '#c9a169', badgeTo: '#946535', badgeTextColor: '#ffffff', previewFrom: '#ead0a7', previewTo: '#cb9f63', type: 'Archive' },
+  file: { text: 'FILE', textClass: 'text-[7px] font-black tracking-[0.02em]', badgeFrom: '#9ea8ba', badgeTo: '#6a7382', badgeTextColor: '#ffffff', previewFrom: '#e0e5ef', previewTo: '#b3bccd', type: 'File' },
+}
+
+function formatAttachmentSize(sizeBytes: number): string {
+  const bytes = Number.isFinite(sizeBytes) ? Math.max(0, sizeBytes) : 0
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: number): AttachmentVisual {
+  const lowerName = String(fileName || '').toLowerCase()
+  const extension = lowerName.includes('.') ? lowerName.split('.').pop() || '' : ''
+  const normalizedMime = String(mimeType || '').toLowerCase()
+  const isImage = normalizedMime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'svg'].includes(extension)
+  let styleKey: keyof typeof ATTACHMENT_BADGE_STYLES = 'file'
+
+  if (['doc', 'docx'].includes(extension)) styleKey = 'word'
+  else if (['ppt', 'pptx'].includes(extension)) styleKey = 'ppt'
+  else if (['xls', 'xlsx'].includes(extension)) styleKey = 'excel'
+  else if (extension === 'pdf') styleKey = 'pdf'
+  else if (isImage) styleKey = 'image'
+  else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(extension)) styleKey = 'archive'
+  else if (['txt', 'md', 'markdown', 'log', 'csv', 'xml', 'yaml', 'yml', 'json'].includes(extension)) styleKey = 'text'
+  else if (['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'go', 'rs', 'cpp', 'c', 'h'].includes(extension)) styleKey = 'code'
+
+  const base = ATTACHMENT_BADGE_STYLES[styleKey]
+  const typeLabel = extension ? `${base.type} · ${extension.toUpperCase()}` : base.type
+  return {
+    badgeText: base.text,
+    badgeFrom: base.badgeFrom,
+    badgeTo: base.badgeTo,
+    badgeTextColor: base.badgeTextColor,
+    badgeTextClass: base.textClass,
+    previewFrom: base.previewFrom,
+    previewTo: base.previewTo,
+    typeLabel,
+    sizeLabel: formatAttachmentSize(sizeBytes),
+  }
 }
 
 export function ComposerBar({
@@ -192,6 +256,8 @@ export function ComposerBar({
     const uploadingItems: UploadingAttachmentItem[] = picked.map((file, index) => ({
       id: `${file.name}-${file.size}-${file.lastModified}-${Date.now()}-${index}`,
       name: file.name || `attachment-${index + 1}`,
+      mimeType: String(file.type || ''),
+      sizeBytes: Number(file.size || 0),
     }))
     setUploadingAttachments((prev) => [...prev, ...uploadingItems].slice(0, MAX_PENDING_ATTACHMENTS))
     inFlightUploadBatchesRef.current += 1
@@ -255,38 +321,67 @@ export function ComposerBar({
           />
 
           {(uploadingAttachments.length > 0 || pendingAttachments.length > 0) && (
-            <div className={cn('mb-2.5 flex flex-wrap items-center gap-1.5 max-[500px]:mb-2', isAttaching && 'pointer-events-none opacity-70')}>
-              {uploadingAttachments.map((attachment) => (
-                <span
-                  key={attachment.id}
-                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1 text-[11px] text-[var(--color-text)]"
-                  title={attachment.name}
-                >
-                  <span className="h-2.5 w-2.5 animate-pulse rounded-full border border-[var(--color-accent)] bg-[var(--color-accent-soft)]" />
-                  <span className="max-w-[220px] truncate">{attachment.name}</span>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">处理中</span>
-                </span>
-              ))}
-              {pendingAttachments.map((attachment, index) => (
-                <span
-                  key={`${attachment.attachment_id}-${attachment.file_name}-${index}`}
-                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1 text-[11px] text-[var(--color-text)]"
-                  title={attachment.file_name}
-                >
-                  <span className="h-2.5 w-2.5 rounded-full border border-[var(--color-border)] bg-[var(--color-text-muted)]/60" />
-                  <span className="max-w-[220px] truncate">{attachment.file_name}</span>
-                  <button
-                    type="button"
-                    onClick={() => removePendingAttachment(index)}
-                    disabled={isAttaching}
-                    className="rounded-full p-0.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
-                    aria-label={`移除附件 ${attachment.file_name}`}
-                    title="移除附件"
+            <div className={cn('mb-2.5 flex items-stretch gap-2 overflow-x-auto pb-1 max-[500px]:mb-2', isAttaching && 'pointer-events-none opacity-70')}>
+              {uploadingAttachments.map((attachment) => {
+                const visual = resolveAttachmentVisual(attachment.name, attachment.mimeType, attachment.sizeBytes)
+                return (
+                  <div
+                    key={attachment.id}
+                    className="flex w-[250px] shrink-0 min-w-0 items-center gap-2 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-3 py-2"
+                    title={attachment.name}
                   >
-                    <X size={11} />
-                  </button>
-                </span>
-              ))}
+                    <span
+                      className="h-4 w-4 shrink-0 rounded-full border-2 border-[var(--color-border-strong)] border-t-[var(--color-accent)] animate-spin"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{attachment.name}</span>
+                      <span className="block text-[11px] text-[var(--color-text-muted)]">上传中 · {visual.typeLabel} · {visual.sizeLabel}</span>
+                    </span>
+                  </div>
+                )
+              })}
+              {pendingAttachments.map((attachment, index) => {
+                const visual = resolveAttachmentVisual(attachment.file_name, attachment.mime_type, attachment.size_bytes)
+                return (
+                  <div
+                    key={`${attachment.attachment_id}-${attachment.file_name}-${index}`}
+                    className="group flex w-[280px] shrink-0 min-w-0 items-center gap-2 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-3 py-2"
+                    title={attachment.file_name}
+                  >
+                    <span
+                      className="relative inline-flex h-10 w-8 shrink-0"
+                      aria-hidden="true"
+                    >
+                      <span className="absolute inset-0 rounded-[11px] border-2 border-[#b3b3b3] bg-white" />
+                      <span
+                        className="absolute left-[6px] top-[6px] h-[20px] w-[20px] rounded-[7px]"
+                        style={{ backgroundImage: `linear-gradient(135deg, ${visual.previewFrom}, ${visual.previewTo})` }}
+                      />
+                      <span
+                        className="absolute left-[-7px] bottom-[-3px] inline-flex h-[28px] w-[28px] items-center justify-center rounded-[9px] shadow-[0_3px_10px_rgba(13,57,163,0.25)]"
+                        style={{ backgroundImage: `linear-gradient(165deg, ${visual.badgeFrom}, ${visual.badgeTo})`, color: visual.badgeTextColor }}
+                      >
+                        <span className={cn('leading-none', visual.badgeTextClass)}>{visual.badgeText}</span>
+                      </span>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14px] font-medium text-[var(--color-text)]">{attachment.file_name}</span>
+                      <span className="block text-[12px] text-[var(--color-text-muted)]">{visual.typeLabel} · {visual.sizeLabel}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removePendingAttachment(index)}
+                      disabled={isAttaching}
+                      className="shrink-0 rounded-full p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
+                      aria-label={`移除附件 ${attachment.file_name}`}
+                      title="移除附件"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
 
