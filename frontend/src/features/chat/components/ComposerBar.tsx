@@ -129,8 +129,8 @@ function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: 
   else if (normalizedMime === 'application/pdf' || extension === 'pdf') styleKey = 'pdf'
   else if (isImage) styleKey = 'image'
   else if (ARCHIVE_MIME_TYPES.has(normalizedMime) || ARCHIVE_EXTENSIONS.has(extension)) styleKey = 'archive'
-  else if (normalizedMime.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(normalizedMime) || TEXT_EXTENSIONS.has(extension)) styleKey = 'text'
   else if (CODE_MIME_TYPES.has(normalizedMime) || CODE_EXTENSIONS.has(extension)) styleKey = 'code'
+  else if (normalizedMime.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(normalizedMime) || TEXT_EXTENSIONS.has(extension)) styleKey = 'text'
 
   const base = ATTACHMENT_BADGE_STYLES[styleKey]
   const typeLabel = extension ? `${base.type} · ${extension.toUpperCase()}` : base.type
