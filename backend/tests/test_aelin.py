@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 import app.routers.aelin as aelin_router
+from app.services.browser_plane import browser_plane_adapter
 from app.services.web_search import WebSearchResult
 from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client, _sync_and_wait
@@ -398,7 +399,7 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
     monkeypatch.setattr(settings, "aelin_agent_loop_max_rounds", 2)
     monkeypatch.setattr(settings, "aelin_agent_loop_max_tool_calls", 3)
     monkeypatch.setattr(settings, "aelin_agent_loop_max_calls_per_round", 2)
-    monkeypatch.setattr(settings, "aelin_agent_loop_allow_write_tools", False)
+    monkeypatch.setattr(settings, "aelin_agent_loop_allow_write_tools", True)
 
     class _FakeCompletions:
         def __init__(self):
@@ -445,6 +446,83 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
     data = resp.json()
     assert data.get("answer") == "这是 loop 的最终回答。"
     assert any((it.get("stage") == "agent_loop_tool") for it in (data.get("tool_trace") or []))
+
+
+def test_aelin_chat_agent_loop_triggers_browser_use(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
+    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
+    monkeypatch.setattr(settings, "aelin_agent_loop_max_rounds", 2)
+    monkeypatch.setattr(settings, "aelin_agent_loop_max_tool_calls", 3)
+    monkeypatch.setattr(settings, "aelin_agent_loop_max_calls_per_round", 2)
+    monkeypatch.setattr(settings, "aelin_agent_loop_allow_write_tools", True)
+
+    class _FakeCompletions:
+        def __init__(self):
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                tool_call = SimpleNamespace(
+                    id="call_browser_1",
+                    function=SimpleNamespace(
+                        name="browser_use",
+                        arguments='{"action":"navigate","scope":"external","url":"https://example.com"}',
+                    ),
+                )
+                msg = SimpleNamespace(content="", tool_calls=[tool_call])
+                return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+            msg = SimpleNamespace(content="这是带 browser_use 的最终回答。", tool_calls=[])
+            return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+
+    class _FakeService:
+        def __init__(self):
+            self.config = SimpleNamespace(model="fake-model", temperature=0.0)
+            self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+
+        def is_configured(self):
+            return True
+
+    monkeypatch.setattr(aelin_router, "_resolve_llm_service", lambda db, user: (_FakeService(), "openai"))
+
+    def _legacy_should_not_run(*args, **kwargs):
+        raise AssertionError("legacy path should not run in this test")
+
+    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
+
+    captured: dict[str, object] = {}
+
+    def _fake_browser_use(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "scope": kwargs.get("scope", "external"),
+            "action": kwargs.get("action"),
+            "effect_summary": f"opened_external:{kwargs.get('args', {}).get('url', '')}",
+        }
+
+    monkeypatch.setattr(browser_plane_adapter, "use", _fake_browser_use)
+
+    resp = client.post(
+        "/api/v1/aelin/chat",
+        json={
+            "query": "请帮我在浏览器里打开 example.com 看看。",
+            "use_memory": True,
+            "workspace": "default",
+            "images": [],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("answer") == "这是带 browser_use 的最终回答。"
+    assert any((it.get("stage") == "agent_loop_tool") for it in (data.get("tool_trace") or []))
+    assert captured.get("action") == "navigate"
+    assert captured.get("scope") == "external"
 
 
 def test_aelin_chat_loop_only_even_when_shadow_toggle_enabled(monkeypatch):
@@ -1683,9 +1761,6 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     )
     assert isinstance(web_step, dict)
     assert web_step.get("status") == "skipped"
-
-
-
 
 
 
