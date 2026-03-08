@@ -35,7 +35,20 @@ type AttachmentVisual = {
   sizeLabel: string
 }
 
-const ATTACHMENT_BADGE_STYLES: Record<string, { text: string; textClass: string; badgeFrom: string; badgeTo: string; badgeTextColor: string; previewFrom: string; previewTo: string; type: string }> = {
+type AttachmentStyleKey = 'word' | 'ppt' | 'excel' | 'pdf' | 'image' | 'text' | 'code' | 'archive' | 'file'
+
+type AttachmentBadgeStyle = {
+  text: string
+  textClass: string
+  badgeFrom: string
+  badgeTo: string
+  badgeTextColor: string
+  previewFrom: string
+  previewTo: string
+  type: string
+}
+
+const ATTACHMENT_BADGE_STYLES: Record<AttachmentStyleKey, AttachmentBadgeStyle> = {
   word: { text: 'W', textClass: 'text-[21px] font-black', badgeFrom: '#2f76f8', badgeTo: '#153eb9', badgeTextColor: '#ffffff', previewFrom: '#53cde8', previewTo: '#2661e8', type: 'Word' },
   ppt: { text: 'P', textClass: 'text-[21px] font-black', badgeFrom: '#ff846b', badgeTo: '#cf3f2b', badgeTextColor: '#ffffff', previewFrom: '#ffb29d', previewTo: '#f1634a', type: 'PPT' },
   excel: { text: 'X', textClass: 'text-[21px] font-black', badgeFrom: '#42bf7e', badgeTo: '#1b7e4c', badgeTextColor: '#ffffff', previewFrom: '#9de8bc', previewTo: '#35a967', type: 'Excel' },
@@ -46,6 +59,55 @@ const ATTACHMENT_BADGE_STYLES: Record<string, { text: string; textClass: string;
   archive: { text: 'ZIP', textClass: 'text-[8px] font-black', badgeFrom: '#c9a169', badgeTo: '#946535', badgeTextColor: '#ffffff', previewFrom: '#ead0a7', previewTo: '#cb9f63', type: 'Archive' },
   file: { text: 'FILE', textClass: 'text-[7px] font-black tracking-[0.02em]', badgeFrom: '#9ea8ba', badgeTo: '#6a7382', badgeTextColor: '#ffffff', previewFrom: '#e0e5ef', previewTo: '#b3bccd', type: 'File' },
 }
+
+const WORD_EXTENSIONS = new Set(['doc', 'docx'])
+const PPT_EXTENSIONS = new Set(['ppt', 'pptx'])
+const EXCEL_EXTENSIONS = new Set(['xls', 'xlsx'])
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'svg'])
+const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz'])
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'log', 'csv', 'xml', 'yaml', 'yml', 'json'])
+const CODE_EXTENSIONS = new Set(['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'go', 'rs', 'cpp', 'c', 'h'])
+
+const WORD_MIME_TYPES = new Set([
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+])
+const PPT_MIME_TYPES = new Set([
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+])
+const EXCEL_MIME_TYPES = new Set([
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+])
+const ARCHIVE_MIME_TYPES = new Set([
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/x-7z-compressed',
+  'application/x-rar-compressed',
+  'application/x-tar',
+  'application/x-gtar',
+  'application/gzip',
+  'application/x-gzip',
+])
+const TEXT_LIKE_MIME_TYPES = new Set([
+  'application/json',
+  'application/xml',
+  'application/yaml',
+  'application/x-yaml',
+  'application/csv',
+])
+const CODE_MIME_TYPES = new Set([
+  'application/javascript',
+  'text/javascript',
+  'text/x-typescript',
+  'text/x-python',
+  'text/x-java',
+  'text/x-go',
+  'text/x-rust',
+  'text/x-c++src',
+  'text/x-csrc',
+])
 
 function formatAttachmentSize(sizeBytes: number): string {
   const bytes = Number.isFinite(sizeBytes) ? Math.max(0, sizeBytes) : 0
@@ -58,17 +120,17 @@ function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: 
   const lowerName = String(fileName || '').toLowerCase()
   const extension = lowerName.includes('.') ? lowerName.split('.').pop() || '' : ''
   const normalizedMime = String(mimeType || '').toLowerCase()
-  const isImage = normalizedMime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'svg'].includes(extension)
-  let styleKey: keyof typeof ATTACHMENT_BADGE_STYLES = 'file'
+  const isImage = normalizedMime.startsWith('image/') || IMAGE_EXTENSIONS.has(extension)
+  let styleKey: AttachmentStyleKey = 'file'
 
-  if (['doc', 'docx'].includes(extension)) styleKey = 'word'
-  else if (['ppt', 'pptx'].includes(extension)) styleKey = 'ppt'
-  else if (['xls', 'xlsx'].includes(extension)) styleKey = 'excel'
-  else if (extension === 'pdf') styleKey = 'pdf'
+  if (WORD_MIME_TYPES.has(normalizedMime) || WORD_EXTENSIONS.has(extension)) styleKey = 'word'
+  else if (PPT_MIME_TYPES.has(normalizedMime) || PPT_EXTENSIONS.has(extension)) styleKey = 'ppt'
+  else if (EXCEL_MIME_TYPES.has(normalizedMime) || EXCEL_EXTENSIONS.has(extension)) styleKey = 'excel'
+  else if (normalizedMime === 'application/pdf' || extension === 'pdf') styleKey = 'pdf'
   else if (isImage) styleKey = 'image'
-  else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(extension)) styleKey = 'archive'
-  else if (['txt', 'md', 'markdown', 'log', 'csv', 'xml', 'yaml', 'yml', 'json'].includes(extension)) styleKey = 'text'
-  else if (['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'go', 'rs', 'cpp', 'c', 'h'].includes(extension)) styleKey = 'code'
+  else if (ARCHIVE_MIME_TYPES.has(normalizedMime) || ARCHIVE_EXTENSIONS.has(extension)) styleKey = 'archive'
+  else if (normalizedMime.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(normalizedMime) || TEXT_EXTENSIONS.has(extension)) styleKey = 'text'
+  else if (CODE_MIME_TYPES.has(normalizedMime) || CODE_EXTENSIONS.has(extension)) styleKey = 'code'
 
   const base = ATTACHMENT_BADGE_STYLES[styleKey]
   const typeLabel = extension ? `${base.type} · ${extension.toUpperCase()}` : base.type
@@ -316,7 +378,7 @@ export function ComposerBar({
             type="file"
             multiple
             className="hidden"
-            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.rar,.7z,.tar,.gz,.ts,.tsx,.js,.jsx,.py,.java,.go,.rs,.cpp,.c,.h"
             onChange={handleAttachmentChange}
           />
 
@@ -353,7 +415,7 @@ export function ComposerBar({
                       className="relative inline-flex h-10 w-8 shrink-0"
                       aria-hidden="true"
                     >
-                      <span className="absolute inset-0 rounded-[11px] border-2 border-[#b3b3b3] bg-white" />
+                      <span className="absolute inset-0 rounded-[11px] border-2 border-[var(--color-border)] bg-[var(--color-panel)]" />
                       <span
                         className="absolute left-[6px] top-[6px] h-[20px] w-[20px] rounded-[7px]"
                         style={{ backgroundImage: `linear-gradient(135deg, ${visual.previewFrom}, ${visual.previewTo})` }}
