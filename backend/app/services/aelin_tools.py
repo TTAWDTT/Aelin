@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import crud
-from app.models import AgentMemoryNote, TrackingChange, TrackingTarget
+from app.models import AgentMemoryNote
 from app.services.agent_memory import AgentMemoryService
 from app.services.device_center import (
     apply_device_mode as device_apply_mode,
@@ -18,11 +18,10 @@ from app.services.device_center import (
     DeviceScreenCaptureError,
     device_capabilities as device_capabilities_info,
 )
-from app.services.browser_plane import browser_plane_adapter
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
-from app.services.tracking_autonomy import TrackingAutonomyService
 from app.services.aelin_utils import normalize_positive_ints
+from app.services.pinchtab_client import get_pinchtab_client
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 
@@ -31,10 +30,6 @@ _TOOL_KEYWORDS = (
     "diary",
     "profile",
     "画像",
-    "tracking",
-    "跟踪",
-    "追踪",
-    "监控",
     "device",
     "进程",
     "性能",
@@ -114,7 +109,6 @@ class AelinToolHub:
         user_id: int,
         workspace: str,
         memory_service: AgentMemoryService,
-        tracking_service: TrackingAutonomyService,
         file_memory_bridge: TrackingFileMemoryBridge,
         web_search_service: WebSearchService | None = None,
         attachment_service: AelinAttachmentService | None = None,
@@ -124,7 +118,6 @@ class AelinToolHub:
         self.user_id = int(user_id)
         self.workspace = _normalize_workspace(workspace)
         self._memory = memory_service
-        self._tracking = tracking_service
         self._file_memory = file_memory_bridge
         self._web_search = web_search_service or WebSearchService()
         self._attachments = attachment_service or get_aelin_attachment_service()
@@ -175,25 +168,6 @@ class AelinToolHub:
                             "action": {"type": "string", "enum": ["get", "append_note"]},
                             "note": {"type": "string"},
                             "max_items": {"type": "integer", "minimum": 1, "maximum": 24},
-                        },
-                        "required": ["action"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "tracking",
-                    "description": "查询、创建或执行追踪任务。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {"type": "string", "enum": ["list", "create", "run_once", "changes"]},
-                            "target": {"type": "string"},
-                            "source": {"type": "string"},
-                            "query": {"type": "string"},
-                            "target_id": {"type": "integer"},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
                         },
                         "required": ["action"],
                     },
@@ -275,61 +249,19 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
-                    "name": "browser_session_list",
-                    "description": "列出浏览器会话与系统浏览器进程（managed/system/external/all）。",
+                    "name": "pinchtab",
+                    "description": "通过本地 PinchTab 服务执行浏览器相关操作（PoC）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "scope": {"type": "string", "enum": ["managed", "system", "external", "all"]},
-                            "max_items": {"type": "integer", "minimum": 1, "maximum": 200},
-                            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
-                        },
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "browser_state_get",
-                    "description": "读取浏览器状态。支持 scope=auto|cdp|external|system|all（managed 已软下线，不再建议使用）。默认轻量模式（include_dom=false, include_a11y=false）。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "scope": {"type": "string", "enum": ["auto", "cdp", "external", "system", "all"]},
-                            "include_dom": {"type": "boolean"},
-                            "include_a11y": {"type": "boolean"},
-                            "max_targets": {"type": "integer", "minimum": 1, "maximum": 60},
-                            "max_items": {"type": "integer", "minimum": 0, "maximum": 200},
-                            "pid": {"type": "integer", "minimum": 0, "maximum": 2147483647},
-                        },
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "browser_use",
-                    "description": "执行浏览器动作（navigate/click/type/scroll/wait）。scope=auto 下 navigate 优先 external；复杂动作在系统浏览器已打开时会先要求 confirm，并可能需要 CDP。scope=external 仅支持 navigate（继承系统浏览器登录态）。managed 已软下线，不再建议使用。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "wait"]},
-                            "scope": {"type": "string", "enum": ["auto", "cdp", "external"]},
+                            "action": {
+                                "type": "string",
+                                "enum": ["health", "launch_instance", "open_tab", "snapshot", "text", "click"],
+                            },
+                            "instance_id": {"type": "string"},
+                            "tab_id": {"type": "string"},
                             "url": {"type": "string"},
-                            "target": {"type": "string"},
-                            "selector": {"type": "string"},
-                            "text": {"type": "string"},
-                            "value": {"type": "string"},
-                            "strategy": {"type": "string", "enum": ["auto", "selector", "text", "role"]},
-                            "role": {"type": "string"},
-                            "press_enter": {"type": "boolean"},
-                            "direction": {"type": "string", "enum": ["up", "down"]},
-                            "amount": {"type": "integer", "minimum": -6000, "maximum": 6000},
-                            "wait_ms": {"type": "integer", "minimum": 100, "maximum": 20000},
-                            "timeout_ms": {"type": "integer", "minimum": 500, "maximum": 120000},
-                            "confirm": {"type": "boolean"},
+                            "ref": {"type": "string"},
                         },
                         "required": ["action"],
                     },
@@ -345,8 +277,6 @@ class AelinToolHub:
             return self._tool_diary(args)
         if tool == "profile":
             return self._tool_profile(args)
-        if tool == "tracking":
-            return self._tool_tracking(args)
         if tool == "device":
             return self._tool_device(args)
         if tool == "web_search":
@@ -355,12 +285,8 @@ class AelinToolHub:
             return self._tool_attachment_search(args)
         if tool == "screen_get":
             return self._tool_screen_get(args)
-        if tool == "browser_session_list":
-            return self._tool_browser_session_list(args)
-        if tool == "browser_state_get":
-            return self._tool_browser_state_get(args)
-        if tool == "browser_use":
-            return self._tool_browser_use(args)
+        if tool == "pinchtab":
+            return self._tool_pinchtab(args)
         return _result_error(f"unsupported tool: {tool}")
 
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -454,83 +380,6 @@ class AelinToolHub:
                 "updated_at": it.updated_at.isoformat() if getattr(it, "updated_at", None) else "",
             }
             for it in notes
-        ]
-        return _result_items(items)
-
-    def _tool_tracking(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "list").strip().lower()
-        if action == "create":
-            target = str(args.get("target") or "").strip()[:240]
-            if not target:
-                return _result_error("missing target")
-            source = str(args.get("source") or "web").strip().lower() or "web"
-            query = str(args.get("query") or "").strip()[:500]
-            row = self._tracking.upsert_target(
-                self.db,
-                user_id=self.user_id,
-                workspace=self.workspace,
-                target=target,
-                source_type=source,
-                query=query,
-                description="",
-                tags=[],
-                track_type=None,
-                interval_seconds=None,
-                notify_level="all",
-                is_temporary=False,
-                temporary_days=7,
-                config_ready=True,
-                merge_existing=True,
-            )
-            return _result_ok(
-                target_id=int(row.id),
-                target=str(row.display_name or target),
-                source=str(row.source_type or source),
-            )
-
-        if action == "run_once":
-            target_id = _safe_int(args.get("target_id"), 0, low=0, high=1_000_000_000)
-            if target_id <= 0:
-                return _result_error("missing target_id")
-            result = self._tracking.run_target_now(user_id=self.user_id, target_id=target_id)
-            return {"ok": bool(result.get("ok")), "message": str(result.get("message") or "")[:220]}
-
-        if action == "changes":
-            target_id = _safe_int(args.get("target_id"), 0, low=0, high=1_000_000_000)
-            if target_id <= 0:
-                return _result_error("missing target_id")
-            limit = _safe_int(args.get("limit"), 10, low=1, high=50)
-            rows = self._tracking.list_changes(self.db, user_id=self.user_id, target_id=target_id, limit=limit)
-            items = [
-                {
-                    "id": int(it.id),
-                    "change_type": str(it.change_type or ""),
-                    "severity": str(it.severity or ""),
-                    "title": str(it.title or ""),
-                    "summary": str(it.summary or "")[:220],
-                    "created_at": it.created_at.isoformat() if it.created_at else "",
-                    "acked": bool(it.acked),
-                }
-                for it in rows
-            ]
-            return _result_items(items)
-
-        limit = _safe_int(args.get("limit"), 10, low=1, high=50)
-        rows = self._tracking.list_targets(
-            self.db,
-            user_id=self.user_id,
-            workspace=self.workspace,
-            limit=limit,
-        )
-        items = [
-            {
-                "target_id": int(it.id),
-                "target": str(it.display_name or ""),
-                "source": str(it.source_type or "web"),
-                "status": str(it.status or "active"),
-                "next_run_at": it.next_run_at.isoformat() if it.next_run_at else "",
-            }
-            for it in rows
         ]
         return _result_items(items)
 
@@ -682,75 +531,39 @@ class AelinToolHub:
             captured_at=str(shot.get("captured_at") or "")[:64],
         )
 
-    def _tool_browser_session_list(self, args: dict[str, Any]) -> dict[str, Any]:
-        scope = str(args.get("scope") or "all").strip().lower()[:16]
-        max_items = _safe_int(args.get("max_items"), 20, low=1, high=200)
-        pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
-        try:
-            result = browser_plane_adapter.list_sessions(
-                user_id=self.user_id,
-                workspace=self.workspace,
-                scope=scope,
-                max_items=max_items,
-                pid=pid,
-            )
-        except Exception as exc:
-            return _result_error(f"browser_session_list_failed:{str(exc)[:160]}")
-        return result if isinstance(result, dict) else _result_error("browser_session_list_invalid_payload")
-
-    def _tool_browser_state_get(self, args: dict[str, Any]) -> dict[str, Any]:
-        scope = str(args.get("scope") or "auto").strip().lower()[:16]
-        include_dom = bool(args.get("include_dom", False))
-        include_a11y = bool(args.get("include_a11y", False))
-        max_targets = _safe_int(args.get("max_targets"), 30, low=1, high=60)
-        max_items = _safe_int(args.get("max_items"), 0, low=0, high=200)
-        pid = _safe_int(args.get("pid"), 0, low=0, high=2_147_483_647)
-        try:
-            result = browser_plane_adapter.state_get(
-                user_id=self.user_id,
-                workspace=self.workspace,
-                scope=scope,
-                include_dom=include_dom,
-                include_a11y=include_a11y,
-                max_targets=max_targets,
-                max_items=max_items,
-                pid=pid,
-            )
-        except Exception as exc:
-            return _result_error(f"browser_state_get_failed:{str(exc)[:160]}")
-        return result if isinstance(result, dict) else _result_error("browser_state_get_invalid_payload")
-
-    def _tool_browser_use(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _tool_pinchtab(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()
+        client = get_pinchtab_client()
         if not action:
             return _result_error("missing action")
-        scope = str(args.get("scope") or "auto").strip().lower()[:16]
-        payload = {
-            "url": str(args.get("url") or "").strip()[:1000],
-            "target": str(args.get("target") or "").strip()[:240],
-            "selector": str(args.get("selector") or "").strip()[:1000],
-            "text": str(args.get("text") or "").strip()[:1000],
-            "value": str(args.get("value") or "")[:1200],
-            "strategy": str(args.get("strategy") or "auto").strip().lower()[:16],
-            "role": str(args.get("role") or "").strip().lower()[:24],
-            "press_enter": bool(args.get("press_enter", False)),
-            "direction": str(args.get("direction") or "").strip().lower()[:16],
-            "amount": _safe_int(args.get("amount"), 720, low=-6000, high=6000),
-            "wait_ms": _safe_int(args.get("wait_ms"), 900, low=100, high=20000),
-            "timeout_ms": _safe_int(args.get("timeout_ms"), 12000, low=500, high=120000),
-            "confirm": bool(args.get("confirm", False)),
-        }
-        try:
-            result = browser_plane_adapter.use(
-                user_id=self.user_id,
-                workspace=self.workspace,
-                action=action,
-                args=payload,
-                scope=scope,
-            )
-        except Exception as exc:
-            return _result_error(f"browser_use_failed:{str(exc)[:160]}")
-        return result if isinstance(result, dict) else _result_error("browser_use_invalid_payload")
+        if action == "health":
+            out = client.health()
+            return out if isinstance(out, dict) else _result_error("pinchtab_health_failed")
+        if action == "launch_instance":
+            return client.launch_instance()
+        if action == "open_tab":
+            instance_id = str(args.get("instance_id") or "").strip()
+            url = str(args.get("url") or "").strip()
+            if not instance_id or not url:
+                return _result_error("missing instance_id or url")
+            return client.open_tab(instance_id=instance_id, url=url)
+        if action == "snapshot":
+            tab_id = str(args.get("tab_id") or "").strip()
+            if not tab_id:
+                return _result_error("missing tab_id")
+            return client.snapshot(tab_id=tab_id)
+        if action == "text":
+            tab_id = str(args.get("tab_id") or "").strip()
+            if not tab_id:
+                return _result_error("missing tab_id")
+            return client.text(tab_id=tab_id)
+        if action == "click":
+            tab_id = str(args.get("tab_id") or "").strip()
+            ref = str(args.get("ref") or "").strip()
+            if not tab_id or not ref:
+                return _result_error("missing tab_id or ref")
+            return client.action(tab_id=tab_id, kind="click", ref=ref)
+        return _result_error(f"unsupported pinchtab action: {action}")
 
 
 def _safe_load_json(raw: str) -> dict[str, Any]:
@@ -863,16 +676,11 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
         note = ""
         if status != "completed":
             note = error or "failed"
-        elif name == "tracking":
-            if "target_id" in result:
-                note = f"target_id={result.get('target_id')}, target={result.get('target')}"
-            else:
-                note = f"total={result.get('total')}"
         elif name == "web_search":
             note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
         elif name == "attachment_search":
             note = f"total={result.get('total')}, attachments={','.join([str(x) for x in list(result.get('attachment_ids') or [])[:6]])}"
-        elif name in {"diary", "profile", "context_get", "device", "screen_get", "browser_session_list", "browser_state_get", "browser_use"}:
+        elif name in {"diary", "profile", "context_get", "device", "screen_get"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
             elif "summary" in result:

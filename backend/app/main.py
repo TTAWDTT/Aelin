@@ -21,7 +21,6 @@ from app.routers import (
     aelin_media,
     aelin_notifications,
     aelin_proactive,
-    aelin_tracking,
     auth,
     contacts,
     desk,
@@ -29,7 +28,6 @@ from app.routers import (
     messages,
 )
 from app.settings import settings
-from app.services.tracking_autonomy import tracking_autonomy_service
 
 _log = logging.getLogger(__name__)
 
@@ -79,15 +77,10 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     # Lightweight column migration for SQLite (add columns that don't exist yet)
     _add_missing_columns(engine)
-    if settings.tracking_scheduler_enabled:
-        tracking_autonomy_service.start()
-        _log.info("tracking scheduler enabled")
-    else:
-        _log.info("tracking scheduler disabled")
     try:
         yield
     finally:
-        tracking_autonomy_service.stop()
+        pass
 
 
 def create_app() -> FastAPI:
@@ -132,7 +125,6 @@ def create_app() -> FastAPI:
     app.include_router(aelin_media.router, prefix="/api/v1")
     app.include_router(aelin_notifications.router, prefix="/api/v1")
     app.include_router(aelin_proactive.router, prefix="/api/v1")
-    app.include_router(aelin_tracking.router, prefix="/api/v1")
     app.include_router(desk.router, prefix="/api/v1")
     app.include_router(inbound.router, prefix="/api/v1")
 

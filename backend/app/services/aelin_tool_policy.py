@@ -30,8 +30,6 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "profile":
         return action == "append_note"
-    if tool == "tracking":
-        return action in {"create", "run_once"}
     if tool == "device":
         return action == "mode_apply"
     if tool == "web_search":
@@ -40,12 +38,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "screen_get":
         return False
-    if tool == "browser_state_get":
-        return False
-    if tool == "browser_session_list":
-        return False
-    if tool == "browser_use":
-        # Browser actions can mutate external state; treat as write for safety budgeting.
+    if tool == "pinchtab":
+        # PinchTab 调用会驱动真实浏览器行为，统一视为写操作以纳入配额控制。
         return True
     return False
 
@@ -76,14 +70,11 @@ class AelinToolPolicy:
             "context_get",
             "diary",
             "profile",
-            "tracking",
             "device",
             "web_search",
             "attachment_search",
             "screen_get",
-            "browser_session_list",
-            "browser_state_get",
-            "browser_use",
+            "pinchtab",
         }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 

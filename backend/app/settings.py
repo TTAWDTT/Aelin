@@ -46,25 +46,6 @@ class Settings(BaseSettings):
     crawler_rsshub_parallelism: int = 12
     crawler_playwright_poll_seconds: int = 10
 
-    # Autonomous tracking scheduler.
-    tracking_scheduler_enabled: bool = False
-    tracking_scheduler_tick_seconds: float = 1.0
-    tracking_scheduler_batch_size: int = 80
-    tracking_global_max_workers: int = 16
-    tracking_source_max_workers: int = 4
-    tracking_min_interval_seconds: int = 30
-    tracking_default_term_interval_seconds: int = 120
-    tracking_default_url_interval_seconds: int = 180
-    tracking_max_backoff_seconds: int = 60 * 60 * 6
-    tracking_request_timeout_seconds: float = 15.0
-    tracking_target_timeout_seconds: float = 70.0
-    tracking_error_threshold: int = 10
-    tracking_dedupe_window_hours: int = 24
-    tracking_quiet_start_hour: int = 23
-    tracking_quiet_end_hour: int = 8
-    tracking_sqlite_lock_retry_attempts: int = 4
-    tracking_sqlite_lock_retry_base_delay_seconds: float = 0.15
-
     # File memory bridge (OpenViking-compatible projection + retrieval fallback).
     openviking_enabled: bool = True
     openviking_semantic_enabled: bool = True
@@ -98,6 +79,7 @@ class Settings(BaseSettings):
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
+    pinchtab_base_url: str = "http://127.0.0.1:9867"
     aelin_attachment_storage_dir: str = "./data/aelin_attachments"
     aelin_attachment_max_size_bytes: int = 30 * 1024 * 1024
     aelin_attachment_chunk_size: int = 700

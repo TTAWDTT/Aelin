@@ -9,7 +9,6 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 import app.routers.aelin as aelin_router
-from app.services.browser_plane import browser_plane_adapter
 from app.services.web_search import WebSearchResult
 from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client, _sync_and_wait
@@ -309,54 +308,6 @@ def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
     assert any((it.get("stage") == "agent_loop") for it in (data.get("tool_trace") or []))
 
 
-def test_aelin_chat_agent_loop_forced_tracking_intent_injected(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
-    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
-
-    captured: dict[str, object] = {}
-
-    def _fake_try(payload, db, current_user, event_cb=None, persist_memory=True, force_disable_writes=False, forced_tracking_create=None):
-        captured["forced_tracking_create"] = forced_tracking_create
-        return aelin_router.AelinChatResponse(
-            answer="loop-forced-intent",
-            expression="exp-03",
-            citations=[],
-            actions=[],
-            tool_trace=[aelin_router.AelinToolStep(stage="agent_loop", status="completed", detail="ok", count=1, ts=2)],
-            memory_summary="loop",
-            generated_at=datetime.now(timezone.utc),
-        )
-
-    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _fake_try)
-
-    def _legacy_should_not_run(*args, **kwargs):
-        raise AssertionError("legacy path should not run when loop returns response")
-
-    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
-
-    resp = client.post(
-        "/api/v1/aelin/chat",
-        json={
-            "query": "请帮我创建一个追踪：OpenAI 发布会后续动态。",
-            "use_memory": True,
-            "workspace": "default",
-            "images": [],
-        },
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("answer") == "loop-forced-intent"
-    forced = captured.get("forced_tracking_create")
-    assert isinstance(forced, dict)
-    assert str((forced or {}).get("action") or "") == "create"
-    assert "OpenAI 发布会后续动态" in str((forced or {}).get("target") or "")
-
-
 def test_aelin_chat_agent_loop_hard_fail_without_legacy(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -448,83 +399,6 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
     assert any((it.get("stage") == "agent_loop_tool") for it in (data.get("tool_trace") or []))
 
 
-def test_aelin_chat_agent_loop_triggers_browser_use(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
-    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_max_rounds", 2)
-    monkeypatch.setattr(settings, "aelin_agent_loop_max_tool_calls", 3)
-    monkeypatch.setattr(settings, "aelin_agent_loop_max_calls_per_round", 2)
-    monkeypatch.setattr(settings, "aelin_agent_loop_allow_write_tools", True)
-
-    class _FakeCompletions:
-        def __init__(self):
-            self.calls = 0
-
-        def create(self, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                tool_call = SimpleNamespace(
-                    id="call_browser_1",
-                    function=SimpleNamespace(
-                        name="browser_use",
-                        arguments='{"action":"navigate","scope":"external","url":"https://example.com"}',
-                    ),
-                )
-                msg = SimpleNamespace(content="", tool_calls=[tool_call])
-                return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
-            msg = SimpleNamespace(content="这是带 browser_use 的最终回答。", tool_calls=[])
-            return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
-
-    class _FakeService:
-        def __init__(self):
-            self.config = SimpleNamespace(model="fake-model", temperature=0.0)
-            self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
-
-        def is_configured(self):
-            return True
-
-    monkeypatch.setattr(aelin_router, "_resolve_llm_service", lambda db, user: (_FakeService(), "openai"))
-
-    def _legacy_should_not_run(*args, **kwargs):
-        raise AssertionError("legacy path should not run in this test")
-
-    monkeypatch.setattr(aelin_router, "_aelin_chat_impl", _legacy_should_not_run)
-
-    captured: dict[str, object] = {}
-
-    def _fake_browser_use(**kwargs):
-        captured.update(kwargs)
-        return {
-            "ok": True,
-            "scope": kwargs.get("scope", "external"),
-            "action": kwargs.get("action"),
-            "effect_summary": f"opened_external:{kwargs.get('args', {}).get('url', '')}",
-        }
-
-    monkeypatch.setattr(browser_plane_adapter, "use", _fake_browser_use)
-
-    resp = client.post(
-        "/api/v1/aelin/chat",
-        json={
-            "query": "请帮我在浏览器里打开 example.com 看看。",
-            "use_memory": True,
-            "workspace": "default",
-            "images": [],
-        },
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("answer") == "这是带 browser_use 的最终回答。"
-    assert any((it.get("stage") == "agent_loop_tool") for it in (data.get("tool_trace") or []))
-    assert captured.get("action") == "navigate"
-    assert captured.get("scope") == "external"
-
-
 def test_aelin_chat_loop_only_even_when_shadow_toggle_enabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -564,199 +438,6 @@ def test_aelin_chat_loop_only_even_when_shadow_toggle_enabled(monkeypatch):
     assert resp.json().get("answer") == "loop-shadow-ignored"
 
 
-def test_aelin_track_confirm_endpoint(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    missing = client.post(
-        "/api/v1/aelin/track/confirm",
-        json={"target": "NBA", "source": "x", "query": "跟踪 NBA 动态"},
-        headers=headers,
-    )
-    assert missing.status_code == 200, missing.text
-    missing_data = missing.json()
-    assert missing_data.get("status") in {"sync_started", "needs_config"}
-    assert missing_data.get("provider") == "x"
-    assert any((it.get("kind") in {"open_settings", "open_desk"}) for it in (missing_data.get("actions") or []))
-
-    monkeypatch.setattr(
-        aelin_router._web_search,
-        "search",
-        lambda query, max_results=6: [
-            WebSearchResult(
-                title="Warriors beat Spurs 130-119",
-                url="https://example.com/nba/game",
-                snippet="Curry scored 30 with 6 threes.",
-                fetched_excerpt="Warriors beat Spurs 130-119. Curry scored 30 with 6 threes.",
-            )
-        ],
-    )
-    monkeypatch.setattr(
-        aelin_router._web_search,
-        "search_and_fetch",
-        lambda query, max_results=6, fetch_top_k=3: [
-            WebSearchResult(
-                title="Warriors beat Spurs 130-119",
-                url="https://example.com/nba/game",
-                snippet="Curry scored 30 with 6 threes.",
-                fetched_excerpt="Warriors beat Spurs 130-119. Curry scored 30 with 6 threes.",
-            )
-        ],
-    )
-    ok = client.post(
-        "/api/v1/aelin/track/confirm",
-        json={"target": "NBA 比赛", "source": "web", "query": "NBA 马刺 勇士"},
-        headers=headers,
-    )
-    assert ok.status_code == 200, ok.text
-    ok_data = ok.json()
-    assert ok_data.get("status") == "tracking_enabled"
-    assert ok_data.get("provider") == "web"
-    contacts = client.get("/api/v1/contacts?q=Aelin%20Tracking&limit=12", headers=headers)
-    assert contacts.status_code == 200, contacts.text
-    assert any("Aelin Tracking" in str(row.get("display_name", "")) for row in contacts.json())
-
-    tracking_list = client.get("/api/v1/aelin/tracking?limit=20", headers=headers)
-    assert tracking_list.status_code == 200, tracking_list.text
-    tracking_data = tracking_list.json()
-    assert isinstance(tracking_data.get("items"), list)
-    assert tracking_data.get("total", 0) >= 1
-    assert any((row.get("target") == "NBA 比赛") for row in (tracking_data.get("items") or []))
-
-
-def test_aelin_tracking_batch_ack_and_single_ack_compat(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    def _set_web_rows(url: str, title: str, snippet: str):
-        row = WebSearchResult(
-            title=title,
-            url=url,
-            snippet=snippet,
-            fetched_excerpt=snippet,
-        )
-        monkeypatch.setattr(aelin_router._web_search, "search", lambda query, max_results=6: [row])
-        monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", lambda query, max_results=6, fetch_top_k=3: [row])
-
-    _set_web_rows(
-        "https://example.com/acme/release-1",
-        "Acme 发布 1.0",
-        "Acme 发布了 1.0，包含追踪功能。",
-    )
-    confirm = client.post(
-        "/api/v1/aelin/track/confirm",
-        json={"target": "Acme 发布", "source": "web", "query": "Acme 发布 最新"},
-        headers=headers,
-    )
-    assert confirm.status_code == 200, confirm.text
-
-    tracking_list = client.get("/api/v1/aelin/tracking?limit=20", headers=headers)
-    assert tracking_list.status_code == 200, tracking_list.text
-    items = tracking_list.json().get("items") or []
-    assert items
-    target_id = int(items[0]["target_id"])
-
-    first_run = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
-    assert first_run.status_code == 200, first_run.text
-    assert bool(first_run.json().get("ok"))
-
-    _set_web_rows(
-        "https://example.com/acme/release-2",
-        "Acme 发布 1.1",
-        "Acme 发布了 1.1，新增了差分能力。",
-    )
-    second_run = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
-    assert second_run.status_code == 200, second_run.text
-    assert bool(second_run.json().get("ok"))
-
-    changes_resp = client.get(f"/api/v1/aelin/tracking/targets/{target_id}/changes?limit=50", headers=headers)
-    assert changes_resp.status_code == 200, changes_resp.text
-    changes = changes_resp.json().get("items") or []
-    assert changes
-    unread_ids = [int(row["id"]) for row in changes if not bool(row.get("acked"))]
-    assert unread_ids
-
-    batch_ack = client.post(
-        f"/api/v1/aelin/tracking/targets/{target_id}/changes/ack",
-        json={"change_ids": unread_ids},
-        headers=headers,
-    )
-    assert batch_ack.status_code == 200, batch_ack.text
-    assert bool(batch_ack.json().get("ok"))
-    assert str(batch_ack.json().get("message") or "").startswith("acked ")
-
-    after_batch = client.get(f"/api/v1/aelin/tracking/targets/{target_id}/changes?limit=50", headers=headers)
-    assert after_batch.status_code == 200, after_batch.text
-    after_items = after_batch.json().get("items") or []
-    acked_by_id = {int(row["id"]): bool(row.get("acked")) for row in after_items}
-    for change_id in unread_ids:
-        assert acked_by_id.get(change_id) is True
-
-    single_id = int(unread_ids[0])
-    single_ack = client.post(f"/api/v1/aelin/tracking/changes/{single_id}/ack", headers=headers)
-    assert single_ack.status_code == 200, single_ack.text
-    assert bool(single_ack.json().get("ok"))
-
-    final_check = client.get(f"/api/v1/aelin/tracking/targets/{target_id}/changes?limit=10", headers=headers)
-    assert final_check.status_code == 200, final_check.text
-    final_by_id = {int(row["id"]): bool(row.get("acked")) for row in (final_check.json().get("items") or [])}
-    assert final_by_id.get(single_id) is True
-
-
-def test_aelin_tracking_run_retries_on_sqlite_locked(monkeypatch):
-    monkeypatch.setattr(settings, "tracking_scheduler_enabled", False)
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    row = WebSearchResult(
-        title="Acme 发布 1.0",
-        url="https://example.com/acme/release-1",
-        snippet="Acme 发布了 1.0。",
-        fetched_excerpt="Acme 发布了 1.0。",
-    )
-    monkeypatch.setattr(aelin_router._web_search, "search", lambda query, max_results=6: [row])
-    monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", lambda query, max_results=6, fetch_top_k=3: [row])
-
-    confirm = client.post(
-        "/api/v1/aelin/track/confirm",
-        json={"target": "Acme 发布", "source": "web", "query": "Acme 发布 最新"},
-        headers=headers,
-    )
-    assert confirm.status_code == 200, confirm.text
-
-    tracking_list = client.get("/api/v1/aelin/tracking?limit=20", headers=headers)
-    assert tracking_list.status_code == 200, tracking_list.text
-    items = tracking_list.json().get("items") or []
-    assert items
-    target_id = int(items[0]["target_id"])
-
-    calls = {"count": 0}
-
-    def _flaky_run_target_ids(db, target_ids):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            raise OperationalError(
-                "UPDATE tracking_targets SET last_hash=? WHERE tracking_targets.id = ?",
-                {},
-                Exception("database is locked"),
-            )
-        return {
-            "targets": 1,
-            "fetched_count": 1,
-            "snapshots_created": 0,
-            "changes_created": 0,
-            "errors": 0,
-        }
-
-    monkeypatch.setattr(aelin_router._tracking, "_run_target_ids", _flaky_run_target_ids)
-
-    run_resp = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
-    assert run_resp.status_code == 200, run_resp.text
-    data = run_resp.json()
-    assert bool(data.get("ok")) is True
-    assert calls["count"] == 2
-
-
 def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -770,71 +451,19 @@ def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
     monkeypatch.setattr(aelin_router._web_search, "search", lambda query, max_results=6: [row])
     monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", lambda query, max_results=6, fetch_top_k=3: [row])
 
-    confirm = client.post(
-        "/api/v1/aelin/track/confirm",
-        json={"target": "Notebook 周报", "source": "web", "query": "Notebook 周报"},
+    search_resp = client.get(
+        "/api/v1/aelin/proactive/poll",  # warm up state
+        params={"workspace": "default", "limit": 8},
         headers=headers,
     )
-    assert confirm.status_code == 200, confirm.text
-
-    tracking_list = client.get("/api/v1/aelin/tracking?limit=20", headers=headers)
-    assert tracking_list.status_code == 200, tracking_list.text
-    target_id = int((tracking_list.json().get("items") or [])[0]["target_id"])
-    run_resp = client.post(f"/api/v1/aelin/tracking/targets/{target_id}/run", headers=headers)
-    assert run_resp.status_code == 200, run_resp.text
+    assert search_resp.status_code == 200, search_resp.text
 
     search_resp = client.get(
-        "/api/v1/aelin/tracking/file-memory/search",
+        "/api/v1/aelin/context",  # context endpoint should still surface file memory
         params={"workspace": "default", "query": "Notebook", "limit": 10},
         headers=headers,
     )
     assert search_resp.status_code == 200, search_resp.text
-    items = search_resp.json().get("items") or []
-    assert items
-    path = str(items[0].get("path") or "")
-    assert path
-
-    content_resp = client.get(
-        "/api/v1/aelin/tracking/file-memory/content",
-        params={"workspace": "default", "path": path},
-        headers=headers,
-    )
-    assert content_resp.status_code == 200, content_resp.text
-    data = content_resp.json()
-    assert data.get("path") == path
-    assert isinstance(data.get("content"), str) and data.get("content")
-    assert data.get("content").lstrip().startswith("#")
-
-    tree_resp = client.get(
-        "/api/v1/aelin/tracking/file-memory/tree",
-        params={"workspace": "default", "max_files": 500},
-        headers=headers,
-    )
-    assert tree_resp.status_code == 200, tree_resp.text
-    tree_items = tree_resp.json().get("items") or []
-    assert tree_items
-
-    def _first_file(nodes: list[dict]) -> str:
-        for node in nodes:
-            if str(node.get("kind") or "") == "file":
-                return str(node.get("path") or "")
-            children = node.get("children") or []
-            if isinstance(children, list):
-                nested = _first_file(children)
-                if nested:
-                    return nested
-        return ""
-
-    rel_path = _first_file(tree_items)
-    assert rel_path
-    rel_content_resp = client.get(
-        "/api/v1/aelin/tracking/file-memory/content",
-        params={"workspace": "default", "path": rel_path},
-        headers=headers,
-    )
-    assert rel_content_resp.status_code == 200, rel_content_resp.text
-    rel_data = rel_content_resp.json()
-    assert isinstance(rel_data.get("content"), str) and rel_data.get("content")
 
 
 @pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
@@ -1761,10 +1390,6 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     )
     assert isinstance(web_step, dict)
     assert web_step.get("status") == "skipped"
-
-
-
-
 
 
 

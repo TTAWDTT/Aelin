@@ -13,7 +13,6 @@ from app.models import AgentMemoryNote, Message, User
 from app.routers.auth import get_current_user
 from app.schemas import AelinNotificationItem, AelinProactivePollResponse
 from app.services.aelin_runtime import normalize_workspace, parse_iso_datetime
-from app.services.aelin_tracking_events import load_tracking_events
 from app.services.agent_memory import AgentMemoryService
 from app.services.device_center import collect_device_process_items as device_collect_process_items
 
@@ -113,7 +112,6 @@ def poll_aelin_proactive_events(
     initialized = bool(state.get("initialized"))
     seen_focus_ids = _safe_int_list(state.get("seen_focus_message_ids"), max_items=_PROACTIVE_SEEN_LIMIT)
     seen_focus_set = set(seen_focus_ids)
-    tracking_status_prev = state.get("tracking_status") if isinstance(state.get("tracking_status"), dict) else {}
 
     events: list[dict[str, Any]] = []
     brief = _memory.build_daily_brief(db, current_user.id)
@@ -153,42 +151,6 @@ def poll_aelin_proactive_events(
         if len(events) >= max_items:
             break
 
-    tracking_events = load_tracking_events(db, user_id=current_user.id, limit=80)
-    tracking_status_next: dict[str, str] = {}
-    for key, event in tracking_events.items():
-        if not isinstance(event, dict):
-            continue
-        status = str(event.get("status") or "active").strip().lower() or "active"
-        tracking_status_next[key] = status
-        prev = str(tracking_status_prev.get(key) or "").strip().lower()
-        if not initialized:
-            continue
-        if prev and prev == status:
-            continue
-        target = str(event.get("target") or "").strip()
-        source = str(event.get("source") or "auto").strip()
-        query = str(event.get("query") or "").strip()
-        message_id = int(event.get("message_id") or 0) if str(event.get("message_id") or "").isdigit() else 0
-        detail_bits = [f"{source} · 状态 {status}"]
-        if query:
-            detail_bits.append(f"触发: {query[:80]}")
-        payload: dict[str, str] = {"target": target, "source": source}
-        if message_id > 0:
-            payload["message_id"] = str(message_id)
-        events.append(
-            {
-                "id": f"proactive-track-{key}-{status}",
-                "level": "success" if status in {"active", "sync_started", "tracking_enabled"} else "info",
-                "title": f"跟踪状态更新: {target or '未知目标'}",
-                "detail": "；".join(detail_bits),
-                "source": "tracking",
-                "ts": str(event.get("updated_at") or now.isoformat()),
-                "action_kind": "open_tracking",
-                "action_payload": payload,
-            }
-        )
-        if len(events) >= max_items:
-            break
 
     unread_count = int(
         db.scalar(select(func.count(Message.id)).where(Message.user_id == current_user.id, Message.is_read.is_(False))) or 0
@@ -267,7 +229,6 @@ def poll_aelin_proactive_events(
         "initialized": True,
         "workspace": workspace_norm,
         "seen_focus_message_ids": next_seen[:_PROACTIVE_SEEN_LIMIT],
-        "tracking_status": tracking_status_next,
         "last_unread_count": unread_count,
         "last_unread_alert_at": str(state.get("last_unread_alert_at") or ""),
         "last_process_alert_at": str(state.get("last_process_alert_at") or ""),

@@ -8,7 +8,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models import TrackingTarget
 from app.schemas import AelinCitation
 from app.services.agent_memory import AgentMemoryService
 from app.services.aelin_chat_planning import _normalize_match_text
@@ -16,11 +15,9 @@ from app.services.aelin_runtime import (
     json_from_text as _json_from_text,
     normalize_workspace as _normalize_workspace,
 )
-from app.services.aelin_tracking_events import normalize_track_source as _normalize_track_source
 from app.services.llm import LLMService
 from app.services.memory_draft import ParallelMemoryDraftResult
 from app.services.openviking_bridge import tracking_file_memory_bridge
-from app.services.tracking_autonomy import tracking_autonomy_service
 from app.settings import settings
 from app.routers.aelin_text_helpers import (
     _build_chat_diary_entry,
@@ -31,7 +28,6 @@ from app.routers.aelin_text_helpers import (
 )
 
 _memory = AgentMemoryService()
-_tracking = tracking_autonomy_service
 _tracking_file_memory = tracking_file_memory_bridge
 
 def _save_chat_diary_entry(

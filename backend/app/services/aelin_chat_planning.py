@@ -8,7 +8,6 @@ from typing import Any
 from app.schemas import AelinCitation
 from app.services.aelin_chat_answering import _extract_score_clues, _looks_like_link_dump_answer
 from app.services.llm import LLMService
-from app.services.aelin_tracking_events import normalize_track_source as _normalize_track_source
 from app.services.web_search import WebSearchResult
 
 _MAX_WEB_SUBAGENTS = 5
