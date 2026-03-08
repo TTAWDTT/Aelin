@@ -206,6 +206,24 @@ class BrowserPlaneAdapter:
             workspace=workspace,
         )
 
+    def list_tasks(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        statuses: list[str] | None = None,
+        kinds: list[str] | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        items = browser_plane_task_store.list_tasks(
+            user_id=int(user_id),
+            workspace=workspace,
+            statuses=statuses,
+            kinds=kinds,
+            limit=limit,
+        )
+        return {"ok": True, "workspace": workspace, "items": items, "total": len(items)}
+
     def task_resume(
         self,
         *,
@@ -517,6 +535,30 @@ class BrowserPlaneAdapter:
             limit=limit,
         )
         return {"ok": True, "workspace": workspace, "items": items, "total": len(items)}
+
+    def task_replay(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        task = self.task_get(user_id=int(user_id), workspace=workspace, task_id=task_id)
+        if not task:
+            return {}
+        artifacts = browser_plane_artifact_store.list_artifacts(
+            user_id=int(user_id),
+            workspace=workspace,
+            task_id=task_id,
+            limit=50,
+        )
+        return {
+            "ok": True,
+            "workspace": workspace,
+            "task": task,
+            "artifacts": artifacts,
+            "total_artifacts": len(artifacts),
+        }
 
     def get_tab_lock(
         self,

@@ -401,6 +401,105 @@ def test_browser_artifact_list_endpoint(monkeypatch):
     assert str((payload.get("items") or [{}])[0].get("kind") or "") == "tab_text"
 
 
+def test_browser_task_list_endpoint(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "list_tasks",
+        lambda **kwargs: {
+            "ok": True,
+            "workspace": kwargs.get("workspace"),
+            "items": [
+                {
+                    "task_id": "btask-1",
+                    "profile_id": "default:default",
+                    "tab_id": "btab-1",
+                    "workspace": "default",
+                    "kind": "browser_use",
+                    "status": "pending",
+                    "scope": "external",
+                    "action": "navigate",
+                    "input": {"url": "https://example.com", "scope": "external"},
+                    "result": {},
+                    "checkpoint_request_id": "",
+                    "created_at": 1.0,
+                    "updated_at": 2.0,
+                }
+            ],
+            "total": 1,
+        },
+    )
+
+    resp = client.get(
+        "/api/v1/aelin/agent/browser/tasks?workspace=default&status=pending&kind=browser_use&limit=10",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert int(payload.get("total") or 0) == 1
+    items = payload.get("items") or []
+    assert len(items) == 1
+    assert str(items[0].get("task_id") or "") == "btask-1"
+
+
+def test_browser_task_replay_endpoint(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        browser_plane_adapter,
+        "task_replay",
+        lambda **kwargs: {
+            "ok": True,
+            "workspace": kwargs.get("workspace"),
+            "task": {
+                "task_id": "btask-1",
+                "profile_id": "default:default",
+                "tab_id": "btab-1",
+                "workspace": "default",
+                "kind": "browser_use",
+                "status": "completed",
+                "scope": "external",
+                "action": "navigate",
+                "input": {"url": "https://example.com", "scope": "external"},
+                "result": {"ok": True, "effect_summary": "opened_external:https://example.com"},
+                "checkpoint_request_id": "",
+                "created_at": 1.0,
+                "updated_at": 2.0,
+            },
+            "artifacts": [
+                {
+                    "artifact_id": 1,
+                    "workspace": "default",
+                    "task_id": "btask-1",
+                    "tab_id": "btab-1",
+                    "profile_id": "default:default",
+                    "kind": "task_result",
+                    "title": "browser_use:navigate:completed",
+                    "text_content": "opened_external:https://example.com",
+                    "data": {"ok": True},
+                    "created_at": 1.0,
+                }
+            ],
+            "total_artifacts": 1,
+        },
+    )
+
+    resp = client.get(
+        "/api/v1/aelin/agent/browser/tasks/btask-1/replay?workspace=default",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert bool(payload.get("ok")) is True
+    assert str((payload.get("task") or {}).get("task_id") or "") == "btask-1"
+    assert int(payload.get("total_artifacts") or 0) == 1
+    artifacts = payload.get("artifacts") or []
+    assert len(artifacts) == 1
+    assert str(artifacts[0].get("kind") or "") == "task_result"
+
 def test_browser_tab_lock_endpoints(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)

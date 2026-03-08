@@ -35,6 +35,8 @@ from app.schemas import (
     AelinBrowserTabLockResponse,
     AelinBrowserArtifactItem,
     AelinBrowserArtifactListResponse,
+    AelinBrowserTaskListResponse,
+    AelinBrowserTaskReplayResponse,
     AelinBrowserTabListResponse,
     AelinBrowserTabOpenRequest,
     AelinBrowserTabOpenResponse,
@@ -341,6 +343,31 @@ def get_browser_task(
     )
 
 
+@router.get("/agent/browser/tasks", response_model=AelinBrowserTaskListResponse)
+def list_browser_tasks(
+    workspace: str = "default",
+    status: str = "",
+    kind: str = "",
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    statuses = [str(item).strip() for item in str(status or "").split(",") if str(item).strip()]
+    kinds = [str(item).strip() for item in str(kind or "").split(",") if str(item).strip()]
+    result = browser_plane_adapter.list_tasks(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        statuses=statuses,
+        kinds=kinds,
+        limit=max(1, min(200, int(limit or 20))),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserTaskListResponse(
+        total=len(items),
+        items=[AelinBrowserTaskItem(**item) for item in items],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
 @router.post("/agent/browser/tasks/{task_id}/resume", response_model=AelinBrowserTaskResponse)
 def resume_browser_task(
     task_id: str,
@@ -355,6 +382,30 @@ def resume_browser_task(
     return AelinBrowserTaskResponse(
         ok=bool(item),
         item=AelinBrowserTaskItem(**item) if item else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tasks/{task_id}/replay", response_model=AelinBrowserTaskReplayResponse)
+def replay_browser_task(
+    task_id: str,
+    workspace: str = "default",
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.task_replay(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        task_id=str(task_id or ""),
+    )
+    task_payload = result.get("task") if isinstance(result, dict) and isinstance(result.get("task"), dict) else None
+    artifacts_payload = result.get("artifacts") if isinstance(result, dict) and isinstance(result.get("artifacts"), list) else []
+    return AelinBrowserTaskReplayResponse(
+        ok=bool(result.get("ok", False)) if isinstance(result, dict) else False,
+        task=AelinBrowserTaskItem(**task_payload) if task_payload else None,
+        artifacts=[AelinBrowserArtifactItem(**item) for item in artifacts_payload],
+        total_artifacts=int(result.get("total_artifacts") or len(artifacts_payload))
+        if isinstance(result, dict)
+        else len(artifacts_payload),
         generated_at=datetime.now(timezone.utc),
     )
 

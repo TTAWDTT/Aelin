@@ -649,6 +649,20 @@ class AelinBrowserArtifactListResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinBrowserTaskListResponse(BaseModel):
+    total: int = 0
+    items: list[AelinBrowserTaskItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class AelinBrowserTaskReplayResponse(BaseModel):
+    ok: bool = True
+    task: AelinBrowserTaskItem | None = None
+    artifacts: list[AelinBrowserArtifactItem] = Field(default_factory=list)
+    total_artifacts: int = 0
+    generated_at: datetime
+
+
 class AelinTrackingItem(BaseModel):
     note_id: Optional[int] = None
     message_id: Optional[int] = None
