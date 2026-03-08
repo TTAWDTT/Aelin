@@ -977,7 +977,34 @@ class BrowserAutomationService:
         resolved_mode = self._resolve_mode(mode)
         resolved_profile_id = self._resolved_profile_id(workspace=workspace, profile_id=profile_id)
         if resolved_mode == "auto":
-            if self._cdp_enabled and self._cdp_endpoint:
+            # When choosing a session automatically, prefer any existing session
+            # for the current thread (CDP or managed) before creating a new one,
+            # and keep using the previously established mode for this workspace.
+            thread_id = threading.get_ident()
+            has_managed_session = False
+            with self._lock:
+                # Reuse same-thread sessions first.
+                for candidate_mode in ("cdp", "managed"):
+                    key = self._session_key(
+                        user_id=user_id,
+                        workspace=workspace,
+                        mode=candidate_mode,
+                        profile_id=resolved_profile_id,
+                    )
+                    session = self._sessions.get(key)
+                    if session is not None and int(getattr(session, "owner_thread_id", 0) or 0) == thread_id:
+                        session.touch()
+                        return session
+                # If there is any managed session for this workspace/profile, prefer
+                # creating another managed session even when CDP is enabled.
+                managed_key = self._session_key(
+                    user_id=user_id,
+                    workspace=workspace,
+                    mode="managed",
+                    profile_id=resolved_profile_id,
+                )
+                has_managed_session = managed_key in self._sessions
+            if self._cdp_enabled and self._cdp_endpoint and not has_managed_session:
                 try:
                     return self._get_session(user_id=user_id, workspace=workspace, mode="cdp", profile_id=resolved_profile_id)
                 except Exception:
@@ -2690,21 +2717,8 @@ class BrowserAutomationService:
                 "requires_cdp": bool(active_state.get("requires_cdp", False)),
             }
 
-        # Prefer an existing CDP session when scope=auto so that transient endpoint
-        # probe failures do not immediately downgrade the view to external-only state.
-        effective_user_scope = user_scope
-        if user_scope == "auto":
-            if sticky_scope == "cdp" and self._cdp_enabled:
-                effective_user_scope = "cdp"
-            elif self._has_reusable_cdp_session(
-                user_id=int(user_id),
-                workspace=workspace,
-                profile_id=profile.profile_id,
-            ):
-                effective_user_scope = "cdp"
-
         runtime_scope, fallback_reason, early_payload = self._resolve_state_runtime_scope(
-            user_scope=effective_user_scope,
+            user_scope="cdp" if user_scope == "auto" and sticky_scope == "cdp" and self._cdp_enabled else user_scope,
             include_dom=bool(include_dom),
             include_a11y=bool(include_a11y),
             proc_limit=proc_limit,
