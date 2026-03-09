@@ -125,6 +125,20 @@ const CODE_MIME_TYPES = new Set([
   'application/sql',
 ])
 
+const ACCEPT_FILE_EXTENSIONS = Array.from(
+  new Set<string>([
+    'pdf',
+    ...WORD_EXTENSIONS,
+    ...PPT_EXTENSIONS,
+    ...EXCEL_EXTENSIONS,
+    ...TEXT_EXTENSIONS,
+    ...ARCHIVE_EXTENSIONS,
+    ...CODE_EXTENSIONS,
+  ]),
+)
+
+const ATTACHMENT_ACCEPT_ATTR = ['image/*', ...ACCEPT_FILE_EXTENSIONS.map((ext) => `.${ext}`)].join(',')
+
 function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: number): AttachmentVisual {
   const lowerName = String(fileName || '').toLowerCase()
   const extension = lowerName.includes('.') ? lowerName.split('.').pop() || '' : ''
@@ -142,7 +156,11 @@ function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: 
   else if (normalizedMime.startsWith('text/') || TEXT_LIKE_MIME_TYPES.has(normalizedMime) || TEXT_EXTENSIONS.has(extension)) styleKey = 'text'
 
   const base = ATTACHMENT_BADGE_STYLES[styleKey]
-  const typeLabel = extension ? `${base.type} · ${extension.toUpperCase()}` : base.type
+  const upperExtension = extension.toUpperCase()
+  const typeLabel =
+    extension && base.type.toUpperCase() !== upperExtension
+      ? `${base.type} · ${upperExtension}`
+      : base.type
   return {
     badgeText: base.text,
     badgeFrom: base.badgeFrom,
@@ -400,7 +418,7 @@ export function ComposerBar({
             type="file"
             multiple
             className="hidden"
-            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.rar,.7z,.tar,.gz,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.java,.go,.rs,.c,.h,.cc,.hh,.cpp,.hpp,.cxx,.hxx,.cs,.rb,.php,.swift,.kt,.kts,.m,.mm,.sh,.bash,.ps1,.sql,.lua,.r"
+            accept={ATTACHMENT_ACCEPT_ATTR}
             onChange={handleAttachmentChange}
           />
 
