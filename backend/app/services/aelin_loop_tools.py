@@ -219,6 +219,17 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
         return base
 
     if tool in {"context_get", "diary", "profile", "device", "pinchtab"}:
+        if tool == "pinchtab":
+            # For PinchTab, preserve identifiers so the model can chain calls
+            # across launch_instance -> open_tab -> snapshot/text -> click.
+            if "instance_id" in payload:
+                base["instance_id"] = str(payload.get("instance_id") or "")[:128]
+            if "tab_id" in payload:
+                base["tab_id"] = str(payload.get("tab_id") or "")[:128]
+            if "status" in payload:
+                base["status"] = _truncate_model_text(payload.get("status"), limit=32)
+            if "mode" in payload:
+                base["mode"] = _truncate_model_text(payload.get("mode"), limit=32)
         if "summary" in payload:
             base["summary"] = _truncate_model_text(payload.get("summary"), limit=260)
         if "total" in payload:

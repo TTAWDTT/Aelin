@@ -10,6 +10,7 @@ from typing import Any
 from app.services import aelin_agent_loop as aelin_agent_loop_module
 from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_loop_tools import (
+    _compact_tool_result_for_model,
     _sanitize_for_log,
     _serialize_tool_message_content,
 )
@@ -383,3 +384,16 @@ def test_sanitize_tool_args_for_log_masks_browser_type_inputs():
     }
     safe = _sanitize_for_log(raw_args)
     assert isinstance(safe, dict)
+    assert str(safe.get("value") or "").startswith("<redacted")
+    assert safe.get("scope") == "managed"
+
+
+def test_compact_tool_result_for_model_preserves_pinchtab_ids():
+    # PinchTab results must keep instance_id / tab_id so the model can chain calls.
+    result1 = _compact_tool_result_for_model("pinchtab", {"ok": True, "instance_id": "inst_123"})
+    assert result1.get("ok") is True
+    assert result1.get("instance_id") == "inst_123"
+
+    result2 = _compact_tool_result_for_model("pinchtab", {"ok": True, "tab_id": "tab_456"})
+    assert result2.get("ok") is True
+    assert result2.get("tab_id") == "tab_456"
