@@ -218,8 +218,8 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
             ]
         return base
 
-    if tool in {"context_get", "diary", "profile", "device", "pinchtab"}:
-        if tool == "pinchtab":
+    if tool in {"context_get", "diary", "profile", "device", "pinchtab", "pinchtab_agent"}:
+        if tool in {"pinchtab", "pinchtab_agent"}:
             # For PinchTab, preserve identifiers so the model can chain calls
             # across launch_instance -> open_tab -> snapshot/text -> click.
             if "instance_id" in payload:

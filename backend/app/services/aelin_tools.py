@@ -113,6 +113,7 @@ class AelinToolHub:
         web_search_service: WebSearchService | None = None,
         attachment_service: AelinAttachmentService | None = None,
         available_attachment_ids: list[int] | None = None,
+        llm_service: LLMService | None = None,
     ) -> None:
         self.db = db
         self.user_id = int(user_id)
@@ -122,6 +123,9 @@ class AelinToolHub:
         self._web_search = web_search_service or WebSearchService()
         self._attachments = attachment_service or get_aelin_attachment_service()
         self._available_attachment_ids = normalize_positive_ints(available_attachment_ids, cap=20)
+        # Optional reference to the current LLM service so tools can delegate
+        # sub-tasks (for example, a higher-level pinchtab agent).
+        self._llm_service = llm_service
 
     def tool_definitions(self) -> list[dict[str, Any]]:
         return [
@@ -270,6 +274,26 @@ class AelinToolHub:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "pinchtab_agent",
+                    "description": (
+                        "将需要在网页中完成的多步骤任务整体外包给 PinchTab 代理。"
+                        "你只需描述高层目标（例如“在某站点搜索并整理列表”），该工具会在内部使用 pinchtab 浏览器原语完成尽量多的步骤，"
+                        "并返回简要结果与执行过的动作列表。"
+                        "适用于复杂浏览任务；简单的一次性打开/点击仍可直接使用 pinchtab。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "goal": {"type": "string"},
+                            "max_steps": {"type": "integer", "minimum": 1, "maximum": 8},
+                        },
+                        "required": ["goal"],
+                    },
+                },
+            },
         ]
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -290,6 +314,8 @@ class AelinToolHub:
             return self._tool_screen_get(args)
         if tool == "pinchtab":
             return self._tool_pinchtab(args)
+        if tool == "pinchtab_agent":
+            return self._tool_pinchtab_agent(args)
         return _result_error(f"unsupported tool: {tool}")
 
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -567,6 +593,155 @@ class AelinToolHub:
                 return _result_error("missing tab_id or ref")
             return client.action(tab_id=tab_id, kind="click", ref=ref)
         return _result_error(f"unsupported pinchtab action: {action}")
+
+    def _tool_pinchtab_agent(self, args: dict[str, Any]) -> dict[str, Any]:
+        """
+        High-level browser task helper built on top of PinchTab.
+
+        This is intentionally simple: it launches a fresh instance, asks the LLM
+        to propose a short sequence of primitive actions, executes them via
+        PinchTab, and returns a compact summary plus any extracted page text.
+        """
+        goal = str(args.get("goal") or "").strip()
+        max_steps = _safe_int(args.get("max_steps"), 4, low=1, high=8)
+        if not goal:
+            return _result_error("missing goal")
+
+        service: LLMService | None = getattr(self, "_llm_service", None)
+        client = get_pinchtab_client()
+        if service is None or getattr(service, "client", None) is None:
+            return _result_error("pinchtab_agent_llm_not_configured")
+
+        # Step 1: launch an instance to operate in.
+        inst = client.launch_instance()
+        if not bool(inst.get("ok")):
+            return _result_error(str(inst.get("error") or "pinchtab_agent_launch_failed"))
+        instance_id = str(inst.get("instance_id") or "").strip()
+        if not instance_id:
+            return _result_error("pinchtab_agent_missing_instance_id")
+
+        # Step 2: ask the LLM for a small plan of primitive actions.
+        sys_text = (
+            "You are a browser task planner for PinchTab. "
+            "You control a browser instance via a small set of primitive actions:\n"
+            "- open: {\"action\":\"open\",\"url\":\"https://example.com\"}\n"
+            "- text: {\"action\":\"text\"}\n"
+            "- snapshot: {\"action\":\"snapshot\"}\n"
+            "- click: {\"action\":\"click\",\"ref\":\"element-ref\"}\n"
+            "Given the user's goal, produce a JSON object with a single key \"steps\" "
+            "whose value is an array of action objects (max steps is {max_steps}). "
+            "Do not include any other keys or comments. The JSON must be valid."
+        ).replace("{max_steps}", str(max_steps))
+        user_text = f"goal={goal[:800]}"
+        try:
+            response = service.client.chat.completions.create(
+                model=service.config.model,
+                messages=[
+                    {"role": "system", "content": sys_text},
+                    {"role": "user", "content": user_text},
+                ],
+                temperature=0.0,
+                max_tokens=256,
+            )
+        except Exception as exc:
+            return _result_error(f"pinchtab_agent_planner_error:{str(exc)[:120]}")
+
+        choice = response.choices[0] if getattr(response, "choices", None) else None
+        message = getattr(choice, "message", None) if choice else None
+        content = getattr(message, "content", "") if message else ""
+        raw_text = str(content or "")
+        plan = _safe_load_json(raw_text)
+        if not plan:
+            # Be tolerant if the model wraps JSON with explanations; try to
+            # extract the first JSON object substring.
+            start = raw_text.find("{")
+            end = raw_text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                plan = _safe_load_json(raw_text[start : end + 1])
+        raw_steps = plan.get("steps") if isinstance(plan, dict) else None
+        steps: list[dict[str, Any]] = [s for s in (raw_steps or []) if isinstance(s, dict)]
+        if not steps:
+            # Fallback: at least try to open a plausible URL and read text.
+            steps = [{"action": "open", "url": "https://www.google.com"}]
+
+        executed: list[dict[str, Any]] = []
+        tab_id = ""
+        last_text = ""
+        last_url = ""
+
+        for idx, step in enumerate(steps[:max_steps], start=1):
+            kind = str(step.get("action") or "").strip().lower()
+            status = "completed"
+            error = ""
+            extra: dict[str, Any] = {}
+            try:
+                if kind == "open":
+                    url = str(step.get("url") or "").strip()
+                    if not url:
+                        raise ValueError("missing url")
+                    out = client.open_tab(instance_id=instance_id, url=url)
+                    if not bool(out.get("ok")):
+                        raise RuntimeError(str(out.get("error") or "open_tab_failed"))
+                    tab_id = str(out.get("tab_id") or "").strip() or tab_id
+                    last_url = url
+                    extra["tab_id"] = tab_id
+                    extra["url"] = url
+                elif kind == "text":
+                    if not tab_id:
+                        raise ValueError("missing tab_id for text")
+                    out = client.text(tab_id=tab_id)
+                    if not bool(out.get("ok", True)):
+                        raise RuntimeError(str(out.get("error") or "text_failed"))
+                    text_val = str(out.get("text") or "")
+                    last_text = text_val
+                    last_url = str(out.get("url") or last_url)
+                    extra["text_excerpt"] = text_val[:800]
+                    extra["url"] = last_url
+                elif kind == "snapshot":
+                    if not tab_id:
+                        raise ValueError("missing tab_id for snapshot")
+                    out = client.snapshot(tab_id=tab_id)
+                    if not bool(out.get("ok", True)):
+                        raise RuntimeError(str(out.get("error") or "snapshot_failed"))
+                    extra["title"] = str(out.get("title") or "")
+                    extra["url"] = str(out.get("url") or last_url)
+                elif kind == "click":
+                    if not tab_id:
+                        raise ValueError("missing tab_id for click")
+                    ref = str(step.get("ref") or "").strip()
+                    if not ref:
+                        raise ValueError("missing ref")
+                    out = client.action(tab_id=tab_id, kind="click", ref=ref)
+                    if not bool(out.get("ok", True)):
+                        raise RuntimeError(str(out.get("error") or "click_failed"))
+                    extra["ref"] = ref
+                else:
+                    status = "skipped"
+                    error = f"unsupported_action:{kind or 'unknown'}"
+            except Exception as exc:
+                status = "failed"
+                error = str(exc)[:160]
+            executed.append(
+                {
+                    "index": idx,
+                    "requested": step,
+                    "status": status,
+                    "error": error,
+                    **extra,
+                }
+            )
+            if status == "failed":
+                break
+
+        summary = f"pinchtab_agent executed {len(executed)} step(s) for goal: {goal[:80]}"
+        return _result_ok(
+            summary=summary,
+            instance_id=instance_id,
+            tab_id=tab_id,
+            last_url=last_url,
+            last_text=last_text[:1200],
+            steps=executed,
+        )
 
 
 def _safe_load_json(raw: str) -> dict[str, Any]:

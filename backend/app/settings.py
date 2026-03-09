@@ -61,8 +61,6 @@ class Settings(BaseSettings):
     aelin_parallel_memory_draft_min_confidence: float = 0.58
     aelin_base_context_cache_ttl_seconds: float = 4.0
     aelin_base_context_cache_max_entries: int = 128
-    aelin_tracking_snapshot_cache_ttl_seconds: float = 10.0
-    aelin_tracking_snapshot_cache_max_entries: int = 256
     aelin_agent_loop_enabled: bool = True
     aelin_agent_loop_shadow_enabled: bool = False
     aelin_agent_loop_max_rounds: int = 8

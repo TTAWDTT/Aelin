@@ -38,7 +38,7 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "screen_get":
         return False
-    if tool == "pinchtab":
+    if tool in {"pinchtab", "pinchtab_agent"}:
         # PinchTab 调用会驱动真实浏览器行为，统一视为写操作以纳入配额控制。
         return True
     return False
@@ -75,6 +75,7 @@ class AelinToolPolicy:
             "attachment_search",
             "screen_get",
             "pinchtab",
+            "pinchtab_agent",
         }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 

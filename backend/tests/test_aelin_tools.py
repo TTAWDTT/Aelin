@@ -17,6 +17,29 @@ class _DummyFileMemory:
     pass
 
 
+class _FakeLLMCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs):
+        # Record the call and return a minimal JSON plan with a single open+text.
+        self.calls.append(kwargs)
+        content = '{"steps":[{"action":"open","url":"https://example.com"},{"action":"text"}]}'
+        return type(
+            "Resp",
+            (object,),
+            {
+                "choices": [
+                    type(
+                        "Choice",
+                        (object,),
+                        {"message": type("Msg", (object,), {"content": content})()},
+                    )()
+                ]
+            },
+        )()
+
+
 class _FakeWebSearch:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, int, int]] = []
@@ -82,7 +105,7 @@ class _FakePinchTabClient:
         return {"ok": True, "effect": "clicked"}
 
 
-def _hub(fake_web: _FakeWebSearch) -> AelinToolHub:
+def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
     return AelinToolHub(
         db=None,  # type: ignore[arg-type]
         user_id=1,
@@ -90,6 +113,7 @@ def _hub(fake_web: _FakeWebSearch) -> AelinToolHub:
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
         file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
+        llm_service=llm_service,  # type: ignore[arg-type]
     )
 
 
@@ -249,3 +273,31 @@ def test_pinchtab_tool_calls_client_methods(monkeypatch):
     # unsupported action
     unsupported = hub.execute("pinchtab", {"action": "unknown"})
     assert unsupported["ok"] is False
+
+
+def test_pinchtab_agent_executes_plan_with_llm_and_client(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+
+    result = hub.execute("pinchtab_agent", {"goal": "打开 example.com 并读取文本"})
+    assert result["ok"] is True
+    assert result.get("instance_id") == "inst-1"
+    assert result.get("tab_id") == "tab-1"
+    assert "last_text" in result
+    # Ensure the low-level client was actually used.
+    called_ops = [name for name, _ in fake_client.calls]
+    assert "launch_instance" in called_ops
+    assert "open_tab" in called_ops
+    assert "text" in called_ops
