@@ -328,17 +328,34 @@ export function ComposerBar({
       .then((uploaded) => {
         setPendingAttachments((prev) => [...prev, ...uploaded].slice(0, MAX_PENDING_ATTACHMENTS))
         if (uploaded.length < picked.length) {
-          const uploadedNames = new Set(uploaded.map((item) => String(item.file_name || '').trim()).filter(Boolean))
-          const failedNames = picked
-            .map((file) => file.name || '')
-            .filter((name) => name && !uploadedNames.has(name))
+          const uploadedNameCount = new Map<string, number>()
+          for (const item of uploaded) {
+            const name = String(item.file_name || '').trim()
+            if (!name) continue
+            uploadedNameCount.set(name, (uploadedNameCount.get(name) || 0) + 1)
+          }
+          const failedNames: string[] = []
+          for (const file of picked) {
+            const name = String(file.name || '').trim()
+            const remain = uploadedNameCount.get(name) || 0
+            if (!name || remain <= 0) {
+              failedNames.push(name || '未命名文件')
+              continue
+            }
+            uploadedNameCount.set(name, remain - 1)
+          }
           if (failedNames.length > 0) {
-            toast(`部分附件上传失败：${failedNames.join('、')}`)
+            const preview = failedNames.slice(0, 3).join('、')
+            const suffix = failedNames.length > 3 ? ` 等 ${failedNames.length} 个` : ''
+            toast(`部分附件上传失败：${preview}${suffix}`)
+          } else {
+            toast(`部分附件上传失败：${picked.length - uploaded.length} 个文件未成功处理`)
           }
         }
       })
       .catch((error) => {
         console.error('Attachment upload failed:', error)
+        toast('附件上传失败，请重试')
       })
       .finally(() => {
         setUploadingAttachments((prev) => prev.filter((row) => !uploadingItems.some((item) => item.id === row.id)))
