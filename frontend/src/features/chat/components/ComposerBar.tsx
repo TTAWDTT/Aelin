@@ -3,7 +3,7 @@ import { Send, Square, Camera, Loader2, Paperclip, X, Crop, Monitor } from 'luci
 import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
-import { formatBytes } from '../hooks/chatStreamHelpers'
+import { formatBytes } from '../utils/formatBytes'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 
 interface Props {
@@ -142,7 +142,10 @@ const ATTACHMENT_ACCEPT_ATTR = ['image/*', ...ACCEPT_FILE_EXTENSIONS.map((ext) =
 function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: number): AttachmentVisual {
   const lowerName = String(fileName || '').toLowerCase()
   const extension = lowerName.includes('.') ? lowerName.split('.').pop() || '' : ''
-  const normalizedMime = String(mimeType || '').toLowerCase()
+  const normalizedMime = String(mimeType || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
   const isImage = normalizedMime.startsWith('image/') || IMAGE_EXTENSIONS.has(extension)
   let styleKey: AttachmentStyleKey = 'file'
 
