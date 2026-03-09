@@ -71,10 +71,10 @@ class Settings(BaseSettings):
     aelin_agent_loop_hard_fail: bool = True
     aelin_agent_loop_user_whitelist_csv: str = ""
     aelin_agent_loop_workspace_whitelist_csv: str = ""
-    # Agent-loop timeouts (per round + overall). PinchTab 等外部代理可能会比较慢，
-    # 这里默认给得稍微宽松一点，避免复杂浏览任务过早被打断。
-    aelin_agent_loop_round_timeout_seconds: float = 60.0
-    aelin_agent_loop_total_timeout_seconds: float = 240.0
+    # Agent-loop timeouts (per round + overall)。如需调整针对 PinchTab 等长任务的等待窗口，
+    # 建议通过环境变量显式覆盖，而不是在代码里硬编码过大的默认值。
+    aelin_agent_loop_round_timeout_seconds: float = 40.0
+    aelin_agent_loop_total_timeout_seconds: float = 120.0
     desktop_plugin_base_url: str = "http://127.0.0.1:21914"
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0

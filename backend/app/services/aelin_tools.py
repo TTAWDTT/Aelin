@@ -289,6 +289,10 @@ class AelinToolHub:
                         "properties": {
                             "goal": {"type": "string"},
                             "max_steps": {"type": "integer", "minimum": 1, "maximum": 8},
+                            # Optional: reuse an existing browser instance / tab across calls
+                            # so Aelin can分多轮把任务持续外包给同一个 PinchTab 会话。
+                            "instance_id": {"type": "string"},
+                            "tab_id": {"type": "string"},
                         },
                         "required": ["goal"],
                     },
@@ -604,6 +608,10 @@ class AelinToolHub:
         """
         goal = str(args.get("goal") or "").strip()
         max_steps = _safe_int(args.get("max_steps"), 4, low=1, high=8)
+        # Allow the caller (Aelin) to reuse an existing PinchTab instance/tab so
+        # it can分多轮轮询式地推进任务，而不是一次性做完所有步骤。
+        instance_id_arg = str(args.get("instance_id") or "").strip()
+        tab_id_arg = str(args.get("tab_id") or "").strip()
         if not goal:
             return _result_error("missing goal")
 
@@ -612,13 +620,16 @@ class AelinToolHub:
         if service is None or getattr(service, "client", None) is None:
             return _result_error("pinchtab_agent_llm_not_configured")
 
-        # Step 1: launch an instance to operate in.
-        inst = client.launch_instance()
-        if not bool(inst.get("ok")):
-            return _result_error(str(inst.get("error") or "pinchtab_agent_launch_failed"))
-        instance_id = str(inst.get("instance_id") or "").strip()
-        if not instance_id:
-            return _result_error("pinchtab_agent_missing_instance_id")
+        # Step 1: launch or reuse an instance to operate in.
+        if instance_id_arg:
+            instance_id = instance_id_arg
+        else:
+            inst = client.launch_instance()
+            if not bool(inst.get("ok")):
+                return _result_error(str(inst.get("error") or "pinchtab_agent_launch_failed"))
+            instance_id = str(inst.get("instance_id") or "").strip()
+            if not instance_id:
+                return _result_error("pinchtab_agent_missing_instance_id")
 
         # Step 2: ask the LLM for a small plan of primitive actions.
         sys_text = (
@@ -630,7 +641,9 @@ class AelinToolHub:
             "- click: {\"action\":\"click\",\"ref\":\"element-ref\"}\n"
             "Given the user's goal, produce a JSON object with a single key \"steps\" "
             "whose value is an array of action objects (max steps is {max_steps}). "
-            "Do not include any other keys or comments. The JSON must be valid."
+            "Do not include any other keys or comments. The JSON must be valid. "
+            "The browser instance may already be mid-task; plan the *next* short "
+            "sequence of actions needed from the current page state."
         ).replace("{max_steps}", str(max_steps))
         user_text = f"goal={goal[:800]}"
         try:
@@ -665,11 +678,21 @@ class AelinToolHub:
             steps = [{"action": "open", "url": "https://www.google.com"}]
 
         executed: list[dict[str, Any]] = []
-        tab_id = ""
+        tab_id = tab_id_arg or ""
         last_text = ""
         last_url = ""
 
+        # To避免一次工具调用卡太久，给 pinchtab_agent 一次调用设置一个温和的时间预算，
+        # 超过预算就先返回当前进度，由上层决定是否继续调用本工具推进任务。
+        started_at = time.perf_counter()
+        per_call_budget_s = 25.0
+        overall_status = "completed"
+
         for idx, step in enumerate(steps[:max_steps], start=1):
+            if (time.perf_counter() - started_at) > per_call_budget_s:
+                # 超过本次调用预算，先返回已完成的步骤，供 Aelin 做下一步决策。
+                overall_status = "partial"
+                break
             kind = str(step.get("action") or "").strip().lower()
             status = "completed"
             error = ""
@@ -731,6 +754,7 @@ class AelinToolHub:
                 }
             )
             if status == "failed":
+                overall_status = "partial"
                 break
 
         summary = f"pinchtab_agent executed {len(executed)} step(s) for goal: {goal[:80]}"
@@ -740,6 +764,7 @@ class AelinToolHub:
             tab_id=tab_id,
             last_url=last_url,
             last_text=last_text[:1200],
+            status=overall_status,
             steps=executed,
         )
 
