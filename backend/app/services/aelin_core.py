@@ -147,8 +147,6 @@ _AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES = max(
     0,
     int(getattr(settings, "aelin_base_context_cache_max_entries", 128) or 128),
 )
-_AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS = 0.0
-_AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES = 0
 
 _MEDIA_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
 _MEDIA_SUMMARY_HINTS_ZH = (
@@ -177,9 +175,6 @@ _MEDIA_SUMMARY_HINTS_EN = (
 
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
-
-_tracking_snapshot_cache_lock = threading.Lock()
-_tracking_snapshot_cache: dict[tuple[int, str, str, int], tuple[float, dict[str, Any]]] = {}
 
 
 def _scoped_web_search_service(proxy_url: str = "") -> WebSearchService:
@@ -1604,9 +1599,10 @@ def _aelin_chat_impl(
             user_id=current_user.id,
             workspace=payload.workspace,
             memory_service=_memory,
-    file_memory_bridge=_tracking_file_memory,
+            file_memory_bridge=_tracking_file_memory,
             web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
             available_attachment_ids=_normalize_attachment_ids(getattr(payload, "attachment_ids", [])),
+            llm_service=service,
         )
         runs, tool_err = run_aelin_structured_tools(
             service=service,
@@ -2293,35 +2289,11 @@ def _aelin_chat_impl(
         except Exception:
             pass
 
-    insight_write_result: dict[str, Any] = {"written": False, "reason": "not_evaluated"}
-    try:
-        insight_write_result = _maybe_write_tracking_insight(
-            db,
-            user_id=current_user.id,
-            workspace=payload.workspace,
-            query=payload.query,
-            answer=answer,
-            service=service,
-            provider=provider,
-            tracking_snapshot=tracking_snapshot,
-            file_memory_lines=file_memory_lines,
-            citations=citations,
-        )
-        if bool(insight_write_result.get("written")):
-            detail = (
-                f"target={str(insight_write_result.get('target') or '')[:80]}; "
-                f"conf={float(insight_write_result.get('confidence') or 0.0):.2f}"
-            )
-            add_trace("insight_write", status="completed", detail=detail, count=1)
-        else:
-            add_trace(
-                "insight_write",
-                status="skipped",
-                detail=str(insight_write_result.get("reason") or "planner_skip")[:160],
-                count=0,
-            )
-    except Exception as exc:
-        add_trace("insight_write", status="failed", detail=f"{str(exc)[:160]}", count=0)
+    # Tracking autonomy has been removed; keep a lightweight stubbed result so
+    # traces and downstream logic remain consistent without invoking legacy
+    # tracking DB or planner flows.
+    insight_write_result: dict[str, Any] = {"written": False, "reason": "tracking_disabled"}
+    add_trace("insight_write", status="skipped", detail="tracking_disabled", count=0)
 
     chat_diary_result: dict[str, Any] = {"written": False, "reason": "not_evaluated", "path": ""}
     try:
@@ -2649,6 +2621,7 @@ def _try_agent_loop_chat(
         file_memory_bridge=_tracking_file_memory,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
         available_attachment_ids=attachment_ids,
+        llm_service=service,
     )
     _log.info(
         "agent_loop preflight phase=tool_hub_ready user_id=%s workspace=%s latency_ms=%s",
