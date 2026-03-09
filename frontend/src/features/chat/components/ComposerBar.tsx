@@ -228,7 +228,6 @@ export function ComposerBar({
       })
       .catch((error) => {
         console.error('Attachment upload failed:', error)
-        toast('附件上传失败，请重试')
       })
       .finally(() => {
         setUploadingAttachments((prev) => prev.filter((row) => !uploadingItems.some((item) => item.id === row.id)))
