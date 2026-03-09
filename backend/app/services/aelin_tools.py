@@ -646,6 +646,8 @@ class AelinToolHub:
             "sequence of actions needed from the current page state."
         ).replace("{max_steps}", str(max_steps))
         user_text = f"goal={goal[:800]}"
+        # Planner 调用单独使用较小的超时时间，避免一次规划就占满整个 Agent Loop 的时间窗口。
+        planner_timeout = min(float(getattr(service, "timeout_seconds", 30.0) or 30.0), 20.0)
         try:
             response = service.client.chat.completions.create(
                 model=service.config.model,
@@ -655,6 +657,7 @@ class AelinToolHub:
                 ],
                 temperature=0.0,
                 max_tokens=256,
+                timeout=planner_timeout,
             )
         except Exception as exc:
             return _result_error(f"pinchtab_agent_planner_error:{str(exc)[:120]}")
