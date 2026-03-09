@@ -157,6 +157,14 @@ def build_initial_messages(
         },
         {
             "role": "system",
+            "content": (
+                "工具使用规则：当用户问题涉及网页内容、网站状态，或需要在浏览器中执行点击、输入、滚动等操作时，"
+                "优先通过 pinchtab 工具在本地浏览器中完成这些步骤；对于纯搜索型问题可使用 web_search。"
+                "例如：查看 X/Twitter 关注列表或网页上的账号信息时，应使用 pinchtab 打开对应页面并读取结果，而不是直接声明自己无法访问网页。"
+            ),
+        },
+        {
+            "role": "system",
             "content": f"memory_summary={str(memory_summary or '')[:600]}",
         },
     ]

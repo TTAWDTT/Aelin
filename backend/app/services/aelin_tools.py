@@ -250,7 +250,10 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "pinchtab",
-                    "description": "通过本地 PinchTab 服务执行浏览器相关操作（PoC）。",
+                    "description": (
+                        "通过本地 PinchTab 服务在真实浏览器中打开网页、查看内容并点击元素。"
+                        "用于所有需要“上网”“浏览网页”“操作 X/Twitter 等网站”的任务，这是你唯一的网页浏览方式。"
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
