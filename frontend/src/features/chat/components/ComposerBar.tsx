@@ -3,6 +3,7 @@ import { Send, Square, Camera, Loader2, Paperclip, X, Crop, Monitor } from 'luci
 import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
+import { formatBytes } from '../hooks/chatStreamHelpers'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 
 interface Props {
@@ -66,7 +67,13 @@ const EXCEL_EXTENSIONS = new Set(['xls', 'xlsx'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'gif', 'webp', 'svg'])
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz'])
 const TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'log', 'csv', 'xml', 'yaml', 'yml', 'json'])
-const CODE_EXTENSIONS = new Set(['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'go', 'rs', 'cpp', 'c', 'h'])
+const CODE_EXTENSIONS = new Set([
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs',
+  'py', 'java', 'go', 'rs',
+  'c', 'h', 'cc', 'hh', 'cpp', 'hpp', 'cxx', 'hxx',
+  'cs', 'rb', 'php', 'swift', 'kt', 'kts',
+  'm', 'mm', 'sh', 'bash', 'ps1', 'sql', 'lua', 'r',
+])
 
 const WORD_MIME_TYPES = new Set([
   'application/msword',
@@ -100,21 +107,23 @@ const TEXT_LIKE_MIME_TYPES = new Set([
 const CODE_MIME_TYPES = new Set([
   'application/javascript',
   'text/javascript',
+  'application/x-javascript',
+  'text/x-c',
+  'text/x-c++',
+  'text/x-c++hdr',
+  'text/x-c++src',
+  'text/x-csrc',
+  'text/x-csharp',
   'text/x-typescript',
   'text/x-python',
   'text/x-java',
   'text/x-go',
   'text/x-rust',
-  'text/x-c++src',
-  'text/x-csrc',
+  'text/x-shellscript',
+  'application/x-sh',
+  'text/x-php',
+  'application/sql',
 ])
-
-function formatAttachmentSize(sizeBytes: number): string {
-  const bytes = Number.isFinite(sizeBytes) ? Math.max(0, sizeBytes) : 0
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-}
 
 function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: number): AttachmentVisual {
   const lowerName = String(fileName || '').toLowerCase()
@@ -143,7 +152,7 @@ function resolveAttachmentVisual(fileName: string, mimeType: string, sizeBytes: 
     previewFrom: base.previewFrom,
     previewTo: base.previewTo,
     typeLabel,
-    sizeLabel: formatAttachmentSize(sizeBytes),
+    sizeLabel: formatBytes(sizeBytes),
   }
 }
 
@@ -344,13 +353,9 @@ export function ComposerBar({
             }
             uploadedNameCount.set(name, remain - 1)
           }
-          if (failedNames.length > 0) {
-            const preview = failedNames.slice(0, 3).join('、')
-            const suffix = failedNames.length > 3 ? ` 等 ${failedNames.length} 个` : ''
-            toast(`部分附件上传失败：${preview}${suffix}`)
-          } else {
-            toast(`部分附件上传失败：${picked.length - uploaded.length} 个文件未成功处理`)
-          }
+          const preview = failedNames.slice(0, 3).join('、')
+          const suffix = failedNames.length > 3 ? ` 等 ${failedNames.length} 个` : ''
+          toast(`部分附件上传失败：${preview}${suffix}`)
         }
       })
       .catch((error) => {
@@ -395,7 +400,7 @@ export function ComposerBar({
             type="file"
             multiple
             className="hidden"
-            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.rar,.7z,.tar,.gz,.ts,.tsx,.js,.jsx,.py,.java,.go,.rs,.cpp,.c,.h"
+            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.rar,.7z,.tar,.gz,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.java,.go,.rs,.c,.h,.cc,.hh,.cpp,.hpp,.cxx,.hxx,.cs,.rb,.php,.swift,.kt,.kts,.m,.mm,.sh,.bash,.ps1,.sql,.lua,.r"
             onChange={handleAttachmentChange}
           />
 
