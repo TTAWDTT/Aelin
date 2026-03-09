@@ -2833,6 +2833,7 @@ def _try_agent_loop_chat(
             "query": str(forced_tracking_create.get("query") or payload.query or "")[:500],
         }
         _emit_prefixed("intent_router", status="completed", detail="forced_tracking_create", count=1)
+        _emit_prefixed("forced_tool", status="running", detail="tracking.create", count=0)
         started = time.perf_counter()
         forced_result = tool_hub.execute("tracking", forced_args)
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -2866,6 +2867,12 @@ def _try_agent_loop_chat(
             "top_k": 10,
             "mode": "hybrid",
         }
+        _emit_prefixed(
+            "attachment_prefetch",
+            status="running",
+            detail=f"tool=attachment_search; args={json.dumps(attachment_prefetch_args, ensure_ascii=False, separators=(',', ':'))[:160]}",
+            count=0,
+        )
         prefetch_started = time.perf_counter()
         attachment_prefetch_result = tool_hub.execute("attachment_search", attachment_prefetch_args)
         prefetch_latency_ms = int((time.perf_counter() - prefetch_started) * 1000)
@@ -2929,6 +2936,8 @@ def _try_agent_loop_chat(
         max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 3) or 3),
         round_timeout_seconds=float(getattr(settings, "aelin_agent_loop_round_timeout_seconds", 10.0) or 10.0),
         total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
+        round_max_tokens=int(getattr(settings, "aelin_agent_loop_round_max_tokens", 700) or 700),
+        final_max_tokens=int(getattr(settings, "aelin_agent_loop_final_max_tokens", 1400) or 1400),
     )
     _log.info(
         "agent_loop preflight phase=runner_ready user_id=%s workspace=%s total_preflight_ms=%s",
@@ -2936,6 +2945,41 @@ def _try_agent_loop_chat(
         workspace,
         int((time.perf_counter() - pre_loop_started) * 1000),
     )
+    trace_steps: list[AelinToolStep] = [*prefixed_traces]
+
+    def _emit_loop_trace(step: Any) -> None:
+        trace = AelinToolStep(
+            stage=str(getattr(step, "stage", "agent_loop") or "agent_loop")[:80],
+            status=str(getattr(step, "status", "completed") or "completed")[:24],
+            detail=str(getattr(step, "detail", "") or "")[:240],
+            count=max(0, int(getattr(step, "count", 0) or 0)),
+            ts=max(0, int(getattr(step, "ts", _now_ms()) or _now_ms())),
+        )
+        trace_steps.append(trace)
+        if event_cb is not None:
+            try:
+                event_cb("trace", {"step": trace.model_dump()})
+            except Exception:
+                pass
+
+    def _emit_reply_chunk(chunk: str) -> None:
+        text = str(chunk or "")
+        if not text:
+            return
+        if event_cb is not None:
+            try:
+                event_cb("reply", {"chunk": text})
+            except Exception:
+                pass
+
+    def _emit_tool_event(payload: dict[str, Any]) -> None:
+        if event_cb is None:
+            return
+        try:
+            event_cb("tool_event", payload)
+        except Exception:
+            pass
+
     result = runner.run(
         query=payload.query,
         memory_summary=memory_summary,
@@ -2944,23 +2988,13 @@ def _try_agent_loop_chat(
         attachment_ids=attachment_ids,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
+        trace_cb=_emit_loop_trace,
+        reply_chunk_cb=_emit_reply_chunk,
+        tool_event_cb=_emit_tool_event,
     )
-
-    trace_steps: list[AelinToolStep] = [*prefixed_traces]
-    for step in result.trace_steps:
-        trace = AelinToolStep(
-            stage=str(step.stage or "agent_loop")[:80],
-            status=str(step.status or "completed")[:24],
-            detail=str(step.detail or "")[:240],
-            count=max(0, int(step.count or 0)),
-            ts=max(0, int(step.ts or _now_ms())),
-        )
-        trace_steps.append(trace)
-        if event_cb is not None:
-            try:
-                event_cb("trace", {"step": trace.model_dump()})
-            except Exception:
-                pass
+    if len(trace_steps) <= len(prefixed_traces):
+        for step in result.trace_steps:
+            _emit_loop_trace(step)
 
     if not bool(result.ok) or not str(result.answer or "").strip():
         fallback_resp = _build_attachment_prefetch_fallback_response(

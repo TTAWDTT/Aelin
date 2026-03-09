@@ -4,7 +4,9 @@ from dataclasses import dataclass
 import json
 import logging
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
 from typing import Any
 
 from app.services.aelin_loop_logging import truncate_text
@@ -39,6 +41,7 @@ _SENSITIVE_KEY_TOKENS = (
 _MODEL_TOOL_RESULT_MAX_LEN = 1200
 _MODEL_LIST_PREVIEW_ITEMS = 3
 _MODEL_TEXT_PREVIEW_LEN = 220
+_TOOL_PARTIAL_INTERVAL_MS = 180
 _BROWSER_AMBIGUOUS_CLICK_TARGETS = {
     "window",
     "browser window",
@@ -49,6 +52,151 @@ _BROWSER_AMBIGUOUS_CLICK_TARGETS = {
     "个人资料头像或profile链接",
     "profile链接",
 }
+
+
+def _tool_partial_state(tool_name: str, args: dict[str, Any], tick: int, *, elapsed_ms: int = 0) -> dict[str, Any]:
+    safe_tool = str(tool_name or "").strip().lower()
+    tick_index = max(0, int(tick or 0))
+    step = tick_index + 1
+    cycle = tick_index % 3
+    if safe_tool in {"attachment_search", "file_memory_search", "local_search"}:
+        if cycle == 0:
+            return {
+                "message": f"正在检索附件内容（第{step}轮）...",
+                "current_action": "正在检索附件内容",
+                "progress_label": "searching",
+                "tick": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        if cycle == 1:
+            return {
+                "message": f"已找到第{step}条候选片段...",
+                "current_action": "已找到候选片段",
+                "progress_label": "found_candidates",
+                "tick": step,
+                "found_count": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        return {
+            "message": f"正在整理检索结果（第{step}轮）...",
+            "current_action": "正在整理检索结果",
+            "progress_label": "organizing",
+            "tick": step,
+            "elapsed_ms": max(0, int(elapsed_ms or 0)),
+        }
+    if safe_tool in {"web_search"}:
+        if cycle == 0:
+            return {
+                "message": f"正在检索网页内容（第{step}轮）...",
+                "current_action": "正在检索网页内容",
+                "progress_label": "searching_web",
+                "tick": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        if cycle == 1:
+            return {
+                "message": f"已抓取第{step}条候选结果...",
+                "current_action": "已抓取候选结果",
+                "progress_label": "fetched_candidates",
+                "tick": step,
+                "found_count": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        return {
+            "message": f"正在整理网页检索结果（第{step}轮）...",
+            "current_action": "正在整理网页检索结果",
+            "progress_label": "organizing_web",
+            "tick": step,
+            "elapsed_ms": max(0, int(elapsed_ms or 0)),
+        }
+    if safe_tool in {"attachment_prefetch"}:
+        if cycle == 0:
+            return {
+                "message": f"正在解析附件（第{step}轮）...",
+                "current_action": "正在解析附件",
+                "progress_label": "parsing",
+                "tick": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        if cycle == 1:
+            return {
+                "message": f"正在切分内容并建立索引（第{step}轮）...",
+                "current_action": "正在切分内容并建立索引",
+                "progress_label": "indexing",
+                "tick": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        return {
+            "message": f"正在写入检索缓存（第{step}轮）...",
+            "current_action": "正在写入检索缓存",
+            "progress_label": "caching",
+            "tick": step,
+            "elapsed_ms": max(0, int(elapsed_ms or 0)),
+        }
+    if safe_tool in {"browser_use", "browser_state_get"}:
+        action = str(args.get("action") or "").strip().lower()
+        if action:
+            return {
+                "message": f"正在执行浏览器动作：{action}...",
+                "current_action": f"正在执行浏览器动作：{action}",
+                "progress_label": "browser_action",
+                "tick": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        return {
+            "message": "正在执行浏览器动作...",
+            "current_action": "正在执行浏览器动作",
+            "progress_label": "browser_action",
+            "tick": step,
+            "elapsed_ms": max(0, int(elapsed_ms or 0)),
+        }
+    if safe_tool in {"code_write"}:
+        if cycle == 0:
+            return {
+                "message": f"正在生成代码变更（第{step}轮）...",
+                "current_action": "正在生成代码变更",
+                "progress_label": "planning_code",
+                "tick": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        if cycle == 1:
+            return {
+                "message": f"正在执行代码任务（第{step}轮）...",
+                "current_action": "正在执行代码任务",
+                "progress_label": "executing_code",
+                "tick": step,
+                "elapsed_ms": max(0, int(elapsed_ms or 0)),
+            }
+        return {
+            "message": f"正在整理代码执行结果（第{step}轮）...",
+            "current_action": "正在整理代码执行结果",
+            "progress_label": "organizing_code",
+            "tick": step,
+            "elapsed_ms": max(0, int(elapsed_ms or 0)),
+        }
+    return {
+        "message": f"正在执行工具调用（第{step}轮）...",
+        "current_action": "正在执行工具调用",
+        "progress_label": "running_tool",
+        "tick": step,
+        "elapsed_ms": max(0, int(elapsed_ms or 0)),
+    }
+
+
+def _progress_sensitive_tool(tool_name: str) -> bool:
+    safe_tool = str(tool_name or "").strip().lower()
+    return safe_tool in {
+        "attachment_prefetch",
+        "attachment_search",
+        "file_memory_search",
+        "local_search",
+        "web_search",
+    }
+
+
+def _structured_progress_tool(tool_name: str) -> bool:
+    safe_tool = str(tool_name or "").strip().lower()
+    return safe_tool in {"attachment_search"}
 
 
 @dataclass
@@ -532,6 +680,8 @@ def execute_tool_call(
     tool_hub: AelinToolHub,
     tool_name: str,
     args: dict[str, Any],
+    partial_cb: Callable[[dict[str, Any]], None] | None = None,
+    partial_interval_ms: int = _TOOL_PARTIAL_INTERVAL_MS,
 ) -> tuple[str, dict[str, Any], str, int]:
     status = "completed"
     result: dict[str, Any] = {}
@@ -548,11 +698,53 @@ def execute_tool_call(
         _dump_log_json(_sanitize_tool_args_for_log(safe_tool_name, effective_args)),
     )
     started = time.perf_counter()
+    stop_partial = threading.Event()
+    partial_interval_s = max(0.1, min(0.3, float(partial_interval_ms or _TOOL_PARTIAL_INTERVAL_MS) / 1000.0))
+
+    def _emit_partial(payload: dict[str, Any]) -> None:
+        if partial_cb is None:
+            return
+        if not isinstance(payload, dict):
+            return
+        try:
+            partial_cb(payload)
+        except Exception:
+            pass
+
+    partial_tick = 0
+    use_synthetic_partials = not _structured_progress_tool(safe_tool_name)
+    if use_synthetic_partials:
+        _emit_partial(
+            _tool_partial_state(
+                safe_tool_name,
+                effective_args,
+                partial_tick,
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+            )
+        )
+
+    partial_worker: threading.Thread | None = None
+    if partial_cb is not None and use_synthetic_partials:
+        def _partial_loop() -> None:
+            nonlocal partial_tick
+            while not stop_partial.wait(partial_interval_s):
+                partial_tick += 1
+                _emit_partial(
+                    _tool_partial_state(
+                        safe_tool_name,
+                        effective_args,
+                        partial_tick,
+                        elapsed_ms=int((time.perf_counter() - started) * 1000),
+                    )
+                )
+
+        partial_worker = threading.Thread(target=_partial_loop, daemon=True, name="aelin-tool-partial")
+        partial_worker.start()
     try:
         if isinstance(synthetic_result, dict):
             result = dict(synthetic_result)
         else:
-            result = tool_hub.execute(safe_tool_name, effective_args)
+            result = tool_hub.execute(safe_tool_name, effective_args, progress_cb=partial_cb)
         if not bool(result.get("ok", True)):
             status = "failed"
             error = str(result.get("error") or "tool_not_ok")[:180]
@@ -560,6 +752,14 @@ def execute_tool_call(
         status = "failed"
         error = str(exc)[:180]
         result = {"ok": False, "error": error}
+    finally:
+        if partial_cb is not None and _progress_sensitive_tool(safe_tool_name):
+            min_visible_ms = 560
+            while int((time.perf_counter() - started) * 1000) < min_visible_ms:
+                time.sleep(0.04)
+        stop_partial.set()
+        if partial_worker is not None:
+            partial_worker.join(timeout=0.05)
     latency_ms = int((time.perf_counter() - started) * 1000)
     _record_browser_tool_result(
         tool_hub=tool_hub,
@@ -591,6 +791,8 @@ def append_tool_result(
     messages: list[dict[str, Any]],
     tool_runs: list[AgentLoopToolRun],
     trace_steps: list[AgentLoopTraceStep],
+    record_trace: bool = True,
+    trace_emit_cb: Callable[[AgentLoopTraceStep], None] | None = None,
 ) -> bool:
     tool_result_for_run, tool_result_for_message, image_data_url = prepare_tool_result_payload(
         tool_name=tool_name,
@@ -619,14 +821,19 @@ def append_tool_result(
     )
     if image_data_url:
         messages.append(build_screen_observation_message(image_data_url))
-    trace_steps.append(
-        AgentLoopTraceStep(
+    if record_trace:
+        step = AgentLoopTraceStep(
             stage="agent_loop_tool",
             status=status,
             detail=f"{tool_name}:{error or 'ok'}",
             count=1,
         )
-    )
+        trace_steps.append(step)
+        if trace_emit_cb is not None:
+            try:
+                trace_emit_cb(step)
+            except Exception:
+                pass
     return status == "completed"
 
 
@@ -638,32 +845,75 @@ def flush_pending_reads(
     messages: list[dict[str, Any]],
     tool_runs: list[AgentLoopToolRun],
     trace_steps: list[AgentLoopTraceStep],
+    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
+    record_tool_trace: bool = True,
+    trace_emit_cb: Callable[[AgentLoopTraceStep], None] | None = None,
 ) -> int:
     if not pending_reads:
         return 0
     batch = list(pending_reads)
     pending_reads.clear()
-    trace_steps.append(
-        AgentLoopTraceStep(
-            stage="agent_loop_read_batch",
-            status="running",
-            detail=f"parallel_reads={len(batch)}",
-            count=len(batch),
-        )
+    start_step = AgentLoopTraceStep(
+        stage="agent_loop_read_batch",
+        status="running",
+        detail=f"parallel_reads={len(batch)}",
+        count=len(batch),
     )
+    trace_steps.append(start_step)
+    if trace_emit_cb is not None:
+        try:
+            trace_emit_cb(start_step)
+        except Exception:
+            pass
 
     results: list[tuple[str, dict[str, Any], str, int] | None] = [None] * len(batch)
     max_workers = max(1, min(4, len(batch)))
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="aelin-loop-read") as pool:
-        future_map = {
-            pool.submit(
+        future_map: dict[Any, int] = {}
+        for idx, item in enumerate(batch):
+            tool_name = str(item.get("tool_name") or "")
+            args = item.get("args") if isinstance(item.get("args"), dict) else {}
+            tc_id = str(item.get("tc_id") or "")
+            stage = str(item.get("stage") or "").strip()
+            if tool_event_cb is not None:
+                try:
+                    tool_event_cb(
+                        {
+                            "phase": "start",
+                            "round_index": int(round_index),
+                            "tool_name": tool_name,
+                            "tc_id": tc_id,
+                            "args": args,
+                            "stage": stage,
+                        }
+                    )
+                except Exception:
+                    pass
+            def _emit_partial(partial_state: dict[str, Any], *, _round=int(round_index), _tool=tool_name, _tc=tc_id, _args=args, _stage=stage) -> None:
+                if tool_event_cb is None:
+                    return
+                try:
+                    tool_event_cb(
+                        {
+                            "phase": "partial",
+                            "round_index": _round,
+                            "tool_name": _tool,
+                            "tc_id": _tc,
+                            "args": _args,
+                            "stage": _stage,
+                            **(partial_state if isinstance(partial_state, dict) else {}),
+                        }
+                    )
+                except Exception:
+                    pass
+            future = pool.submit(
                 execute_tool_call,
                 tool_hub=tool_hub,
-                tool_name=str(item.get("tool_name") or ""),
-                args=item.get("args") if isinstance(item.get("args"), dict) else {},
-            ): idx
-            for idx, item in enumerate(batch)
-        }
+                tool_name=tool_name,
+                args=args,
+                partial_cb=_emit_partial,
+            )
+            future_map[future] = idx
         for future in as_completed(future_map):
             idx = future_map[future]
             try:
@@ -676,11 +926,30 @@ def flush_pending_reads(
         tool_name = str(item.get("tool_name") or "")
         tc_id = str(item.get("tc_id") or "")
         args = item.get("args") if isinstance(item.get("args"), dict) else {}
+        stage = str(item.get("stage") or "").strip()
         status, result, error, latency_ms = (
             results[idx]
             if isinstance(results[idx], tuple)
             else ("failed", {"ok": False, "error": "unknown"}, "unknown", 0)
         )
+        if tool_event_cb is not None:
+            try:
+                tool_event_cb(
+                    {
+                        "phase": "end",
+                        "round_index": int(round_index),
+                        "tool_name": tool_name,
+                        "tc_id": tc_id,
+                        "args": args,
+                        "status": status,
+                        "result": _compact_tool_result_for_model(tool_name, result if isinstance(result, dict) else {}),
+                        "error": error,
+                        "latency_ms": int(latency_ms or 0),
+                        "stage": stage,
+                    }
+                )
+            except Exception:
+                pass
         if append_tool_result(
             round_index=round_index,
             tool_name=tool_name,
@@ -694,15 +963,21 @@ def flush_pending_reads(
             messages=messages,
             tool_runs=tool_runs,
             trace_steps=trace_steps,
+            record_trace=record_tool_trace,
+            trace_emit_cb=trace_emit_cb,
         ):
             successful_calls += 1
 
-    trace_steps.append(
-        AgentLoopTraceStep(
-            stage="agent_loop_read_batch",
-            status="completed",
-            detail=f"parallel_reads={len(batch)}",
-            count=len(batch),
-        )
+    done_step = AgentLoopTraceStep(
+        stage="agent_loop_read_batch",
+        status="completed",
+        detail=f"parallel_reads={len(batch)}",
+        count=len(batch),
     )
+    trace_steps.append(done_step)
+    if trace_emit_cb is not None:
+        try:
+            trace_emit_cb(done_step)
+        except Exception:
+            pass
     return successful_calls

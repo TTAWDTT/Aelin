@@ -94,6 +94,8 @@ class Settings(BaseSettings):
     aelin_agent_loop_workspace_whitelist_csv: str = ""
     aelin_agent_loop_round_timeout_seconds: float = 40.0
     aelin_agent_loop_total_timeout_seconds: float = 120.0
+    aelin_agent_loop_round_max_tokens: int = 700
+    aelin_agent_loop_final_max_tokens: int = 1400
     desktop_plugin_base_url: str = "http://127.0.0.1:21914"
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0

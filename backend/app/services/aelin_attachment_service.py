@@ -13,6 +13,7 @@ import threading
 import time
 import zipfile
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1234,6 +1235,7 @@ class AelinAttachmentService:
         attachment_ids: list[int],
         top_k: int = 5,
         mode: str = "keyword",
+        progress_cb: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         workspace_norm = self._normalize_workspace(workspace)
         q = self._norm_text(query)
@@ -1262,6 +1264,49 @@ class AelinAttachmentService:
 
         allowed_ids = {int(row.id) for row in docs}
         doc_map = {int(row.id): row for row in docs}
+        progress_started = time.perf_counter()
+
+        def emit_progress(
+            *,
+            current_action: str,
+            progress_label: str,
+            processed: int = 0,
+            matched: int = 0,
+            total: int = 0,
+            found_count: int = 0,
+            force: bool = False,
+        ) -> None:
+            nonlocal last_progress_emit
+            if progress_cb is None:
+                return
+            now = time.perf_counter()
+            if (not force) and (now - last_progress_emit) < 0.12:
+                return
+            last_progress_emit = now
+            payload = {
+                "message": current_action,
+                "current_action": current_action,
+                "progress_label": progress_label,
+                "processed": max(0, int(processed or 0)),
+                "matched": max(0, int(matched or 0)),
+                "total": max(0, int(total or 0)),
+                "found_count": max(0, int(found_count or 0)),
+                "elapsed_ms": int((now - progress_started) * 1000),
+            }
+            try:
+                progress_cb(payload)
+            except Exception:
+                return
+
+        last_progress_emit = 0.0
+        emit_progress(
+            current_action="正在加载附件内容",
+            progress_label="loading_candidates",
+            processed=0,
+            matched=0,
+            total=len(allowed_ids),
+            force=True,
+        )
         candidate_limit = max(120, min(400, k * 40))
         query_lower = q.lower()[:200]
         token_terms: list[str] = []
@@ -1297,6 +1342,14 @@ class AelinAttachmentService:
             )
         if not chunks:
             return {"ok": True, "content": "", "hits": [], "total": 0, "attachment_ids": sorted(allowed_ids)}
+        emit_progress(
+            current_action="正在筛选候选片段",
+            progress_label="scanning_candidates",
+            processed=0,
+            matched=0,
+            total=len(chunks),
+            force=True,
+        )
 
         tokens = self._tokenize(q)
         token_counter = Counter(tokens)
@@ -1304,9 +1357,19 @@ class AelinAttachmentService:
         query_norm = math.sqrt(sum(v * v for v in token_counter.values())) or 1.0
 
         scored: list[tuple[float, AttachmentChunk]] = []
-        for chunk in chunks:
+        matched_candidates = 0
+        total_chunks = len(chunks)
+        for idx, chunk in enumerate(chunks, start=1):
             text = str(chunk.text or "")
             if not text:
+                emit_progress(
+                    current_action="正在检索附件内容",
+                    progress_label="searching",
+                    processed=idx,
+                    matched=matched_candidates,
+                    total=total_chunks,
+                    found_count=matched_candidates,
+                )
                 continue
             lowered = text.lower()
             lexical = float(sum(lowered.count(token) for token in token_counter if token))
@@ -1327,8 +1390,25 @@ class AelinAttachmentService:
                 if row_sq > 0:
                     score += dot / (math.sqrt(row_sq) * query_norm)
             if score <= 0:
+                emit_progress(
+                    current_action="正在检索附件内容",
+                    progress_label="searching",
+                    processed=idx,
+                    matched=matched_candidates,
+                    total=total_chunks,
+                    found_count=matched_candidates,
+                )
                 continue
             scored.append((score, chunk))
+            matched_candidates += 1
+            emit_progress(
+                current_action="已找到候选片段",
+                progress_label="found_candidates",
+                processed=idx,
+                matched=matched_candidates,
+                total=total_chunks,
+                found_count=matched_candidates,
+            )
 
         scored.sort(key=lambda item: item[0], reverse=True)
         if not scored:
@@ -1341,7 +1421,8 @@ class AelinAttachmentService:
 
         hits: list[dict[str, Any]] = []
         seen_texts: set[str] = set()
-        for score, chunk in scored:
+        scored_total = len(scored)
+        for idx, (score, chunk) in enumerate(scored, start=1):
             normalized = self._norm_text(str(chunk.text or ""))
             if not normalized:
                 continue
@@ -1374,10 +1455,27 @@ class AelinAttachmentService:
                     },
                 }
             )
+            emit_progress(
+                current_action="正在整理检索结果",
+                progress_label="organizing",
+                processed=idx,
+                matched=len(hits),
+                total=max(scored_total, len(hits)),
+                found_count=len(hits),
+            )
             if len(hits) >= k:
                 break
 
         content_lines = [f"[{idx + 1}] {hit['text']}" for idx, hit in enumerate(hits)]
+        emit_progress(
+            current_action="检索完成",
+            progress_label="completed",
+            processed=max(scored_total, len(chunks)),
+            matched=len(hits),
+            total=max(scored_total, len(chunks)),
+            found_count=len(hits),
+            force=True,
+        )
         return {
             "ok": True,
             "content": "\n\n".join(content_lines)[:8000],
