@@ -60,7 +60,8 @@ function parseSseChunks(chunkText: string, pending = ''): { events: ParsedSseEve
 
 function toEventPayload(raw: string): any {
   const text = String(raw || '').trim()
-  if (!text || text === '[DONE]') return null
+  if (!text) return null
+  if (text === '[DONE]') return { __streamDone: true }
   try {
     return JSON.parse(text)
   } catch {
@@ -69,7 +70,14 @@ function toEventPayload(raw: string): any {
 }
 
 function nextAnimationFrame(): Promise<void> {
-  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
+  return new Promise((resolve) => {
+    const raf =
+      typeof globalThis !== 'undefined' &&
+      typeof (globalThis as { requestAnimationFrame?: (callback: FrameRequestCallback) => number }).requestAnimationFrame === 'function'
+        ? (globalThis as { requestAnimationFrame: (callback: FrameRequestCallback) => number }).requestAnimationFrame.bind(globalThis)
+        : (callback: () => void) => globalThis.setTimeout(callback, 0)
+    raf(() => resolve())
+  })
 }
 
 async function emitReplyChunked(text: string, onReplyChunk?: (text: string) => void): Promise<boolean> {
@@ -152,6 +160,10 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     }
 
     const dispatch = async (sseEvent: string, payload: any): Promise<string> => {
+      if (payload?.__streamDone) {
+        emitDone({})
+        return 'done'
+      }
       const envelopeType = String(payload?.type || payload?.event || '').trim()
       const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
       debugLog('event', { sseEvent, eventType })
