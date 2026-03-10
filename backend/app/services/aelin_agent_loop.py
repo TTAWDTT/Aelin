@@ -251,6 +251,13 @@ class AelinAgentLoop:
                 except Exception:
                     pass
 
+        def _emit_trace_only(step: AgentLoopTraceStep) -> None:
+            if trace_cb is not None:
+                try:
+                    trace_cb(step)
+                except Exception:
+                    pass
+
         def _emit_trace(*, stage: str, status: str, detail: str = "", count: int = 0) -> None:
             _emit_trace_step(
                 AgentLoopTraceStep(
@@ -263,7 +270,7 @@ class AelinAgentLoop:
 
         def _tool_stage(round_index: int, tool_name: str, tc_id: str, args: dict[str, Any]) -> str:
             safe_tool = str(tool_name or "tool").strip().lower()[:24] or "tool"
-            base_key = f"{round_index}:{safe_tool}:{tc_id}:{_json_compact(args, limit=80)}"
+            base_key = f"{round_index}:{safe_tool}:{tc_id}"
             digest = hashlib.sha1(base_key.encode("utf-8", errors="ignore")).hexdigest()[:8]
             return f"tool_call:{safe_tool}:{digest}"
 
@@ -445,7 +452,7 @@ class AelinAgentLoop:
                 round_index=round_index,
                 trace_steps=trace_steps,
                 retried_without_images=retried_without_images,
-                trace_emit_cb=_emit_trace_step,
+                trace_emit_cb=_emit_trace_only,
             )
             if llm_error_reason:
                 stop_reason = llm_error_reason
@@ -521,7 +528,7 @@ class AelinAgentLoop:
                             tool_runs=tool_runs,
                             trace_steps=trace_steps,
                             tool_event_cb=_forward_tool_event,
-                            trace_emit_cb=_emit_trace_step,
+                            trace_emit_cb=_emit_trace_only,
                         )
                         call_stage = _tool_stage(round_index, tool_name, tc_id, args)
                         _forward_tool_event(
@@ -577,7 +584,7 @@ class AelinAgentLoop:
                             messages=messages,
                             tool_runs=tool_runs,
                             trace_steps=trace_steps,
-                            trace_emit_cb=_emit_trace_step,
+                            trace_emit_cb=_emit_trace_only,
                         ):
                             successful_calls += 1
                         if pending_confirmation is None:
@@ -604,7 +611,7 @@ class AelinAgentLoop:
                     tool_runs=tool_runs,
                     trace_steps=trace_steps,
                     tool_event_cb=_forward_tool_event,
-                    trace_emit_cb=_emit_trace_step,
+                    trace_emit_cb=_emit_trace_only,
                 )
                 if not allowed:
                     call_stage = _tool_stage(round_index, tool_name, tc_id, args)
@@ -642,7 +649,7 @@ class AelinAgentLoop:
                         messages=messages,
                         tool_runs=tool_runs,
                         trace_steps=trace_steps,
-                        trace_emit_cb=_emit_trace_step,
+                        trace_emit_cb=_emit_trace_only,
                     ):
                         successful_calls += 1
                     continue
@@ -701,7 +708,7 @@ class AelinAgentLoop:
                     messages=messages,
                     tool_runs=tool_runs,
                     trace_steps=trace_steps,
-                    trace_emit_cb=_emit_trace_step,
+                    trace_emit_cb=_emit_trace_only,
                 ):
                     successful_calls += 1
                 if pending_confirmation is None:
@@ -729,7 +736,7 @@ class AelinAgentLoop:
                 tool_runs=tool_runs,
                 trace_steps=trace_steps,
                 tool_event_cb=_forward_tool_event,
-                trace_emit_cb=_emit_trace_step,
+                trace_emit_cb=_emit_trace_only,
             )
 
             if successful_calls <= 0:

@@ -700,15 +700,18 @@ def execute_tool_call(
     started = time.perf_counter()
     stop_partial = threading.Event()
     callback_lock = threading.Lock()
+    partial_emitted = False
     partial_interval_s = max(0.1, min(0.3, float(partial_interval_ms or _TOOL_PARTIAL_INTERVAL_MS) / 1000.0))
 
     def _emit_partial(payload: dict[str, Any]) -> None:
+        nonlocal partial_emitted
         if partial_cb is None:
             return
         if not isinstance(payload, dict):
             return
         try:
             with callback_lock:
+                partial_emitted = True
                 partial_cb(payload)
         except Exception:
             pass
@@ -759,7 +762,7 @@ def execute_tool_call(
         error = str(exc)[:180]
         result = {"ok": False, "error": error}
     finally:
-        if partial_cb is not None and _progress_sensitive_tool(safe_tool_name):
+        if partial_cb is not None and partial_emitted and _progress_sensitive_tool(safe_tool_name):
             min_visible_ms = max(
                 0,
                 int(getattr(settings, "aelin_agent_loop_progress_min_visible_ms", 320) or 320),

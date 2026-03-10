@@ -189,6 +189,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
           callbacks.onToolStep?.((payload.data?.step ?? payload.step ?? payload.data ?? payload) as AelinToolStep)
           return eventType
         case 'tool_event':
+          hasStreamedTrace = true
           callbacks.onToolEvent?.((payload.data ?? payload) as Record<string, unknown>)
           return eventType
         case 'citations':
