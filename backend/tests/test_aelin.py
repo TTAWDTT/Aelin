@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 import app.routers.aelin as aelin_router
+import app.routers.aelin_proactive as aelin_proactive_router
 from app.services.web_search import WebSearchResult
 from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client, _sync_and_wait
@@ -466,6 +467,54 @@ def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
         headers=headers,
     )
     assert search_resp.status_code == 200, search_resp.text
+
+
+def test_aelin_proactive_poll_skips_state_write_when_unchanged(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    calls = {"save": 0}
+    original_save = aelin_proactive_router._save_proactive_state
+
+    def _wrapped_save(*args, **kwargs):
+        calls["save"] += 1
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(aelin_proactive_router, "_save_proactive_state", _wrapped_save)
+    monkeypatch.setattr(
+        aelin_proactive_router,
+        "_memory",
+        SimpleNamespace(
+            build_focus_items=lambda db, user_id, query="", limit=10: [
+                SimpleNamespace(
+                    message_id=101,
+                    source="imap",
+                    sender="tester",
+                    sender_avatar_url=None,
+                    title="focus title",
+                    received_at="2026-03-11 00:00",
+                    score=1.0,
+                )
+            ],
+            build_daily_brief=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not build daily brief")),
+        ),
+    )
+    monkeypatch.setattr(aelin_proactive_router, "device_collect_process_items", lambda sort_by="cpu", limit=6: [])
+
+    first = client.get(
+        "/api/v1/aelin/proactive/poll",
+        params={"workspace": "default", "limit": 8},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.get(
+        "/api/v1/aelin/proactive/poll",
+        params={"workspace": "default", "limit": 8},
+        headers=headers,
+    )
+    assert second.status_code == 200, second.text
+    assert calls["save"] == 1
 
 
 @pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
@@ -1392,7 +1441,6 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     )
     assert isinstance(web_step, dict)
     assert web_step.get("status") == "skipped"
-
 
 
 

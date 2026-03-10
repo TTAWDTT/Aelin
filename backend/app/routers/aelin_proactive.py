@@ -13,7 +13,7 @@ from app.models import AgentMemoryNote, Message, User
 from app.routers.auth import get_current_user
 from app.schemas import AelinNotificationItem, AelinProactivePollResponse
 from app.services.aelin_runtime import normalize_workspace, parse_iso_datetime
-from app.services.agent_memory import AgentMemoryService
+from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services.device_center import collect_device_process_items as device_collect_process_items
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -97,6 +97,18 @@ def _save_proactive_state(
     return row
 
 
+def _state_for_compare(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "initialized": bool(state.get("initialized")),
+        "workspace": normalize_workspace(str(state.get("workspace") or "default")),
+        "seen_focus_message_ids": _safe_int_list(state.get("seen_focus_message_ids"), max_items=_PROACTIVE_SEEN_LIMIT),
+        "last_unread_count": int(state.get("last_unread_count") or 0),
+        "last_unread_alert_at": str(state.get("last_unread_alert_at") or ""),
+        "last_process_alert_at": str(state.get("last_process_alert_at") or ""),
+        "last_process_alert_pid": int(state.get("last_process_alert_pid") or 0),
+    }
+
+
 @router.get("/proactive/poll", response_model=AelinProactivePollResponse)
 def poll_aelin_proactive_events(
     workspace: str = Query(default="default", min_length=1, max_length=64),
@@ -114,10 +126,10 @@ def poll_aelin_proactive_events(
     seen_focus_set = set(seen_focus_ids)
 
     events: list[dict[str, Any]] = []
-    brief = _memory.build_daily_brief(db, current_user.id)
-    top_updates = brief.get("top_updates") if isinstance(brief, dict) else []
-    if not isinstance(top_updates, list):
-        top_updates = []
+    top_updates = [
+        serialize_focus_item(item)
+        for item in _memory.build_focus_items(db, current_user.id, query="", limit=10)
+    ]
 
     for row in top_updates[:10]:
         if not isinstance(row, dict):
@@ -233,16 +245,16 @@ def poll_aelin_proactive_events(
         "last_unread_alert_at": str(state.get("last_unread_alert_at") or ""),
         "last_process_alert_at": str(state.get("last_process_alert_at") or ""),
         "last_process_alert_pid": int(state.get("last_process_alert_pid") or 0),
-        "last_poll_at": now.isoformat(),
     }
-    _save_proactive_state(
-        db,
-        user_id=current_user.id,
-        workspace=workspace_norm,
-        existing=existing,
-        state=next_state,
-    )
-    db.commit()
+    if _state_for_compare(state) != _state_for_compare(next_state):
+        _save_proactive_state(
+            db,
+            user_id=current_user.id,
+            workspace=workspace_norm,
+            existing=existing,
+            state=next_state,
+        )
+        db.commit()
 
     items = [AelinNotificationItem(**item) for item in events[:max_items]]
     return AelinProactivePollResponse(
