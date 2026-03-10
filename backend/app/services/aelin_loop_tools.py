@@ -886,6 +886,11 @@ def flush_pending_reads(
         for idx, item in enumerate(batch):
             tool_name = str(item.get("tool_name") or "")
             args = item.get("args") if isinstance(item.get("args"), dict) else {}
+            safe_args = (
+                _sanitize_tool_args_for_log(tool_name, args)
+                if isinstance(args, dict)
+                else {}
+            )
             tc_id = str(item.get("tc_id") or "")
             stage = str(item.get("stage") or "").strip()
             if tool_event_cb is not None:
@@ -897,13 +902,13 @@ def flush_pending_reads(
                                 "round_index": int(round_index),
                                 "tool_name": tool_name,
                                 "tc_id": tc_id,
-                                "args": args,
+                                "args": safe_args,
                                 "stage": stage,
                             }
                         )
                 except Exception:
                     pass
-            def _emit_partial(partial_state: dict[str, Any], *, _round=int(round_index), _tool=tool_name, _tc=tc_id, _args=args, _stage=stage) -> None:
+            def _emit_partial(partial_state: dict[str, Any], *, _round=int(round_index), _tool=tool_name, _tc=tc_id, _args=safe_args, _stage=stage) -> None:
                 if tool_event_cb is None:
                     return
                 try:
@@ -941,6 +946,11 @@ def flush_pending_reads(
         tool_name = str(item.get("tool_name") or "")
         tc_id = str(item.get("tc_id") or "")
         args = item.get("args") if isinstance(item.get("args"), dict) else {}
+        safe_args = (
+            _sanitize_tool_args_for_log(tool_name, args)
+            if isinstance(args, dict)
+            else {}
+        )
         stage = str(item.get("stage") or "").strip()
         status, result, error, latency_ms = (
             results[idx]
@@ -949,20 +959,21 @@ def flush_pending_reads(
         )
         if tool_event_cb is not None:
             try:
-                tool_event_cb(
-                    {
-                        "phase": "end",
-                        "round_index": int(round_index),
-                        "tool_name": tool_name,
-                        "tc_id": tc_id,
-                        "args": args,
-                        "status": status,
-                        "result": _compact_tool_result_for_model(tool_name, result if isinstance(result, dict) else {}),
-                        "error": error,
-                        "latency_ms": int(latency_ms or 0),
-                        "stage": stage,
-                    }
-                )
+                with tool_event_lock:
+                    tool_event_cb(
+                        {
+                            "phase": "end",
+                            "round_index": int(round_index),
+                            "tool_name": tool_name,
+                            "tc_id": tc_id,
+                            "args": safe_args,
+                            "status": status,
+                            "result": _compact_tool_result_for_model(tool_name, result if isinstance(result, dict) else {}),
+                            "error": error,
+                            "latency_ms": int(latency_ms or 0),
+                            "stage": stage,
+                        }
+                    )
             except Exception:
                 pass
         if append_tool_result(

@@ -75,7 +75,7 @@ function nextAnimationFrame(): Promise<void> {
       typeof globalThis !== 'undefined' &&
       typeof (globalThis as { requestAnimationFrame?: (callback: FrameRequestCallback) => number }).requestAnimationFrame === 'function'
         ? (globalThis as { requestAnimationFrame: (callback: FrameRequestCallback) => number }).requestAnimationFrame.bind(globalThis)
-        : (callback: () => void) => globalThis.setTimeout(callback, 0)
+        : (callback: () => void) => setTimeout(callback, 0)
     raf(() => resolve())
   })
 }

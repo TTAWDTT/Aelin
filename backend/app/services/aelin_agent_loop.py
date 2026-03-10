@@ -270,7 +270,7 @@ class AelinAgentLoop:
                 )
             )
 
-        def _tool_stage(round_index: int, tool_name: str, tc_id: str, args: dict[str, Any]) -> str:
+        def _tool_stage(round_index: int, tool_name: str, tc_id: str) -> str:
             safe_tool = str(tool_name or "tool").strip().lower()[:24] or "tool"
             base_key = f"{round_index}:{safe_tool}:{tc_id}"
             digest = hashlib.sha1(base_key.encode("utf-8", errors="ignore")).hexdigest()[:8]
@@ -298,7 +298,7 @@ class AelinAgentLoop:
                 tool_name = raw_tool_name
                 tc_id = str(safe_payload.get("tc_id") or "")
                 args = safe_args if isinstance(safe_args, dict) else {}
-                stage = str(safe_payload.get("stage") or "").strip() or _tool_stage(round_no, tool_name, tc_id, raw_args)
+                stage = str(safe_payload.get("stage") or "").strip() or _tool_stage(round_no, tool_name, tc_id)
                 if phase == "start":
                     tool_partial_seen[stage] = 0
                     _emit_trace(
@@ -533,7 +533,7 @@ class AelinAgentLoop:
                             tool_event_cb=_forward_tool_event,
                             trace_emit_cb=_emit_trace_only,
                         )
-                        call_stage = _tool_stage(round_index, tool_name, tc_id, args)
+                        call_stage = _tool_stage(round_index, tool_name, tc_id)
                         _forward_tool_event(
                             {
                                 "phase": "start",
@@ -601,7 +601,7 @@ class AelinAgentLoop:
                     pending_reads.append(
                         {
                             **planned,
-                            "stage": _tool_stage(round_index, tool_name, tc_id, args),
+                            "stage": _tool_stage(round_index, tool_name, tc_id),
                         }
                     )
                     continue
@@ -617,7 +617,7 @@ class AelinAgentLoop:
                     trace_emit_cb=_emit_trace_only,
                 )
                 if not allowed:
-                    call_stage = _tool_stage(round_index, tool_name, tc_id, args)
+                    call_stage = _tool_stage(round_index, tool_name, tc_id)
                     _forward_tool_event(
                         {
                             "phase": "start",
@@ -657,7 +657,7 @@ class AelinAgentLoop:
                         successful_calls += 1
                     continue
 
-                call_stage = _tool_stage(round_index, tool_name, tc_id, args)
+                call_stage = _tool_stage(round_index, tool_name, tc_id)
                 _forward_tool_event(
                     {
                         "phase": "start",

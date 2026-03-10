@@ -468,6 +468,9 @@ function EventText({
   className?: string
 }) {
   const displayText = animateProgress ? animatedProgressText(text, nowTs) : text
+  if (animateProgress) {
+    return <span className={className}>{displayText}</span>
+  }
   return <TypewriterText text={displayText} active={active} className={className} />
 }
 
