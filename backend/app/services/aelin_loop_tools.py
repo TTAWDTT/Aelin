@@ -18,6 +18,7 @@ from app.services.aelin_loop_message import (
 from app.services.aelin_loop_types import AgentLoopToolRun, AgentLoopTraceStep
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin_tools import AelinToolHub
+from app.settings import settings
 
 _LOG = logging.getLogger(__name__)
 
@@ -717,7 +718,7 @@ def execute_tool_call(
             pass
 
     partial_tick = 0
-    use_synthetic_partials = not _structured_progress_tool(safe_tool_name)
+    use_synthetic_partials = _progress_sensitive_tool(safe_tool_name) and not _structured_progress_tool(safe_tool_name)
     if use_synthetic_partials:
         _emit_partial(
             _tool_partial_state(

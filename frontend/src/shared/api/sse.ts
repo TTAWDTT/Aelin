@@ -85,10 +85,11 @@ async function emitReplyChunked(text: string, onReplyChunk?: (text: string) => v
   if (!raw || !onReplyChunk) return false
   const chunkSize = 28
   const maxAnimatedChars = chunkSize * 10
-  const animateByFrame = raw.length <= maxAnimatedChars
-  for (let idx = 0; idx < raw.length; idx += chunkSize) {
-    onReplyChunk(raw.slice(idx, idx + chunkSize))
-    if (animateByFrame && idx + chunkSize < raw.length) {
+  const glyphs = Array.from(raw)
+  const animateByFrame = glyphs.length <= maxAnimatedChars
+  for (let idx = 0; idx < glyphs.length; idx += chunkSize) {
+    onReplyChunk(glyphs.slice(idx, idx + chunkSize).join(''))
+    if (animateByFrame && idx + chunkSize < glyphs.length) {
       await nextAnimationFrame()
     }
   }

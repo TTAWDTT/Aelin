@@ -13,6 +13,7 @@ from app.services.aelin_loop_logging import safe_preview
 from app.services.aelin_loop_message import build_initial_messages, extract_message_text
 from app.services.aelin_loop_round import request_round_response
 from app.services.aelin_loop_tools import (
+    _compact_tool_result_for_model,
     _sanitize_tool_args_for_log,
     append_tool_result,
     build_tool_calls_payload,
@@ -692,7 +693,10 @@ class AelinAgentLoop:
                         "tc_id": tc_id,
                         "args": args,
                         "status": status,
-                        "result": result,
+                        "result": _compact_tool_result_for_model(
+                            tool_name,
+                            result if isinstance(result, dict) else {},
+                        ),
                         "error": error,
                         "latency_ms": latency_ms,
                         "stage": call_stage,
