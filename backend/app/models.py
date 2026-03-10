@@ -46,6 +46,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    remote_commands: Mapped[list["RemoteCommand"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     tracking_targets: Mapped[list["TrackingTarget"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -220,6 +224,40 @@ class AgentMemoryNote(Base):
     user: Mapped["User"] = relationship(back_populates="agent_memory_notes")
 
 
+class RemoteCommand(Base):
+    __tablename__ = "remote_commands"
+    __table_args__ = (
+        Index("ix_remote_commands_user_workspace_created", "user_id", "workspace", "created_at"),
+        Index("ix_remote_commands_status_updated", "status", "updated_at"),
+        Index("ix_remote_commands_source_message", "source", "source_message_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+
+    source: Mapped[str] = mapped_column(String(32), default="manual", index=True)
+    source_open_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    source_chat_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    source_message_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    source_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    raw_text: Mapped[str] = mapped_column(Text, default="")
+    normalized_text: Mapped[str] = mapped_column(Text, default="")
+    command_type: Mapped[str] = mapped_column(String(64), default="help", index=True)
+    args_json: Mapped[str] = mapped_column(Text, default="{}")
+    risk_level: Mapped[str] = mapped_column(String(16), default="low")
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    result_json: Mapped[str] = mapped_column(Text, default="{}")
+    error_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="remote_commands")
 
 
 class TrackingTarget(Base):

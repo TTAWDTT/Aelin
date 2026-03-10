@@ -21,6 +21,7 @@ from app.routers import (
     aelin_media,
     aelin_notifications,
     aelin_proactive,
+    aelin_remote_control,
     aelin_tracking,
     auth,
     contacts,
@@ -29,6 +30,7 @@ from app.routers import (
     messages,
 )
 from app.settings import settings
+from app.services.feishu_bot import feishu_bot_service
 from app.services.tracking_autonomy import tracking_autonomy_service
 
 _log = logging.getLogger(__name__)
@@ -84,9 +86,15 @@ async def lifespan(_app: FastAPI):
         _log.info("tracking scheduler enabled")
     else:
         _log.info("tracking scheduler disabled")
+    if settings.feishu_bot_enabled:
+        feishu_bot_service.start()
+        _log.info("feishu bot enabled")
+    else:
+        _log.info("feishu bot disabled")
     try:
         yield
     finally:
+        feishu_bot_service.stop()
         tracking_autonomy_service.stop()
 
 
@@ -132,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(aelin_media.router, prefix="/api/v1")
     app.include_router(aelin_notifications.router, prefix="/api/v1")
     app.include_router(aelin_proactive.router, prefix="/api/v1")
+    app.include_router(aelin_remote_control.router, prefix="/api/v1")
     app.include_router(aelin_tracking.router, prefix="/api/v1")
     app.include_router(desk.router, prefix="/api/v1")
     app.include_router(inbound.router, prefix="/api/v1")
