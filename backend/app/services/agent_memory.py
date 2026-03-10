@@ -7,7 +7,7 @@ import json
 import re
 from typing import Any, Iterable
 
-from sqlalchemy import Select, desc, func, select
+from sqlalchemy import Select, case, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models import AgentConversationMemory, AgentMemoryNote, Contact, Message
@@ -48,6 +48,26 @@ class FocusItem:
     title: str
     received_at: str
     score: float
+
+
+def source_label_for(source: str | None) -> str:
+    source_key = _truncate(_clean_text(source or ""), 32).lower()
+    if not source_key:
+        return "unknown"
+    return _SOURCE_LABELS.get(source_key, source_key.upper())
+
+
+def serialize_focus_item(item: FocusItem) -> dict[str, Any]:
+    return {
+        "message_id": int(item.message_id or 0),
+        "source": str(item.source or "unknown"),
+        "source_label": source_label_for(item.source),
+        "sender": str(item.sender or ""),
+        "sender_avatar_url": item.sender_avatar_url,
+        "title": str(item.title or ""),
+        "received_at": str(item.received_at or ""),
+        "score": round(float(item.score or 0.0), 2),
+    }
 
 
 class AgentMemoryService:
@@ -352,10 +372,6 @@ class AgentMemoryService:
 
     def recommend_pins(self, db: Session, user_id: int, *, limit: int = 6) -> list[dict[str, Any]]:
         n = max(1, min(20, int(limit or 6)))
-        contacts = db.scalars(select(Contact).where(Contact.user_id == user_id)).all()
-        if not contacts:
-            return []
-
         # Manual pin preference from recent workspace layouts.
         history_rows = db.scalars(
             select(AgentMemoryNote)
@@ -377,26 +393,60 @@ class AgentMemoryService:
                 if cid > 0:
                     pin_history[cid] += 1
 
+        ranked_messages = (
+            select(
+                Message.contact_id.label("contact_id"),
+                Message.received_at.label("received_at"),
+                Message.is_read.label("is_read"),
+                func.row_number()
+                .over(
+                    partition_by=Message.contact_id,
+                    order_by=(Message.received_at.desc(), Message.id.desc()),
+                )
+                .label("rn"),
+            )
+            .where(Message.user_id == user_id)
+            .subquery()
+        )
+        stats_rows = db.execute(
+            select(
+                ranked_messages.c.contact_id,
+                func.count().label("msg_count"),
+                func.sum(case((ranked_messages.c.is_read.is_(False), 1), else_=0)).label("unread_count"),
+                func.max(ranked_messages.c.received_at).label("last_received_at"),
+            )
+            .where(ranked_messages.c.rn <= 60)
+            .group_by(ranked_messages.c.contact_id)
+        ).all()
+        if not stats_rows:
+            return []
+
+        contact_ids = [int(row.contact_id) for row in stats_rows if int(row.contact_id or 0) > 0]
+        contacts = db.scalars(
+            select(Contact)
+            .where(Contact.user_id == user_id, Contact.id.in_(contact_ids))
+        ).all()
+        contact_map = {int(row.id): row for row in contacts}
+        if not contact_map:
+            return []
+
         now = datetime.now(timezone.utc)
         out: list[dict[str, Any]] = []
-        for c in contacts:
-            msgs = db.scalars(
-                select(Message)
-                .where(Message.user_id == user_id, Message.contact_id == c.id)
-                .order_by(desc(Message.received_at), desc(Message.id))
-                .limit(60)
-            ).all()
-            if not msgs:
+        for row in stats_rows:
+            contact_id = int(row.contact_id or 0)
+            contact = contact_map.get(contact_id)
+            if contact is None:
                 continue
-
-            unread = sum(1 for m in msgs if not m.is_read)
-            msg_count = len(msgs)
-            last = msgs[0].received_at
+            unread = int(row.unread_count or 0)
+            msg_count = int(row.msg_count or 0)
+            last = row.last_received_at
+            if last is None:
+                continue
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
             age_hours = max(0.0, (now - last).total_seconds() / 3600.0)
             recency_score = max(0.0, 8.0 - age_hours / 10.0)
-            history_score = min(4.0, pin_history.get(c.id, 0) * 1.25)
+            history_score = min(4.0, pin_history.get(contact_id, 0) * 1.25)
             unread_score = min(10.0, unread * 1.7)
             freq_score = min(4.0, msg_count * 0.08)
             score = unread_score + recency_score + history_score + freq_score
@@ -406,19 +456,19 @@ class AgentMemoryService:
                 reasons.append(f"未读 {unread} 条")
             if recency_score >= 4:
                 reasons.append("近期活跃")
-            if pin_history.get(c.id, 0) > 0:
+            if pin_history.get(contact_id, 0) > 0:
                 reasons.append("你曾多次手动置顶")
             if msg_count >= 12:
                 reasons.append("互动频率高")
 
             out.append(
                 {
-                    "contact_id": c.id,
-                    "display_name": c.display_name,
+                    "contact_id": contact_id,
+                    "display_name": contact.display_name,
                     "score": round(score, 2),
                     "reasons": reasons[:4],
                     "unread_count": unread,
-                    "last_message_at": c.last_message_at,
+                    "last_message_at": getattr(contact, "last_message_at", None) or last,
                 }
             )
 
@@ -498,6 +548,18 @@ class AgentMemoryService:
     def build_daily_brief(self, db: Session, user_id: int) -> dict[str, Any]:
         focus_items = self.build_focus_items(db, user_id, query="", limit=6)
         todos = self.list_todos(db, user_id, include_done=False, limit=20)
+        return self.build_daily_brief_from_items(db, user_id, focus_items=focus_items, todos=todos)
+
+    def build_daily_brief_from_items(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        focus_items: list[FocusItem],
+        todos: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        focus_items = list(focus_items or [])[:6]
+        todos = list(todos or [])
 
         actions: list[dict[str, Any]] = []
         for item in focus_items[:3]:
@@ -536,19 +598,7 @@ class AgentMemoryService:
         return {
             "generated_at": datetime.now(timezone.utc),
             "summary": "；".join(summary_parts) + "。",
-            "top_updates": [
-                {
-                    "message_id": item.message_id,
-                    "source": item.source,
-                    "source_label": _SOURCE_LABELS.get(item.source, item.source),
-                    "sender": item.sender,
-                    "sender_avatar_url": item.sender_avatar_url,
-                    "title": item.title,
-                    "received_at": item.received_at,
-                    "score": round(item.score, 2),
-                }
-                for item in focus_items
-            ],
+            "top_updates": [serialize_focus_item(item) for item in focus_items],
             "actions": actions[:10],
         }
 
@@ -640,19 +690,7 @@ class AgentMemoryService:
                 }
                 for n in notes
             ],
-            "focus_items": [
-                {
-                    "message_id": item.message_id,
-                    "source": item.source,
-                    "source_label": _SOURCE_LABELS.get(item.source, item.source),
-                    "sender": item.sender,
-                    "sender_avatar_url": item.sender_avatar_url,
-                    "title": item.title,
-                    "received_at": item.received_at,
-                    "score": round(item.score, 2),
-                }
-                for item in focus_items
-            ],
+            "focus_items": [serialize_focus_item(item) for item in focus_items],
         }
 
     def build_memory_layers(
@@ -663,12 +701,28 @@ class AgentMemoryService:
         workspace: str = "default",
         query: str = "",
     ) -> dict[str, list[dict[str, Any]]]:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        notes = self.list_notes(db, user_id, limit=120)
-        focus_items = self.build_focus_items(db, user_id, query=query, limit=10)
-        todos = self.list_todos(db, user_id, include_done=False, limit=20)
-        layout_cards = self.get_latest_layout_cards(db, user_id, workspace=workspace)
+        return self.build_memory_layers_from_items(
+            summary=self.get_summary(db, user_id),
+            notes=self.list_notes(db, user_id, limit=120),
+            focus_items=self.build_focus_items(db, user_id, query=query, limit=10),
+            todos=self.list_todos(db, user_id, include_done=False, limit=20),
+            layout_cards=self.get_latest_layout_cards(db, user_id, workspace=workspace),
+            workspace=workspace,
+            query=query,
+        )
 
+    def build_memory_layers_from_items(
+        self,
+        *,
+        summary: str,
+        notes: list[AgentMemoryNote],
+        focus_items: list[FocusItem],
+        todos: list[dict[str, Any]],
+        layout_cards: list[dict[str, Any]],
+        workspace: str = "default",
+        query: str = "",
+    ) -> dict[str, list[dict[str, Any]]]:
+        now_iso = datetime.now(timezone.utc).isoformat()
         facts: list[dict[str, Any]] = []
         preferences: list[dict[str, Any]] = []
         in_progress: list[dict[str, Any]] = []
@@ -707,14 +761,14 @@ class AgentMemoryService:
             if len(bucket) > max_items:
                 del bucket[max_items:]
 
-        summary = self.get_summary(db, user_id).strip()
-        if summary:
+        summary_clean = str(summary or "").strip()
+        if summary_clean:
             _push(
                 facts,
                 item_id="summary",
                 layer="fact",
                 title="近期对话摘要",
-                detail=summary,
+                detail=summary_clean,
                 source="chat_summary",
                 confidence=0.66,
                 updated_at=now_iso,
@@ -839,10 +893,23 @@ class AgentMemoryService:
 
     def build_notifications(self, db: Session, user_id: int, *, limit: int = 20) -> list[dict[str, Any]]:
         max_items = max(1, min(100, int(limit or 20)))
+        brief = self.build_daily_brief(db, user_id)
+        todos = self.list_todos(db, user_id, include_done=False, limit=20)
+        return self.build_notifications_from_items(db, user_id, brief=brief, todos=todos, limit=max_items)
+
+    def build_notifications_from_items(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        brief: dict[str, Any],
+        todos: list[dict[str, Any]],
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        max_items = max(1, min(100, int(limit or 20)))
         now = datetime.now(timezone.utc)
         items: list[dict[str, Any]] = []
 
-        brief = self.build_daily_brief(db, user_id)
         summary = _truncate(_clean_text(str(brief.get("summary") or "")), 220)
         if summary:
             items.append(
@@ -879,8 +946,7 @@ class AgentMemoryService:
                 }
             )
 
-        todos = self.list_todos(db, user_id, include_done=False, limit=20)
-        for todo in todos[:8]:
+        for todo in list(todos or [])[:8]:
             todo_id = int(todo.get("id") or 0)
             priority = str(todo.get("priority") or "normal").lower()
             title = _truncate(_clean_text(str(todo.get("title") or "")), 120)

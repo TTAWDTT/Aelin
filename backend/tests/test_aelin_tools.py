@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import app.services.aelin_tools as aelin_tools
 from app.services.aelin_tools import AelinToolHub
 from app.services.web_search import WebSearchResult
@@ -170,6 +172,16 @@ def test_web_search_tool_search_and_fetch():
     assert fake_web.calls[0] == ("search_and_fetch", "DeepSeek 4.0", 3, 2)
 
 
+def test_tool_definitions_are_cached_per_hub_instance():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    first = hub.tool_definitions()
+    second = hub.tool_definitions()
+
+    assert first is second
+
+
 def test_web_search_tool_missing_query():
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -243,6 +255,58 @@ def test_attachment_search_prefers_explicit_ids():
     assert fake_attachment.calls[0]["attachment_ids"] == [5, 6]
     assert fake_attachment.calls[0]["top_k"] == 6
     assert fake_attachment.calls[0]["mode"] == "hybrid"
+
+
+def test_context_get_reuses_shared_memory_primitives_without_snapshot():
+    fake_web = _FakeWebSearch()
+    calls = {"get_summary": 0, "build_focus_items": 0, "list_todos": 0, "snapshot": 0}
+
+    class _Memory:
+        def get_summary(self, db, user_id):
+            calls["get_summary"] += 1
+            return "summary"
+
+        def build_focus_items(self, db, user_id, *, query="", limit=8):
+            calls["build_focus_items"] += 1
+            return [
+                SimpleNamespace(
+                    message_id=11,
+                    source="imap",
+                    sender="alice",
+                    sender_avatar_url=None,
+                    title="mail title",
+                    received_at="2026-03-11 10:00",
+                    score=8.3,
+                )
+            ]
+
+        def list_todos(self, db, user_id, *, include_done=True, limit=100):
+            calls["list_todos"] += 1
+            return [{"id": 1, "title": "todo", "done": False, "updated_at": "2026-03-11T10:00:00+00:00"}]
+
+        def snapshot(self, db, user_id, *, query=""):
+            calls["snapshot"] += 1
+            raise AssertionError("snapshot should not be used")
+
+    hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=7,
+        workspace="default",
+        memory_service=_Memory(),  # type: ignore[arg-type]
+        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+    )
+
+    result = hub.execute("context_get", {"query": "mail", "max_items": 3})
+
+    assert result["ok"] is True
+    assert result["summary"] == "summary"
+    assert result["focus_items"][0]["source_label"] == "Email"
+    assert result["todos"][0]["title"] == "todo"
+    assert calls["get_summary"] == 1
+    assert calls["build_focus_items"] == 1
+    assert calls["list_todos"] == 1
+    assert calls["snapshot"] == 0
 
 
 def test_pinchtab_tool_calls_client_methods(monkeypatch):

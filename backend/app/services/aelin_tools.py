@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.models import AgentMemoryNote
-from app.services.agent_memory import AgentMemoryService
+from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services.device_center import (
     apply_device_mode as device_apply_mode,
     capture_device_screen as device_capture_screen,
@@ -126,9 +126,12 @@ class AelinToolHub:
         # Optional reference to the current LLM service so tools can delegate
         # sub-tasks (for example, a higher-level pinchtab agent).
         self._llm_service = llm_service
+        self._tool_definitions_cache: list[dict[str, Any]] | None = None
 
     def tool_definitions(self) -> list[dict[str, Any]]:
-        return [
+        if self._tool_definitions_cache is not None:
+            return self._tool_definitions_cache
+        self._tool_definitions_cache = [
             {
                 "type": "function",
                 "function": {
@@ -299,6 +302,7 @@ class AelinToolHub:
                 },
             },
         ]
+        return self._tool_definitions_cache
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         tool = str(name or "").strip().lower()
@@ -325,12 +329,15 @@ class AelinToolHub:
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()[:400]
         limit = _safe_int(args.get("max_items"), 8, low=1, high=20)
-        snapshot = self._memory.snapshot(self.db, self.user_id, query=query)
-        focus_items = list(snapshot.get("focus_items") or [])[:limit]
+        summary = str(self._memory.get_summary(self.db, self.user_id) or "")
+        focus_items = [
+            serialize_focus_item(item)
+            for item in self._memory.build_focus_items(self.db, self.user_id, query=query, limit=limit)
+        ]
         todos = self._memory.list_todos(self.db, self.user_id, include_done=False, limit=limit)
         return _result_ok(
             workspace=self.workspace,
-            summary=str(snapshot.get("summary") or ""),
+            summary=summary,
             focus_items=focus_items,
             todos=todos,
         )
