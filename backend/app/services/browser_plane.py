@@ -4,7 +4,9 @@ from uuid import uuid4
 from typing import Any
 
 from app.services.browser_automation import browser_automation_service
+from app.services.browser_plane_artifact_store import browser_plane_artifact_store
 from app.services.browser_exec import run_sync_playwright_call
+from app.services.browser_plane_lock_store import browser_plane_lock_store
 from app.services.browser_plane_task_store import browser_plane_task_store
 
 
@@ -204,6 +206,24 @@ class BrowserPlaneAdapter:
             workspace=workspace,
         )
 
+    def list_tasks(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        statuses: list[str] | None = None,
+        kinds: list[str] | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        items = browser_plane_task_store.list_tasks(
+            user_id=int(user_id),
+            workspace=workspace,
+            statuses=statuses,
+            kinds=kinds,
+            limit=limit,
+        )
+        return {"ok": True, "workspace": workspace, "items": items, "total": len(items)}
+
     def task_resume(
         self,
         *,
@@ -220,6 +240,35 @@ class BrowserPlaneAdapter:
         action = str(task.get("action") or "").strip().lower()
         input_payload = task.get("input") if isinstance(task.get("input"), dict) else {}
         profile_id = str(task.get("profile_id") or "").strip()
+        tab_id = str(task.get("tab_id") or "").strip()
+        owner = f"task:{task_id}"
+
+        if tab_id:
+            current_lock = self.get_tab_lock(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+            )
+            lock_payload = current_lock.get("lock") if isinstance(current_lock.get("lock"), dict) else {}
+            if lock_payload and str(lock_payload.get("owner") or "") != owner:
+                result = {"ok": False, "error": "tab_locked", "lock": lock_payload}
+                return browser_plane_task_store.update_task(
+                    task_id=task_id,
+                    user_id=int(user_id),
+                    workspace=workspace,
+                    status="blocked",
+                    result_payload=result,
+                    checkpoint_request_id="",
+                    profile_id=profile_id,
+                )
+            self.acquire_tab_lock(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                owner=owner,
+                reason=f"resume:{kind}:{action}",
+                ttl_seconds=300,
+            )
 
         if kind == "browser_use":
             result = self.use(
@@ -257,6 +306,17 @@ class BrowserPlaneAdapter:
             result_payload=result if isinstance(result, dict) else {},
             checkpoint_request_id=checkpoint_request_id,
             profile_id=str(result.get("profile_id") or profile_id or ""),
+        )
+        browser_plane_artifact_store.create_artifact(
+            user_id=int(user_id),
+            workspace=workspace,
+            task_id=task_id,
+            tab_id=tab_id,
+            profile_id=str(result.get("profile_id") or profile_id or ""),
+            kind="task_result",
+            title=f"{kind}:{action}:{status}",
+            text_content=str(result.get("effect_summary") or result.get("error") or "")[:4000],
+            data=result if isinstance(result, dict) else {},
         )
         return updated
 
@@ -377,7 +437,7 @@ class BrowserPlaneAdapter:
         mode: str = "raw",
         max_chars: int = 12000,
     ) -> dict[str, Any]:
-        return run_sync_playwright_call(
+        result = run_sync_playwright_call(
             browser_automation_service.tab_text,
             user_id=user_id,
             workspace=workspace,
@@ -385,6 +445,18 @@ class BrowserPlaneAdapter:
             mode=mode,
             max_chars=max_chars,
         )
+        if isinstance(result, dict) and bool(result.get("ok")):
+            browser_plane_artifact_store.create_artifact(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                profile_id=str(result.get("profile_id") or ""),
+                kind="tab_text",
+                title=f"text:{str(result.get('mode') or mode)}",
+                text_content=str(result.get("text") or "")[:12000],
+                data=result,
+            )
+        return result
 
     def tab_evaluate(
         self,
@@ -394,13 +466,25 @@ class BrowserPlaneAdapter:
         tab_id: str,
         script: str,
     ) -> dict[str, Any]:
-        return run_sync_playwright_call(
+        result = run_sync_playwright_call(
             browser_automation_service.tab_evaluate,
             user_id=user_id,
             workspace=workspace,
             tab_id=tab_id,
             script=script,
         )
+        if isinstance(result, dict) and bool(result.get("ok")):
+            browser_plane_artifact_store.create_artifact(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                profile_id=str(result.get("profile_id") or ""),
+                kind="tab_eval",
+                title="evaluate",
+                text_content="",
+                data=result,
+            )
+        return result
 
     def tab_screenshot(
         self,
@@ -411,13 +495,135 @@ class BrowserPlaneAdapter:
         format: str = "jpeg",
         quality: int = 80,
     ) -> dict[str, Any]:
-        return run_sync_playwright_call(
+        result = run_sync_playwright_call(
             browser_automation_service.tab_screenshot,
             user_id=user_id,
             workspace=workspace,
             tab_id=tab_id,
             format=format,
             quality=quality,
+        )
+        if isinstance(result, dict) and bool(result.get("ok")):
+            browser_plane_artifact_store.create_artifact(
+                user_id=int(user_id),
+                workspace=workspace,
+                tab_id=tab_id,
+                profile_id=str(result.get("profile_id") or ""),
+                kind="tab_screenshot",
+                title=f"screenshot:{str(result.get('format') or format)}",
+                text_content="",
+                data=result,
+            )
+        return result
+
+    def list_artifacts(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        task_id: str = "",
+        tab_id: str = "",
+        kinds: list[str] | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        items = browser_plane_artifact_store.list_artifacts(
+            user_id=int(user_id),
+            workspace=workspace,
+            task_id=task_id,
+            tab_id=tab_id,
+            kinds=kinds,
+            limit=limit,
+        )
+        return {"ok": True, "workspace": workspace, "items": items, "total": len(items)}
+
+    def task_replay(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        task = self.task_get(user_id=int(user_id), workspace=workspace, task_id=task_id)
+        if not task:
+            return {}
+        artifacts = browser_plane_artifact_store.list_artifacts(
+            user_id=int(user_id),
+            workspace=workspace,
+            task_id=task_id,
+            limit=50,
+        )
+        return {
+            "ok": True,
+            "workspace": workspace,
+            "task": task,
+            "artifacts": artifacts,
+            "total_artifacts": len(artifacts),
+        }
+
+    def get_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+    ) -> dict[str, Any]:
+        lock = browser_plane_lock_store.get_lock(
+            tab_id=tab_id,
+            user_id=int(user_id),
+            workspace=workspace,
+        )
+        return {"ok": bool(lock), "lock": lock}
+
+    def list_tab_locks(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.list_tab_locks,
+            user_id=user_id,
+            workspace=workspace,
+        )
+
+    def acquire_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        owner: str,
+        reason: str = "",
+        ttl_seconds: int = 300,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.acquire_tab_lock,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            owner=owner,
+            reason=reason,
+            ttl_seconds=ttl_seconds,
+            force=force,
+        )
+
+    def release_tab_lock(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        tab_id: str,
+        owner: str = "",
+        force: bool = False,
+    ) -> dict[str, Any]:
+        return run_sync_playwright_call(
+            browser_automation_service.release_tab_lock,
+            user_id=user_id,
+            workspace=workspace,
+            tab_id=tab_id,
+            owner=owner,
+            force=force,
         )
 
 

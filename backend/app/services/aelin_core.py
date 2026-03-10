@@ -2741,6 +2741,7 @@ def _try_agent_loop_chat(
     persist_memory: bool = True,
     force_disable_writes: bool = False,
     forced_tracking_create: dict[str, str] | None = None,
+    cancel_token: Any | None = None,
 ) -> AelinChatResponse | None:
     pre_loop_started = time.perf_counter()
     query_preview = " ".join(str(payload.query or "").split())[:120]
@@ -2991,6 +2992,7 @@ def _try_agent_loop_chat(
         trace_cb=_emit_loop_trace,
         reply_chunk_cb=_emit_reply_chunk,
         tool_event_cb=_emit_tool_event,
+        cancel_token=cancel_token,
     )
     if len(trace_steps) <= len(prefixed_traces):
         for step in result.trace_steps:
@@ -3068,12 +3070,14 @@ def _dispatch_aelin_chat(
     current_user: User,
     *,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+    cancel_token: Any | None = None,
 ) -> AelinChatResponse:
     return _dispatch_aelin_chat_service(
         payload,
         db,
         current_user,
         event_cb=event_cb,
+        cancel_token=cancel_token,
         detect_forced_tracking_create=_detect_forced_tracking_create,
         try_agent_loop_chat=_try_agent_loop_chat,
         pick_expression=_pick_expression,

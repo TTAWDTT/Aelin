@@ -132,6 +132,38 @@ class BrowserPlaneTaskStore:
         finally:
             db.close()
 
+    def list_tasks(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        statuses: list[str] | None = None,
+        kinds: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        db = create_session()
+        try:
+            query = select(BrowserPlaneTask).where(
+                BrowserPlaneTask.user_id == int(user_id),
+                BrowserPlaneTask.workspace == _normalize_workspace(workspace),
+            )
+            allow_statuses = [str(item or "").strip()[:32] for item in list(statuses or []) if str(item or "").strip()]
+            if allow_statuses:
+                query = query.where(BrowserPlaneTask.status.in_(allow_statuses))
+            allow_kinds = [str(item or "").strip()[:32] for item in list(kinds or []) if str(item or "").strip()]
+            if allow_kinds:
+                query = query.where(BrowserPlaneTask.kind.in_(allow_kinds))
+            rows = list(
+                db.scalars(
+                    query.order_by(BrowserPlaneTask.updated_at.desc(), BrowserPlaneTask.id.desc()).limit(
+                        max(1, min(200, int(limit or 20)))
+                    )
+                )
+            )
+            return [_row_to_payload(row) for row in rows]
+        finally:
+            db.close()
+
     def update_task(
         self,
         *,

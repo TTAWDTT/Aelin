@@ -15,6 +15,7 @@ def dispatch_aelin_chat(
     current_user: User,
     *,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+    cancel_token: Any | None = None,
     detect_forced_tracking_create: Callable[[str], dict[str, str] | None],
     try_agent_loop_chat: Callable[..., AelinChatResponse | None],
     pick_expression: Callable[[str, str], str],
@@ -28,9 +29,10 @@ def dispatch_aelin_chat(
             current_user,
             event_cb=event_cb,
             forced_tracking_create=forced_tracking_create,
+            cancel_token=cancel_token,
         )
         if forced_tracking_create
-        else try_agent_loop_chat(payload, db, current_user, event_cb=event_cb)
+        else try_agent_loop_chat(payload, db, current_user, event_cb=event_cb, cancel_token=cancel_token)
     )
     if agent_response is not None:
         return agent_response

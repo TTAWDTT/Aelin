@@ -165,6 +165,20 @@ def test_aelin_browser_confirm_resolves_login_state(monkeypatch):
     assert resolved.get("status") == "continued"
     assert resolved.get("domain") == "x.com"
 
+    # After login is resolved, navigate to the same domain in CDP scope should not
+    # trigger auth_guard again when called via the underlying automation service.
+    result = browser_automation_service.use(
+        user_id=1,
+        workspace="default",
+        action="navigate",
+        args={"url": "https://x.com/following", "scope": "cdp"},
+        profile_id=str(resolved.get("profile_id") or ""),
+        scope="cdp",
+    )
+    # In this environment CDP may be disabled, but auth_guard should not be the
+    # reason for failure once the login flow has been resolved.
+    assert str(result.get("error") or "") != "auth_permission_required"
+
 def test_aelin_browser_login_checkpoints_endpoint_lists_pending_items():
     client = _create_test_client()
     headers = _auth_headers(client)

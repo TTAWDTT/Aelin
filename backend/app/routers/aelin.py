@@ -61,6 +61,7 @@ def _dispatch_aelin_chat(
     current_user: User,
     *,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+    cancel_token: Any | None = None,
 ) -> AelinChatResponse:
     _sync_core_runtime()
-    return _ORIG_DISPATCH(payload, db, current_user, event_cb=event_cb)
+    return _ORIG_DISPATCH(payload, db, current_user, event_cb=event_cb, cancel_token=cancel_token)

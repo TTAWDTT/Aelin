@@ -29,10 +29,19 @@ from app.schemas import (
     AelinBrowserTabItem,
     AelinBrowserTabEvaluateRequest,
     AelinBrowserTabEvaluateResponse,
+    AelinBrowserTabLockItem,
+    AelinBrowserTabLockListResponse,
+    AelinBrowserTabLockRequest,
+    AelinBrowserTabLockResponse,
+    AelinBrowserArtifactItem,
+    AelinBrowserArtifactListResponse,
+    AelinBrowserTaskListResponse,
+    AelinBrowserTaskReplayResponse,
     AelinBrowserTabListResponse,
     AelinBrowserTabOpenRequest,
     AelinBrowserTabOpenResponse,
     AelinBrowserTabTextResponse,
+    AelinBrowserTabUnlockRequest,
     AelinBrowserTaskCreateRequest,
     AelinBrowserTaskItem,
     AelinBrowserTaskResponse,
@@ -153,6 +162,13 @@ def aelin_chat_stream(
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         done_token = "__done__"
+        # Simple cancellation token shared with the agent loop. When the SSE
+        # connection is interrupted, this flag is set to True so the loop can
+        # stop at the next safe checkpoint.
+        class _CancelToken:
+            cancelled: bool = False
+
+        cancel_token = _CancelToken()
 
         def _push(event: str, data: dict[str, Any]) -> None:
             _LOG.debug(
@@ -177,6 +193,7 @@ def aelin_chat_stream(
                     payload,
                     user_id=int(current_user.id),
                     event_cb=_push,
+                    cancel_token=cancel_token,
                 )
                 _LOG.info(
                     "aelin_stream worker_final req=%s uid=%s answer_len=%s actions=%s traces=%s",
@@ -235,6 +252,7 @@ def aelin_chat_stream(
                 if event == "done":
                     break
         except BaseException as exc:
+            cancel_token.cancelled = True
             _LOG.warning(
                 "aelin_stream interrupted req=%s uid=%s type=%s msg=%s",
                 req_id,
@@ -334,6 +352,31 @@ def get_browser_task(
     )
 
 
+@router.get("/agent/browser/tasks", response_model=AelinBrowserTaskListResponse)
+def list_browser_tasks(
+    workspace: str = "default",
+    status: str = "",
+    kind: str = "",
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    statuses = [str(item).strip() for item in str(status or "").split(",") if str(item).strip()]
+    kinds = [str(item).strip() for item in str(kind or "").split(",") if str(item).strip()]
+    result = browser_plane_adapter.list_tasks(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        statuses=statuses,
+        kinds=kinds,
+        limit=max(1, min(200, int(limit or 20))),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserTaskListResponse(
+        total=len(items),
+        items=[AelinBrowserTaskItem(**item) for item in items],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
 @router.post("/agent/browser/tasks/{task_id}/resume", response_model=AelinBrowserTaskResponse)
 def resume_browser_task(
     task_id: str,
@@ -348,6 +391,30 @@ def resume_browser_task(
     return AelinBrowserTaskResponse(
         ok=bool(item),
         item=AelinBrowserTaskItem(**item) if item else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tasks/{task_id}/replay", response_model=AelinBrowserTaskReplayResponse)
+def replay_browser_task(
+    task_id: str,
+    workspace: str = "default",
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.task_replay(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        task_id=str(task_id or ""),
+    )
+    task_payload = result.get("task") if isinstance(result, dict) and isinstance(result.get("task"), dict) else None
+    artifacts_payload = result.get("artifacts") if isinstance(result, dict) and isinstance(result.get("artifacts"), list) else []
+    return AelinBrowserTaskReplayResponse(
+        ok=bool(result.get("ok", False)) if isinstance(result, dict) else False,
+        task=AelinBrowserTaskItem(**task_payload) if task_payload else None,
+        artifacts=[AelinBrowserArtifactItem(**item) for item in artifacts_payload],
+        total_artifacts=int(result.get("total_artifacts") or len(artifacts_payload))
+        if isinstance(result, dict)
+        else len(artifacts_payload),
         generated_at=datetime.now(timezone.utc),
     )
 
@@ -555,5 +622,95 @@ def get_browser_tab_screenshot(
         task_id="",
         profile_id=str(snap.get("profile_id") or ""),
         snapshot=snap,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/tabs/locks", response_model=AelinBrowserTabLockListResponse)
+def list_browser_tab_locks(
+    workspace: str = "default",
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.list_tab_locks(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserTabLockListResponse(
+        total=len(items),
+        items=[AelinBrowserTabLockItem(**item) for item in items],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tabs/{tab_id}/lock", response_model=AelinBrowserTabLockResponse)
+def acquire_browser_tab_lock(
+    tab_id: str,
+    payload: AelinBrowserTabLockRequest,
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.acquire_tab_lock(
+        user_id=int(current_user.id),
+        workspace=str(payload.workspace or "default"),
+        tab_id=str(tab_id or ""),
+        owner=str(payload.owner or ""),
+        reason=str(payload.reason or ""),
+        ttl_seconds=int(payload.ttl_seconds or 300),
+        force=bool(payload.force),
+    )
+    lock = result.get("lock") if isinstance(result, dict) and isinstance(result.get("lock"), dict) else None
+    return AelinBrowserTabLockResponse(
+        ok=bool(result.get("ok", False)) if isinstance(result, dict) else False,
+        error=str(result.get("error") or "") if isinstance(result, dict) else "",
+        lock=AelinBrowserTabLockItem(**lock) if lock else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/agent/browser/tabs/{tab_id}/unlock", response_model=AelinBrowserTabLockResponse)
+def release_browser_tab_lock(
+    tab_id: str,
+    payload: AelinBrowserTabUnlockRequest,
+    current_user: User = Depends(get_current_user),
+):
+    result = browser_plane_adapter.release_tab_lock(
+        user_id=int(current_user.id),
+        workspace=str(payload.workspace or "default"),
+        tab_id=str(tab_id or ""),
+        owner=str(payload.owner or ""),
+        force=bool(payload.force),
+    )
+    lock = result.get("lock") if isinstance(result, dict) and isinstance(result.get("lock"), dict) else None
+    return AelinBrowserTabLockResponse(
+        ok=bool(result.get("ok", False)) if isinstance(result, dict) else False,
+        error=str(result.get("error") or "") if isinstance(result, dict) else "",
+        released=result.get("released") if isinstance(result, dict) else None,
+        lock=AelinBrowserTabLockItem(**lock) if lock else None,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/agent/browser/artifacts", response_model=AelinBrowserArtifactListResponse)
+def list_browser_artifacts(
+    workspace: str = "default",
+    task_id: str = "",
+    tab_id: str = "",
+    kind: str = "",
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+):
+    kinds = [str(item).strip() for item in str(kind or "").split(",") if str(item).strip()]
+    result = browser_plane_adapter.list_artifacts(
+        user_id=int(current_user.id),
+        workspace=str(workspace or "default"),
+        task_id=str(task_id or ""),
+        tab_id=str(tab_id or ""),
+        kinds=kinds,
+        limit=max(1, min(200, int(limit or 20))),
+    )
+    items = list(result.get("items") or []) if isinstance(result, dict) else []
+    return AelinBrowserArtifactListResponse(
+        total=len(items),
+        items=[AelinBrowserArtifactItem(**item) for item in items],
         generated_at=datetime.now(timezone.utc),
     )
