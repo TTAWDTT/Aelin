@@ -76,9 +76,13 @@ async function emitReplyChunked(text: string, onReplyChunk?: (text: string) => v
   const raw = String(text || '')
   if (!raw || !onReplyChunk) return false
   const chunkSize = 28
+  const maxDelayedChars = chunkSize * 10
+  const delayPerChunkMs = raw.length <= maxDelayedChars ? 12 : 0
   for (let idx = 0; idx < raw.length; idx += chunkSize) {
     onReplyChunk(raw.slice(idx, idx + chunkSize))
-    await sleep(12)
+    if (delayPerChunkMs > 0) {
+      await sleep(delayPerChunkMs)
+    }
   }
   return true
 }
@@ -148,10 +152,17 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     }
 
     const dispatch = async (sseEvent: string, payload: any): Promise<string> => {
-      if (!payload) return 'message'
       const envelopeType = String(payload?.type || payload?.event || '').trim()
       const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
       debugLog('event', { sseEvent, eventType })
+
+      if (!payload) {
+        if (eventType === 'done' || eventType === 'final') {
+          emitDone({})
+          return eventType
+        }
+        return eventType
+      }
 
       switch (eventType) {
         case 'intent':

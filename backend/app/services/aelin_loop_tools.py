@@ -914,7 +914,7 @@ def flush_pending_reads(
                 tool_hub=tool_hub,
                 tool_name=tool_name,
                 args=args,
-                partial_cb=_emit_partial,
+                partial_cb=_emit_partial if tool_event_cb is not None else None,
             )
             future_map[future] = idx
         for future in as_completed(future_map):

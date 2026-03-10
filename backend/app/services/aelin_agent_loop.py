@@ -12,6 +12,7 @@ from app.services.aelin_loop_logging import safe_preview
 from app.services.aelin_loop_message import build_initial_messages, extract_message_text
 from app.services.aelin_loop_round import request_round_response
 from app.services.aelin_loop_tools import (
+    _sanitize_tool_args_for_log,
     append_tool_result,
     build_tool_calls_payload,
     execute_tool_call,
@@ -267,17 +268,27 @@ class AelinAgentLoop:
             return f"tool_call:{safe_tool}:{digest}"
 
         def _forward_tool_event(payload: dict[str, Any]) -> None:
+            raw_tool_name = str(payload.get("tool_name") or "tool").strip().lower()
+            raw_args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+            safe_args = (
+                _sanitize_tool_args_for_log(raw_tool_name, raw_args)
+                if isinstance(raw_args, dict)
+                else {}
+            )
+            safe_payload = dict(payload)
+            safe_payload["tool_name"] = raw_tool_name
+            safe_payload["args"] = safe_args
             if tool_event_cb is not None:
                 try:
-                    tool_event_cb(payload)
+                    tool_event_cb(safe_payload)
                 except Exception:
                     pass
-            phase = str(payload.get("phase") or "").strip().lower()
-            round_no = max(1, int(payload.get("round_index") or 1))
-            tool_name = str(payload.get("tool_name") or "tool").strip().lower()
-            tc_id = str(payload.get("tc_id") or "")
-            args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
-            stage = str(payload.get("stage") or "").strip() or _tool_stage(round_no, tool_name, tc_id, args)
+            phase = str(safe_payload.get("phase") or "").strip().lower()
+            round_no = max(1, int(safe_payload.get("round_index") or 1))
+            tool_name = raw_tool_name
+            tc_id = str(safe_payload.get("tc_id") or "")
+            args = safe_args if isinstance(safe_args, dict) else {}
+            stage = str(safe_payload.get("stage") or "").strip() or _tool_stage(round_no, tool_name, tc_id, raw_args)
             if phase == "start":
                 tool_partial_seen[stage] = 0
                 _emit_trace(
@@ -288,15 +299,15 @@ class AelinAgentLoop:
                 )
                 return
             if phase == "partial":
-                message = str(payload.get("message") or payload.get("summary") or payload.get("progress") or "").strip()
-                current_action = str(payload.get("current_action") or "").strip()
-                progress_label = str(payload.get("progress_label") or "").strip()
-                tick = max(0, int(payload.get("tick") or 0))
-                elapsed_ms = max(0, int(payload.get("elapsed_ms") or 0))
-                found_count = max(0, int(payload.get("found_count") or 0))
-                processed = max(0, int(payload.get("processed") or 0))
-                matched = max(0, int(payload.get("matched") or 0))
-                total = max(0, int(payload.get("total") or 0))
+                message = str(safe_payload.get("message") or safe_payload.get("summary") or safe_payload.get("progress") or "").strip()
+                current_action = str(safe_payload.get("current_action") or "").strip()
+                progress_label = str(safe_payload.get("progress_label") or "").strip()
+                tick = max(0, int(safe_payload.get("tick") or 0))
+                elapsed_ms = max(0, int(safe_payload.get("elapsed_ms") or 0))
+                found_count = max(0, int(safe_payload.get("found_count") or 0))
+                processed = max(0, int(safe_payload.get("processed") or 0))
+                matched = max(0, int(safe_payload.get("matched") or 0))
+                total = max(0, int(safe_payload.get("total") or 0))
                 if message or current_action or progress_label:
                     tool_partial_seen[stage] = max(0, int(tool_partial_seen.get(stage, 0))) + 1
                     detail_parts = [f"round={round_no}", f"tool={tool_name}"]
@@ -326,10 +337,10 @@ class AelinAgentLoop:
                     )
                 return
             if phase == "end":
-                result_payload = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-                status_raw = str(payload.get("status") or "").strip().lower()
+                result_payload = safe_payload.get("result") if isinstance(safe_payload.get("result"), dict) else {}
+                status_raw = str(safe_payload.get("status") or "").strip().lower()
                 status_norm = "completed" if status_raw == "completed" else "failed"
-                latency_ms = max(0, int(payload.get("latency_ms") or 0))
+                latency_ms = max(0, int(safe_payload.get("latency_ms") or 0))
                 summary_text = _tool_result_summary(result_payload)
                 if status_norm == "completed" and int(tool_partial_seen.get(stage, 0) or 0) <= 0:
                     for partial in _split_tool_partial_messages(summary_text):
@@ -358,7 +369,7 @@ class AelinAgentLoop:
                 )
                 return
             if phase == "blocked":
-                reason = str(payload.get("reason") or "policy_denied").strip()
+                reason = str(safe_payload.get("reason") or "policy_denied").strip()
                 _emit_trace(
                     stage=stage,
                     status="failed",
