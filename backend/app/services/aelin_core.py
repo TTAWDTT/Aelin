@@ -40,7 +40,7 @@ from app.schemas import (
     AgentFocusItemOut,
     AgentMemoryNoteOut,
 )
-from app.services.agent_memory import AgentMemoryService
+from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services import content_tagging
 from app.services.aelin_tools import (
     AelinToolHub,
@@ -277,8 +277,9 @@ def _build_fixed_profile_injection(bundle: dict[str, Any], *, max_items: int = 1
 
 def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: str) -> dict:
     workspace_norm = _normalize_workspace(workspace)
-    snap = _memory.snapshot(db, user_id, query=query)
+    summary = _memory.get_summary(db, user_id)
     note_rows = _memory.list_notes(db, user_id, limit=24)
+    focus_items = _memory.build_focus_items(db, user_id, query=query, limit=8)
     notes: list[AgentMemoryNoteOut] = []
     for row in note_rows:
         src = (row.source or "").strip().lower()
@@ -312,7 +313,13 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
         except Exception:
             continue
 
-    brief_raw = _memory.build_daily_brief(db, user_id)
+    layout_rows = _memory.get_latest_layout_cards(db, user_id, workspace=workspace_norm)
+    brief_raw = _memory.build_daily_brief_from_items(
+        db,
+        user_id,
+        focus_items=focus_items[:6],
+        todos=todos_raw,
+    )
     daily_brief = AelinDailyBrief(
         generated_at=brief_raw["generated_at"],
         summary=str(brief_raw.get("summary") or ""),
@@ -320,8 +327,16 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
         actions=[AelinDailyBriefAction(**item) for item in brief_raw.get("actions", [])],
     )
 
-    layout_cards = _to_layout_cards(_memory.get_latest_layout_cards(db, user_id, workspace=workspace_norm))
-    memory_layers_raw = _memory.build_memory_layers(db, user_id, workspace=workspace_norm, query=query)
+    layout_cards = _to_layout_cards(layout_rows)
+    memory_layers_raw = _memory.build_memory_layers_from_items(
+        summary=summary,
+        notes=note_rows,
+        focus_items=focus_items,
+        todos=todos_raw,
+        layout_cards=layout_rows,
+        workspace=workspace_norm,
+        query=query,
+    )
     memory_layers = AelinMemoryLayers(
         facts=[AelinMemoryLayerItem(**item) for item in (memory_layers_raw.get("facts") or [])],
         preferences=[AelinMemoryLayerItem(**item) for item in (memory_layers_raw.get("preferences") or [])],
@@ -330,14 +345,21 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
     )
     notifications = [
         AelinNotificationItem(**item)
-        for item in _memory.build_notifications(db, user_id, limit=24)
+        for item in _memory.build_notifications_from_items(
+            db,
+            user_id,
+            brief=brief_raw,
+            todos=todos_raw,
+            limit=24,
+        )
     ]
+    serialized_focus_items = [serialize_focus_item(item) for item in focus_items]
 
     return {
         "workspace": workspace_norm,
-        "summary": str(snap.get("summary") or ""),
-        "focus_items": [AgentFocusItemOut(**item) for item in snap.get("focus_items", [])],
-        "focus_items_raw": list(snap.get("focus_items", [])),
+        "summary": str(summary or ""),
+        "focus_items": [AgentFocusItemOut(**item) for item in serialized_focus_items],
+        "focus_items_raw": serialized_focus_items,
         "notes": notes,
         "notes_count": len(notes),
         "todos": todos,
@@ -442,19 +464,7 @@ def _fetch_local_focus_citations(
     try:
         n = max(4, min(20, int(max_citations or 6) * 2))
         focus_items = _memory.build_focus_items(local_db, user_id, query=query, limit=n)
-        rows = [
-            {
-                "message_id": int(item.message_id or 0),
-                "source": str(item.source or "unknown"),
-                "source_label": str(item.source or "unknown"),
-                "sender": str(item.sender or ""),
-                "sender_avatar_url": str(item.sender_avatar_url or "").strip() or None,
-                "title": str(item.title or ""),
-                "received_at": str(item.received_at or ""),
-                "score": float(item.score or 0.0),
-            }
-            for item in focus_items
-        ]
+        rows = [serialize_focus_item(item) for item in focus_items]
         return _to_citations(rows, max_citations), ""
     except Exception as exc:
         return [], str(exc)[:140]
@@ -2558,6 +2568,10 @@ def _build_attachment_prefetch_fallback_response(
     )
 
 
+def _get_memory_summary_for_chat(db: Session, user_id: int) -> str:
+    return str(_memory.get_summary(db, user_id) or "")
+
+
 def _try_agent_loop_chat(
     payload: AelinChatRequest,
     db: Session,
@@ -2572,45 +2586,46 @@ def _try_agent_loop_chat(
     pre_loop_started = time.perf_counter()
     query_preview = " ".join(str(payload.query or "").split())[:120]
 
+    resolve_started = time.perf_counter()
     service, provider = _resolve_llm_service(db, current_user)
+    resolve_latency_ms = int((time.perf_counter() - resolve_started) * 1000)
     _log.info(
         "agent_loop preflight phase=resolve_service user_id=%s workspace=%s provider=%s latency_ms=%s query=%s",
         int(current_user.id),
         _normalize_workspace(payload.workspace),
         str(provider or ""),
-        int((time.perf_counter() - pre_loop_started) * 1000),
+        resolve_latency_ms,
         query_preview,
     )
     llm_available = not (provider == "rule_based" or not service.is_configured())
-    if not llm_available:
-        return None
 
     workspace = _normalize_workspace(payload.workspace)
-    base_context_started = time.perf_counter()
-    base_bundle = _build_cached_base_context_bundle(
-        db,
-        current_user.id,
-        workspace=workspace,
-    )
+    summary_started = time.perf_counter()
+    memory_summary = _get_memory_summary_for_chat(db, current_user.id)
+    summary_latency_ms = int((time.perf_counter() - summary_started) * 1000)
     _log.info(
-        "agent_loop preflight phase=base_context user_id=%s workspace=%s latency_ms=%s",
+        "agent_loop preflight phase=memory_summary user_id=%s workspace=%s latency_ms=%s",
         int(current_user.id),
         workspace,
-        int((time.perf_counter() - base_context_started) * 1000),
-    )
-    memory_summary = str(base_bundle.get("summary") or "")
-    normalize_started = time.perf_counter()
-    history_turns = _normalize_history(payload.history)
-    images = _normalize_images(payload.images)
-    _log.info(
-        "agent_loop preflight phase=normalize_inputs user_id=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
-        int(current_user.id),
-        workspace,
-        len(history_turns),
-        len(images),
-        int((time.perf_counter() - normalize_started) * 1000),
+        summary_latency_ms,
     )
     attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
+    history_turns: list[dict[str, str]] = []
+    images: list[dict[str, str]] = []
+    if llm_available:
+        normalize_started = time.perf_counter()
+        history_turns = _normalize_history(payload.history)
+        images = _normalize_images(payload.images)
+        _log.info(
+            "agent_loop preflight phase=normalize_inputs user_id=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
+            int(current_user.id),
+            workspace,
+            len(history_turns),
+            len(images),
+            int((time.perf_counter() - normalize_started) * 1000),
+        )
+    elif not attachment_ids:
+        return None
 
     tool_hub_started = time.perf_counter()
     tool_hub = AelinToolHub(
@@ -2683,10 +2698,13 @@ def _try_agent_loop_chat(
                 count=0,
             )
 
-    def _run_attachment_prefetch() -> None:
+    def _ensure_attachment_prefetch() -> dict[str, Any]:
         nonlocal attachment_prefetch_result
+        if attachment_prefetch_result:
+            return attachment_prefetch_result
         if not attachment_ids:
-            return
+            attachment_prefetch_result = {"ok": False, "error": "missing_attachment_ids"}
+            return attachment_prefetch_result
         attachment_prefetch_args = {
             "query": str(payload.query or "请总结附件主要内容")[:500],
             "attachment_ids": attachment_ids[:20],
@@ -2717,9 +2735,10 @@ def _try_agent_loop_chat(
                 detail=f"{str(attachment_prefetch_result.get('error') or 'unknown')[:140]}; latency_ms={prefetch_latency_ms}",
                 count=0,
             )
+        return attachment_prefetch_result
 
     if not llm_available:
-        _run_attachment_prefetch()
+        _ensure_attachment_prefetch()
         fallback_resp = _build_attachment_prefetch_fallback_response(
             payload=payload,
             memory_summary=memory_summary,
@@ -2730,8 +2749,6 @@ def _try_agent_loop_chat(
         if fallback_resp is not None:
             return fallback_resp
         return None
-
-    _run_attachment_prefetch()
 
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
     if forced_tracking_create and not force_disable_writes:
@@ -2791,6 +2808,7 @@ def _try_agent_loop_chat(
                 pass
 
     if not bool(result.ok) or not str(result.answer or "").strip():
+        _ensure_attachment_prefetch()
         fallback_resp = _build_attachment_prefetch_fallback_response(
             payload=payload,
             memory_summary=memory_summary,

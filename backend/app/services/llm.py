@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Iterator, Any
 from urllib.parse import urlparse, urlunparse
 
@@ -9,28 +10,55 @@ from app.schemas import AgentConfigOut
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
+_CLIENT_CACHE_LOCK = threading.Lock()
+_CLIENT_CACHE: dict[tuple[str, str, str, float], openai.Client] = {}
 
 
 class LLMService:
     def __init__(self, config: AgentConfigOut, api_key: str | None = None):
         self.config = config
         self.api_key = api_key
-        self.client: openai.Client | None = None
+        self._client: openai.Client | None = None
+        self._client_init_attempted = False
         self.timeout_seconds = max(5.0, float(getattr(settings, "llm_request_timeout_seconds", 90.0)))
-        self._setup_client()
 
     def _setup_client(self) -> None:
+        if self._client_init_attempted:
+            return
+        self._client_init_attempted = True
         if self.config.provider != "rule_based" and self.api_key:
             try:
                 normalized_base_url = self._normalize_base_url(self.config.base_url)
-                self.client = openai.Client(
-                    base_url=normalized_base_url,
-                    api_key=self.api_key,
-                    timeout=self.timeout_seconds,
-                    max_retries=1,
+                cache_key = (
+                    str(self.config.provider or "").strip().lower(),
+                    normalized_base_url,
+                    str(self.api_key or ""),
+                    float(self.timeout_seconds),
                 )
+                with _CLIENT_CACHE_LOCK:
+                    cached = _CLIENT_CACHE.get(cache_key)
+                    if cached is None:
+                        cached = openai.Client(
+                            base_url=normalized_base_url,
+                            api_key=self.api_key,
+                            timeout=self.timeout_seconds,
+                            max_retries=1,
+                        )
+                        _CLIENT_CACHE[cache_key] = cached
+                self._client = cached
             except Exception as e:
                 _log.warning("Failed to initialize OpenAI client: %s", e)
+
+    @property
+    def client(self) -> openai.Client | None:
+        if self._client is None:
+            self._setup_client()
+        return self._client
+
+    @client.setter
+    def client(self, value: openai.Client | None) -> None:
+        self._client = value
+        self._client_init_attempted = True
 
     @staticmethod
     def _normalize_base_url(raw: str) -> str:
@@ -51,7 +79,7 @@ class LLMService:
             return text.rstrip("/")
 
     def is_configured(self) -> bool:
-        return self.client is not None
+        return self.config.provider != "rule_based" and bool(self.api_key)
 
     def _chat(
         self,
