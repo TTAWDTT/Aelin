@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer, clipboard } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, screen, powerMonitor, desktopCapturer, clipboard, shell } = require("electron");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const fs = require("fs");
@@ -865,6 +865,89 @@ async function captureScreenSnapshot(payload = {}) {
   return await withAelinWindowsProtected(runCapture);
 }
 
+function normalizeRemoteModuleRoute(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  const aliases = {
+    "": "/",
+    "/": "/",
+    "aelin": "/",
+    "chat": "/",
+    "home": "/",
+    "首页": "/",
+    "主页": "/",
+    "settings": "/settings",
+    "/settings": "/settings",
+    "设置": "/settings",
+    "tracking": "/tracking",
+    "/tracking": "/tracking",
+    "跟踪": "/tracking",
+    "追踪": "/tracking",
+    "diary": "/diary",
+    "/diary": "/diary",
+    "日记": "/diary",
+    "focus": "/focus",
+    "/focus": "/focus",
+    "专注": "/focus",
+    "processes": "/processes",
+    "/processes": "/processes",
+    "进程": "/processes",
+  };
+  return aliases[value] || "/";
+}
+
+async function activateDesktopApp(payload = {}) {
+  const route = normalizeRemoteModuleRoute(payload?.route);
+  openModule(route);
+  return {
+    activated: true,
+    route,
+    detail: "ok",
+  };
+}
+
+function normalizeRemoteUrl(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    if (!["http:", "https:"].includes(String(parsed.protocol || "").toLowerCase())) {
+      return "";
+    }
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+async function openExternalDesktopUrl(payload = {}) {
+  const url = normalizeRemoteUrl(payload?.url);
+  if (!url) {
+    throw new Error("invalid_url");
+  }
+  if (shell && typeof shell.openExternal === "function") {
+    await shell.openExternal(url);
+    return {
+      opened: true,
+      url,
+      detail: "ok",
+    };
+  }
+  const escaped = url.replace(/"/g, "\"\"");
+  const child = spawnViaCmd(`start "" "${escaped}"`, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  if (child && typeof child.unref === "function") {
+    child.unref();
+  }
+  return {
+    opened: true,
+    url,
+    detail: "ok",
+  };
+}
+
 function createPetPluginApiApp() {
   const api = express();
   api.disable("x-powered-by");
@@ -900,6 +983,40 @@ function createPetPluginApiApp() {
       res.status(500).json({
         ok: false,
         detail: error instanceof Error ? error.message : String(error || "screen_capture_failed"),
+      });
+    }
+  });
+
+  api.post("/v1/desktop/app/activate", async (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const result = await activateDesktopApp(body);
+      res.json({
+        ok: true,
+        ...result,
+        ts: Date.now(),
+      });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error || "desktop_app_activate_failed"),
+      });
+    }
+  });
+
+  api.post("/v1/desktop/url/open", async (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const result = await openExternalDesktopUrl(body);
+      res.json({
+        ok: true,
+        ...result,
+        ts: Date.now(),
+      });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error || "desktop_url_open_failed"),
       });
     }
   });

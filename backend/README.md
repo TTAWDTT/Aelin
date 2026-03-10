@@ -43,3 +43,18 @@ Optional env vars:
 - `MERCURYDESK_GMAIL_CLIENT_ID` / `MERCURYDESK_GMAIL_CLIENT_SECRET`
 - `MERCURYDESK_OUTLOOK_CLIENT_ID` / `MERCURYDESK_OUTLOOK_CLIENT_SECRET`
 - `MERCURYDESK_GITHUB_CLIENT_ID` / `MERCURYDESK_GITHUB_CLIENT_SECRET`
+- `MERCURYDESK_FEISHU_BOT_ENABLED` (`true` to enable Feishu long-connection remote control)
+- `MERCURYDESK_FEISHU_APP_ID` / `MERCURYDESK_FEISHU_APP_SECRET`
+- `MERCURYDESK_FEISHU_BOT_BIND_USER_EMAIL` (optional; bind the bot to a specific local user)
+- `MERCURYDESK_FEISHU_BOT_WORKSPACE` (default `default`)
+- `MERCURYDESK_FEISHU_BOT_ALLOWED_OPEN_IDS_CSV` (optional Feishu sender allowlist)
+- `MERCURYDESK_FEISHU_BOT_ALLOWED_CHAT_IDS_CSV` (optional Feishu chat allowlist)
+- `MERCURYDESK_FEISHU_BOT_COMMAND_PREFIX` (default `/aelin`; used in group chats)
+- `MERCURYDESK_FEISHU_BOT_GROUP_REQUIRE_PREFIX` (default `true`)
+- `MERCURYDESK_DESKTOP_PLUGIN_BASE_URL` / `MERCURYDESK_DESKTOP_PLUGIN_TOKEN`
+
+## Feishu Remote Control V1
+
+See the full setup and usage guide:
+
+- `../docs/feishu_remote_control_v1.md`
