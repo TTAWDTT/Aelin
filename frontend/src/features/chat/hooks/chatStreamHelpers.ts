@@ -91,6 +91,19 @@ function compactJson(value: unknown, limit = 180): string {
   }
 }
 
+function buildSafeParamDetailParts(args: Record<string, unknown>): string[] {
+  const parts: string[] = []
+  const queryRaw = String(args.query || '').replace(/;/g, '，').trim()
+  const query = queryRaw.length > 120 ? `${queryRaw.slice(0, 119)}…` : queryRaw
+  if (query) parts.push(`query=${query}`)
+  const topKRaw = Number(args.top_k ?? args.k ?? args.limit)
+  const topK = Number.isFinite(topKRaw) && topKRaw > 0 ? Math.round(topKRaw) : 0
+  if (topK > 0) parts.push(`top_k=${topK}`)
+  const ids = Array.isArray(args.attachment_ids) ? args.attachment_ids : []
+  if (ids.length > 0) parts.push(`attachment_ids=${ids.slice(0, 8).join(',')}${ids.length > 8 ? ',…' : ''}`)
+  return parts
+}
+
 function stageStatusText(stageRaw: string): string {
   const stage = String(stageRaw || '').trim().toLowerCase()
   if (stage.startsWith('tool_call:')) {
@@ -119,11 +132,17 @@ function buildToolEventTraceStep(event: ToolEventPayload): AelinToolStep | null 
   const ts = Date.now()
 
   if (phase === 'start') {
-    const args = typeof event.args === 'object' && event.args !== null ? event.args : {}
+    const args =
+      typeof event.args === 'object' && event.args !== null ? (event.args as Record<string, unknown>) : {}
+    const detailParts = [
+      `round=${Number.isFinite(roundIndex) && roundIndex > 0 ? roundIndex : 1}`,
+      `tool=${toolName}`,
+      ...buildSafeParamDetailParts(args),
+    ]
     return {
       stage,
       status: 'running',
-      detail: `round=${Number.isFinite(roundIndex) && roundIndex > 0 ? roundIndex : 1}; tool=${toolName}; args=${compactJson(args, 180)}`,
+      detail: detailParts.join('; '),
       count: 0,
       ts,
     }
@@ -131,7 +150,8 @@ function buildToolEventTraceStep(event: ToolEventPayload): AelinToolStep | null 
 
   if (phase === 'partial') {
     const message = String(event.message || event.summary || '').trim()
-    const args = typeof event.args === 'object' && event.args !== null ? event.args : {}
+    const args =
+      typeof event.args === 'object' && event.args !== null ? (event.args as Record<string, unknown>) : {}
     const currentAction = String(event.current_action || '').trim()
     const progressLabel = String(event.progress_label || '').trim()
     const tick = Math.max(0, Number(event.tick || 0))
@@ -144,7 +164,7 @@ function buildToolEventTraceStep(event: ToolEventPayload): AelinToolStep | null 
     const detailParts = [
       `round=${Number.isFinite(roundIndex) && roundIndex > 0 ? roundIndex : 1}`,
       `tool=${toolName}`,
-      `args=${compactJson(args, 180)}`,
+      ...buildSafeParamDetailParts(args),
     ]
     if (currentAction) detailParts.push(`current_action=${compactJson(currentAction, 180)}`)
     if (progressLabel) detailParts.push(`progress_label=${progressLabel}`)

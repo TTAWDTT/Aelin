@@ -349,7 +349,7 @@ function buildTimeline(trace: AelinToolStep[]): { planText: string; cards: Stage
     }
 
     if (status === 'success') {
-      if (card.toolName === 'attachment_search') card.runCount += 1
+      if (card.key === 'search_attachment') card.runCount += 1
       if (card.key === 'parse_attachment') {
         setCurrentState(card, hits > 0 ? '' : '附件解析完成', 'success')
       } else if (card.key === 'search_attachment') {

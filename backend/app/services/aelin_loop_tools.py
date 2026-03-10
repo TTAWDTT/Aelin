@@ -879,6 +879,7 @@ def flush_pending_reads(
             pass
 
     results: list[tuple[str, dict[str, Any], str, int] | None] = [None] * len(batch)
+    tool_event_lock = threading.Lock()
     max_workers = max(1, min(4, len(batch)))
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="aelin-loop-read") as pool:
         future_map: dict[Any, int] = {}
@@ -889,33 +890,35 @@ def flush_pending_reads(
             stage = str(item.get("stage") or "").strip()
             if tool_event_cb is not None:
                 try:
-                    tool_event_cb(
-                        {
-                            "phase": "start",
-                            "round_index": int(round_index),
-                            "tool_name": tool_name,
-                            "tc_id": tc_id,
-                            "args": args,
-                            "stage": stage,
-                        }
-                    )
+                    with tool_event_lock:
+                        tool_event_cb(
+                            {
+                                "phase": "start",
+                                "round_index": int(round_index),
+                                "tool_name": tool_name,
+                                "tc_id": tc_id,
+                                "args": args,
+                                "stage": stage,
+                            }
+                        )
                 except Exception:
                     pass
             def _emit_partial(partial_state: dict[str, Any], *, _round=int(round_index), _tool=tool_name, _tc=tc_id, _args=args, _stage=stage) -> None:
                 if tool_event_cb is None:
                     return
                 try:
-                    tool_event_cb(
-                        {
-                            "phase": "partial",
-                            "round_index": _round,
-                            "tool_name": _tool,
-                            "tc_id": _tc,
-                            "args": _args,
-                            "stage": _stage,
-                            **(partial_state if isinstance(partial_state, dict) else {}),
-                        }
-                    )
+                    with tool_event_lock:
+                        tool_event_cb(
+                            {
+                                "phase": "partial",
+                                "round_index": _round,
+                                "tool_name": _tool,
+                                "tc_id": _tc,
+                                "args": _args,
+                                "stage": _stage,
+                                **(partial_state if isinstance(partial_state, dict) else {}),
+                            }
+                        )
                 except Exception:
                     pass
             future = pool.submit(

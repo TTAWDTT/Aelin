@@ -1359,17 +1359,26 @@ class AelinAttachmentService:
         scored: list[tuple[float, AttachmentChunk]] = []
         matched_candidates = 0
         total_chunks = len(chunks)
+        scan_emit_stride = max(1, min(12, total_chunks // 24 or 1))
+
+        def should_emit_scan_progress(index: int, *, force: bool = False, state_changed: bool = False) -> bool:
+            if force or state_changed:
+                return True
+            if index <= 1 or index >= total_chunks:
+                return True
+            return (index % scan_emit_stride) == 0
         for idx, chunk in enumerate(chunks, start=1):
             text = str(chunk.text or "")
             if not text:
-                emit_progress(
-                    current_action="正在检索附件内容",
-                    progress_label="searching",
-                    processed=idx,
-                    matched=matched_candidates,
-                    total=total_chunks,
-                    found_count=matched_candidates,
-                )
+                if should_emit_scan_progress(idx):
+                    emit_progress(
+                        current_action="正在检索附件内容",
+                        progress_label="searching",
+                        processed=idx,
+                        matched=matched_candidates,
+                        total=total_chunks,
+                        found_count=matched_candidates,
+                    )
                 continue
             lowered = text.lower()
             lexical = float(sum(lowered.count(token) for token in token_counter if token))
@@ -1390,25 +1399,27 @@ class AelinAttachmentService:
                 if row_sq > 0:
                     score += dot / (math.sqrt(row_sq) * query_norm)
             if score <= 0:
+                if should_emit_scan_progress(idx):
+                    emit_progress(
+                        current_action="正在检索附件内容",
+                        progress_label="searching",
+                        processed=idx,
+                        matched=matched_candidates,
+                        total=total_chunks,
+                        found_count=matched_candidates,
+                    )
+                continue
+            scored.append((score, chunk))
+            matched_candidates += 1
+            if should_emit_scan_progress(idx, state_changed=True):
                 emit_progress(
-                    current_action="正在检索附件内容",
-                    progress_label="searching",
+                    current_action="已找到候选片段",
+                    progress_label="found_candidates",
                     processed=idx,
                     matched=matched_candidates,
                     total=total_chunks,
                     found_count=matched_candidates,
                 )
-                continue
-            scored.append((score, chunk))
-            matched_candidates += 1
-            emit_progress(
-                current_action="已找到候选片段",
-                progress_label="found_candidates",
-                processed=idx,
-                matched=matched_candidates,
-                total=total_chunks,
-                found_count=matched_candidates,
-            )
 
         scored.sort(key=lambda item: item[0], reverse=True)
         if not scored:
@@ -1455,14 +1466,15 @@ class AelinAttachmentService:
                     },
                 }
             )
-            emit_progress(
-                current_action="正在整理检索结果",
-                progress_label="organizing",
-                processed=idx,
-                matched=len(hits),
-                total=max(scored_total, len(hits)),
-                found_count=len(hits),
-            )
+            if idx == 1 or idx >= scored_total or len(hits) >= k or (idx % max(1, min(8, scored_total // 12 or 1))) == 0:
+                emit_progress(
+                    current_action="正在整理检索结果",
+                    progress_label="organizing",
+                    processed=idx,
+                    matched=len(hits),
+                    total=max(scored_total, len(hits)),
+                    found_count=len(hits),
+                )
             if len(hits) >= k:
                 break
 
