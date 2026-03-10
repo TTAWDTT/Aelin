@@ -9,7 +9,11 @@ interface SessionTabsProps {
 }
 
 export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
-  const { sessions, activeSessionId, switchSession, createSession, deleteSession } = useChatStore()
+  const sessions = useChatStore(s => s.sessions)
+  const activeSessionId = useChatStore(s => s.activeSessionId)
+  const switchSession = useChatStore(s => s.switchSession)
+  const createSession = useChatStore(s => s.createSession)
+  const deleteSession = useChatStore(s => s.deleteSession)
   const activeTabRef = useRef<HTMLButtonElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const prefersReducedMotion =

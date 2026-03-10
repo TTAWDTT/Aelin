@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '../stores/chatStore'
@@ -23,7 +24,7 @@ interface MessageBubbleProps {
   onQuickPrompt?: (text: string) => void
 }
 
-export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth, onQuickPrompt }: MessageBubbleProps) {
+function MessageBubbleComponent({ message, isThinking = false, thinkingText, compact = false, viewportWidth, onQuickPrompt }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
@@ -85,13 +86,22 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
         )}
 
         {/* Content */}
-        <div
-          className={cn(
-            'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
-          )}
-          style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
-        </div>
+        {isThinking && !isUser ? (
+          <div
+            className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+            style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}
+          >
+            {message.content || ''}
+          </div>
+        ) : (
+          <div
+            className={cn(
+              'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
+            )}
+            style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : '…')}</ReactMarkdown>
+          </div>
+        )}
 
         {!isUser && stickerSrc && !isThinking && (
           <div className="mt-2">
@@ -126,3 +136,12 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
     </article>
   )
 }
+
+export const MessageBubble = memo(MessageBubbleComponent, (prev, next) => (
+  prev.message === next.message
+  && prev.isThinking === next.isThinking
+  && prev.thinkingText === next.thinkingText
+  && prev.compact === next.compact
+  && prev.viewportWidth === next.viewportWidth
+  && prev.onQuickPrompt === next.onQuickPrompt
+))
