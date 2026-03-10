@@ -245,7 +245,8 @@ def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
         memory_summary="loop",
         generated_at=datetime.now(timezone.utc),
     )
-    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
+    _fake_try = lambda payload, db, current_user, event_cb=None, **kwargs: loop_resp
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _fake_try)
 
     def _legacy_should_not_run(*args, **kwargs):
         raise AssertionError("legacy path should not run")
@@ -266,6 +267,7 @@ def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
     data = resp.json()
     assert data.get("answer") == "loop-path-even-when-disabled"
     assert any((it.get("stage") == "agent_loop") for it in (data.get("tool_trace") or []))
+    assert aelin_router._core._try_agent_loop_chat is not _fake_try
 
 
 def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
@@ -285,7 +287,7 @@ def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
         memory_summary="loop",
         generated_at=datetime.now(timezone.utc),
     )
-    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None, **kwargs: loop_resp)
 
     def _legacy_should_not_run(*args, **kwargs):
         raise AssertionError("legacy path should not run when loop returns response")
@@ -316,7 +318,7 @@ def test_aelin_chat_agent_loop_hard_fail_without_legacy(monkeypatch):
     monkeypatch.setattr(settings, "aelin_agent_loop_hard_fail", True)
     monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
     monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
-    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: None)
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None, **kwargs: None)
 
     def _legacy_should_not_run(*args, **kwargs):
         raise AssertionError("legacy path should not run in hard-fail mode")
@@ -417,7 +419,7 @@ def test_aelin_chat_loop_only_even_when_shadow_toggle_enabled(monkeypatch):
         memory_summary="loop",
         generated_at=datetime.now(timezone.utc),
     )
-    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None: loop_resp)
+    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None, **kwargs: loop_resp)
 
     def _legacy_should_not_run(*args, **kwargs):
         raise AssertionError("legacy path should not run")
@@ -1390,7 +1392,6 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     )
     assert isinstance(web_step, dict)
     assert web_step.get("status") == "skipped"
-
 
 
 
