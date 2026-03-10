@@ -754,7 +754,10 @@ def execute_tool_call(
         result = {"ok": False, "error": error}
     finally:
         if partial_cb is not None and _progress_sensitive_tool(safe_tool_name):
-            min_visible_ms = 560
+            min_visible_ms = max(
+                0,
+                int(getattr(settings, "aelin_agent_loop_progress_min_visible_ms", 320) or 320),
+            )
             while int((time.perf_counter() - started) * 1000) < min_visible_ms:
                 time.sleep(0.04)
         stop_partial.set()
