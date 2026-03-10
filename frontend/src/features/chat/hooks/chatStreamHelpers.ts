@@ -16,6 +16,8 @@ const VISIBLE_TRACE_STAGES = new Set([
   'generation',
   'final_answer',
 ])
+const TERMINAL_TRACE_STATUSES = new Set(['completed', 'failed', 'skipped'])
+const RUNNING_TRACE_STATUSES = new Set(['running', 'in_progress'])
 
 export type PendingImage = { dataUrl: string; name: string }
 export type ChatStoreState = ReturnType<typeof useChatStore.getState>
@@ -35,9 +37,6 @@ function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep):
   }
   if (!existing.length) return [normalizedStep]
 
-  const terminalStatuses = new Set(['completed', 'failed', 'skipped'])
-  const runningStatuses = new Set(['running', 'in_progress'])
-
   let matchIndex = -1
   for (let idx = existing.length - 1; idx >= 0; idx -= 1) {
     if (String(existing[idx]?.stage || '').trim() === stage) {
@@ -55,8 +54,8 @@ function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep):
     Number(target?.count || 0) === Number(normalizedStep.count || 0)
   if (sameSnapshot) return existing
 
-  if (runningStatuses.has(status)) {
-    if (runningStatuses.has(targetStatus)) {
+  if (RUNNING_TRACE_STATUSES.has(status)) {
+    if (RUNNING_TRACE_STATUSES.has(targetStatus)) {
       existing[matchIndex] = {
         ...target,
         ...normalizedStep,
@@ -67,7 +66,7 @@ function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep):
     return [...existing, normalizedStep].slice(-160)
   }
 
-  if (terminalStatuses.has(status) && runningStatuses.has(targetStatus)) {
+  if (TERMINAL_TRACE_STATUSES.has(status) && RUNNING_TRACE_STATUSES.has(targetStatus)) {
     return [...existing, normalizedStep].slice(-160)
   }
 
@@ -322,11 +321,10 @@ function hasRecentEquivalentStep(trace: AelinToolStep[], step: AelinToolStep): b
 function hasRunningStepForStage(trace: AelinToolStep[], stageRaw: string): boolean {
   const stage = String(stageRaw || '').trim()
   if (!stage) return false
-  const runningStatuses = new Set(['running', 'in_progress'])
   return trace.some((item) => {
     if (String(item.stage || '').trim() !== stage) return false
     const status = String(item.status || '').trim().toLowerCase()
-    return runningStatuses.has(status)
+    return RUNNING_TRACE_STATUSES.has(status)
   })
 }
 

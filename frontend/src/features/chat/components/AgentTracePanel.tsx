@@ -200,10 +200,15 @@ function extractKeyParams(detailMap: Record<string, string>): string {
 }
 
 function extractHitCount(detailMap: Record<string, string>): number {
-  const direct = parsePositiveNumber(detailMap.hits || detailMap.hit_count || detailMap.total || detailMap.count || detailMap.matched)
+  const direct = parsePositiveNumber(
+    detailMap.hits ||
+      detailMap.hit_count ||
+      detailMap.matched ||
+      detailMap.found_count
+  )
   if (direct > 0) return direct
   const summary = normalizeText(detailMap.summary || detailMap.effect_summary || detailMap.message)
-  const match = summary.match(/(?:hits|命中)\s*[=:]?\s*(\d+)/i) || summary.match(/(\d+)\s*条/)
+  const match = summary.match(/(?:hits|命中)\s*[=:]?\s*(\d+)/i)
   if (!match) return 0
   return parsePositiveNumber(match[1])
 }
@@ -566,6 +571,7 @@ export function AgentTracePanel({ trace, live = false }: { trace: AelinToolStep[
       {visibleCards.map((card) => {
         const isExpanded = expandedMap[card.key] ?? card.status === 'running'
         const panelId = `agent-trace-panel-${card.key}`
+        const hasDetails = Boolean(card.paramsText || card.debugText)
         return (
           <article key={card.key} className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)]">
             <div className={cn('px-3 py-2.5', card.status === 'running' && 'shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-accent)_24%,transparent)]')}>
@@ -573,7 +579,7 @@ export function AgentTracePanel({ trace, live = false }: { trace: AelinToolStep[
                 type="button"
                 className="flex w-full items-start gap-2 text-left"
                 aria-expanded={isExpanded}
-                aria-controls={panelId}
+                aria-controls={hasDetails ? panelId : undefined}
                 onClick={() => setExpandedMap((prev) => ({ ...prev, [card.key]: !(prev[card.key] ?? card.status === 'running') }))}
               >
                 <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-panel)]">
@@ -612,7 +618,7 @@ export function AgentTracePanel({ trace, live = false }: { trace: AelinToolStep[
                 </span>
               </button>
 
-              {(card.paramsText || card.debugText) && isExpanded && (
+              {hasDetails && isExpanded && (
                 <div id={panelId} className="mt-2 border-t border-[var(--color-border)] pt-2 text-[11px] leading-relaxed">
                   <div className="space-y-2">
                     {card.toolName && (

@@ -68,20 +68,20 @@ function toEventPayload(raw: string): any {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, ms)))
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
 }
 
 async function emitReplyChunked(text: string, onReplyChunk?: (text: string) => void): Promise<boolean> {
   const raw = String(text || '')
   if (!raw || !onReplyChunk) return false
   const chunkSize = 28
-  const maxDelayedChars = chunkSize * 10
-  const delayPerChunkMs = raw.length <= maxDelayedChars ? 12 : 0
+  const maxAnimatedChars = chunkSize * 10
+  const animateByFrame = raw.length <= maxAnimatedChars
   for (let idx = 0; idx < raw.length; idx += chunkSize) {
     onReplyChunk(raw.slice(idx, idx + chunkSize))
-    if (delayPerChunkMs > 0) {
-      await sleep(delayPerChunkMs)
+    if (animateByFrame && idx + chunkSize < raw.length) {
+      await nextAnimationFrame()
     }
   }
   return true
@@ -199,7 +199,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
           if (!hasStreamedTrace && Array.isArray(result.tool_trace)) {
             for (const step of result.tool_trace) {
               callbacks.onToolStep?.(step as AelinToolStep)
-              await sleep(20)
+              await nextAnimationFrame()
             }
           }
           if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
@@ -231,9 +231,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       for (const evt of parsed.events) {
         const payload = toEventPayload(evt.data)
         try {
-          const handled = await dispatch(evt.event, payload)
-          if (handled === 'reply') await sleep(8)
-          else if (handled === 'trace' || handled === 'tool_step' || handled === 'tool_event') await sleep(16)
+          await dispatch(evt.event, payload)
         } catch (callbackError: any) {
           // Callback exceptions should not be misreported as transport failures.
           // eslint-disable-next-line no-console

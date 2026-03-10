@@ -699,6 +699,7 @@ def execute_tool_call(
     )
     started = time.perf_counter()
     stop_partial = threading.Event()
+    callback_lock = threading.Lock()
     partial_interval_s = max(0.1, min(0.3, float(partial_interval_ms or _TOOL_PARTIAL_INTERVAL_MS) / 1000.0))
 
     def _emit_partial(payload: dict[str, Any]) -> None:
@@ -707,7 +708,8 @@ def execute_tool_call(
         if not isinstance(payload, dict):
             return
         try:
-            partial_cb(payload)
+            with callback_lock:
+                partial_cb(payload)
         except Exception:
             pass
 
@@ -744,7 +746,11 @@ def execute_tool_call(
         if isinstance(synthetic_result, dict):
             result = dict(synthetic_result)
         else:
-            result = tool_hub.execute(safe_tool_name, effective_args, progress_cb=partial_cb)
+            result = tool_hub.execute(
+                safe_tool_name,
+                effective_args,
+                progress_cb=_emit_partial if partial_cb is not None else None,
+            )
         if not bool(result.get("ok", True)):
             status = "failed"
             error = str(result.get("error") or "tool_not_ok")[:180]
