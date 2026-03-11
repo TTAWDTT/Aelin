@@ -604,6 +604,59 @@ class AelinDeviceScreenCaptureRequest(BaseModel):
     selection_timeout_ms: int = Field(default=45000, ge=5000, le=180000)
 
 
+class RemoteControlExecuteRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+
+
+class RemoteControlCommandItem(BaseModel):
+    id: int
+    workspace: str = "default"
+    source: str = "manual"
+    source_user_name: str = ""
+    source_open_id: str = ""
+    source_chat_id: str = ""
+    source_message_id: str = ""
+    raw_text: str = ""
+    normalized_text: str = ""
+    command_type: str = ""
+    risk_level: str = "low"
+    status: str = "pending"
+    summary: str = ""
+    result: dict[str, Any] = Field(default_factory=dict)
+    error_detail: str = ""
+    created_at: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+
+
+class RemoteControlExecuteResponse(BaseModel):
+    ok: bool
+    reply_text: str
+    item: RemoteControlCommandItem
+    generated_at: datetime
+
+
+class RemoteControlCommandListResponse(BaseModel):
+    total: int = 0
+    items: list[RemoteControlCommandItem] = Field(default_factory=list)
+    generated_at: datetime
+
+
+class RemoteControlStatusResponse(BaseModel):
+    enabled: bool = False
+    running: bool = False
+    configured: bool = False
+    sdk_available: bool = False
+    workspace: str = "default"
+    bound_user_email: str = ""
+    plugin_base_url: str = ""
+    plugin_reachable: bool = False
+    commands: list[str] = Field(default_factory=list)
+    last_error: str = ""
+    generated_at: datetime
+
+
 class AgentCardLayoutItem(BaseModel):
     contact_id: int
     display_name: str = Field(min_length=1, max_length=255)

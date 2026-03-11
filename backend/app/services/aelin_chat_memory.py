@@ -10,11 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.schemas import AelinCitation
 from app.services.agent_memory import AgentMemoryService
-from app.services.aelin_chat_planning import _normalize_match_text
-from app.services.aelin_runtime import (
-    json_from_text as _json_from_text,
-    normalize_workspace as _normalize_workspace,
-)
 from app.services.llm import LLMService
 from app.services.memory_draft import ParallelMemoryDraftResult
 from app.services.openviking_bridge import tracking_file_memory_bridge
@@ -23,7 +18,6 @@ from app.routers.aelin_text_helpers import (
     _build_chat_diary_entry,
     _build_source_indices_from_citations,
     _extract_first_json_object,
-    _infer_diary_topic_path,
     _sanitize_diary_answer,
 )
 
@@ -182,89 +176,6 @@ def _save_parallel_draft_entry(
         pass
     return {"written": True, "reason": "", "path": str(out_path)}
 
-def _pick_tracking_target_for_insight(
-    db: Session,
-    *,
-    user_id: int,
-    workspace: str,
-    query: str,
-    tracking_snapshot: dict[str, Any] | None,
-) -> TrackingTarget | None:
-    workspace_norm = _normalize_workspace(workspace)
-    try:
-        rows = _tracking.list_targets(
-            db,
-            user_id=user_id,
-            workspace=workspace_norm,
-            limit=180,
-            include_deleted=False,
-        )
-    except Exception:
-        rows = []
-    if not rows:
-        return None
-
-    candidates: list[tuple[str, str, str]] = []
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
-    for key in ("matched_items", "active_items"):
-        items = tracking.get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items[:16]:
-            if not isinstance(item, dict):
-                continue
-            target = str(item.get("target") or "").strip()
-            if not target:
-                continue
-            source = _normalize_track_source(str(item.get("source") or "auto"))
-            candidate_query = str(item.get("query") or "").strip()
-            candidates.append((source, target, candidate_query))
-
-    q_norm = _normalize_match_text(query)
-    best: TrackingTarget | None = None
-    best_score = -1.0
-    for row in rows:
-        if row is None:
-            continue
-        if str(getattr(row, "status", "") or "").strip().lower() == "deleted":
-            continue
-        if getattr(row, "deleted_at", None) is not None:
-            continue
-        row_source = str(getattr(row, "source_type", "web") or "web").strip().lower() or "web"
-        row_target = (str(getattr(row, "display_name", "") or "") or str(getattr(row, "source_key", "") or "")).strip()
-        row_cfg = _json_from_text(getattr(row, "config_json", "") or "{}")
-        row_query = str(row_cfg.get("query") or "").strip()
-        row_target_norm = _normalize_match_text(row_target)
-        row_query_norm = _normalize_match_text(row_query)
-
-        score = 0.0
-        if str(getattr(row, "status", "") or "").strip().lower() == "active":
-            score += 1.2
-
-        for source, target, cand_query in candidates:
-            target_norm = _normalize_match_text(target)
-            cand_query_norm = _normalize_match_text(cand_query)
-            if source and source == row_source:
-                score += 0.7
-            if target_norm and row_target_norm and (target_norm in row_target_norm or row_target_norm in target_norm):
-                score += 3.2
-            if cand_query_norm and row_query_norm and (cand_query_norm in row_query_norm or row_query_norm in cand_query_norm):
-                score += 1.8
-
-        if q_norm:
-            if row_target_norm and (q_norm in row_target_norm or row_target_norm in q_norm):
-                score += 2.0
-            if row_query_norm and (q_norm in row_query_norm or row_query_norm in q_norm):
-                score += 1.4
-
-        if score > best_score:
-            best_score = score
-            best = row
-
-    if best is not None and best_score > 0:
-        return best
-    return rows[0] if rows else None
-
 def _decide_tracking_insight_write(
     *,
     service: LLMService,
@@ -341,79 +252,4 @@ def _decide_tracking_insight_write(
         "title": title,
         "markdown": markdown,
         "reason": reason or ("planner_declined" if not should_write else ""),
-    }
-
-def _maybe_write_tracking_insight(
-    db: Session,
-    *,
-    user_id: int,
-    workspace: str,
-    query: str,
-    answer: str,
-    service: LLMService,
-    provider: str,
-    tracking_snapshot: dict[str, Any] | None,
-    file_memory_lines: list[str],
-    citations: list[AelinCitation],
-) -> dict[str, Any]:
-    decision = _decide_tracking_insight_write(
-        service=service,
-        provider=provider,
-        query=query,
-        answer=answer,
-        tracking_snapshot=tracking_snapshot,
-        file_memory_lines=file_memory_lines,
-    )
-    if not bool(decision.get("should_write")):
-        return {"written": False, "reason": str(decision.get("reason") or "planner_skip")}
-
-    target = _pick_tracking_target_for_insight(
-        db,
-        user_id=user_id,
-        workspace=workspace,
-        query=query,
-        tracking_snapshot=tracking_snapshot,
-    )
-    if target is None:
-        return {"written": False, "reason": "no_tracking_target"}
-
-    topic_path = _infer_diary_topic_path(
-        query,
-        answer,
-        str(getattr(target, "display_name", "") or ""),
-        fallback_source=str(getattr(target, "source_type", "") or "综合"),
-    )
-    source_indices = _build_source_indices_from_citations(citations)
-    out_path = _tracking_file_memory.append_insight(
-        target=target,
-        title=str(decision.get("title") or "追踪洞察"),
-        markdown=str(decision.get("markdown") or "").strip(),
-        reason=str(decision.get("reason") or ""),
-        confidence=float(decision.get("confidence") or 0.0),
-        source_query=query,
-        topic_path=topic_path,
-        source_indices=source_indices,
-        entry_kind="tracking_insight",
-    )
-    if out_path is None:
-        return {"written": False, "reason": "file_write_failed"}
-
-    try:
-        _memory.add_note(
-            db,
-            user_id,
-            f"[tracking-insight] {str(decision.get('title') or '追踪洞察')}\\npath: {str(out_path)}",
-            kind="tracking_insight",
-            source=f"tracking:insight:{int(getattr(target, 'id', 0) or 0)}",
-        )
-    except Exception:
-        pass
-
-    return {
-        "written": True,
-        "target_id": int(getattr(target, "id", 0) or 0),
-        "target": str(getattr(target, "display_name", "") or ""),
-        "path": str(out_path),
-        "confidence": float(decision.get("confidence") or 0.0),
-        "reason": str(decision.get("reason") or ""),
     }

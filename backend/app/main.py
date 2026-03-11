@@ -21,6 +21,7 @@ from app.routers import (
     aelin_media,
     aelin_notifications,
     aelin_proactive,
+    aelin_remote_control,
     auth,
     contacts,
     desk,
@@ -28,6 +29,7 @@ from app.routers import (
     messages,
 )
 from app.settings import settings
+from app.services.feishu_bot import feishu_bot_service
 
 _log = logging.getLogger(__name__)
 
@@ -77,10 +79,15 @@ async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=engine)
     # Lightweight column migration for SQLite (add columns that don't exist yet)
     _add_missing_columns(engine)
+    if settings.feishu_bot_enabled:
+        feishu_bot_service.start()
+        _log.info("feishu bot enabled")
+    else:
+        _log.info("feishu bot disabled")
     try:
         yield
     finally:
-        pass
+        feishu_bot_service.stop()
 
 
 def create_app() -> FastAPI:
@@ -125,6 +132,7 @@ def create_app() -> FastAPI:
     app.include_router(aelin_media.router, prefix="/api/v1")
     app.include_router(aelin_notifications.router, prefix="/api/v1")
     app.include_router(aelin_proactive.router, prefix="/api/v1")
+    app.include_router(aelin_remote_control.router, prefix="/api/v1")
     app.include_router(desk.router, prefix="/api/v1")
     app.include_router(inbound.router, prefix="/api/v1")
 

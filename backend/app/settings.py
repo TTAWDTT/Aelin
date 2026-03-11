@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     # 建议通过环境变量显式覆盖，而不是在代码里硬编码过大的默认值。
     aelin_agent_loop_round_timeout_seconds: float = 40.0
     aelin_agent_loop_total_timeout_seconds: float = 120.0
+    feishu_bot_enabled: bool = False
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_bot_name: str = "Aelin"
+    feishu_bot_bind_user_email: str = ""
+    feishu_bot_workspace: str = "default"
+    feishu_bot_allowed_open_ids_csv: str = ""
+    feishu_bot_allowed_chat_ids_csv: str = ""
+    feishu_bot_command_prefix: str = "/aelin"
+    feishu_bot_group_require_prefix: bool = True
+    feishu_bot_message_dedupe_ttl_seconds: int = 600
+    feishu_bot_reply_timeout_seconds: float = 15.0
     desktop_plugin_base_url: str = "http://127.0.0.1:21914"
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0

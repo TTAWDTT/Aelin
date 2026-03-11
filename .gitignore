@@ -2,6 +2,9 @@
 
 backend/.env
 backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/*.db-journal
 backend/__pycache__/
 backend/.pytest_cache/
 backend/**/__pycache__/
@@ -29,6 +32,9 @@ desktop/build-dist-*.meta
 # Local runtime data / generated memory store
 /data/
 /*.db
+/*.db-shm
+/*.db-wal
+/*.db-journal
 
 .DS_Store
 Thumbs.db
