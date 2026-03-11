@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 import logging
 import threading
 from typing import Iterator, Any
@@ -11,7 +12,8 @@ from app.settings import settings
 
 _log = logging.getLogger(__name__)
 _CLIENT_CACHE_LOCK = threading.Lock()
-_CLIENT_CACHE: dict[tuple[str, str, str, float], openai.Client] = {}
+_CLIENT_CACHE_MAX_SIZE = 16
+_CLIENT_CACHE: OrderedDict[tuple[str, str, str, float], openai.Client] = OrderedDict()
 
 
 class LLMService:
@@ -37,7 +39,9 @@ class LLMService:
                 )
                 with _CLIENT_CACHE_LOCK:
                     cached = _CLIENT_CACHE.get(cache_key)
-                    if cached is None:
+                    if cached is not None:
+                        _CLIENT_CACHE.move_to_end(cache_key)
+                    else:
                         cached = openai.Client(
                             base_url=normalized_base_url,
                             api_key=self.api_key,
@@ -45,6 +49,8 @@ class LLMService:
                             max_retries=1,
                         )
                         _CLIENT_CACHE[cache_key] = cached
+                        if len(_CLIENT_CACHE) > _CLIENT_CACHE_MAX_SIZE:
+                            _CLIENT_CACHE.popitem(last=False)
                 self._client = cached
             except Exception as e:
                 _log.warning("Failed to initialize OpenAI client: %s", e)

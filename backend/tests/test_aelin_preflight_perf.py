@@ -262,6 +262,34 @@ def test_llm_service_defers_openai_client_init_until_client_is_used(monkeypatch)
     assert calls["client_init"] == 1
 
 
+def test_llm_service_client_cache_is_bounded(monkeypatch):
+    calls = {"client_init": 0}
+
+    class _FakeOpenAIClient:
+        def __init__(self, **kwargs) -> None:
+            calls["client_init"] += 1
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(llm_service.openai, "Client", _FakeOpenAIClient)
+    llm_service._CLIENT_CACHE.clear()
+
+    for idx in range(llm_service._CLIENT_CACHE_MAX_SIZE + 4):
+        config = AgentConfigOut(
+            provider="openai",
+            base_url=f"https://api-{idx}.example.com/v1",
+            model="gpt-4o-mini",
+            temperature=0.2,
+            has_api_key=True,
+            web_search_proxy_url="",
+        )
+        service = llm_service.LLMService(config, f"sk-test-{idx}")
+        assert service.client is not None
+
+    assert len(llm_service._CLIENT_CACHE) == llm_service._CLIENT_CACHE_MAX_SIZE
+    oldest_key = next(iter(llm_service._CLIENT_CACHE.keys()))
+    assert "api-4.example.com" in oldest_key[1]
+
+
 def test_build_context_bundle_reuses_shared_memory_primitives(monkeypatch):
     now = datetime.now(timezone.utc)
     calls = {
