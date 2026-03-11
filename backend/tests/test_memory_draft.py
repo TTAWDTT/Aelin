@@ -60,7 +60,7 @@ def test_save_parallel_draft_entry_writes_when_quality_passed(monkeypatch, tmp_p
     )
 
     out_path = tmp_path / "parallel-draft.md"
-    monkeypatch.setattr(aelin_router._tracking_file_memory, "append_insight", lambda **kwargs: out_path)
+    monkeypatch.setattr(aelin_router._file_memory, "append_insight", lambda **kwargs: out_path)
     monkeypatch.setattr(aelin_router._memory, "add_note", lambda *args, **kwargs: None)
 
     result = aelin_router._save_parallel_draft_entry(

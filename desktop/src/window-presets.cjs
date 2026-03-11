@@ -10,13 +10,6 @@ const ROUTE_PROFILES = {
     minWidth: 1040,
     minHeight: 760,
   },
-  tracking: {
-    // Tracking with Desk rail needs noticeably wider landscape ratio.
-    heightRatio: 0.88,
-    aspectRatio: 1.7,
-    minWidth: 1240,
-    minHeight: 740,
-  },
   processes: {
     // Mac Activity Monitor style: strongly horizontal.
     heightRatio: 0.84,
@@ -39,7 +32,6 @@ function clamp(value, min, max) {
 function getRouteProfile(route) {
   const cleanRoute = String(route || "/").split("?")[0].split("#")[0];
   if (cleanRoute.startsWith("/processes")) return ROUTE_PROFILES.processes;
-  if (cleanRoute.startsWith("/tracking")) return ROUTE_PROFILES.tracking;
   if (cleanRoute.startsWith("/settings")) return ROUTE_PROFILES.settings;
   return ROUTE_PROFILES.default;
 }

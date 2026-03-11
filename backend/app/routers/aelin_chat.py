@@ -23,11 +23,11 @@ from app.schemas import (
     AelinChatResponse,
     AelinDiaryTreeNode,
     AelinDiaryTreeResponse,
-    AelinTrackingFileMemoryContentResponse,
+    AelinFileMemoryContentResponse,
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 from app.services.aelin_chat_worker import run_aelin_chat_with_local_session
-from app.services.openviking_bridge import tracking_file_memory_bridge
+from app.services.openviking_bridge import file_memory_bridge
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -126,15 +126,15 @@ def aelin_chat(
     return _dispatch_aelin_chat(payload, db, current_user)
 
 
-@router.get("/tracking/file-memory/tree", response_model=AelinDiaryTreeResponse)
-def aelin_tracking_file_memory_tree(
+@router.get("/memory/file-memory/tree", response_model=AelinDiaryTreeResponse)
+def aelin_memory_file_memory_tree(
     workspace: str = "default",
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> AelinDiaryTreeResponse:
     _ = db
     workspace_norm = str(workspace or "default").strip() or "default"
-    tree = tracking_file_memory_bridge.list_diary_tree(
+    tree = file_memory_bridge.list_diary_tree(
         user_id=int(current_user.id),
         workspace=workspace_norm,
         max_files=200,
@@ -163,23 +163,23 @@ def aelin_tracking_file_memory_tree(
     )
 
 
-@router.get("/tracking/file-memory/content", response_model=AelinTrackingFileMemoryContentResponse)
-def aelin_tracking_file_memory_content(
+@router.get("/memory/file-memory/content", response_model=AelinFileMemoryContentResponse)
+def aelin_memory_file_memory_content(
     workspace: str = "default",
     path: str = "",
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
-) -> AelinTrackingFileMemoryContentResponse:
+) -> AelinFileMemoryContentResponse:
     _ = db
     workspace_norm = str(workspace or "default").strip() or "default"
-    entry = tracking_file_memory_bridge.read_memory_markdown(
+    entry = file_memory_bridge.read_memory_markdown(
         user_id=int(current_user.id),
         workspace=workspace_norm,
         path=path,
     )
     if not entry:
         raise HTTPException(status_code=404, detail="file_memory_entry_not_found")
-    return AelinTrackingFileMemoryContentResponse(
+    return AelinFileMemoryContentResponse(
         workspace=workspace_norm,
         path=str(path or "").strip(),
         title=str(entry.get("title") or ""),

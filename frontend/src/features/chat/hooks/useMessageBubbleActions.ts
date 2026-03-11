@@ -1,11 +1,10 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinAction, AelinBrowserConfirmResponse } from '@/shared/api/types'
 import { useChatStore, type ChatMessage } from '../stores/chatStore'
 import {
   buildBrowserConfirmBody,
-  buildTrackConfirmBody,
   formatBrowserConfirmFeedback,
 } from '../components/messageBubbleUtils'
 
@@ -35,27 +34,7 @@ function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId:
   })
 }
 
-export function useMessageBubbleActions({ message, onQuickPrompt }: UseMessageBubbleActionsOptions) {
-  const queryClient = useQueryClient()
-
-  const confirmTrack = useMutation({
-    mutationFn: async (action: AelinAction) => {
-      const body = buildTrackConfirmBody(action, message.content)
-      if (!body) {
-        throw new Error('缺少可追踪目标')
-      }
-      return aelinApi.trackConfirm(body)
-    },
-    onSuccess: (response) => {
-      toast.success(String(response.message || '已创建追踪'))
-      queryClient.invalidateQueries({ queryKey: ['tracking'] })
-      queryClient.invalidateQueries({ queryKey: ['desk-tracking-list'] })
-    },
-    onError: (error: Error) => {
-      toast.error(String(error?.message || '追踪创建失败'))
-    },
-  })
-
+export function useMessageBubbleActions({ message: _message, onQuickPrompt }: UseMessageBubbleActionsOptions) {
   const confirmBrowser = useMutation({
     mutationFn: async (action: AelinAction) => {
       const originSessionId = useChatStore.getState().activeSessionId
@@ -79,7 +58,6 @@ export function useMessageBubbleActions({ message, onQuickPrompt }: UseMessageBu
   })
 
   return {
-    confirmTrack,
     confirmBrowser,
   }
 }

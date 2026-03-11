@@ -225,9 +225,9 @@ class _OpenVikingAdapter:
         return out
 
 
-class TrackingFileMemoryBridge:
+class FileMemoryBridge:
     """
-    File-first memory projection for tracking targets.
+    File-first memory projection for long-term memory entries.
 
     - Writes profile/snapshot/change timeline as markdown.
     - Retrieval uses optional OpenViking SDK; falls back to local lexical scoring.
@@ -296,7 +296,7 @@ class TrackingFileMemoryBridge:
             / meta["user_id"]
             / "workspaces"
             / _slug(meta["workspace"], fallback="default")
-            / "tracking"
+            / "memory"
             / _slug(meta["source_type"], fallback="web")
             / meta["target_hash"]
         )
@@ -310,8 +310,8 @@ class TrackingFileMemoryBridge:
             / _slug(_normalize_workspace(workspace), fallback="default")
         )
 
-    def _tracking_root(self, *, user_id: int, workspace: str) -> Path:
-        return self._workspace_root(user_id=user_id, workspace=workspace) / "tracking"
+    def _memory_root(self, *, user_id: int, workspace: str) -> Path:
+        return self._workspace_root(user_id=user_id, workspace=workspace) / "memory"
 
     def _diary_root(self, *, user_id: int, workspace: str) -> Path:
         return self._workspace_root(user_id=user_id, workspace=workspace) / "diary"
@@ -361,13 +361,13 @@ class TrackingFileMemoryBridge:
         source: str | None,
         include_diary: bool,
     ) -> list[Path]:
-        tracking_root = self._tracking_root(user_id=user_id, workspace=workspace)
+        memory_root = self._memory_root(user_id=user_id, workspace=workspace)
         out: list[Path] = []
         source_norm = str(source or "").strip().lower()
         if source_norm:
-            out.append(tracking_root / _slug(source_norm, fallback="web"))
+            out.append(memory_root / _slug(source_norm, fallback="web"))
         else:
-            out.append(tracking_root)
+            out.append(memory_root)
         if include_diary:
             out.append(self._diary_root(user_id=user_id, workspace=workspace))
         return out
@@ -818,7 +818,7 @@ class TrackingFileMemoryBridge:
         source_query: str = "",
         topic_path: list[str] | None = None,
         source_indices: list[dict[str, Any]] | None = None,
-        entry_kind: str = "tracking_insight",
+        entry_kind: str = "memory_insight",
     ) -> Path | None:
         if not self.enabled:
             return None
@@ -830,7 +830,7 @@ class TrackingFileMemoryBridge:
             now = _utcnow()
             ts = _iso(now) or _iso(_utcnow())
             ts_id = _slug(ts.replace(":", "").replace("+00:00", "Z"), fallback="t", max_len=48)
-            title_text = str(title or "追踪洞察").strip()[:180] or "追踪洞察"
+            title_text = str(title or "长期记忆洞察").strip()[:180] or "长期记忆洞察"
             score_text = ""
             if confidence is not None:
                 try:
@@ -866,13 +866,13 @@ class TrackingFileMemoryBridge:
             topic_parts = self._normalize_topic_path(topic_path, fallback=meta["source_type"] or "综合")
             topic_text = " > ".join(topic_parts)
             body = [
-                "# Tracking Insight",
+                "# Memory Insight",
                 "",
                 f"- canonical_id: `{meta['canonical_id']}`",
                 f"- target: {meta['display_name']}",
                 f"- source: {meta['source_type']}",
                 "- kind: insight",
-                f"- entry_kind: {str(entry_kind or 'tracking_insight').strip()[:48]}",
+                f"- entry_kind: {str(entry_kind or 'memory_insight').strip()[:48]}",
                 f"- topic_path: {topic_text}",
                 f"- created_at: {ts}",
             ]
@@ -911,7 +911,7 @@ class TrackingFileMemoryBridge:
             legacy_path = self._target_dir(target) / "insights" / file_name
             self._write_markdown(legacy_path, content)
 
-            entry_kind_norm = str(entry_kind or "tracking_insight").strip().lower()
+            entry_kind_norm = str(entry_kind or "memory_insight").strip().lower()
             user_id = int(meta["user_id"] or 0)
             workspace_norm = meta["workspace"]
             if entry_kind_norm == "chat_diary":
@@ -933,7 +933,7 @@ class TrackingFileMemoryBridge:
                 "canonical_id": meta["canonical_id"],
                 "target": meta["display_name"],
                 "source": meta["source_type"],
-                "entry_kind": str(entry_kind or "tracking_insight").strip()[:48],
+                "entry_kind": str(entry_kind or "memory_insight").strip()[:48],
                 "topic_path": topic_parts,
                 "created_at": ts,
                 "title": title_text,
@@ -941,7 +941,7 @@ class TrackingFileMemoryBridge:
                 "reason": reason.strip()[:500],
                 "confidence": score_text,
                 "source_indices": source_items,
-                "tracking_path": str(legacy_path),
+                "legacy_path": str(legacy_path),
             }
             self._write_json(diary_path.with_suffix(".meta.json"), diary_meta)
             if entry_kind_norm == "chat_diary":
@@ -1210,7 +1210,7 @@ class TrackingFileMemoryBridge:
             score += 1.6 if include_diary else -3.5
         if "- entry_kind: media_insight" in lowered:
             score += 1.4
-        if "- entry_kind: tracking_insight" in lowered:
+        if "- entry_kind: memory_insight" in lowered:
             score += 1.0
         if "## 提炼信息（日记）" in lowered:
             score += 1.2 if include_diary else -0.5
@@ -1298,7 +1298,7 @@ class TrackingFileMemoryBridge:
                         break
         if section_title:
             title = section_title
-        elif title.lower() == "tracking insight" and target:
+        elif title.lower() == "memory insight" and target:
             title = target[:120]
         sidecar = self._read_sidecar_meta(path)
         if sidecar:
@@ -1437,7 +1437,7 @@ class TrackingFileMemoryBridge:
             candidate_paths = [
                 workspace_root / candidate,
                 self._diary_root(user_id=user_id, workspace=workspace).resolve() / candidate,
-                self._tracking_root(user_id=user_id, workspace=workspace).resolve() / candidate,
+                self._memory_root(user_id=user_id, workspace=workspace).resolve() / candidate,
             ]
             for path_item in candidate_paths:
                 try:
@@ -1468,4 +1468,4 @@ class TrackingFileMemoryBridge:
         }
 
 
-tracking_file_memory_bridge = TrackingFileMemoryBridge()
+file_memory_bridge = FileMemoryBridge()

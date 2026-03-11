@@ -14,11 +14,9 @@ from app.models import AgentConversationMemory, AgentMemoryNote, Contact, Messag
 from app.services.agent_memory_utils import (
     _clean_text,
     _extract_terms,
-    _extract_tracking_field,
     _iso_or_empty,
     _note_candidates_from_user_text,
     _parse_json_or_none,
-    _parse_tracking_payload,
     _truncate,
 )
 
@@ -832,25 +830,6 @@ class AgentMemoryService:
                 continue
             updated_at = _iso_or_empty(row.updated_at) or now_iso
 
-            if kind == "tracking" or source.startswith("track:"):
-                parsed = _parse_tracking_payload(content)
-                target = _truncate(_clean_text(parsed.get("target") or content), 140)
-                status = _truncate(_clean_text(parsed.get("status") or "active"), 32)
-                query_text = _truncate(_clean_text(parsed.get("query") or ""), 180)
-                _push(
-                    in_progress,
-                    item_id=f"track-{row.id}",
-                    layer="in_progress",
-                    title=target,
-                    detail=f"状态: {status}" + (f"；触发: {query_text}" if query_text else ""),
-                    source=source or "tracking",
-                    confidence=0.82,
-                    updated_at=updated_at,
-                    meta={"note_id": str(row.id), "status": status},
-                    max_items=14,
-                )
-                continue
-
             if kind == "preference" or ("喜欢" in content or "偏好" in content or "不喜欢" in content):
                 _push(
                     preferences,
@@ -1103,42 +1082,6 @@ class AgentMemoryService:
                 }
             )
 
-        tracking_notes = db.scalars(
-            select(AgentMemoryNote)
-            .where(
-                AgentMemoryNote.user_id == user_id,
-                AgentMemoryNote.kind == "tracking",
-            )
-            .order_by(desc(AgentMemoryNote.updated_at), desc(AgentMemoryNote.id))
-            .limit(16)
-        ).all()
-        seen_tracking: set[str] = set()
-        for row in tracking_notes:
-            parsed = _parse_tracking_payload(row.content or "")
-            target = _truncate(_clean_text(parsed.get("target") or ""), 120)
-            if not target:
-                continue
-            key = target.lower()
-            if key in seen_tracking:
-                continue
-            seen_tracking.add(key)
-            status = _truncate(_clean_text(parsed.get("status") or "active"), 40)
-            source = _truncate(_clean_text(parsed.get("source") or row.source or "tracking"), 40)
-            items.append(
-                {
-                    "id": f"track-{row.id}",
-                    "level": "success" if status in {"active", "sync_started", "tracking_enabled"} else "info",
-                    "title": f"跟踪中: {target}",
-                    "detail": f"{source} · 状态 {status}",
-                    "source": "tracking",
-                    "ts": _iso_or_empty(row.updated_at) or now.isoformat(),
-                    "action_kind": "open_tracking",
-                    "action_payload": {"target": target, "source": source},
-                }
-            )
-            if len(seen_tracking) >= 8:
-                break
-
         items.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
         dedup: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
@@ -1221,42 +1164,6 @@ class AgentMemoryService:
                     "action_payload": {"todo_id": str(todo_id)},
                 }
             )
-
-        tracking_notes = db.scalars(
-            select(AgentMemoryNote)
-            .where(
-                AgentMemoryNote.user_id == user_id,
-                AgentMemoryNote.kind == "tracking",
-            )
-            .order_by(desc(AgentMemoryNote.updated_at), desc(AgentMemoryNote.id))
-            .limit(16)
-        ).all()
-        seen_tracking: set[str] = set()
-        for row in tracking_notes:
-            parsed = _parse_tracking_payload(row.content or "")
-            target = _truncate(_clean_text(parsed.get("target") or ""), 120)
-            if not target:
-                continue
-            key = target.lower()
-            if key in seen_tracking:
-                continue
-            seen_tracking.add(key)
-            status = _truncate(_clean_text(parsed.get("status") or "active"), 40)
-            source = _truncate(_clean_text(parsed.get("source") or row.source or "tracking"), 40)
-            items.append(
-                {
-                    "id": f"track-{row.id}",
-                    "level": "success" if status in {"active", "sync_started", "tracking_enabled"} else "info",
-                    "title": f"跟踪中: {target}",
-                    "detail": f"{source} · 状态 {status}",
-                    "source": "tracking",
-                    "ts": _iso_or_empty(row.updated_at) or now.isoformat(),
-                    "action_kind": "open_tracking",
-                    "action_payload": {"target": target, "source": source},
-                }
-            )
-            if len(seen_tracking) >= 8:
-                break
 
         items.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
         dedup: list[dict[str, Any]] = []

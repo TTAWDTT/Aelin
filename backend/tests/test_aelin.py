@@ -480,11 +480,6 @@ def test_aelin_chat_can_use_web_search_plan(monkeypatch):
             "need_local_search": False,
             "need_web_search": True,
             "web_queries": ["NBA 马刺 勇士"],
-            "track_suggestion": {
-                "target": "NBA 比赛",
-                "source": "web",
-                "reason": "你最近在问比赛结果，适合持续跟踪。",
-            },
             "reason": "test_plan",
         },
     )
@@ -529,9 +524,7 @@ def test_aelin_chat_can_use_web_search_plan(monkeypatch):
     assert "reply_agent" in trace_stages
     assert any((it.get("stage") == "web_search") for it in data.get("tool_trace") or [])
     assert "reply_verifier" in trace_stages
-    assert "trace_agent" in trace_stages
     assert any((it.get("source") == "web") for it in data.get("citations") or [])
-    assert any((it.get("kind") == "confirm_track") for it in data.get("actions") or [])
 
 
 @pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
@@ -546,7 +539,6 @@ def test_aelin_chat_verifier_can_trigger_web_retry(monkeypatch):
             "need_local_search": False,
             "need_web_search": False,
             "web_queries": [],
-            "track_suggestion": None,
             "reason": "test_no_web_initial",
         },
     )
@@ -592,7 +584,6 @@ def test_aelin_chat_llm_planner_trace_route_not_overridden(monkeypatch):
             "requires_citations": False,
             "requires_factuality": False,
             "sports_result_intent": False,
-            "tracking_intent": False,
             "ambiguities": [],
             "confidence": 0.9,
             "reason": "test_intent_chat",
@@ -607,7 +598,6 @@ def test_aelin_chat_llm_planner_trace_route_not_overridden(monkeypatch):
             "need_web_search": False,
             "web_queries": [],
             "context_boundaries": [],
-            "track_suggestion": None,
             "route": {
                 "reply_agent": True,
                 "trace_agent": False,
@@ -642,7 +632,6 @@ def test_aelin_chat_llm_planner_trace_route_not_overridden(monkeypatch):
     )
     assert isinstance(trace_agent_step, dict)
     assert trace_agent_step.get("status") == "skipped"
-    assert not any((it.get("kind") == "confirm_track") for it in (data.get("actions") or []))
 
 
 @pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
@@ -661,7 +650,6 @@ def test_aelin_chat_llm_planner_retry_not_overridden(monkeypatch):
             "requires_citations": False,
             "requires_factuality": False,
             "sports_result_intent": False,
-            "tracking_intent": False,
             "ambiguities": [],
             "confidence": 0.9,
             "reason": "test_intent_chat",
@@ -676,7 +664,6 @@ def test_aelin_chat_llm_planner_retry_not_overridden(monkeypatch):
             "need_web_search": False,
             "web_queries": [],
             "context_boundaries": [],
-            "track_suggestion": None,
             "route": {
                 "reply_agent": True,
                 "trace_agent": False,
@@ -743,7 +730,6 @@ def test_aelin_chat_parallel_web_subagent_accepts_keyword_only_search(monkeypatc
                 {"kind": "web", "query": "minimax 模型 发布", "scope": "release"},
                 {"kind": "web", "query": "minimax 模型 更新", "scope": "update"},
             ],
-            "track_suggestion": None,
             "reason": "test_context_boundary_parallel",
         },
     )
@@ -803,7 +789,6 @@ def test_aelin_chat_all_models_retrieval_guard(monkeypatch):
             "need_local_search": False,
             "need_web_search": True,
             "web_queries": ["NBA 马刺 勇士 比分"],
-            "track_suggestion": None,
             "reason": "test_generic_web",
         },
     )
@@ -861,7 +846,7 @@ def test_build_fixed_profile_injection_uses_layers_and_profile_notes():
         ),
         "notes": [
             SimpleNamespace(kind="profile", source="profile:manual", content="用户长期关注模型发布节奏"),
-            SimpleNamespace(kind="tracking_insight", source="tracking", content="这条不应进入固定注入"),
+            SimpleNamespace(kind="memory_insight", source="memory", content="这条不应进入固定注入"),
         ],
     }
     lines = aelin_router._build_fixed_profile_injection(bundle, max_items=12)
@@ -890,14 +875,13 @@ def test_aelin_chat_diary_only_query_forces_no_web(monkeypatch):
                 {"kind": "local", "query": "抖音 内容", "scope": "local"},
                 {"kind": "web", "query": "抖音 内容 讲了什么", "scope": "web"},
             ],
-            "track_suggestion": None,
             "route": {"reply_agent": True, "trace_agent": False, "allow_web_retry": True},
             "reason": "test_force_web_before_override",
         },
     )
     monkeypatch.setattr(
         aelin_router,
-        "_build_planner_tracking_snapshot",
+        "_build_planner_memory_snapshot",
         lambda *args, **kwargs: {
             "active_items": [],
             "matched_items": [],
@@ -967,7 +951,7 @@ def test_plan_tool_usage_invalid_json_fallback_still_dispatches_web():
         service=_FakePlannerService(),
         provider="openai",
         memory_summary="有一些历史记忆",
-        tracking_snapshot={"active_items": [], "matched_items": []},
+        memory_snapshot={"active_items": [], "matched_items": []},
     )
     assert plan.get("planner_source") == "fallback"
     assert plan.get("need_web_search") is True
@@ -1017,7 +1001,7 @@ def test_build_intent_contract_fallback_for_recent_sports_query():
         service=_FakeService(),
         provider="openai",
         memory_summary="",
-        tracking_snapshot={"active_count": 0, "matched_count": 0},
+        memory_snapshot={"active_count": 0, "matched_count": 0},
     )
     assert intent.get("intent_source") == "fallback"
     assert intent.get("requires_citations") is True
@@ -1036,7 +1020,6 @@ def test_plan_critic_can_patch_missing_web_path():
             "intent_type": "retrieval",
             "requires_citations": True,
             "sports_result_intent": True,
-            "tracking_intent": False,
         },
         tool_plan={
             "need_local_search": True,
@@ -1070,7 +1053,6 @@ def test_aelin_chat_critic_patch_can_enable_web_retrieval(monkeypatch):
             "requires_citations": True,
             "requires_factuality": True,
             "sports_result_intent": True,
-            "tracking_intent": False,
             "ambiguities": [],
             "confidence": 0.9,
             "reason": "test_intent",
@@ -1085,7 +1067,6 @@ def test_aelin_chat_critic_patch_can_enable_web_retrieval(monkeypatch):
             "need_web_search": False,
             "web_queries": [],
             "context_boundaries": [{"kind": "local", "query": "nba", "scope": "local"}],
-            "track_suggestion": None,
             "route": {"reply_agent": True, "trace_agent": False, "allow_web_retry": False},
             "reason": "test_plan_without_web",
             "planner_source": "llm",
@@ -1164,7 +1145,6 @@ def test_aelin_chat_local_subagents_execute_in_parallel(monkeypatch):
             "requires_citations": False,
             "requires_factuality": False,
             "sports_result_intent": False,
-            "tracking_intent": False,
             "ambiguities": [],
             "confidence": 0.8,
             "reason": "test_intent",
@@ -1184,7 +1164,6 @@ def test_aelin_chat_local_subagents_execute_in_parallel(monkeypatch):
                 {"kind": "local", "query": "topic c", "scope": "C"},
             ],
             "trace_context_boundaries": [],
-            "track_suggestion": None,
             "route": {"reply_agent": True, "trace_agent": False, "allow_web_retry": False},
             "reason": "test_local_parallel",
             "planner_source": "llm",
@@ -1241,89 +1220,6 @@ def test_aelin_chat_local_subagents_execute_in_parallel(monkeypatch):
 
 
 @pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
-def test_aelin_chat_trace_agent_dispatches_local_and_web_subagents(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    monkeypatch.setattr(
-        aelin_router,
-        "_build_intent_contract",
-        lambda **kwargs: {
-            "goal": "tracking",
-            "intent_type": "tracking",
-            "time_scope": "recent",
-            "freshness_hours": 24,
-            "requires_citations": False,
-            "requires_factuality": True,
-            "sports_result_intent": False,
-            "tracking_intent": True,
-            "ambiguities": [],
-            "confidence": 0.9,
-            "reason": "test_intent_tracking",
-            "intent_source": "llm",
-        },
-    )
-    monkeypatch.setattr(
-        aelin_router,
-        "_plan_tool_usage",
-        lambda **kwargs: {
-            "need_local_search": False,
-            "need_web_search": False,
-            "web_queries": [],
-            "context_boundaries": [],
-            "trace_context_boundaries": [
-                {"kind": "local", "query": "minimax memory", "scope": "memory"},
-                {"kind": "web", "query": "minimax latest model release", "scope": "release"},
-            ],
-            "track_suggestion": {
-                "target": "minimax 模型更新",
-                "source": "web",
-                "reason": "test_trace_dispatch",
-            },
-            "route": {"reply_agent": True, "trace_agent": True, "allow_web_retry": False},
-            "reason": "test_trace_route",
-            "planner_source": "llm",
-        },
-    )
-    monkeypatch.setattr(
-        aelin_router,
-        "_critic_tool_plan",
-        lambda **kwargs: {
-            "accepted": True,
-            "issues": [],
-            "patch": None,
-            "reason": "test_critic_accept",
-            "critic_source": "llm",
-        },
-    )
-    monkeypatch.setattr(
-        aelin_router._web_search,
-        "search_and_fetch",
-        lambda query, max_results=6, fetch_top_k=3: [
-            WebSearchResult(
-                title=f"{query} - result",
-                url=f"https://example.com/{abs(hash(query)) % 100000}",
-                snippet="trace web result",
-                fetched_excerpt="trace web result fetched excerpt",
-            )
-        ],
-    )
-
-    resp = client.post(
-        "/api/v1/aelin/chat",
-        json={"query": "帮我持续追踪 minimax 模型更新", "use_memory": True, "workspace": "default"},
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    stages = [str(it.get("stage") or "") for it in (data.get("tool_trace") or [])]
-    assert "trace_dispatch" in stages
-    assert any(stage.startswith("trace_local_subagent_") for stage in stages)
-    assert any(stage.startswith("trace_web_subagent_") for stage in stages)
-    assert any((it.get("kind") == "confirm_track") for it in (data.get("actions") or []))
-
-
-@pytest.mark.skip(reason="legacy retrieval route removed in agent-loop-only runtime")
 def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -1339,7 +1235,6 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
             "requires_citations": False,
             "requires_factuality": False,
             "sports_result_intent": False,
-            "tracking_intent": False,
             "ambiguities": [],
             "confidence": 0.9,
             "reason": "test_intent_chat",
@@ -1355,7 +1250,6 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
             "web_queries": [],
             "context_boundaries": [],
             "trace_context_boundaries": [{"kind": "web", "query": "nba today result", "scope": "score"}],
-            "track_suggestion": None,
             "route": {"reply_agent": True, "trace_agent": False, "allow_web_retry": False},
             "reason": "test_no_hard_override",
             "planner_source": "fallback",
@@ -1392,8 +1286,4 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     )
     assert isinstance(web_step, dict)
     assert web_step.get("status") == "skipped"
-
-
-
-
 

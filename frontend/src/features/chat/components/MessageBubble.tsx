@@ -28,7 +28,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
   const stickerLabel = message.expression ? (EXPRESSION_LABELS[message.expression] ?? 'Aelin 表情') : 'Aelin 表情'
-  const { confirmTrack, confirmBrowser } = useMessageBubbleActions({ message, onQuickPrompt })
+  const { confirmBrowser } = useMessageBubbleActions({ message, onQuickPrompt })
 
   return (
     <article className={cn(
@@ -109,9 +109,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
         <MessageCitationsPanel citations={message.citations || []} />
         <MessageActionsPanel
           actions={message.actions || []}
-          isTrackPending={confirmTrack.isPending}
           isBrowserPending={confirmBrowser.isPending}
-          onTrackConfirm={(action) => confirmTrack.mutate(action)}
           onBrowserConfirm={(action) => confirmBrowser.mutate(action)}
         />
         {/* Tool trace */}

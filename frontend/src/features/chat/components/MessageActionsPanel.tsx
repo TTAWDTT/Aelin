@@ -1,11 +1,9 @@
 import type { AelinAction } from '@/shared/api/types'
-import { isBrowserConfirmAction, isTrackAction, resolveActionHref } from './messageBubbleUtils'
+import { isBrowserConfirmAction, resolveActionHref } from './messageBubbleUtils'
 
 interface MessageActionsPanelProps {
   actions: AelinAction[]
-  isTrackPending: boolean
   isBrowserPending: boolean
-  onTrackConfirm: (action: AelinAction) => void
   onBrowserConfirm: (action: AelinAction) => void
 }
 
@@ -29,9 +27,7 @@ function ActionCard({
 
 export function MessageActionsPanel({
   actions,
-  isTrackPending,
   isBrowserPending,
-  onTrackConfirm,
   onBrowserConfirm,
 }: MessageActionsPanelProps) {
   if (actions.length === 0) return null
@@ -47,20 +43,6 @@ export function MessageActionsPanel({
             {actions.map((action, index) => {
               const detail = String(action.detail || '').trim()
               const key = `${String(action.kind || 'action')}-${index}`
-
-              if (isTrackAction(action)) {
-                return (
-                  <ActionCard key={key} title={action.title} detail={detail}>
-                    <button
-                      className="aelin-btn mt-2 h-7 px-2 text-[11px]"
-                      onClick={() => onTrackConfirm(action)}
-                      disabled={isTrackPending}
-                    >
-                      {isTrackPending ? '处理中…' : '执行'}
-                    </button>
-                  </ActionCard>
-                )
-              }
 
               if (isBrowserConfirmAction(action)) {
                 return (

@@ -319,7 +319,7 @@ def _sanitize_diary_answer(answer: str) -> str:
         lowered = stripped.lower()
         if "path=" in lowered:
             continue
-        if "tracking snapshot" in lowered:
+        if "memory snapshot" in lowered:
             continue
         if lowered.startswith("[expression:") or lowered.startswith("[emoji:"):
             continue

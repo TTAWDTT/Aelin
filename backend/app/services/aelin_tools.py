@@ -22,7 +22,7 @@ from app.services.device_center import (
     device_status_snapshot,
     open_desktop_external_url,
 )
-from app.services.openviking_bridge import TrackingFileMemoryBridge
+from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_client import get_pinchtab_client
@@ -119,7 +119,7 @@ class AelinToolHub:
         user_id: int,
         workspace: str,
         memory_service: AgentMemoryService,
-        file_memory_bridge: TrackingFileMemoryBridge,
+        file_memory_bridge: FileMemoryBridge,
         web_search_service: WebSearchService | None = None,
         attachment_service: AelinAttachmentService | None = None,
         available_attachment_ids: list[int] | None = None,
@@ -1104,7 +1104,7 @@ def run_aelin_structured_tools(
             "role": "system",
             "content": (
                 "You are a tool planner for Aelin. "
-                "Only call tools when the user query clearly needs memory/profile/diary/tracking/device/screen/browser/attachment operations. "
+                "Only call tools when the user query clearly needs memory/profile/diary/device/screen/browser/attachment operations. "
                 "At most call 2 tools. If no tool is needed, respond directly without tool calls."
             ),
         },

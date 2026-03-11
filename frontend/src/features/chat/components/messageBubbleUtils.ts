@@ -2,7 +2,6 @@ import type {
   AelinAction,
   AelinBrowserConfirmRequest,
   AelinBrowserConfirmResponse,
-  AelinTrackConfirmRequest,
 } from '@/shared/api/types'
 
 export const EXPRESSION_LABELS: Record<string, string> = {
@@ -35,7 +34,7 @@ export function formatMessageTime(timestamp: number) {
 
 export function resolveActionHref(action: AelinAction): string {
   const kind = String(action.kind || '').trim().toLowerCase()
-  if (kind === 'open_tracking' || kind === 'open_desk' || kind === 'open_todos') {
+  if (kind === 'open_desk' || kind === 'open_todos') {
     return '/desk'
   }
   if (kind === 'open_settings') {
@@ -48,28 +47,8 @@ export function resolveActionHref(action: AelinAction): string {
   return ''
 }
 
-export function isTrackAction(action: AelinAction) {
-  const kind = String(action.kind || '').trim().toLowerCase()
-  return kind === 'confirm_track' || kind === 'track_topic'
-}
-
 export function isBrowserConfirmAction(action: AelinAction) {
   return String(action.kind || '').trim().toLowerCase() === 'confirm_browser_action'
-}
-
-export function buildTrackConfirmBody(action: AelinAction, fallbackText: string): AelinTrackConfirmRequest | null {
-  const payload = action.payload || {}
-  const target = String(payload.target || payload.query || fallbackText || '').trim().slice(0, 240)
-  if (!target) return null
-  const source = String(payload.source || 'auto').trim().toLowerCase() || 'auto'
-  const query = String(payload.query || '').trim().slice(0, 500)
-  const workspace = String(payload.workspace || 'default').trim() || 'default'
-  return {
-    target,
-    source,
-    query: query || undefined,
-    workspace,
-  }
 }
 
 export function buildBrowserConfirmBody(action: AelinAction): AelinBrowserConfirmRequest {

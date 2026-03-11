@@ -453,31 +453,7 @@ class RemoteControlStatusResponse(BaseModel):
     generated_at: datetime
 
 
-class AelinTrackConfirmRequest(BaseModel):
-    target: str = Field(min_length=1, max_length=240)
-    source: str = Field(default="auto", min_length=1, max_length=32)
-    query: str = Field(default="", max_length=500)
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    description: str = Field(default="", max_length=1200)
-    tags: list[str] = Field(default_factory=list, max_length=20)
-    track_type: Optional[str] = Field(default=None, max_length=16)
-    interval_seconds: Optional[int] = Field(default=None, ge=30, le=86400)
-    notify_level: str = Field(default="all", min_length=1, max_length=16)
-    is_temporary: bool = False
-    temporary_days: int = Field(default=7, ge=1, le=30)
-
-
-class AelinTrackConfirmResponse(BaseModel):
-    status: str
-    message: str
-    provider: Optional[str] = None
-    target_id: Optional[int] = None
-    next_run_at: Optional[str] = None
-    actions: list[AelinAction] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinTrackingFileMemoryItem(BaseModel):
+class AelinFileMemoryItem(BaseModel):
     path: str
     title: str = ""
     preview: str = ""
@@ -491,14 +467,14 @@ class AelinTrackingFileMemoryItem(BaseModel):
     entry_kind: str = ""
 
 
-class AelinTrackingFileMemorySearchResponse(BaseModel):
+class AelinFileMemorySearchResponse(BaseModel):
     workspace: str = "default"
     total: int = 0
-    items: list[AelinTrackingFileMemoryItem] = Field(default_factory=list)
+    items: list[AelinFileMemoryItem] = Field(default_factory=list)
     generated_at: datetime
 
 
-class AelinTrackingFileMemoryContentResponse(BaseModel):
+class AelinFileMemoryContentResponse(BaseModel):
     workspace: str = "default"
     path: str
     title: str = ""
