@@ -12,7 +12,7 @@ from app.schemas import AelinCitation
 from app.services.agent_memory import AgentMemoryService
 from app.services.llm import LLMService
 from app.services.memory_draft import ParallelMemoryDraftResult
-from app.services.openviking_bridge import tracking_file_memory_bridge
+from app.services.openviking_bridge import file_memory_bridge
 from app.settings import settings
 from app.routers.aelin_text_helpers import (
     _build_chat_diary_entry,
@@ -22,7 +22,7 @@ from app.routers.aelin_text_helpers import (
 )
 
 _memory = AgentMemoryService()
-_tracking_file_memory = tracking_file_memory_bridge
+_file_memory = file_memory_bridge
 
 def _save_chat_diary_entry(
     db: Session,
@@ -47,7 +47,7 @@ def _save_chat_diary_entry(
         display_name="与主人的聊天日记",
     )
     source_indices = _build_source_indices_from_citations(citations)
-    out_path = _tracking_file_memory.append_insight(
+    out_path = _file_memory.append_insight(
         target=target,
         title=title,
         markdown=markdown,
@@ -65,7 +65,7 @@ def _save_chat_diary_entry(
             db,
             user_id,
             f"[chat-diary] {title}\npath: {str(out_path)}",
-            kind="tracking_insight",
+            kind="memory_insight",
             source="chat:diary",
         )
     except Exception:
@@ -151,7 +151,7 @@ def _save_parallel_draft_entry(
             _sanitize_diary_answer(answer),
         ]
     ).strip()
-    out_path = _tracking_file_memory.append_insight(
+    out_path = _file_memory.append_insight(
         target=target,
         title=str(draft_result.title or "并行记忆草稿")[:120],
         markdown=merged_markdown,
@@ -169,20 +169,20 @@ def _save_parallel_draft_entry(
             db,
             user_id,
             f"[parallel-draft] {draft_result.title}\npath: {str(out_path)}",
-            kind="tracking_insight",
+            kind="memory_insight",
             source="chat:parallel-draft",
         )
     except Exception:
         pass
     return {"written": True, "reason": "", "path": str(out_path)}
 
-def _decide_tracking_insight_write(
+def _decide_memory_insight_write(
     *,
     service: LLMService,
     provider: str,
     query: str,
     answer: str,
-    tracking_snapshot: dict[str, Any] | None,
+    memory_snapshot: dict[str, Any] | None,
     file_memory_lines: list[str],
 ) -> dict[str, Any]:
     if provider == "rule_based" or not service.is_configured():
@@ -192,16 +192,16 @@ def _decide_tracking_insight_write(
     if not question or not reply:
         return {"should_write": False, "reason": "empty_turn", "confidence": 0.0}
 
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
-    active_items = tracking.get("active_items") if isinstance(tracking.get("active_items"), list) else []
-    matched_items = tracking.get("matched_items") if isinstance(tracking.get("matched_items"), list) else []
+    memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
+    active_items = memory.get("active_items") if isinstance(memory.get("active_items"), list) else []
+    matched_items = memory.get("matched_items") if isinstance(memory.get("matched_items"), list) else []
     active_hint = "; ".join(str(it.get("target") or "").strip() for it in active_items[:8] if isinstance(it, dict) and str(it.get("target") or "").strip())
     matched_hint = "; ".join(str(it.get("target") or "").strip() for it in matched_items[:6] if isinstance(it, dict) and str(it.get("target") or "").strip())
     file_hint = "\n".join(file_memory_lines[:6]) if file_memory_lines else ""
 
     system_prompt = (
-        "You are Aelin planner for long-term tracking memory write.\\n"
-        "Decide autonomously whether this finished answer should be persisted as a tracking insight.\\n"
+        "You are Aelin planner for long-term memory write.\\n"
+        "Decide autonomously whether this finished answer should be persisted as a reusable memory insight.\\n"
         "Return strict JSON only with keys: should_write, confidence, title, markdown, reason.\\n"
         "Rules: should_write=true only when output adds stable insight helpful for future discussion; markdown should be concise, structured, and factual.\\n"
         "confidence in [0,1]."
@@ -209,8 +209,8 @@ def _decide_tracking_insight_write(
     user_prompt = (
         f"question: {question[:500]}\\n\\n"
         + f"answer: {reply[:1800]}\\n\\n"
-        + f"matched_tracking: {matched_hint or 'none'}\\n"
-        + f"active_tracking: {active_hint or 'none'}\\n"
+        + f"matched_memory: {matched_hint or 'none'}\\n"
+        + f"active_memory: {active_hint or 'none'}\\n"
         + (f"file_memory_hits:\\n{file_hint}\\n" if file_hint else "")
     )
     try:

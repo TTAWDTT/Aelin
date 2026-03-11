@@ -40,14 +40,16 @@ from app.schemas import (
     AgentFocusItemOut,
     AgentMemoryNoteOut,
 )
-from app.services.agent_memory import AgentMemoryService
+from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services import content_tagging
 from app.services.aelin_tools import (
     AelinToolHub,
+    get_active_pinchtab_session,
     run_aelin_structured_tools,
     should_attempt_aelin_tools,
     summarize_tool_results_for_prompt,
 )
+from app.services.skill_loader import get_skill_prompts_for_query_and_tools
 from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
@@ -75,11 +77,11 @@ from app.services.aelin_chat_planning import (
     _check_evidence_coverage,
     _critic_tool_plan,
     _decompose_web_context_boundaries,
+    _extract_search_subject,
     _is_diary_only_query,
     _is_smalltalk_query,
     _is_sports_result_query,
     _is_time_sensitive_query,
-    _is_tracking_intent_query,
     _judge_answer_grounding,
     _main_agent_route,
     _normalize_context_boundaries,
@@ -89,7 +91,6 @@ from app.services.aelin_chat_planning import (
     _plan_tool_usage,
     _safe_float,
     _safe_int,
-    _trace_agent_suggestion,
     _verify_reply_answer,
 )
 from app.services.aelin_chat_answering import (
@@ -105,7 +106,7 @@ from app.services.aelin_chat_memory import (
 )
 from app.services.memory_draft import ParallelMemoryDraftResult, build_parallel_memory_draft
 from app.services.media_ingest import MediaIngestError
-from app.services.openviking_bridge import tracking_file_memory_bridge
+from app.services.openviking_bridge import file_memory_bridge
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
 from app.services.web_search import WebSearchResult, WebSearchService
@@ -126,7 +127,7 @@ _log = logging.getLogger(__name__)
 _memory = AgentMemoryService()
 _summarizer = RuleBasedSummarizer()
 _web_search = WebSearchService()
-_tracking_file_memory = tracking_file_memory_bridge
+_file_memory = file_memory_bridge
 _memory_draft_executor = ThreadPoolExecutor(
     max_workers=max(1, min(8, int(getattr(settings, "aelin_parallel_memory_draft_workers", 4) or 4))),
     thread_name_prefix="aelin-memory-draft",
@@ -277,8 +278,9 @@ def _build_fixed_profile_injection(bundle: dict[str, Any], *, max_items: int = 1
 
 def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: str) -> dict:
     workspace_norm = _normalize_workspace(workspace)
-    snap = _memory.snapshot(db, user_id, query=query)
+    summary = _memory.get_summary(db, user_id)
     note_rows = _memory.list_notes(db, user_id, limit=24)
+    focus_items = _memory.build_focus_items(db, user_id, query=query, limit=8)
     notes: list[AgentMemoryNoteOut] = []
     for row in note_rows:
         src = (row.source or "").strip().lower()
@@ -312,7 +314,13 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
         except Exception:
             continue
 
-    brief_raw = _memory.build_daily_brief(db, user_id)
+    layout_rows = _memory.get_latest_layout_cards(db, user_id, workspace=workspace_norm)
+    brief_raw = _memory.build_daily_brief_from_items(
+        db,
+        user_id,
+        focus_items=focus_items[:6],
+        todos=todos_raw,
+    )
     daily_brief = AelinDailyBrief(
         generated_at=brief_raw["generated_at"],
         summary=str(brief_raw.get("summary") or ""),
@@ -320,8 +328,16 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
         actions=[AelinDailyBriefAction(**item) for item in brief_raw.get("actions", [])],
     )
 
-    layout_cards = _to_layout_cards(_memory.get_latest_layout_cards(db, user_id, workspace=workspace_norm))
-    memory_layers_raw = _memory.build_memory_layers(db, user_id, workspace=workspace_norm, query=query)
+    layout_cards = _to_layout_cards(layout_rows)
+    memory_layers_raw = _memory.build_memory_layers_from_items(
+        summary=summary,
+        notes=note_rows,
+        focus_items=focus_items,
+        todos=todos_raw,
+        layout_cards=layout_rows,
+        workspace=workspace_norm,
+        query=query,
+    )
     memory_layers = AelinMemoryLayers(
         facts=[AelinMemoryLayerItem(**item) for item in (memory_layers_raw.get("facts") or [])],
         preferences=[AelinMemoryLayerItem(**item) for item in (memory_layers_raw.get("preferences") or [])],
@@ -330,14 +346,22 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
     )
     notifications = [
         AelinNotificationItem(**item)
-        for item in _memory.build_notifications(db, user_id, limit=24)
+        for item in _memory.build_notifications_from_items(
+            db,
+            user_id,
+            brief=brief_raw,
+            todos=todos_raw,
+            limit=24,
+        )
     ]
+
+    serialized_focus_items = [serialize_focus_item(item) for item in focus_items]
 
     return {
         "workspace": workspace_norm,
-        "summary": str(snap.get("summary") or ""),
-        "focus_items": [AgentFocusItemOut(**item) for item in snap.get("focus_items", [])],
-        "focus_items_raw": list(snap.get("focus_items", [])),
+        "summary": str(summary or ""),
+        "focus_items": [AgentFocusItemOut(**item) for item in serialized_focus_items],
+        "focus_items_raw": serialized_focus_items,
         "notes": notes,
         "notes_count": len(notes),
         "todos": todos,
@@ -386,7 +410,7 @@ def _build_cached_base_context_bundle(db: Session, user_id: int, *, workspace: s
     return bundle
 
 
-def _empty_tracking_snapshot() -> dict[str, Any]:
+def _empty_memory_snapshot() -> dict[str, Any]:
     return {
         "active_items": [],
         "matched_items": [],
@@ -396,7 +420,7 @@ def _empty_tracking_snapshot() -> dict[str, Any]:
     }
 
 
-def _build_cached_tracking_snapshot(
+def _build_cached_memory_snapshot(
     db: Session,
     *,
     user_id: int,
@@ -405,8 +429,8 @@ def _build_cached_tracking_snapshot(
     include_file_memory: bool,
     include_diary_memory: bool = False,
 ) -> dict[str, Any]:
-    # Tracking 子系统已移除，这里统一返回空快照。
-    return _empty_tracking_snapshot()
+    # The old follow-up subsystem is gone; only file-memory retrieval remains.
+    return _empty_memory_snapshot()
 
 
 def _to_citations(raw_focus_items: list[dict], max_items: int) -> list[AelinCitation]:
@@ -442,19 +466,7 @@ def _fetch_local_focus_citations(
     try:
         n = max(4, min(20, int(max_citations or 6) * 2))
         focus_items = _memory.build_focus_items(local_db, user_id, query=query, limit=n)
-        rows = [
-            {
-                "message_id": int(item.message_id or 0),
-                "source": str(item.source or "unknown"),
-                "source_label": str(item.source or "unknown"),
-                "sender": str(item.sender or ""),
-                "sender_avatar_url": str(item.sender_avatar_url or "").strip() or None,
-                "title": str(item.title or ""),
-                "received_at": str(item.received_at or ""),
-                "score": float(item.score or 0.0),
-            }
-            for item in focus_items
-        ]
+        rows = [serialize_focus_item(item) for item in focus_items]
         return _to_citations(rows, max_citations), ""
     except Exception as exc:
         return [], str(exc)[:140]
@@ -563,7 +575,6 @@ def _build_actions(
     citations: list[AelinCitation],
     *,
     has_todos: bool,
-    track_suggestion: dict[str, str] | None = None,
 ) -> list[AelinAction]:
     actions: list[AelinAction] = [
         AelinAction(
@@ -582,32 +593,6 @@ def _build_actions(
                 detail=f"查看：{citations[0].title}",
                 payload={"message_id": str(citations[0].message_id), "query": query.strip()[:180]},
             ),
-        )
-    if track_suggestion:
-        target = str(track_suggestion.get("target") or "").strip()
-        source = str(track_suggestion.get("source") or "auto").strip().lower()
-        reason = str(track_suggestion.get("reason") or "").strip()
-        if target:
-            actions.append(
-                AelinAction(
-                    kind="confirm_track",
-                    title=f"跟踪 {target} 的后续动态？",
-                    detail=reason or "Aelin 判断这可能值得持续跟踪。",
-                    payload={
-                        "target": target[:240],
-                        "source": source[:32] or "auto",
-                        "query": query.strip()[:500],
-                    },
-                ),
-            )
-    if "追踪" not in query and "follow" not in query.lower():
-        actions.append(
-            AelinAction(
-                kind="track_topic",
-                title="持续追踪该主题",
-                detail="将当前问题加入长期追踪边界",
-                payload={"query": query.strip()},
-            )
         )
     if has_todos:
         actions.append(
@@ -690,7 +675,7 @@ def _tracking_key(source: str, target: str) -> str:
     return f"{(source or 'auto').strip().lower()}::{(target or '').strip().lower()}"
 
 
-def _build_planner_tracking_snapshot(
+def _build_planner_memory_snapshot(
     db: Session,
     *,
     user_id: int,
@@ -699,11 +684,11 @@ def _build_planner_tracking_snapshot(
     include_file_memory: bool = True,
     include_diary_memory: bool = False,
 ) -> dict[str, Any]:
-    # Tracking 子系统已移除，这里不再从 tracking_autonomy 加载目标，仅保留文件记忆部分。
+    # Only file-memory retrieval remains here; legacy autonomy is gone.
     workspace_norm = _normalize_workspace(workspace)
     memory_hits: list[Any] = []
     if include_file_memory:
-        memory_hits = _tracking_file_memory.search(
+        memory_hits = _file_memory.search(
             user_id=user_id,
             workspace=workspace_norm,
             query=query,
@@ -932,7 +917,7 @@ def _aelin_chat_impl(
         if media_save_state.get("written"):
             actions.append(
                 AelinAction(
-                    kind="open_tracking",
+                    kind="open_desk",
                     title="打开 Aelinの日记",
                     detail=str(media_save_state.get("diary_path") or "")[:220],
                     payload={"workspace": _normalize_workspace(payload.workspace)},
@@ -957,7 +942,7 @@ def _aelin_chat_impl(
         if bool(chat_diary_media.get("written")):
             actions.append(
                 AelinAction(
-                    kind="open_tracking",
+                    kind="open_desk",
                     title="打开聊天日记",
                     detail=str(chat_diary_media.get("path") or "")[:220],
                     payload={"workspace": _normalize_workspace(payload.workspace)},
@@ -997,7 +982,7 @@ def _aelin_chat_impl(
     history_turns = _normalize_history(payload.history)
     diary_only_mode = _is_diary_only_query(payload.query)
     include_file_memory_for_plan = bool((not _is_smalltalk_query(payload.query)) or diary_only_mode)
-    tracking_snapshot = _build_cached_tracking_snapshot(
+    memory_snapshot = _build_cached_memory_snapshot(
         db,
         user_id=current_user.id,
         workspace=payload.workspace,
@@ -1010,7 +995,7 @@ def _aelin_chat_impl(
         service=service,
         provider=provider,
         memory_summary=memory_summary,
-        tracking_snapshot=tracking_snapshot,
+        memory_snapshot=memory_snapshot,
     )
     if diary_only_mode:
         intent_contract = dict(intent_contract)
@@ -1036,7 +1021,7 @@ def _aelin_chat_impl(
         service=service,
         provider=provider,
         memory_summary=memory_summary,
-        tracking_snapshot=tracking_snapshot,
+        memory_snapshot=memory_snapshot,
         intent_contract=intent_contract,
     )
     critic = _critic_tool_plan(
@@ -1067,7 +1052,6 @@ def _aelin_chat_impl(
         tool_plan["web_queries"] = []
         tool_plan["context_boundaries"] = []
         tool_plan["trace_context_boundaries"] = []
-        tool_plan["track_suggestion"] = None
         route_patch = dict(tool_plan.get("route") or {})
         route_patch.update({"reply_agent": True, "trace_agent": False, "allow_web_retry": False})
         tool_plan["route"] = route_patch
@@ -1098,7 +1082,7 @@ def _aelin_chat_impl(
             query=payload.query,
             web_boundaries=web_boundaries,
             intent_contract=intent_contract,
-            tracking_snapshot=tracking_snapshot,
+            memory_snapshot=memory_snapshot,
             service=service,
             provider=provider,
         )
@@ -1134,14 +1118,12 @@ def _aelin_chat_impl(
     need_local_search = bool(local_boundaries)
     need_web_search = bool(web_boundaries)
     web_queries = [str(it.get("query") or "") for it in web_boundaries if str(it.get("query") or "").strip()]
-    planned_track_suggestion = tool_plan.get("track_suggestion") if isinstance(tool_plan.get("track_suggestion"), dict) else None
     route = _main_agent_route(
         need_local_search=need_local_search,
         need_web_search=need_web_search,
-        planned_track_suggestion=planned_track_suggestion if isinstance(planned_track_suggestion, dict) else None,
         planned_route=tool_plan.get("route") if isinstance(tool_plan.get("route"), dict) else None,
     )
-    trace_route_enabled = bool(route.get("trace_agent")) or bool(planned_track_suggestion)
+    trace_route_enabled = bool(route.get("trace_agent"))
     trace_context_boundaries = _build_trace_context_boundaries(
         query=payload.query,
         raw_boundaries=tool_plan.get("trace_context_boundaries"),
@@ -1149,7 +1131,7 @@ def _aelin_chat_impl(
         need_web_search=trace_route_enabled and bool(need_web_search or route.get("allow_web_retry")),
         web_queries=web_queries,
         intent_contract=intent_contract,
-        tracking_snapshot=tracking_snapshot,
+        memory_snapshot=memory_snapshot,
     )
     trace_local_boundaries = [
         it for it in trace_context_boundaries if str(it.get("kind") or "") == "local"
@@ -1164,7 +1146,7 @@ def _aelin_chat_impl(
         detail=(
             f"{planning_reason}; mode={search_mode}; local={len(local_boundaries)}; web={len(web_boundaries)}; "
             f"trace_local={len(trace_local_boundaries)}; trace_web={len(trace_web_boundaries)}; "
-            f"matched_tracking={int(tracking_snapshot.get('matched_count') or 0)}"
+            f"matched_memory={int(memory_snapshot.get('matched_count') or 0)}"
         ),
     )
     add_trace(
@@ -1458,8 +1440,8 @@ def _aelin_chat_impl(
         web_evidence_lines = []
 
     file_memory_items_raw = (
-        tracking_snapshot.get("matched_file_items")
-        if isinstance(tracking_snapshot, dict) and isinstance(tracking_snapshot.get("matched_file_items"), list)
+        memory_snapshot.get("matched_file_items")
+        if isinstance(memory_snapshot, dict) and isinstance(memory_snapshot.get("matched_file_items"), list)
         else []
     )
     file_memory_items: list[dict[str, Any]] = []
@@ -1483,7 +1465,7 @@ def _aelin_chat_impl(
 
     if (not file_memory_items) and (not local_jobs) and (need_local_search or diary_only_mode) and payload.query.strip():
         try:
-            fallback_hits = _tracking_file_memory.search(
+            fallback_hits = _file_memory.search(
                 user_id=current_user.id,
                 workspace=payload.workspace,
                 query=payload.query,
@@ -1512,7 +1494,7 @@ def _aelin_chat_impl(
     for item in file_memory_items[:6]:
         title = str(item.get("title") or item.get("target") or "memory").strip()
         preview = re.sub(r"\s+", " ", str(item.get("preview") or "")).strip()[:160]
-        source = str(item.get("source") or "tracking").strip() or "tracking"
+        source = str(item.get("source") or "memory").strip() or "memory"
         kind = str(item.get("kind") or "memory").strip() or "memory"
         topic_path = str(item.get("topic_path") or "").strip()
         path = str(item.get("path") or "").strip()[:220]
@@ -1599,7 +1581,7 @@ def _aelin_chat_impl(
             user_id=current_user.id,
             workspace=payload.workspace,
             memory_service=_memory,
-            file_memory_bridge=_tracking_file_memory,
+            file_memory_bridge=_file_memory,
             web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
             available_attachment_ids=_normalize_attachment_ids(getattr(payload, "attachment_ids", [])),
             llm_service=service,
@@ -1623,22 +1605,6 @@ def _aelin_chat_impl(
                 detail=(tool_err[:180] if tool_err else "no structured tools needed"),
                 count=0,
             )
-        for run in structured_tool_runs:
-            if str(run.get("name") or "").strip().lower() != "tracking":
-                continue
-            result = run.get("result") if isinstance(run.get("result"), dict) else {}
-            target_id = int(result.get("target_id") or 0) if str(result.get("target_id") or "").isdigit() else 0
-            target = str(result.get("target") or "").strip()
-            if target_id <= 0:
-                continue
-            structured_tool_actions.append(
-                AelinAction(
-                    kind="open_tracking",
-                    title="已通过工具创建追踪",
-                    detail=(target[:120] if target else f"target_id={target_id}"),
-                    payload={"target_id": str(target_id), "workspace": payload.workspace},
-                )
-            )
         if structured_tool_runs:
             first_diary = next(
                 (
@@ -1657,7 +1623,7 @@ def _aelin_chat_impl(
                     if detail_path:
                         structured_tool_actions.append(
                             AelinAction(
-                                kind="open_tracking",
+                                kind="open_desk",
                                 title="查看工具命中的日记",
                                 detail=detail_path,
                                 payload={"workspace": payload.workspace, "path": detail_path},
@@ -1916,7 +1882,7 @@ def _aelin_chat_impl(
             payload.query,
             used_web_queries,
             intent_contract=intent_contract,
-            tracking_snapshot=tracking_snapshot,
+            memory_snapshot=memory_snapshot,
         )
         if retry_queries:
             retried_web = len(retry_queries)
@@ -2102,165 +2068,7 @@ def _aelin_chat_impl(
     if maybe_expression:
         expression = maybe_expression
 
-    trace_should_run = bool(route.get("trace_agent")) or bool(planned_track_suggestion)
-    track_suggestion = planned_track_suggestion if isinstance(planned_track_suggestion, dict) else None
-    trace_local_citations: list[AelinCitation] = []
-    trace_web_citations: list[AelinCitation] = []
-    trace_web_results: list[WebSearchResult] = []
-    if trace_should_run:
-        add_trace(
-            "trace_agent",
-            status="running",
-            detail=f"dispatching local={len(trace_local_boundaries)} web={len(trace_web_boundaries)}",
-        )
-        add_trace(
-            "trace_dispatch",
-            status="completed",
-            detail=f"context_boundaries={len(trace_local_boundaries) + len(trace_web_boundaries)}",
-            count=len(trace_local_boundaries) + len(trace_web_boundaries),
-        )
-        trace_jobs: list[dict[str, Any]] = []
-        for idx, boundary in enumerate(trace_local_boundaries, start=1):
-            sub_query = str(boundary.get("query") or payload.query).strip()[:180]
-            sub_scope = str(boundary.get("scope") or sub_query).strip()[:120]
-            add_trace(f"trace_local_subagent_{idx}", status="running", detail=sub_scope or sub_query)
-            trace_jobs.append(
-                {
-                    "kind": "local",
-                    "idx": idx,
-                    "query": sub_query,
-                    "scope": sub_scope,
-                }
-            )
-        for idx, boundary in enumerate(trace_web_boundaries, start=1):
-            sub_query = str(boundary.get("query") or payload.query).strip()[:180]
-            sub_scope = str(boundary.get("scope") or sub_query).strip()[:120]
-            add_trace(f"trace_web_subagent_{idx}", status="running", detail=sub_scope or sub_query)
-            trace_jobs.append(
-                {
-                    "kind": "web",
-                    "idx": idx,
-                    "query": sub_query,
-                    "scope": sub_scope,
-                }
-            )
-
-        def _trace_local_lookup(raw_query: str) -> tuple[list[AelinCitation], str]:
-            return _fetch_local_focus_citations(
-                user_id=current_user.id,
-                query=raw_query,
-                max_citations=payload.max_citations,
-            )
-
-        def _trace_web_lookup(raw_query: str) -> list[WebSearchResult]:
-            return _web_search.search_and_fetch(
-                raw_query,
-                max_results=_WEB_SEARCH_MAX_RESULTS,
-                fetch_top_k=_WEB_SEARCH_FETCH_TOP_K,
-            )
-
-        futures: dict[Any, dict[str, Any]] = {}
-        if trace_jobs:
-            max_trace_workers = max(1, min(len(trace_jobs), _MAX_LOCAL_SUBAGENTS + _MAX_WEB_SUBAGENTS))
-            with ThreadPoolExecutor(max_workers=max_trace_workers) as pool:
-                for job in trace_jobs:
-                    if job["kind"] == "local":
-                        futures[pool.submit(_trace_local_lookup, str(job["query"]))] = job
-                    else:
-                        futures[pool.submit(_trace_web_lookup, str(job["query"]))] = job
-
-                for fut in as_completed(futures):
-                    job = futures[fut]
-                    kind = str(job.get("kind") or "")
-                    idx = int(job.get("idx") or 0)
-                    query_text = str(job.get("query") or "")
-                    scope_text = str(job.get("scope") or query_text)
-                    if kind == "local":
-                        sub_stage = f"trace_local_subagent_{idx}"
-                        try:
-                            cites, trace_local_error = fut.result()
-                        except Exception as e:
-                            add_trace(sub_stage, status="failed", detail=f"{scope_text or query_text}: {str(e)[:140]}")
-                            continue
-                        if trace_local_error:
-                            add_trace(sub_stage, status="failed", detail=f"{scope_text or query_text}: {trace_local_error}")
-                            continue
-                        trace_local_citations.extend(cites or [])
-                        add_trace(sub_stage, status="completed", detail=scope_text or query_text, count=len(cites or []))
-                        continue
-
-                    sub_stage = f"trace_web_subagent_{idx}"
-                    try:
-                        rows = fut.result() or []
-                    except Exception as e:
-                        add_trace(sub_stage, status="failed", detail=f"{scope_text or query_text}: {str(e)[:140]}")
-                        continue
-                    if not rows:
-                        add_trace(sub_stage, status="failed", detail=f"{scope_text or query_text}: no result")
-                        continue
-                    trace_web_results.extend(rows[:_WEB_SEARCH_MAX_RESULTS])
-                    provider_counts = Counter(
-                        str(getattr(it, "provider", "") or "unknown")
-                        for it in rows[:_WEB_SEARCH_MAX_RESULTS]
-                    )
-                    fetch_counts = Counter(
-                        str(getattr(it, "fetch_mode", "") or "none")
-                        for it in rows[:_WEB_SEARCH_MAX_RESULTS]
-                    )
-                    provider_note = ",".join(f"{name}:{count}" for name, count in provider_counts.most_common(3))
-                    fetch_note = ",".join(f"{name}:{count}" for name, count in fetch_counts.most_common(3))
-                    try:
-                        persisted = _persist_web_search_results(
-                            db,
-                            current_user.id,
-                            query=query_text,
-                            results=rows,
-                        )
-                    except Exception:
-                        persisted = []
-                    trace_web_citations.extend(persisted)
-                    add_trace(
-                        sub_stage,
-                        status="completed",
-                        detail=f"{scope_text or query_text}; p={provider_note or 'unknown'}; f={fetch_note or 'none'}",
-                        count=len(persisted),
-                    )
-
-        if trace_local_citations:
-            trace_local_citations = _hydrate_citation_avatars(db, current_user.id, trace_local_citations)
-        trace_merged = _dedupe_citations([*trace_local_citations, *trace_web_citations], limit=max_citations)
-        if trace_merged:
-            citations = _dedupe_citations([*citations, *trace_merged], limit=max_citations)
-            add_trace(
-                "message_hub",
-                status="completed",
-                detail=f"trace merge local={len(trace_local_citations)} web={len(trace_web_citations)}",
-                count=len(citations),
-            )
-            web_results_for_answer.extend(trace_web_results[:_WEB_SEARCH_MAX_RESULTS])
-
-        suggestion, trace_reason = _trace_agent_suggestion(
-            query=payload.query,
-            planned_track_suggestion=track_suggestion if isinstance(track_suggestion, dict) else None,
-            citations=citations,
-            need_web_search=bool(need_web_search or retried_web or trace_web_citations),
-        )
-        if suggestion:
-            track_suggestion = suggestion
-            source_list = sorted({str(it.source or "").strip() for it in citations if str(it.source or "").strip()})
-            emit(
-                "confirmed",
-                {
-                    "items": [str(track_suggestion.get("target") or "").strip()[:240]],
-                    "source_count": len(source_list),
-                    "sources": source_list[:5],
-                },
-            )
-            add_trace("trace_agent", status="completed", detail=trace_reason, count=1)
-        else:
-            add_trace("trace_agent", status="completed", detail=trace_reason, count=0)
-    else:
-        add_trace("trace_agent", status="skipped", detail="trace route disabled")
+    add_trace("trace_agent", status="skipped", detail="trace route disabled")
 
     if media_result is not None and not media_summary_intent:
         save_note = "并写入 Aelinの日记。"
@@ -2291,9 +2099,9 @@ def _aelin_chat_impl(
 
     # Tracking autonomy has been removed; keep a lightweight stubbed result so
     # traces and downstream logic remain consistent without invoking legacy
-    # tracking DB or planner flows.
-    insight_write_result: dict[str, Any] = {"written": False, "reason": "tracking_disabled"}
-    add_trace("insight_write", status="skipped", detail="tracking_disabled", count=0)
+    # legacy memory DB or planner flows.
+    insight_write_result: dict[str, Any] = {"written": False, "reason": "memory_write_disabled"}
+    add_trace("insight_write", status="skipped", detail="memory_write_disabled", count=0)
 
     chat_diary_result: dict[str, Any] = {"written": False, "reason": "not_evaluated", "path": ""}
     try:
@@ -2389,13 +2197,12 @@ def _aelin_chat_impl(
         payload.query,
         citations,
         has_todos=bool(todo_titles),
-        track_suggestion=track_suggestion if isinstance(track_suggestion, dict) else None,
     )]
     if media_result is not None:
         actions.insert(
             0,
             AelinAction(
-                kind="open_tracking",
+                kind="open_desk",
                 title="查看 Aelinの日记摘要",
                 detail=(
                     str(media_save_state.get("diary_path") or "").strip()[:220]
@@ -2410,7 +2217,7 @@ def _aelin_chat_impl(
         actions.insert(
             0,
             AelinAction(
-                kind="open_tracking",
+                kind="open_desk",
                 title="已沉淀长期洞察",
                 detail=str(insight_write_result.get("path") or "").strip()[:220],
                 payload={
@@ -2423,7 +2230,7 @@ def _aelin_chat_impl(
         actions.insert(
             0,
             AelinAction(
-                kind="open_tracking",
+                kind="open_desk",
                 title="查看并行记忆草稿",
                 detail=str(parallel_draft_commit.get("path") or "").strip()[:220],
                 payload={"workspace": payload.workspace, "query": payload.query[:120]},
@@ -2440,57 +2247,6 @@ def _aelin_chat_impl(
         generated_at=datetime.now(timezone.utc),
     )
     return response
-
-
-_TRACK_CREATE_COMMAND_RE = re.compile(
-    r"^(?:请|帮我|麻烦|给我)?\s*(?:创建|新建|添加|开始)?\s*(?:一个)?\s*(?:追踪|跟踪|监控|track(?:ing)?)",
-    flags=re.I,
-)
-
-
-def _detect_forced_tracking_create(query: str) -> dict[str, str] | None:
-    text = str(query or "").strip()
-    if not text:
-        return None
-    lower = text.lower()
-    has_track_word = any(token in text for token in ("追踪", "跟踪", "监控")) or any(
-        token in lower for token in ("track", "tracking", "monitor")
-    )
-    has_create_word = any(token in text for token in ("创建", "新建", "添加", "开始"))
-    if not has_track_word:
-        return None
-    if not (has_create_word or _TRACK_CREATE_COMMAND_RE.search(text)):
-        return None
-
-    target = ""
-    for sep in ("：", ":"):
-        if sep in text:
-            left, right = text.split(sep, 1)
-            if any(token in left for token in ("追踪", "跟踪", "监控")) or any(
-                token in left.lower() for token in ("track", "tracking", "monitor")
-            ):
-                target = right.strip()
-                break
-    if not target:
-        match = re.search(r"(?:追踪|跟踪|监控|track(?:ing)?)(?:目标|主题|一下)?\s*(.+)$", text, flags=re.I)
-        if match:
-            target = str(match.group(1) or "").strip()
-    if not target:
-        url_match = re.search(r"https?://[^\s<>()\"']+", text, flags=re.I)
-        if url_match:
-            target = str(url_match.group(0) or "").strip()
-
-    target = re.sub(r"^[\s\-:：]+|[\s，,。！？!?]+$", "", target).strip()
-    if len(target) < 2:
-        return None
-
-    source = _infer_tracking_source(target)
-    return {
-        "action": "create",
-        "target": target[:240],
-        "source": source[:32] or "web",
-        "query": text[:500],
-    }
 
 
 def _build_attachment_prefetch_fallback_response(
@@ -2558,6 +2314,10 @@ def _build_attachment_prefetch_fallback_response(
     )
 
 
+def _get_memory_summary_for_chat(db: Session, user_id: int) -> str:
+    return str(_memory.get_summary(db, user_id) or "")
+
+
 def _try_agent_loop_chat(
     payload: AelinChatRequest,
     db: Session,
@@ -2566,70 +2326,10 @@ def _try_agent_loop_chat(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     persist_memory: bool = True,
     force_disable_writes: bool = False,
-    forced_tracking_create: dict[str, str] | None = None,
     cancel_token: Any | None = None,
 ) -> AelinChatResponse | None:
     pre_loop_started = time.perf_counter()
     query_preview = " ".join(str(payload.query or "").split())[:120]
-
-    service, provider = _resolve_llm_service(db, current_user)
-    _log.info(
-        "agent_loop preflight phase=resolve_service user_id=%s workspace=%s provider=%s latency_ms=%s query=%s",
-        int(current_user.id),
-        _normalize_workspace(payload.workspace),
-        str(provider or ""),
-        int((time.perf_counter() - pre_loop_started) * 1000),
-        query_preview,
-    )
-    llm_available = not (provider == "rule_based" or not service.is_configured())
-    if not llm_available:
-        return None
-
-    workspace = _normalize_workspace(payload.workspace)
-    base_context_started = time.perf_counter()
-    base_bundle = _build_cached_base_context_bundle(
-        db,
-        current_user.id,
-        workspace=workspace,
-    )
-    _log.info(
-        "agent_loop preflight phase=base_context user_id=%s workspace=%s latency_ms=%s",
-        int(current_user.id),
-        workspace,
-        int((time.perf_counter() - base_context_started) * 1000),
-    )
-    memory_summary = str(base_bundle.get("summary") or "")
-    normalize_started = time.perf_counter()
-    history_turns = _normalize_history(payload.history)
-    images = _normalize_images(payload.images)
-    _log.info(
-        "agent_loop preflight phase=normalize_inputs user_id=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
-        int(current_user.id),
-        workspace,
-        len(history_turns),
-        len(images),
-        int((time.perf_counter() - normalize_started) * 1000),
-    )
-    attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
-
-    tool_hub_started = time.perf_counter()
-    tool_hub = AelinToolHub(
-        db=db,
-        user_id=current_user.id,
-        workspace=workspace,
-        memory_service=_memory,
-        file_memory_bridge=_tracking_file_memory,
-        web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
-        available_attachment_ids=attachment_ids,
-        llm_service=service,
-    )
-    _log.info(
-        "agent_loop preflight phase=tool_hub_ready user_id=%s workspace=%s latency_ms=%s",
-        int(current_user.id),
-        workspace,
-        int((time.perf_counter() - tool_hub_started) * 1000),
-    )
-
     prefixed_traces: list[AelinToolStep] = []
     prefixed_actions: list[AelinAction] = []
     forced_intent = ""
@@ -2651,42 +2351,103 @@ def _try_agent_loop_chat(
             except Exception:
                 pass
 
-    if forced_tracking_create and not force_disable_writes:
-        forced_intent = "tracking_create"
-        forced_args = {
-            "action": "create",
-            "target": str(forced_tracking_create.get("target") or "")[:240],
-            "source": str(forced_tracking_create.get("source") or "web")[:32],
-            "query": str(forced_tracking_create.get("query") or payload.query or "")[:500],
-        }
-        _emit_prefixed("intent_router", status="completed", detail="forced_tracking_create", count=1)
-        started = time.perf_counter()
-        forced_result = tool_hub.execute("tracking", forced_args)
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        forced_tool_runs.append({"name": "tracking", "args": forced_args, "result": forced_result})
-        if bool(forced_result.get("ok")) and int(forced_result.get("target_id") or 0) > 0:
-            target_id = int(forced_result.get("target_id") or 0)
-            prefixed_actions.append(
-                AelinAction(
-                    kind="open_tracking",
-                    title="已创建追踪",
-                    detail=str(forced_result.get("target") or f"target_id={target_id}")[:120],
-                    payload={"target_id": str(target_id), "workspace": workspace},
-                )
-            )
-            _emit_prefixed("forced_tool", status="completed", detail=f"tracking.create; latency_ms={latency_ms}", count=1)
-        else:
-            _emit_prefixed(
-                "forced_tool",
-                status="failed",
-                detail=f"tracking.create failed:{str(forced_result.get('error') or 'unknown')[:140]}",
-                count=0,
-            )
+    resolve_started = time.perf_counter()
+    service, provider = _resolve_llm_service(db, current_user)
+    resolve_latency_ms = int((time.perf_counter() - resolve_started) * 1000)
+    _log.info(
+        "agent_loop preflight phase=resolve_service user_id=%s source=%s workspace=%s provider=%s latency_ms=%s query=%s",
+        int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+        _normalize_workspace(payload.workspace),
+        str(provider or ""),
+        resolve_latency_ms,
+        query_preview,
+    )
+    _emit_prefixed("preflight.resolve_service", status="completed", detail=f"provider={provider}; latency_ms={resolve_latency_ms}", count=1)
+    llm_available = not (provider == "rule_based" or not service.is_configured())
 
-    def _run_attachment_prefetch() -> None:
+    workspace = _normalize_workspace(payload.workspace)
+    summary_started = time.perf_counter()
+    memory_summary = _get_memory_summary_for_chat(db, current_user.id)
+    summary_latency_ms = int((time.perf_counter() - summary_started) * 1000)
+    _log.info(
+        "agent_loop preflight phase=memory_summary user_id=%s source=%s workspace=%s latency_ms=%s",
+        int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+        workspace,
+        summary_latency_ms,
+    )
+    _emit_prefixed("preflight.memory_summary", status="completed", detail=f"latency_ms={summary_latency_ms}", count=1)
+    attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
+
+    history_turns: list[dict[str, str]] = []
+    images: list[dict[str, str]] = []
+    if llm_available:
+        normalize_started = time.perf_counter()
+        history_turns = _normalize_history(payload.history)
+        images = _normalize_images(payload.images)
+        normalize_latency_ms = int((time.perf_counter() - normalize_started) * 1000)
+        _log.info(
+            "agent_loop preflight phase=normalize_inputs user_id=%s source=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
+            int(current_user.id),
+            str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+            workspace,
+            len(history_turns),
+            len(images),
+            normalize_latency_ms,
+        )
+        _emit_prefixed(
+            "preflight.normalize_inputs",
+            status="completed",
+            detail=f"history_turns={len(history_turns)}; images={len(images)}; latency_ms={normalize_latency_ms}",
+            count=len(history_turns) + len(images),
+        )
+    elif not attachment_ids:
+        return None
+
+    tool_hub_started = time.perf_counter()
+    tool_hub = AelinToolHub(
+        db=db,
+        user_id=current_user.id,
+        workspace=workspace,
+        memory_service=_memory,
+        file_memory_bridge=_file_memory,
+        web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
+        available_attachment_ids=attachment_ids,
+        llm_service=service,
+    )
+    tool_hub_latency_ms = int((time.perf_counter() - tool_hub_started) * 1000)
+    _log.info(
+        "agent_loop preflight phase=tool_hub_ready user_id=%s source=%s workspace=%s latency_ms=%s",
+        int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+        workspace,
+        tool_hub_latency_ms,
+    )
+    _emit_prefixed("preflight.tool_hub_ready", status="completed", detail=f"latency_ms={tool_hub_latency_ms}", count=1)
+
+    tool_skill_bodies: list[str] = []
+    if llm_available:
+        # 根据当前可用工具和用户 query，按需注入技能说明（SKILL）作为额外的 system 提示。
+        # 这些技能说明是“如何正确使用工具”的可复用规范，而不是新的可执行工具。
+        tool_defs = tool_hub.tool_definitions()
+        tool_names: list[str] = []
+        for td in tool_defs:
+            fn = td.get("function") if isinstance(td, dict) else None
+            if not isinstance(fn, dict):
+                continue
+            name = str(fn.get("name") or "").strip()
+            if name:
+                tool_names.append(name)
+        tool_skill_bodies = get_skill_prompts_for_query_and_tools(payload.query, tool_names)
+
+    def _ensure_attachment_prefetch() -> dict[str, Any]:
         nonlocal attachment_prefetch_result
+        if attachment_prefetch_result:
+            return attachment_prefetch_result
         if not attachment_ids:
-            return
+            attachment_prefetch_result = {"ok": False, "error": "missing_attachment_ids"}
+            return attachment_prefetch_result
         attachment_prefetch_args = {
             "query": str(payload.query or "请总结附件主要内容")[:500],
             "attachment_ids": attachment_ids[:20],
@@ -2717,9 +2478,10 @@ def _try_agent_loop_chat(
                 detail=f"{str(attachment_prefetch_result.get('error') or 'unknown')[:140]}; latency_ms={prefetch_latency_ms}",
                 count=0,
             )
+        return attachment_prefetch_result
 
     if not llm_available:
-        _run_attachment_prefetch()
+        _ensure_attachment_prefetch()
         fallback_resp = _build_attachment_prefetch_fallback_response(
             payload=payload,
             memory_summary=memory_summary,
@@ -2731,12 +2493,25 @@ def _try_agent_loop_chat(
             return fallback_resp
         return None
 
-    _run_attachment_prefetch()
+    # 如果已经存在一个 PinchTab 浏览会话，让模型知道可以“续上”它，
+    # 而不是每次都重新 launch_instance。
+    try:
+        pinchtab_snapshot = get_active_pinchtab_session(current_user.id, workspace)
+    except Exception:
+        pinchtab_snapshot = None
+    if isinstance(pinchtab_snapshot, dict) and pinchtab_snapshot.get("session_id"):
+        forced_tool_runs.append(
+            {
+                "name": "pinchtab_session",
+                "args": {
+                    "action": "status",
+                    "session_id": pinchtab_snapshot.get("session_id"),
+                },
+                "result": {"ok": True, **pinchtab_snapshot},
+            }
+        )
 
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
-    if forced_tracking_create and not force_disable_writes:
-        # Temporarily allow writes for this request scope only.
-        allow_write_tools = True
 
     policy = AelinToolPolicy(
         max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 2) or 2),
@@ -2758,10 +2533,17 @@ def _try_agent_loop_chat(
         total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
     )
     _log.info(
-        "agent_loop preflight phase=runner_ready user_id=%s workspace=%s total_preflight_ms=%s",
+        "agent_loop preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
         int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
         workspace,
         int((time.perf_counter() - pre_loop_started) * 1000),
+    )
+    _emit_prefixed(
+        "preflight.runner_ready",
+        status="completed",
+        detail=f"total_preflight_ms={int((time.perf_counter() - pre_loop_started) * 1000)}",
+        count=1,
     )
     result = runner.run(
         query=payload.query,
@@ -2771,6 +2553,7 @@ def _try_agent_loop_chat(
         attachment_ids=attachment_ids,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
+        tool_skill_bodies=tool_skill_bodies,
         cancel_token=cancel_token,
     )
 
@@ -2791,6 +2574,7 @@ def _try_agent_loop_chat(
                 pass
 
     if not bool(result.ok) or not str(result.answer or "").strip():
+        _ensure_attachment_prefetch()
         fallback_resp = _build_attachment_prefetch_fallback_response(
             payload=payload,
             memory_summary=memory_summary,
@@ -2870,7 +2654,6 @@ def _dispatch_aelin_chat(
         current_user,
         event_cb=event_cb,
         cancel_token=cancel_token,
-        detect_forced_tracking_create=_detect_forced_tracking_create,
         try_agent_loop_chat=_try_agent_loop_chat,
         pick_expression=_pick_expression,
         now_ms=_now_ms,

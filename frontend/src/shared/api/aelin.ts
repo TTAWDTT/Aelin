@@ -2,10 +2,9 @@ import { fetchFormData, fetchJson } from './client'
 import type {
   AelinChatRequest, AelinChatResponse, AelinContextResponse,
   AelinNotificationResponse, AelinProactivePollResponse,
-  AelinTrackConfirmRequest, AelinTrackConfirmResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinBrowserLoginCheckpointListResponse,
-  AelinTrackingFileMemoryContentResponse, AelinDiaryTreeResponse,
+  AelinFileMemoryContentResponse, AelinDiaryTreeResponse,
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
@@ -35,9 +34,6 @@ export const aelinApi = {
   proactivePoll: (workspace = 'default') =>
     fetchJson<AelinProactivePollResponse>(`/api/v1/aelin/proactive/poll?workspace=${workspace}`),
 
-  trackConfirm: (body: AelinTrackConfirmRequest) =>
-    fetchJson<AelinTrackConfirmResponse>('/api/v1/aelin/track/confirm', { method: 'POST', body: JSON.stringify(body) }),
-
   confirmBrowserAction: (body: AelinBrowserConfirmRequest) =>
     fetchJson<AelinBrowserConfirmResponse>('/api/v1/aelin/agent/browser/confirm', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -47,10 +43,10 @@ export const aelinApi = {
     ),
 
   fileMemoryContent: (params: Record<string, string>) =>
-    fetchJson<AelinTrackingFileMemoryContentResponse>(`/api/v1/aelin/tracking/file-memory/content?${new URLSearchParams(params)}`),
+    fetchJson<AelinFileMemoryContentResponse>(`/api/v1/aelin/memory/file-memory/content?${new URLSearchParams(params)}`),
 
   fileMemoryTree: (params: Record<string, string>) =>
-    fetchJson<AelinDiaryTreeResponse>(`/api/v1/aelin/tracking/file-memory/tree?${new URLSearchParams(params)}`),
+    fetchJson<AelinDiaryTreeResponse>(`/api/v1/aelin/memory/file-memory/tree?${new URLSearchParams(params)}`),
 
   // Device
   deviceCapabilities: () =>

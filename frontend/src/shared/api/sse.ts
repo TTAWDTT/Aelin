@@ -81,6 +81,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
 
   debugLog('request_start', {
     url: `${BASE}/api/v1/aelin/chat/stream`,
+    source: body?.source || 'chat_ui',
     historyCount: Array.isArray(body?.history) ? body.history.length : 0,
     imageCount: Array.isArray(body?.images) ? body.images.length : 0,
   })
@@ -104,7 +105,11 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       callbacks.onError?.({ message: `HTTP ${res.status}${suffix}` })
       return
     }
-    const reader = res.body!.getReader()
+    if (!res.body) {
+      callbacks.onError?.({ message: 'stream body unavailable' })
+      return
+    }
+    const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     let finalized = false

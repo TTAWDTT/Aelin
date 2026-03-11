@@ -30,8 +30,6 @@ export function App() {
           <Route path="settings/*" element={<SettingsPage />} />
           {/* Compat redirects */}
           <Route path="chat" element={<Navigate to="/" replace />} />
-          <Route path="tracking" element={<Navigate to="/desk" replace />} />
-          <Route path="tracking/:targetId" element={<Navigate to="/desk" replace />} />
           <Route path="dashboard" element={<Navigate to="/desk" replace />} />
           <Route path="signals" element={<Navigate to="/desk" replace />} />
           <Route path="signals/:contactId" element={<Navigate to="/desk" replace />} />

@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from app.routers.aelin_text_helpers import _infer_diary_topic_path
 from app.services.agent_memory import AgentMemoryService
 from app.services.media_ingest import MediaIngestOutput, MediaIngestService
-from app.services.openviking_bridge import tracking_file_memory_bridge
+from app.services.openviking_bridge import file_memory_bridge
 
 memory_service = AgentMemoryService()
 media_ingest_service = MediaIngestService()
-tracking_file_memory = tracking_file_memory_bridge
+file_memory = file_memory_bridge
 
 
 def build_media_ingest_answer(result: MediaIngestOutput, *, written: bool) -> str:
@@ -78,7 +78,7 @@ def save_media_ingest_diary(
             "url": result.canonical_url[:500],
         }
     ]
-    out_path = tracking_file_memory.append_insight(
+    out_path = file_memory.append_insight(
         target=target,
         title=result.insight_title,
         markdown=result.insight_markdown,
@@ -98,7 +98,7 @@ def save_media_ingest_diary(
                 db,
                 user_id,
                 f"[Aelinの日记] {result.insight_title}\npath: {diary_path}\nsource: {result.platform}",
-                kind="tracking_insight",
+                kind="memory_insight",
                 source=f"media:{result.platform}",
             )
             note_added = True

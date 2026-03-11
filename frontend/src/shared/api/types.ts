@@ -35,6 +35,8 @@ export interface SyncJobStatusResponse {
 /* ─── Aelin Chat ─── */
 export interface AelinChatRequest {
   query: string; use_memory?: boolean; max_citations?: number
+  source?: string
+  source_metadata?: Record<string, string>
   workspace?: string; images?: AelinImageInput[]
   attachment_ids?: number[]
   history?: { role: string; content: string }[]
@@ -118,18 +120,6 @@ export interface AelinContextResponse {
 export interface AelinNotificationResponse { total: number; items: AelinNotificationItem[]; generated_at: string }
 export interface AelinProactivePollResponse { workspace: string; total: number; items: AelinNotificationItem[]; generated_at: string }
 
-/* ─── Tracking ─── */
-export interface AelinTrackConfirmRequest {
-  target: string; source?: string; query?: string; workspace?: string
-  description?: string; tags?: string[]; track_type?: string
-  interval_seconds?: number; notify_level?: string
-  is_temporary?: boolean; temporary_days?: number
-}
-export interface AelinTrackConfirmResponse {
-  status: string; message: string; provider?: string
-  target_id?: number; next_run_at?: string
-  actions: AelinAction[]; generated_at: string
-}
 export interface AelinBrowserConfirmRequest {
   workspace?: string
   action_kind?: string
@@ -200,15 +190,15 @@ export interface AelinTrackingSnapshotItem {
   fetched_at?: string; normalized_payload_json?: Record<string, unknown>
 }
 export interface AelinTrackingSnapshotListResponse { total: number; items: AelinTrackingSnapshotItem[]; generated_at: string }
-export interface AelinTrackingFileMemoryItem {
+export interface AelinFileMemoryItem {
   path: string; title: string; preview: string; score: number
   updated_at: string; canonical_id: string; target: string
   source: string; kind: string; topic_path: string; entry_kind: string
 }
-export interface AelinTrackingFileMemorySearchResponse {
-  workspace: string; total: number; items: AelinTrackingFileMemoryItem[]; generated_at: string
+export interface AelinFileMemorySearchResponse {
+  workspace: string; total: number; items: AelinFileMemoryItem[]; generated_at: string
 }
-export interface AelinTrackingFileMemoryContentResponse {
+export interface AelinFileMemoryContentResponse {
   workspace: string; path: string; title: string
   source: string; kind: string; topic_path: string; entry_kind: string
   updated_at: string; content: string; generated_at: string

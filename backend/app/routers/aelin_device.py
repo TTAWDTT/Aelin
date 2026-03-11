@@ -28,6 +28,7 @@ from app.services.device_center import (
     capture_device_screen as device_capture_screen,
     collect_device_process_items as device_collect_process_items,
     DeviceScreenCaptureError,
+    device_status_snapshot,
     device_capabilities as device_capabilities_info,
     device_is_windows as is_windows_runtime,
     get_process_name_by_pid_windows as device_process_name_by_pid,
@@ -308,11 +309,11 @@ def get_device_capabilities(
     current_user: User = Depends(get_current_user),
 ):
     _ = current_user  # Auth guard for local device APIs.
-    platform_name, capabilities, notes = device_capabilities_info()
+    snapshot = device_status_snapshot()
     return AelinDeviceCapabilitiesResponse(
-        platform=platform_name,
-        capabilities=capabilities,
-        notes=notes,
+        platform=str(snapshot.get("platform") or "unknown"),
+        capabilities=dict(snapshot.get("capabilities") or {}),
+        notes=list(snapshot.get("notes") or []),
         generated_at=datetime.now(timezone.utc),
     )
 
@@ -345,7 +346,12 @@ def apply_device_mode(
     current_user: User = Depends(get_current_user),
 ):
     requested_mode = str(payload.mode or "").strip().lower()
-    mode, status, summary, steps, warnings = device_apply_mode(payload.mode)
+    result = device_apply_mode(payload.mode)
+    mode = normalize_mode_value(str(result.get("mode") or "normal"))
+    status = str(result.get("status") or "applied").strip().lower() or "applied"
+    summary = str(result.get("summary") or f"{mode} mode applied").strip()
+    steps = [str(x) for x in list(result.get("steps") or [])][:12]
+    warnings = [str(x) for x in list(result.get("warnings") or [])][:12]
     allowed_requested_modes = {"meeting", "focus", "sleep", "normal", "default"}
     if requested_mode and requested_mode not in allowed_requested_modes:
         status = "degraded"

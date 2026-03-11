@@ -130,6 +130,7 @@ class AelinAgentLoop:
         attachment_ids: list[int] | None = None,
         forced_intent: str = "",
         forced_tool_runs: list[dict[str, Any]] | None = None,
+        tool_skill_bodies: list[str] | None = None,
         cancel_token: Any | None = None,
     ) -> AelinAgentLoopResult:
         self._last_query = str(query or "")
@@ -178,6 +179,7 @@ class AelinAgentLoop:
             attachment_ids=attachment_ids,
             forced_intent=forced_intent,
             forced_tool_runs=forced_tool_runs,
+            tool_skill_bodies=tool_skill_bodies,
         )
         retried_without_images = False
         trace_steps.append(AgentLoopTraceStep(stage="agent_loop", status="running", detail="start", count=0))

@@ -77,7 +77,7 @@ def test_media_ingest_endpoint_saves_diary(monkeypatch, tmp_path: Path):
     )
     diary_path = tmp_path / "users" / "1" / "insight.md"
     monkeypatch.setattr(
-        aelin_router._tracking_file_memory,
+        aelin_router._file_memory,
         "append_insight",
         lambda **kwargs: diary_path,
     )
@@ -162,7 +162,7 @@ def test_media_ingest_douyin_auto_login_guide_retry_success(monkeypatch, tmp_pat
         },
     )
     monkeypatch.setattr(
-        aelin_router._tracking_file_memory,
+        aelin_router._file_memory,
         "append_insight",
         lambda **kwargs: tmp_path / "douyin-insight.md",
     )
@@ -281,7 +281,7 @@ def test_media_ingest_endpoint_quality_gate_skips_diary_write(monkeypatch, tmp_p
         state["append_called"] = True
         return tmp_path / "should-not-write.md"
 
-    monkeypatch.setattr(aelin_router._tracking_file_memory, "append_insight", _append_insight_mock)
+    monkeypatch.setattr(aelin_router._file_memory, "append_insight", _append_insight_mock)
 
     resp = client.post(
         "/api/v1/aelin/media/ingest",
@@ -331,7 +331,7 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(aelin_router, "_pick_expression", lambda *_args, **_kwargs: "exp-03")
     diary_path = tmp_path / "users" / "1" / "insight-chat.md"
     monkeypatch.setattr(
-        aelin_router._tracking_file_memory,
+        aelin_router._file_memory,
         "append_insight",
         lambda **kwargs: diary_path,
     )
@@ -347,10 +347,10 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     has_media_ingest = any((it.get("stage") == "media_ingest" and it.get("status") == "completed") for it in trace)
     assert has_media_ingest, f"Expected media_ingest stage in tool_trace, got: {trace!r}"
     assert "Aelinの日记" in str(data.get("answer") or "")
-    assert any((it.get("kind") == "open_tracking") for it in (data.get("actions") or []))
+    assert any((it.get("kind") == "open_desk") for it in (data.get("actions") or []))
 
 
-def test_tracking_file_memory_tree_endpoint(monkeypatch):
+def test_memory_file_memory_tree_endpoint(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -363,7 +363,7 @@ def test_tracking_file_memory_tree_endpoint(monkeypatch):
         updated_at="2026-02-22T00:00:00+00:00",
         source="web",
         topic_path="体育 > NBA",
-        entry_kind="tracking_insight",
+        entry_kind="memory_insight",
         children=[],
     )
     root = SimpleNamespace(
@@ -379,46 +379,46 @@ def test_tracking_file_memory_tree_endpoint(monkeypatch):
         children=[child],
     )
     monkeypatch.setattr(
-        aelin_router._tracking_file_memory,
+        aelin_router._file_memory,
         "list_diary_tree",
         lambda **kwargs: [root],
     )
 
-    resp = client.get("/api/v1/aelin/tracking/file-memory/tree?workspace=default", headers=headers)
+    resp = client.get("/api/v1/aelin/memory/file-memory/tree?workspace=default", headers=headers)
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data.get("total") == 1
     items = data.get("items") or []
     assert items and items[0].get("name") == "体育"
-    assert (items[0].get("children") or [{}])[0].get("entry_kind") == "tracking_insight"
+    assert (items[0].get("children") or [{}])[0].get("entry_kind") == "memory_insight"
 
 
-def test_tracking_file_memory_content_endpoint(monkeypatch):
+def test_memory_file_memory_content_endpoint(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
     monkeypatch.setattr(
-        aelin_router._tracking_file_memory,
+        aelin_router._file_memory,
         "read_memory_markdown",
         lambda **kwargs: {
             "title": "Stephen Curry 纪要",
             "source": "web",
             "kind": "diary",
             "topic_path": "体育 > NBA",
-            "entry_kind": "tracking_insight",
+            "entry_kind": "memory_insight",
             "updated_at": "2026-02-22T00:00:00+00:00",
             "content": "## 概要\n\n本周状态回升",
         },
     )
 
     resp = client.get(
-        "/api/v1/aelin/tracking/file-memory/content?workspace=default&path=%E4%BD%93%E8%82%B2/NBA/2026-02-22.md",
+        "/api/v1/aelin/memory/file-memory/content?workspace=default&path=%E4%BD%93%E8%82%B2/NBA/2026-02-22.md",
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data.get("title") == "Stephen Curry 纪要"
-    assert data.get("entry_kind") == "tracking_insight"
+    assert data.get("entry_kind") == "memory_insight"
     assert "本周状态回升" in str(data.get("content") or "")
 
 

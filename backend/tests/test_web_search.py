@@ -18,7 +18,7 @@ def test_build_web_query_pack_prioritizes_sports_and_time() -> None:
             "sports_result_intent": True,
             "requires_citations": True,
         },
-        tracking_snapshot={"matched_items": []},
+        memory_snapshot={"matched_items": []},
         limit=5,
     )
     assert isinstance(pack, list) and pack
@@ -41,7 +41,7 @@ def test_build_retry_web_queries_avoids_used_and_uses_intent() -> None:
             "sports_result_intent": True,
             "requires_citations": True,
         },
-        tracking_snapshot={"matched_items": []},
+        memory_snapshot={"matched_items": []},
     )
     assert retry
     used_norm = {q.lower() for q in used}
@@ -89,7 +89,7 @@ def test_decompose_web_context_boundaries_llm_returns_facets() -> None:
             "sports_result_intent": True,
             "requires_citations": True,
         },
-        tracking_snapshot={"matched_items": []},
+        memory_snapshot={"matched_items": []},
         service=_FakeSvc(),
         provider="openai",
     )
@@ -117,7 +117,7 @@ def test_decompose_web_context_boundaries_invalid_json_uses_fallback() -> None:
             "sports_result_intent": True,
             "requires_citations": True,
         },
-        tracking_snapshot={"matched_items": []},
+        memory_snapshot={"matched_items": []},
         service=_BadSvc(),
         provider="openai",
     )
@@ -160,7 +160,7 @@ def test_decompose_web_context_boundaries_retry_can_recover() -> None:
             "sports_result_intent": True,
             "requires_citations": True,
         },
-        tracking_snapshot={"matched_items": []},
+        memory_snapshot={"matched_items": []},
         service=svc,
         provider="openai",
     )

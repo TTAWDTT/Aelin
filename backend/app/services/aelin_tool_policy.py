@@ -30,6 +30,16 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "profile":
         return action == "append_note"
+    if tool == "device_status":
+        return False
+    if tool == "device_processes":
+        return False
+    if tool == "device_mode_apply":
+        return True
+    if tool == "desktop_open_url":
+        return True
+    if tool == "desktop_open_aelin":
+        return True
     if tool == "device":
         return action == "mode_apply"
     if tool == "web_search":
@@ -38,7 +48,7 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "screen_get":
         return False
-    if tool in {"pinchtab", "pinchtab_agent"}:
+    if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
         # PinchTab 调用会驱动真实浏览器行为，统一视为写操作以纳入配额控制。
         return True
     return False
@@ -70,12 +80,18 @@ class AelinToolPolicy:
             "context_get",
             "diary",
             "profile",
+            "device_status",
+            "device_processes",
+            "device_mode_apply",
+            "desktop_open_url",
+            "desktop_open_aelin",
             "device",
             "web_search",
             "attachment_search",
             "screen_get",
             "pinchtab",
             "pinchtab_agent",
+            "pinchtab_session",
         }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 

@@ -11,7 +11,7 @@ description: 这是一套面向产品官网文档页的内容基础，结构参�
 ## 文档目标
 
 1. 3 分钟内让新用户知道 Aelin 是什么、能做什么。
-2. 10 分钟内让用户跑通第一个可用闭环（问答 + 跟踪 + 持久化）。
+2. 10 分钟内让用户跑通第一个可用闭环（问答 + 记忆沉淀 + 持久化）。
 3. 让功能、限制、部署方式都能被直接查到。
 
 ## 导航顺序（建议）
@@ -31,11 +31,9 @@ description: 这是一套面向产品官网文档页的内容基础，结构参�
 - `concepts/how-aelin-works.md`
 - `features/agent-chat.md`
 - `features/web-search-and-local-memory.md`
-- `features/long-term-tracking.md`
 - `features/proactive-interaction.md`
 - `features/device-interaction.md`
 - `guides/configure-llm-provider.md`
-- `guides/create-a-tracking-flow.md`
 - `guides/run-web-desktop-mobile.md`
 - `reference/api-overview.md`
 - `reference/storage-and-memory.md`

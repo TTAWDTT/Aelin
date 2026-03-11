@@ -10,7 +10,6 @@
 - `docs/aelin-docs-foundation/concepts/how-aelin-works.md`
 - `docs/aelin-docs-foundation/features/agent-chat.md`
 - `docs/aelin-docs-foundation/features/web-search-and-local-memory.md`
-- `docs/aelin-docs-foundation/features/long-term-tracking.md`
 - `docs/aelin-docs-foundation/features/proactive-interaction.md`
 - `docs/aelin-docs-foundation/features/device-interaction.md`
 

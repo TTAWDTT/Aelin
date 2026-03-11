@@ -23,11 +23,11 @@ from app.schemas import (
     AelinChatResponse,
     AelinDiaryTreeNode,
     AelinDiaryTreeResponse,
-    AelinTrackingFileMemoryContentResponse,
+    AelinFileMemoryContentResponse,
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 from app.services.aelin_chat_worker import run_aelin_chat_with_local_session
-from app.services.openviking_bridge import tracking_file_memory_bridge
+from app.services.openviking_bridge import file_memory_bridge
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -126,15 +126,15 @@ def aelin_chat(
     return _dispatch_aelin_chat(payload, db, current_user)
 
 
-@router.get("/tracking/file-memory/tree", response_model=AelinDiaryTreeResponse)
-def aelin_tracking_file_memory_tree(
+@router.get("/memory/file-memory/tree", response_model=AelinDiaryTreeResponse)
+def aelin_memory_file_memory_tree(
     workspace: str = "default",
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> AelinDiaryTreeResponse:
     _ = db
     workspace_norm = str(workspace or "default").strip() or "default"
-    tree = tracking_file_memory_bridge.list_diary_tree(
+    tree = file_memory_bridge.list_diary_tree(
         user_id=int(current_user.id),
         workspace=workspace_norm,
         max_files=200,
@@ -163,23 +163,23 @@ def aelin_tracking_file_memory_tree(
     )
 
 
-@router.get("/tracking/file-memory/content", response_model=AelinTrackingFileMemoryContentResponse)
-def aelin_tracking_file_memory_content(
+@router.get("/memory/file-memory/content", response_model=AelinFileMemoryContentResponse)
+def aelin_memory_file_memory_content(
     workspace: str = "default",
     path: str = "",
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
-) -> AelinTrackingFileMemoryContentResponse:
+) -> AelinFileMemoryContentResponse:
     _ = db
     workspace_norm = str(workspace or "default").strip() or "default"
-    entry = tracking_file_memory_bridge.read_memory_markdown(
+    entry = file_memory_bridge.read_memory_markdown(
         user_id=int(current_user.id),
         workspace=workspace_norm,
         path=path,
     )
     if not entry:
         raise HTTPException(status_code=404, detail="file_memory_entry_not_found")
-    return AelinTrackingFileMemoryContentResponse(
+    return AelinFileMemoryContentResponse(
         workspace=workspace_norm,
         path=str(path or "").strip(),
         title=str(entry.get("title") or ""),
@@ -204,9 +204,7 @@ def aelin_chat_stream(
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         done_token = "__done__"
-        # Simple cancellation token shared with the agent loop. When the SSE
-        # connection is interrupted, this flag is set to True so the loop can
-        # stop at the next safe checkpoint.
+
         class _CancelToken:
             cancelled: bool = False
 
@@ -225,9 +223,10 @@ def aelin_chat_stream(
         def _worker() -> None:
             try:
                 _LOG.info(
-                    "aelin_stream worker_start req=%s uid=%s workspace=%s query=%s",
+                    "aelin_stream worker_start req=%s uid=%s source=%s workspace=%s query=%s",
                     req_id,
                     int(current_user.id),
+                    str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                     str(payload.workspace or "default")[:64],
                     _preview(str(payload.query or "")),
                 )
@@ -269,6 +268,7 @@ def aelin_chat_stream(
                 "ts": _now_ms(),
                 "req_id": req_id,
                 "query": payload.query.strip()[:180],
+                "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                 "workspace": payload.workspace,
                 "search_mode": _normalize_search_mode(getattr(payload, "search_mode", "auto")),
             },
@@ -282,7 +282,6 @@ def aelin_chat_stream(
                 try:
                     event, data = event_queue.get(timeout=heartbeat_interval_s)
                 except queue.Empty:
-                    # Emit a real SSE event so proxies/clients don't treat this as idle.
                     heartbeat_count += 1
                     yield _sse_event("ping", {"ts": _now_ms(), "req_id": req_id, "hb": heartbeat_count})
                     if (not worker.is_alive()) and event_queue.empty():
