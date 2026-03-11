@@ -46,25 +46,6 @@ class Settings(BaseSettings):
     crawler_rsshub_parallelism: int = 12
     crawler_playwright_poll_seconds: int = 10
 
-    # Autonomous tracking scheduler.
-    tracking_scheduler_enabled: bool = False
-    tracking_scheduler_tick_seconds: float = 1.0
-    tracking_scheduler_batch_size: int = 80
-    tracking_global_max_workers: int = 16
-    tracking_source_max_workers: int = 4
-    tracking_min_interval_seconds: int = 30
-    tracking_default_term_interval_seconds: int = 120
-    tracking_default_url_interval_seconds: int = 180
-    tracking_max_backoff_seconds: int = 60 * 60 * 6
-    tracking_request_timeout_seconds: float = 15.0
-    tracking_target_timeout_seconds: float = 70.0
-    tracking_error_threshold: int = 10
-    tracking_dedupe_window_hours: int = 24
-    tracking_quiet_start_hour: int = 23
-    tracking_quiet_end_hour: int = 8
-    tracking_sqlite_lock_retry_attempts: int = 4
-    tracking_sqlite_lock_retry_base_delay_seconds: float = 0.15
-
     # File memory bridge (OpenViking-compatible projection + retrieval fallback).
     openviking_enabled: bool = True
     openviking_semantic_enabled: bool = True
@@ -80,8 +61,6 @@ class Settings(BaseSettings):
     aelin_parallel_memory_draft_min_confidence: float = 0.58
     aelin_base_context_cache_ttl_seconds: float = 4.0
     aelin_base_context_cache_max_entries: int = 128
-    aelin_tracking_snapshot_cache_ttl_seconds: float = 10.0
-    aelin_tracking_snapshot_cache_max_entries: int = 256
     aelin_agent_loop_enabled: bool = True
     aelin_agent_loop_shadow_enabled: bool = False
     aelin_agent_loop_max_rounds: int = 8
@@ -92,14 +71,30 @@ class Settings(BaseSettings):
     aelin_agent_loop_hard_fail: bool = True
     aelin_agent_loop_user_whitelist_csv: str = ""
     aelin_agent_loop_workspace_whitelist_csv: str = ""
+    # Agent-loop timeouts (per round + overall)。如需调整针对 PinchTab 等长任务的等待窗口，
+    # 建议通过环境变量显式覆盖，而不是在代码里硬编码过大的默认值。
     aelin_agent_loop_round_timeout_seconds: float = 40.0
     aelin_agent_loop_total_timeout_seconds: float = 120.0
     aelin_agent_loop_round_max_tokens: int = 700
     aelin_agent_loop_final_max_tokens: int = 1400
+    feishu_bot_enabled: bool = False
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_bot_name: str = "Aelin"
+    feishu_bot_bind_user_email: str = ""
+    feishu_bot_workspace: str = "default"
+    feishu_bot_allowed_open_ids_csv: str = ""
+    feishu_bot_allowed_chat_ids_csv: str = ""
+    feishu_bot_command_prefix: str = "/aelin"
+    feishu_bot_group_require_prefix: bool = True
+    feishu_bot_message_dedupe_ttl_seconds: int = 600
+    feishu_bot_reply_timeout_seconds: float = 15.0
     desktop_plugin_base_url: str = "http://127.0.0.1:21914"
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
+    desktop_module_base_url: str = ""
+    pinchtab_base_url: str = "http://127.0.0.1:9867"
     aelin_attachment_storage_dir: str = "./data/aelin_attachments"
     aelin_attachment_max_size_bytes: int = 30 * 1024 * 1024
     aelin_attachment_chunk_size: int = 700

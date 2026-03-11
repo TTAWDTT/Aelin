@@ -29,6 +29,13 @@ class DeviceScreenCaptureError(RuntimeError):
         self.detail = str(detail or "device_screen_capture_error")[:220]
 
 
+class DesktopPluginActionError(RuntimeError):
+    def __init__(self, *, status_code: int, detail: str) -> None:
+        super().__init__(str(detail or "desktop_plugin_action_error"))
+        self.status_code = max(400, int(status_code or 500))
+        self.detail = str(detail or "desktop_plugin_action_error")[:220]
+
+
 def _desktop_plugin_headers() -> dict[str, str]:
     token = str(getattr(settings, "desktop_plugin_token", "") or "").strip()
     if not token:
@@ -51,6 +58,55 @@ def _desktop_plugin_error_detail(resp: httpx.Response) -> str:
     return text[:180]
 
 
+def _desktop_plugin_base_url() -> str:
+    return str(getattr(settings, "desktop_plugin_base_url", "") or "").strip().rstrip("/")
+
+
+def _desktop_plugin_timeout_seconds() -> float:
+    return max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0))
+
+
+def _desktop_plugin_post(path: str, payload: dict[str, Any], *, timeout_s: float | None = None) -> dict[str, Any]:
+    base_url = _desktop_plugin_base_url()
+    if not base_url:
+        raise DesktopPluginActionError(status_code=503, detail="desktop_plugin_unconfigured")
+    url = f"{base_url}{path}"
+    timeout_value = max(2.0, float(timeout_s if timeout_s is not None else _desktop_plugin_timeout_seconds()))
+    try:
+        with httpx.Client(timeout=timeout_value, follow_redirects=False) as client:
+            resp = client.post(url, json=payload, headers=_desktop_plugin_headers())
+    except Exception as exc:
+        raise DesktopPluginActionError(
+            status_code=503,
+            detail=f"desktop_plugin_unreachable: {str(exc)[:180]}",
+        ) from exc
+
+    if int(resp.status_code) >= 400:
+        raise DesktopPluginActionError(
+            status_code=502,
+            detail=f"desktop_plugin_action_failed: {_desktop_plugin_error_detail(resp)}",
+        )
+    try:
+        raw = resp.json()
+    except Exception as exc:
+        raise DesktopPluginActionError(status_code=502, detail="desktop_plugin_invalid_json") from exc
+    if not isinstance(raw, dict):
+        raise DesktopPluginActionError(status_code=502, detail="desktop_plugin_invalid_payload")
+    return raw
+
+
+def desktop_plugin_health() -> bool:
+    base_url = _desktop_plugin_base_url()
+    if not base_url:
+        return False
+    try:
+        with httpx.Client(timeout=min(5.0, _desktop_plugin_timeout_seconds()), follow_redirects=False) as client:
+            resp = client.get(f"{base_url}/healthz", headers=_desktop_plugin_headers())
+    except Exception:
+        return False
+    return int(resp.status_code) < 400
+
+
 def capture_device_screen(
     *,
     display_id: str = "",
@@ -60,11 +116,7 @@ def capture_device_screen(
     mode: str = "fullscreen",
     selection_timeout_ms: int = 45_000,
 ) -> dict[str, Any]:
-    base_url = str(getattr(settings, "desktop_plugin_base_url", "") or "").strip().rstrip("/")
-    if not base_url:
-        raise DeviceScreenCaptureError(status_code=503, detail="desktop_plugin_unconfigured")
-
-    timeout_s = max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0))
+    timeout_s = _desktop_plugin_timeout_seconds()
     mode_clean = str(mode or "fullscreen").strip().lower()
     if mode_clean not in {"fullscreen", "region"}:
         mode_clean = "fullscreen"
@@ -85,28 +137,10 @@ def capture_device_screen(
     if display_clean:
         payload["display_id"] = display_clean
 
-    url = f"{base_url}/v1/device/screen/capture"
     try:
-        with httpx.Client(timeout=timeout_s, follow_redirects=False) as client:
-            resp = client.post(url, json=payload, headers=_desktop_plugin_headers())
-    except Exception as exc:
-        raise DeviceScreenCaptureError(
-            status_code=503,
-            detail=f"desktop_plugin_unreachable: {str(exc)[:180]}",
-        ) from exc
-
-    if int(resp.status_code) >= 400:
-        raise DeviceScreenCaptureError(
-            status_code=502,
-            detail=f"desktop_plugin_capture_failed: {_desktop_plugin_error_detail(resp)}",
-        )
-
-    try:
-        raw = resp.json()
-    except Exception as exc:
-        raise DeviceScreenCaptureError(status_code=502, detail="desktop_plugin_invalid_json") from exc
-    if not isinstance(raw, dict):
-        raise DeviceScreenCaptureError(status_code=502, detail="desktop_plugin_invalid_payload")
+        raw = _desktop_plugin_post("/v1/device/screen/capture", payload, timeout_s=timeout_s)
+    except DesktopPluginActionError as exc:
+        raise DeviceScreenCaptureError(status_code=exc.status_code, detail=exc.detail) from exc
 
     data_url = str(raw.get("data_url") or "").strip()
     if not data_url.startswith("data:image/") or ";base64," not in data_url:
@@ -137,6 +171,29 @@ def capture_device_screen(
         "height": height,
         "source_display": str(raw.get("source_display") or "").strip()[:64],
         "captured_at": str(raw.get("captured_at") or datetime.now(timezone.utc).isoformat())[:64],
+        "saved_path": str(raw.get("saved_path") or "").strip()[:1024],
+    }
+
+
+def open_desktop_external_url(url: str) -> dict[str, Any]:
+    url_clean = str(url or "").strip()
+    if not url_clean:
+        raise DesktopPluginActionError(status_code=400, detail="missing_url")
+    raw = _desktop_plugin_post("/v1/desktop/url/open", {"url": url_clean})
+    return {
+        "url": str(raw.get("url") or url_clean)[:2000],
+        "opened": bool(raw.get("opened", True)),
+        "detail": str(raw.get("detail") or "ok")[:200],
+    }
+
+
+def activate_desktop_module(route: str = "/") -> dict[str, Any]:
+    route_clean = str(route or "/").strip() or "/"
+    raw = _desktop_plugin_post("/v1/desktop/app/activate", {"route": route_clean})
+    return {
+        "route": str(raw.get("route") or route_clean)[:120],
+        "activated": bool(raw.get("activated", True)),
+        "detail": str(raw.get("detail") or "ok")[:200],
     }
 
 
@@ -150,6 +207,7 @@ def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
     has_psutil = psutil is not None
     has_windows_fallback = bool(is_windows)
     process_list_supported = bool(has_psutil or has_windows_fallback)
+    desktop_plugin_configured = bool(_desktop_plugin_base_url())
     capabilities = {
         "process_list": process_list_supported,
         "process_terminate": bool(has_psutil or has_windows_fallback),
@@ -158,6 +216,9 @@ def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
         "mode_silent": bool(is_windows),
         "mode_normal": True,
         "optimize_processes": process_list_supported,
+        "desktop_plugin_configured": desktop_plugin_configured,
+        "desktop_open_url": desktop_plugin_configured,
+        "desktop_activate_module": desktop_plugin_configured,
     }
     notes: list[str] = []
     if not has_psutil:
@@ -167,7 +228,20 @@ def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
             notes.append("psutil unavailable; process controls disabled")
     if not is_windows:
         notes.append("non-windows runtime: mode actions may degrade to state-only updates")
+    if not desktop_plugin_configured:
+        notes.append("desktop plugin unconfigured: open_url / activate_module unavailable")
     return platform_name, capabilities, notes
+
+
+def device_status_snapshot() -> dict[str, Any]:
+    platform_name, capabilities, notes = device_capabilities()
+    return {
+        "platform": platform_name,
+        "capabilities": capabilities,
+        "notes": notes,
+        "desktop_plugin_configured": bool(_desktop_plugin_base_url()),
+        "desktop_plugin_reachable": desktop_plugin_health(),
+    }
 
 
 def normalize_device_mode(raw: str) -> str:
@@ -463,15 +537,20 @@ def collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDevic
         rows.sort(key=lambda x: (x.anomaly_score, x.cpu_percent, x.memory_mb), reverse=True)
     return rows[:max_items]
 
-
-def apply_device_mode(mode: str) -> tuple[str, str, str, list[str], list[str]]:
+def apply_device_mode(mode: str) -> dict[str, Any]:
     mode_norm = normalize_device_mode(mode)
     steps: list[str] = []
     warnings: list[str] = []
 
     if not device_is_windows():
         warnings.append("当前仅在 Windows 提供系统级模式控制，其它系统将只记录模式状态。")
-        return mode_norm, "partial", f"模式已切换为 {mode_norm}（系统控制受限）", steps, warnings
+        return {
+            "mode": mode_norm,
+            "status": "partial",
+            "summary": f"模式已切换为 {mode_norm}（系统控制受限）",
+            "steps": steps,
+            "warnings": warnings,
+        }
 
     if mode_norm in {"meeting", "focus", "sleep"}:
         ok_toast, detail_toast = set_windows_toast_enabled(False)
@@ -522,4 +601,10 @@ def apply_device_mode(mode: str) -> tuple[str, str, str, list[str], list[str]]:
         if status == "applied"
         else f"{mode_norm} 模式已部分应用，请查看警告项。"
     )
-    return mode_norm, status, summary, steps, warnings
+    return {
+        "mode": mode_norm,
+        "status": status,
+        "summary": summary,
+        "steps": steps,
+        "warnings": warnings,
+    }

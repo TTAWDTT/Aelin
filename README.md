@@ -101,5 +101,6 @@ Do not commit API keys, OAuth secrets, or local database artifacts.
 - English README: [README.en.md](README.en.md)
 - Contributor guide: [AGENTS.md](AGENTS.md)
 - Backend notes: [backend/README.md](backend/README.md)
+- Feishu remote control: [docs/feishu_remote_control_v1.md](docs/feishu_remote_control_v1.md)
 - Docs index: [docs/INDEX.md](docs/INDEX.md)
 - Manual test cases: [docs/agent_loop_manual_test_cases.md](docs/agent_loop_manual_test_cases.md)

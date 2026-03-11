@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.services.openviking_bridge import TrackingFileMemoryBridge
+from app.services.openviking_bridge import FileMemoryBridge
 from app.settings import settings
 
 
@@ -14,7 +14,7 @@ def test_diary_tree_and_search_include_topic_metadata(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         monkeypatch.setattr(settings, "openviking_enabled", True)
         monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
-        bridge = TrackingFileMemoryBridge()
+        bridge = FileMemoryBridge()
         # Force deterministic local lexical path for unit assertions.
         bridge._openviking = None
 
@@ -35,7 +35,7 @@ def test_diary_tree_and_search_include_topic_metadata(monkeypatch):
             source_query="NBA 最近如何",
             topic_path=["体育", "NBA", "球员"],
             source_indices=[{"type": "message", "message_id": 42, "label": "消息源"}],
-            entry_kind="tracking_insight",
+            entry_kind="memory_insight",
         )
         assert out_path is not None
         assert "diary" in str(out_path).lower()
@@ -44,7 +44,7 @@ def test_diary_tree_and_search_include_topic_metadata(monkeypatch):
         hits = bridge.search(user_id=1, workspace="default", query="curry", limit=10, source=None)
         assert hits
         assert any("体育" in (hit.topic_path or "") for hit in hits)
-        assert any((hit.entry_kind or "") == "tracking_insight" for hit in hits)
+        assert any((hit.entry_kind or "") == "memory_insight" for hit in hits)
 
         tree = bridge.list_diary_tree(user_id=1, workspace="default", max_files=100)
         assert tree
@@ -56,7 +56,7 @@ def test_search_excludes_chat_diary_unless_explicitly_enabled(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         monkeypatch.setattr(settings, "openviking_enabled", True)
         monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
-        bridge = TrackingFileMemoryBridge()
+        bridge = FileMemoryBridge()
 
         chat_target = SimpleNamespace(
             user_id=1,
@@ -94,10 +94,10 @@ def test_search_excludes_chat_diary_unless_explicitly_enabled(monkeypatch):
             markdown=f"## Insight\n\n{rag_token}",
             reason="unit-test",
             confidence=0.9,
-            source_query="tracking query",
+            source_query="memory query",
             topic_path=["技术", "模型"],
             source_indices=[],
-            entry_kind="tracking_insight",
+            entry_kind="memory_insight",
         )
         assert chat_path is not None
         assert rag_path is not None
@@ -129,14 +129,14 @@ def test_search_excludes_chat_diary_unless_explicitly_enabled(monkeypatch):
             include_diary=False,
         )
         assert rag_hits
-        assert any((hit.entry_kind or "") == "tracking_insight" for hit in rag_hits)
+        assert any((hit.entry_kind or "") == "memory_insight" for hit in rag_hits)
 
 
 def test_append_insight_writes_human_diary_content_and_sidecar(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         monkeypatch.setattr(settings, "openviking_enabled", True)
         monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
-        bridge = TrackingFileMemoryBridge()
+        bridge = FileMemoryBridge()
         bridge._openviking = None
 
         target = SimpleNamespace(
@@ -179,7 +179,7 @@ def test_chat_diary_rollup_merges_closed_day_and_cleans_raw(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         monkeypatch.setattr(settings, "openviking_enabled", True)
         monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
-        bridge = TrackingFileMemoryBridge()
+        bridge = FileMemoryBridge()
         bridge._openviking = None
 
         target = SimpleNamespace(

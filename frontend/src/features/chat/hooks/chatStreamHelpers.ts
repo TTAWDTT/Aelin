@@ -294,6 +294,7 @@ export function buildChatRequest(params: {
       (params.images?.length || params.attachmentIds.length
         ? '请先分析我上传的附件，然后给我结论和建议。'
         : ''),
+    source: 'chat_ui',
     workspace: params.session?.workspace || 'default',
     history: params.history,
     images: params.images?.map((image) => ({ data_url: image.dataUrl, name: image.name })),

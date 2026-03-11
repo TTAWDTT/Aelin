@@ -8,7 +8,6 @@ from typing import Any
 from app.schemas import AelinCitation
 from app.services.aelin_chat_answering import _extract_score_clues, _looks_like_link_dump_answer
 from app.services.llm import LLMService
-from app.services.aelin_tracking_events import normalize_track_source as _normalize_track_source
 from app.services.web_search import WebSearchResult
 
 _MAX_WEB_SUBAGENTS = 5
@@ -208,7 +207,7 @@ def _build_web_query_pack_dynamic(
     query: str,
     base_queries: list[str] | None,
     intent_contract: dict[str, Any] | None,
-    tracking_snapshot: dict[str, Any] | None = None,
+    memory_snapshot: dict[str, Any] | None = None,
     limit: int = _MAX_WEB_SUBAGENTS,
 ) -> list[str]:
     query_text = (query or "").strip()
@@ -217,7 +216,7 @@ def _build_web_query_pack_dynamic(
 
     is_cjk = _is_cjk_text(query_text)
     contract = intent_contract if isinstance(intent_contract, dict) else {}
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
+    memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
 
     time_scope = str(contract.get("time_scope") or "").strip().lower()
     sports_intent = bool(contract.get("sports_result_intent")) or _is_sports_result_query(query_text)
@@ -315,7 +314,7 @@ def _build_web_query_pack_dynamic(
         else:
             seeds.extend([f"{focused} official", f"{focused} data", f"{focused} source"])
 
-    matched_items = tracking.get("matched_items") if isinstance(tracking.get("matched_items"), list) else []
+    matched_items = memory.get("matched_items") if isinstance(memory.get("matched_items"), list) else []
     for row in matched_items[:2]:
         target = str(row.get("target") or row.get("query") or "").strip()[:140]
         if not target:
@@ -336,20 +335,20 @@ def _decompose_web_context_boundaries_dynamic(
     query: str,
     web_boundaries: list[dict[str, str]],
     intent_contract: dict[str, Any] | None,
-    tracking_snapshot: dict[str, Any] | None,
+    memory_snapshot: dict[str, Any] | None,
     service: LLMService,
     provider: str,
 ) -> dict[str, Any]:
     query_text = (query or "").strip()
     contract = intent_contract if isinstance(intent_contract, dict) else {}
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
+    memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
     base_queries = [str(it.get("query") or "").strip() for it in web_boundaries if str(it.get("query") or "").strip()]
 
     fallback_queries = _build_web_query_pack_dynamic(
         query=query_text,
         base_queries=base_queries or [query_text],
         intent_contract=contract,
-        tracking_snapshot=tracking,
+        memory_snapshot=memory,
         limit=_MAX_WEB_SUBAGENTS,
     )
     scope_map = {
@@ -389,7 +388,7 @@ def _decompose_web_context_boundaries_dynamic(
         f"user_query: {query_text}\n"
         f"intent_contract: {json.dumps(contract, ensure_ascii=False, separators=(',', ':'))[:1200]}\n"
         f"existing_web_queries: {json.dumps(base_queries, ensure_ascii=False, separators=(',', ':'))[:600]}\n"
-        f"matched_tracking_count: {_safe_int(tracking.get('matched_count'), 0)}\n"
+        f"matched_memory_count: {_safe_int(memory.get('matched_count'), 0)}\n"
         f"current_utc: {now_utc}\n"
         "Return JSON only."
     )
@@ -635,14 +634,14 @@ def _build_web_query_pack(
     query: str,
     base_queries: list[str] | None,
     intent_contract: dict[str, Any] | None,
-    tracking_snapshot: dict[str, Any] | None = None,
+    memory_snapshot: dict[str, Any] | None = None,
     limit: int = _MAX_WEB_SUBAGENTS,
 ) -> list[str]:
     return _build_web_query_pack_dynamic(
         query=query,
         base_queries=base_queries,
         intent_contract=intent_contract,
-        tracking_snapshot=tracking_snapshot,
+        memory_snapshot=memory_snapshot,
         limit=limit,
     )
 
@@ -651,7 +650,7 @@ def _build_web_query_pack_legacy(
     query: str,
     base_queries: list[str] | None,
     intent_contract: dict[str, Any] | None,
-    tracking_snapshot: dict[str, Any] | None = None,
+    memory_snapshot: dict[str, Any] | None = None,
     limit: int = _MAX_WEB_SUBAGENTS,
 ) -> list[str]:
     query_text = (query or "").strip()
@@ -660,7 +659,7 @@ def _build_web_query_pack_legacy(
 
     is_cjk = _is_cjk_text(query_text)
     contract = intent_contract if isinstance(intent_contract, dict) else {}
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
+    memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
 
     time_scope = str(contract.get("time_scope") or "").strip().lower()
     sports_intent = bool(contract.get("sports_result_intent")) or _is_sports_result_query(query_text)
@@ -732,7 +731,7 @@ def _build_web_query_pack_legacy(
         else:
             seeds.extend([f"{focused} official", f"{focused} data", f"{focused} source"])
 
-    matched_items = tracking.get("matched_items") if isinstance(tracking.get("matched_items"), list) else []
+    matched_items = memory.get("matched_items") if isinstance(memory.get("matched_items"), list) else []
     for row in matched_items[:2]:
         target = str(row.get("target") or row.get("query") or "").strip()[:140]
         if not target:
@@ -753,7 +752,7 @@ def _decompose_web_context_boundaries(
     query: str,
     web_boundaries: list[dict[str, str]],
     intent_contract: dict[str, Any] | None,
-    tracking_snapshot: dict[str, Any] | None,
+    memory_snapshot: dict[str, Any] | None,
     service: LLMService,
     provider: str,
 ) -> dict[str, Any]:
@@ -761,7 +760,7 @@ def _decompose_web_context_boundaries(
         query=query,
         web_boundaries=web_boundaries,
         intent_contract=intent_contract,
-        tracking_snapshot=tracking_snapshot,
+        memory_snapshot=memory_snapshot,
         service=service,
         provider=provider,
     )
@@ -771,20 +770,20 @@ def _decompose_web_context_boundaries_legacy(
     query: str,
     web_boundaries: list[dict[str, str]],
     intent_contract: dict[str, Any] | None,
-    tracking_snapshot: dict[str, Any] | None,
+    memory_snapshot: dict[str, Any] | None,
     service: LLMService,
     provider: str,
 ) -> dict[str, Any]:
     query_text = (query or "").strip()
     contract = intent_contract if isinstance(intent_contract, dict) else {}
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
+    memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
     base_queries = [str(it.get("query") or "").strip() for it in web_boundaries if str(it.get("query") or "").strip()]
 
     fallback_queries = _build_web_query_pack(
         query=query_text,
         base_queries=base_queries or [query_text],
         intent_contract=contract,
-        tracking_snapshot=tracking,
+        memory_snapshot=memory,
         limit=_MAX_WEB_SUBAGENTS,
     )
     scope_map = {
@@ -824,7 +823,7 @@ def _decompose_web_context_boundaries_legacy(
         f"user_query: {query_text}\n"
         f"intent_contract: {json.dumps(contract, ensure_ascii=False, separators=(',', ':'))[:1200]}\n"
         f"existing_web_queries: {json.dumps(base_queries, ensure_ascii=False, separators=(',', ':'))[:600]}\n"
-        f"matched_tracking_count: {_safe_int(tracking.get('matched_count'), 0)}\n"
+        f"matched_memory_count: {_safe_int(memory.get('matched_count'), 0)}\n"
         f"current_utc: {now_utc}\n"
         "Return JSON only."
     )
@@ -987,7 +986,7 @@ def _build_trace_context_boundaries(
     need_web_search: bool,
     web_queries: list[str],
     intent_contract: dict[str, Any] | None,
-    tracking_snapshot: dict[str, Any] | None,
+    memory_snapshot: dict[str, Any] | None,
     max_local: int = 2,
     max_web: int = 3,
 ) -> list[dict[str, str]]:
@@ -1010,7 +1009,7 @@ def _build_trace_context_boundaries(
             query=(query or "").strip(),
             base_queries=web_queries or [(query or "").strip()],
             intent_contract=intent_contract if isinstance(intent_contract, dict) else None,
-            tracking_snapshot=tracking_snapshot if isinstance(tracking_snapshot, dict) else None,
+            memory_snapshot=memory_snapshot if isinstance(memory_snapshot, dict) else None,
             limit=web_cap,
         )
         for q in seeds[:web_cap]:
@@ -1070,22 +1069,19 @@ def _fallback_intent_contract(
     *,
     query: str,
     memory_summary: str,
-    tracking_snapshot: dict[str, Any] | None,
+    memory_snapshot: dict[str, Any] | None,
     reason: str,
 ) -> dict[str, Any]:
     query_text = (query or "").strip()
     smalltalk = _is_smalltalk_query(query_text)
     time_sensitive = _is_time_sensitive_query(query_text)
     sports_result_intent = _is_sports_result_query(query_text)
-    tracking_intent = _is_tracking_intent_query(query_text)
     matched_count = 0
-    if isinstance(tracking_snapshot, dict):
-        matched_count = _safe_int(tracking_snapshot.get("matched_count"), 0)
+    if isinstance(memory_snapshot, dict):
+        matched_count = _safe_int(memory_snapshot.get("matched_count"), 0)
 
     intent_type = "chat"
-    if tracking_intent:
-        intent_type = "tracking"
-    elif not smalltalk:
+    if not smalltalk:
         intent_type = "retrieval"
     time_scope = "any"
     if time_sensitive:
@@ -1107,7 +1103,7 @@ def _fallback_intent_contract(
     if len(query_text) <= 6:
         ambiguities.append("query_too_short")
     if intent_type == "retrieval" and matched_count > 0 and not time_sensitive:
-        ambiguities.append("could_use_existing_tracking_only")
+        ambiguities.append("could_use_existing_memory_only")
     if intent_type == "retrieval" and not (memory_summary or "").strip():
         ambiguities.append("limited_personal_memory_context")
 
@@ -1119,7 +1115,6 @@ def _fallback_intent_contract(
         "requires_citations": requires_citations,
         "requires_factuality": requires_factuality,
         "sports_result_intent": sports_result_intent,
-        "tracking_intent": tracking_intent,
         "ambiguities": ambiguities[:4],
         "confidence": 0.62 if not smalltalk else 0.8,
         "reason": reason[:180],
@@ -1141,7 +1136,7 @@ def _normalize_intent_contract(
         out["goal"] = goal[:240]
 
     intent_type = str(raw.get("intent_type") or "").strip().lower()
-    if intent_type in {"chat", "retrieval", "tracking", "analysis"}:
+    if intent_type in {"chat", "retrieval", "analysis"}:
         out["intent_type"] = intent_type
 
     time_scope = str(raw.get("time_scope") or "").strip().lower()
@@ -1157,7 +1152,6 @@ def _normalize_intent_contract(
         out["requires_factuality"] = bool(raw.get("requires_factuality"))
 
     out["sports_result_intent"] = bool(raw.get("sports_result_intent")) or _is_sports_result_query(query)
-    out["tracking_intent"] = bool(raw.get("tracking_intent")) or _is_tracking_intent_query(query)
 
     ambiguities = raw.get("ambiguities")
     if isinstance(ambiguities, list):
@@ -1185,12 +1179,12 @@ def _build_intent_contract(
     service: LLMService,
     provider: str,
     memory_summary: str,
-    tracking_snapshot: dict[str, Any] | None = None,
+    memory_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     fallback = _fallback_intent_contract(
         query=query,
         memory_summary=memory_summary,
-        tracking_snapshot=tracking_snapshot,
+        memory_snapshot=memory_snapshot,
         reason="intent_fallback",
     )
     if provider == "rule_based" or not service.is_configured():
@@ -1202,9 +1196,9 @@ def _build_intent_contract(
         fallback["reason"] = fallback_reason
         return fallback
 
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
-    active_count = _safe_int(tracking.get("active_count"), 0)
-    matched_count = _safe_int(tracking.get("matched_count"), 0)
+    memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
+    active_count = _safe_int(memory.get("active_count"), 0)
+    matched_count = _safe_int(memory.get("matched_count"), 0)
     now_utc = datetime.now(timezone.utc).isoformat()
 
     prompt = (
@@ -1213,13 +1207,12 @@ def _build_intent_contract(
         "Return strict JSON only with schema:\n"
         "{"
         "\"goal\": string,"
-        "\"intent_type\": \"chat|retrieval|tracking|analysis\","
+        "\"intent_type\": \"chat|retrieval|analysis\","
         "\"time_scope\": \"any|today|recent|historical|realtime\","
         "\"freshness_hours\": number,"
         "\"requires_citations\": boolean,"
         "\"requires_factuality\": boolean,"
         "\"sports_result_intent\": boolean,"
-        "\"tracking_intent\": boolean,"
         "\"ambiguities\": string[],"
         "\"confidence\": number,"
         "\"reason\": string"
@@ -1229,8 +1222,8 @@ def _build_intent_contract(
     user_msg = (
         f"user_query: {query.strip()}\n"
         f"memory_summary_available: {'yes' if bool((memory_summary or '').strip()) else 'no'}\n"
-        f"active_tracking_count: {active_count}\n"
-        f"matched_tracking_count: {matched_count}\n"
+        f"active_memory_count: {active_count}\n"
+        f"matched_memory_count: {matched_count}\n"
         f"current_utc: {now_utc}\n"
         "Return JSON only."
     )
@@ -1260,7 +1253,7 @@ def _plan_tool_usage(
     service: LLMService,
     provider: str,
     memory_summary: str,
-    tracking_snapshot: dict[str, Any] | None = None,
+    memory_snapshot: dict[str, Any] | None = None,
     intent_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     def _fallback_plan(reason: str) -> dict[str, Any]:
@@ -1269,19 +1262,18 @@ def _plan_tool_usage(
         contract_time_scope = str(contract.get("time_scope") or "").strip().lower()
         contract_requires_citations = bool(contract.get("requires_citations"))
         contract_sports_intent = bool(contract.get("sports_result_intent"))
-        contract_tracking_intent = bool(contract.get("tracking_intent"))
 
-        tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
-        active_items = tracking.get("active_items") if isinstance(tracking.get("active_items"), list) else []
-        matched_items = tracking.get("matched_items") if isinstance(tracking.get("matched_items"), list) else []
+        memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
+        active_items = memory.get("active_items") if isinstance(memory.get("active_items"), list) else []
+        matched_items = memory.get("matched_items") if isinstance(memory.get("matched_items"), list) else []
 
         query_text = (query or "").strip()
         conversational = _is_smalltalk_query(query_text)
         time_sensitive = contract_time_scope in {"today", "recent", "realtime"} or _is_time_sensitive_query(query_text)
         has_memory = bool((memory_summary or "").strip())
-        has_tracking_match = bool(matched_items)
+        has_memory_match = bool(matched_items)
 
-        recent_tracking_match = False
+        recent_memory_match = False
         now = datetime.now(timezone.utc)
         for it in matched_items[:5]:
             updated_raw = str(it.get("updated_at") or "").strip()
@@ -1294,21 +1286,21 @@ def _plan_tool_usage(
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
             if (now - updated_at).total_seconds() <= 36 * 3600:
-                recent_tracking_match = True
+                recent_memory_match = True
                 break
 
         retrieval_like = bool(query_text) and (not conversational)
         if contract_intent_type == "chat":
             retrieval_like = False
-        elif contract_intent_type in {"retrieval", "tracking", "analysis"}:
+        elif contract_intent_type in {"retrieval", "analysis"}:
             retrieval_like = True
         sports_result_intent = bool(contract_sports_intent or _is_sports_result_query(query_text))
-        need_local = retrieval_like and (has_memory or has_tracking_match or bool(active_items))
+        need_local = retrieval_like and (has_memory or has_memory_match or bool(active_items))
         need_web = False
         if retrieval_like:
             if time_sensitive or sports_result_intent or contract_requires_citations:
-                need_web = not recent_tracking_match
-            elif (not has_memory) and (not has_tracking_match):
+                need_web = not recent_memory_match
+            elif (not has_memory) and (not has_memory_match):
                 need_web = True
 
         web_seed: list[str] = []
@@ -1346,23 +1338,7 @@ def _plan_tool_usage(
             else []
         )
 
-        trace_agent = bool((contract_tracking_intent or _is_tracking_intent_query(query_text)) and not recent_tracking_match)
-        track_suggestion = None
-        if trace_agent and query_text:
-            track_suggestion = {
-                "target": query_text[:240],
-                "source": "web" if need_web else "auto",
-                "reason": "fallback planner detected potential long-running tracking intent",
-            }
-        trace_context_boundaries = _build_trace_context_boundaries(
-            query=query_text,
-            raw_boundaries=[],
-            need_local_search=trace_agent and need_local,
-            need_web_search=trace_agent and bool(need_web or query_text),
-            web_queries=web_queries,
-            intent_contract=contract,
-            tracking_snapshot=tracking,
-        )
+        trace_context_boundaries: list[dict[str, str]] = []
         reason_bits = [reason]
         if conversational:
             reason_bits.append("smalltalk")
@@ -1370,10 +1346,10 @@ def _plan_tool_usage(
             reason_bits.append("time_sensitive")
         if sports_result_intent:
             reason_bits.append("sports_result_intent")
-        if recent_tracking_match:
-            reason_bits.append("tracking_match_recent")
-        elif has_tracking_match:
-            reason_bits.append("tracking_match_stale")
+        if recent_memory_match:
+            reason_bits.append("memory_match_recent")
+        elif has_memory_match:
+            reason_bits.append("memory_match_stale")
         if need_local:
             reason_bits.append("local_context")
         if need_web:
@@ -1384,10 +1360,9 @@ def _plan_tool_usage(
             "web_queries": web_queries,
             "context_boundaries": context_boundaries,
             "trace_context_boundaries": trace_context_boundaries,
-            "track_suggestion": track_suggestion,
             "route": {
                 "reply_agent": True,
-                "trace_agent": trace_agent,
+                "trace_agent": False,
                 "allow_web_retry": bool(need_web and time_sensitive),
             },
             "reason": ";".join(reason_bits),
@@ -1402,18 +1377,18 @@ def _plan_tool_usage(
             fallback_reason = "planner_not_configured"
         return _fallback_plan(fallback_reason)
 
-    tracking = tracking_snapshot if isinstance(tracking_snapshot, dict) else {}
-    active_items = tracking.get("active_items") if isinstance(tracking.get("active_items"), list) else []
-    matched_items = tracking.get("matched_items") if isinstance(tracking.get("matched_items"), list) else []
+    memory = memory_snapshot if isinstance(memory_snapshot, dict) else {}
+    active_items = memory.get("active_items") if isinstance(memory.get("active_items"), list) else []
+    matched_items = memory.get("matched_items") if isinstance(memory.get("matched_items"), list) else []
 
     planning_prompt = (
         "You are Aelin Main Agent planner.\n"
         "Decide dynamic dispatch by context boundaries.\n"
         "You must obey intent contract constraints from Intent Lens Agent.\n"
-        "Do not rely on rigid keyword-only rules; decide from query + memory + tracking context.\n"
+        "Do not rely on rigid keyword-only rules; decide from query + memory context.\n"
         "Both local and web subagents are optional.\n"
         "You may dispatch up to 5 web subagents and up to 5 local subagents in parallel.\n"
-        "If existing tracking already covers the asked topic, you may skip web retrieval.\n"
+        "If existing memory already covers the asked topic, you may skip web retrieval.\n"
         "Return strict JSON only with schema:\n"
         "{"
         "\"need_local_search\": boolean,"
@@ -1424,10 +1399,6 @@ def _plan_tool_usage(
         "\"reply_agent\": boolean,"
         "\"trace_agent\": boolean,"
         "\"allow_web_retry\": boolean,"
-        "\"should_suggest_tracking\": boolean,"
-        "\"tracking_target\": string,"
-        "\"tracking_source\": \"auto|web|rss|x|douyin|xiaohongshu|weibo|bilibili|email\","
-        "\"tracking_reason\": string,"
         "\"reason\": string"
         "}\n"
         "context_boundaries is the primary dispatch plan.\n"
@@ -1452,9 +1423,9 @@ def _plan_tool_usage(
         )
         +
         f"memory_summary_available: {'yes' if bool((memory_summary or '').strip()) else 'no'}\n"
-        f"active_tracking_count: {len(active_items)}\n"
-        + ("matched_tracking:\n" + "\n".join(matched_lines) + "\n" if matched_lines else "matched_tracking: none\n")
-        + ("recent_tracking:\n" + "\n".join(active_lines) + "\n" if active_lines else "recent_tracking: none\n")
+        f"active_memory_count: {len(active_items)}\n"
+        + ("matched_memory:\n" + "\n".join(matched_lines) + "\n" if matched_lines else "matched_memory: none\n")
+        + ("recent_memory:\n" + "\n".join(active_lines) + "\n" if active_lines else "recent_memory: none\n")
         + "Return JSON only."
     )
     try:
@@ -1486,34 +1457,13 @@ def _plan_tool_usage(
             query,
             [it.get("query") for it in context_boundaries if str(it.get("kind") or "") == "web"] or web_queries,
         )
-        should_track = bool(parsed.get("should_suggest_tracking"))
-        track_target = str(parsed.get("tracking_target") or "").strip()[:240]
-        track_source = _normalize_track_source(str(parsed.get("tracking_source") or "auto"))
-        track_reason = str(parsed.get("tracking_reason") or "").strip()[:220]
         reason = str(parsed.get("reason") or "").strip()[:200] or "llm_planner"
         reply_agent = bool(parsed.get("reply_agent", True))
-        trace_agent = bool(parsed.get("trace_agent"))
+        trace_agent = False
         allow_web_retry_raw = parsed.get("allow_web_retry")
         allow_web_retry = bool(allow_web_retry_raw) if allow_web_retry_raw is not None else need_web
 
-        track_suggestion = None
-        if should_track and track_target:
-            track_suggestion = {
-                "target": track_target,
-                "source": track_source,
-                "reason": track_reason or "Aelin 判断该主题值得持续跟踪。",
-            }
-            trace_agent = True
-
-        trace_context_boundaries = _build_trace_context_boundaries(
-            query=query,
-            raw_boundaries=parsed.get("trace_context_boundaries"),
-            need_local_search=trace_agent and need_local,
-            need_web_search=trace_agent and bool(need_web or track_suggestion),
-            web_queries=web_queries,
-            intent_contract=intent_contract if isinstance(intent_contract, dict) else None,
-            tracking_snapshot=tracking_snapshot if isinstance(tracking_snapshot, dict) else None,
-        )
+        trace_context_boundaries: list[dict[str, str]] = []
 
         if need_web and not web_queries:
             web_queries = [query.strip()[:180]] if query.strip() else []
@@ -1523,7 +1473,6 @@ def _plan_tool_usage(
             "web_queries": web_queries,
             "context_boundaries": context_boundaries,
             "trace_context_boundaries": trace_context_boundaries,
-            "track_suggestion": track_suggestion,
             "route": {
                 "reply_agent": reply_agent,
                 "trace_agent": trace_agent,
@@ -1548,7 +1497,6 @@ def _critic_tool_plan(
         requires_citations = bool(contract.get("requires_citations"))
         intent_type = str(contract.get("intent_type") or "").strip().lower()
         sports_result_intent = bool(contract.get("sports_result_intent")) or _is_sports_result_query(query)
-        tracking_intent = bool(contract.get("tracking_intent")) or _is_tracking_intent_query(query)
 
         need_local = bool(tool_plan.get("need_local_search"))
         need_web = bool(tool_plan.get("need_web_search"))
@@ -1566,7 +1514,7 @@ def _critic_tool_plan(
         issues: list[str] = []
         patch: dict[str, Any] = {}
 
-        retrieval_intent = intent_type in {"retrieval", "tracking", "analysis"} or (not _is_smalltalk_query(query))
+        retrieval_intent = intent_type in {"retrieval", "analysis"} or (not _is_smalltalk_query(query))
         if retrieval_intent and (not has_local) and (not has_web):
             issues.append("no_retrieval_path")
             patch["need_local_search"] = True
@@ -1592,23 +1540,6 @@ def _critic_tool_plan(
                 for q in patch.get("web_queries", [])[:2]
             )
             patch["context_boundaries"] = patch_boundaries
-
-        if tracking_intent and (not bool(route.get("trace_agent"))):
-            issues.append("missing_trace_route")
-            patch["route"] = {
-                "reply_agent": bool(route.get("reply_agent", True)),
-                "trace_agent": True,
-                "allow_web_retry": bool(route.get("allow_web_retry", False) or requires_citations or sports_result_intent),
-            }
-            patch["trace_context_boundaries"] = _build_trace_context_boundaries(
-                query=query,
-                raw_boundaries=tool_plan.get("trace_context_boundaries"),
-                need_local_search=has_local,
-                need_web_search=bool(has_web or patch.get("need_web_search")),
-                web_queries=patch.get("web_queries") if isinstance(patch.get("web_queries"), list) else web_queries,
-                intent_contract=contract,
-                tracking_snapshot=None,
-            )
 
         accepted = not issues
         return {
@@ -1747,11 +1678,11 @@ def _apply_plan_patch(
     patch_route = patch.get("route") if isinstance(patch.get("route"), dict) else {}
     merged_route = {
         "reply_agent": bool(patch_route.get("reply_agent", base_route.get("reply_agent", True))),
-        "trace_agent": bool(patch_route.get("trace_agent", base_route.get("trace_agent", False))),
+        "trace_agent": False,
         "allow_web_retry": bool(patch_route.get("allow_web_retry", base_route.get("allow_web_retry", need_web))),
     }
     trace_seed = patch.get("trace_context_boundaries") if isinstance(patch.get("trace_context_boundaries"), list) else out.get("trace_context_boundaries")
-    trace_enabled = bool(merged_route.get("trace_agent")) or bool(out.get("track_suggestion"))
+    trace_enabled = bool(merged_route.get("trace_agent"))
     trace_context_boundaries = _build_trace_context_boundaries(
         query=query,
         raw_boundaries=trace_seed,
@@ -1759,7 +1690,7 @@ def _apply_plan_patch(
         need_web_search=trace_enabled and bool(need_web or merged_route.get("allow_web_retry")),
         web_queries=web_queries,
         intent_contract=None,
-        tracking_snapshot=None,
+        memory_snapshot=None,
     )
 
     out["need_local_search"] = need_local
@@ -1771,24 +1702,6 @@ def _apply_plan_patch(
     out["planner_source"] = str(out.get("planner_source") or "fallback") + "+critic_patch"
     out["reason"] = str(out.get("reason") or "planner") + ";critic_patch"
     return out
-
-def _is_tracking_intent_query(query: str) -> bool:
-    text = (query or "").strip().lower()
-    if not text:
-        return False
-    signals = [
-        "\u8ffd\u8e2a",
-        "\u8ddf\u8e2a",
-        "\u540e\u7eed",
-        "\u6301\u7eed",
-        "\u8ba2\u9605",
-        "\u63d0\u9192",
-        "\u76d1\u63a7",
-        "watch",
-        "follow",
-        "track",
-    ]
-    return any(sig in text for sig in signals)
 
 def _is_diary_only_query(query: str) -> bool:
     text = re.sub(r"\s+", " ", (query or "").strip()).lower()
@@ -1902,15 +1815,13 @@ def _main_agent_route(
     *,
     need_local_search: bool,
     need_web_search: bool,
-    planned_track_suggestion: dict[str, str] | None,
     planned_route: dict[str, Any] | None,
 ) -> dict[str, Any]:
     reply_agent = True
-    trace_agent = bool(planned_track_suggestion)
+    trace_agent = False
     allow_web_retry = bool(need_web_search)
     if isinstance(planned_route, dict):
         reply_agent = bool(planned_route.get("reply_agent", True))
-        trace_agent = bool(planned_route.get("trace_agent", trace_agent))
         allow_web_retry = bool(planned_route.get("allow_web_retry", allow_web_retry))
     multi_agent = bool((reply_agent and (need_local_search or need_web_search)) or trace_agent)
     reasons: list[str] = []
@@ -2090,7 +2001,7 @@ def _build_retry_web_queries(
     used_queries: list[str],
     *,
     intent_contract: dict[str, Any] | None = None,
-    tracking_snapshot: dict[str, Any] | None = None,
+    memory_snapshot: dict[str, Any] | None = None,
 ) -> list[str]:
     base = (query or "").strip()
     if not base:
@@ -2100,7 +2011,7 @@ def _build_retry_web_queries(
         query=base,
         base_queries=[base],
         intent_contract=intent_contract if isinstance(intent_contract, dict) else None,
-        tracking_snapshot=tracking_snapshot if isinstance(tracking_snapshot, dict) else None,
+        memory_snapshot=memory_snapshot if isinstance(memory_snapshot, dict) else None,
         limit=min(_MAX_WEB_SUBAGENTS + 2, 7),
     )
     out: list[str] = []
@@ -2116,37 +2027,3 @@ def _build_retry_web_queries(
         if len(out) >= 3:
             break
     return out
-
-def _trace_agent_suggestion(
-    *,
-    query: str,
-    planned_track_suggestion: dict[str, str] | None,
-    citations: list[AelinCitation],
-    need_web_search: bool,
-) -> tuple[dict[str, str] | None, str]:
-    if planned_track_suggestion:
-        target = str(planned_track_suggestion.get("target") or "").strip()[:240]
-        source = _normalize_track_source(str(planned_track_suggestion.get("source") or "auto"))
-        reason = str(planned_track_suggestion.get("reason") or "").strip()[:220]
-        if target:
-            return (
-                {
-                    "target": target,
-                    "source": source,
-                    "reason": reason or "Trace Agent 采纳了 Reply Agent 的跟踪建议。",
-                },
-                "use_planned_track_suggestion",
-            )
-
-    if _is_tracking_intent_query(query):
-        source = "web" if (need_web_search or any(it.source == "web" for it in citations)) else "auto"
-        return (
-            {
-                "target": query.strip()[:240],
-                "source": source,
-                "reason": "Trace Agent 识别到明确的持续追踪意图。",
-            },
-            "tracking_intent_matched",
-        )
-
-    return None, "no_trace_action"

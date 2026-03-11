@@ -2,13 +2,9 @@ import { fetchFormData, fetchJson } from './client'
 import type {
   AelinChatRequest, AelinChatResponse, AelinContextResponse,
   AelinNotificationResponse, AelinProactivePollResponse,
-  AelinTrackConfirmRequest, AelinTrackConfirmResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinBrowserLoginCheckpointListResponse,
-  AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
-  AelinTrackingItem, AelinTrackingRunResponse,
-  AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
-  AelinTrackingFileMemorySearchResponse, AelinTrackingFileMemoryContentResponse, AelinDiaryTreeResponse,
+  AelinFileMemoryContentResponse, AelinDiaryTreeResponse,
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
@@ -38,9 +34,6 @@ export const aelinApi = {
   proactivePoll: (workspace = 'default') =>
     fetchJson<AelinProactivePollResponse>(`/api/v1/aelin/proactive/poll?workspace=${workspace}`),
 
-  trackConfirm: (body: AelinTrackConfirmRequest) =>
-    fetchJson<AelinTrackConfirmResponse>('/api/v1/aelin/track/confirm', { method: 'POST', body: JSON.stringify(body) }),
-
   confirmBrowserAction: (body: AelinBrowserConfirmRequest) =>
     fetchJson<AelinBrowserConfirmResponse>('/api/v1/aelin/agent/browser/confirm', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -49,34 +42,11 @@ export const aelinApi = {
       `/api/v1/aelin/agent/browser/login-checkpoints?workspace=${encodeURIComponent(workspace)}&status=${encodeURIComponent(status)}&limit=${limit}`,
     ),
 
-  trackingList: (params?: Record<string, string>) =>
-    fetchJson<AelinTrackingListResponse>(`/api/v1/aelin/tracking${params ? '?' + new URLSearchParams(params) : ''}`),
-
-  trackingUpdate: (targetId: number, body: AelinTrackingTargetUpdateRequest) =>
-    fetchJson<AelinTrackingItem>(`/api/v1/aelin/tracking/targets/${targetId}`, { method: 'PATCH', body: JSON.stringify(body) }),
-
-  trackingRun: (targetId: number) =>
-    fetchJson<AelinTrackingRunResponse>(`/api/v1/aelin/tracking/targets/${targetId}/run`, { method: 'POST' }),
-
-  trackingChanges: (targetId: number, params?: Record<string, string>) =>
-    fetchJson<AelinTrackingChangeListResponse>(`/api/v1/aelin/tracking/targets/${targetId}/changes${params ? '?' + new URLSearchParams(params) : ''}`),
-
-  trackingAck: (targetId: number, changeIds: number[]) =>
-    fetchJson<AelinTrackingRunResponse>(`/api/v1/aelin/tracking/targets/${targetId}/changes/ack`, {
-      method: 'POST', body: JSON.stringify({ change_ids: changeIds }),
-    }),
-
-  trackingSnapshots: (targetId: number, params?: Record<string, string>) =>
-    fetchJson<AelinTrackingSnapshotListResponse>(`/api/v1/aelin/tracking/targets/${targetId}/snapshots${params ? '?' + new URLSearchParams(params) : ''}`),
-
-  fileMemorySearch: (params: Record<string, string>) =>
-    fetchJson<AelinTrackingFileMemorySearchResponse>(`/api/v1/aelin/tracking/file-memory/search?${new URLSearchParams(params)}`),
-
   fileMemoryContent: (params: Record<string, string>) =>
-    fetchJson<AelinTrackingFileMemoryContentResponse>(`/api/v1/aelin/tracking/file-memory/content?${new URLSearchParams(params)}`),
+    fetchJson<AelinFileMemoryContentResponse>(`/api/v1/aelin/memory/file-memory/content?${new URLSearchParams(params)}`),
 
   fileMemoryTree: (params: Record<string, string>) =>
-    fetchJson<AelinDiaryTreeResponse>(`/api/v1/aelin/tracking/file-memory/tree?${new URLSearchParams(params)}`),
+    fetchJson<AelinDiaryTreeResponse>(`/api/v1/aelin/memory/file-memory/tree?${new URLSearchParams(params)}`),
 
   // Device
   deviceCapabilities: () =>

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import app.services.aelin_loop_tools as aelin_loop_tools
+from types import SimpleNamespace
+
 import app.services.aelin_tools as aelin_tools
-from app.services.aelin_tools import AelinToolHub
+from app.services.aelin_tools import AelinToolHub, _PINCHTAB_SESSIONS, _PINCHTAB_USER_SESSIONS
 from app.services.web_search import WebSearchResult
 
 
@@ -16,6 +17,29 @@ class _DummyTracking:
 
 class _DummyFileMemory:
     pass
+
+
+class _FakeLLMCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs):
+        # Record the call and return a minimal JSON plan with a single open+text.
+        self.calls.append(kwargs)
+        content = '{"steps":[{"action":"open","url":"https://example.com"},{"action":"text"}]}'
+        return type(
+            "Resp",
+            (object,),
+            {
+                "choices": [
+                    type(
+                        "Choice",
+                        (object,),
+                        {"message": type("Msg", (object,), {"content": content})()},
+                    )()
+                ]
+            },
+        )()
 
 
 class _FakeWebSearch:
@@ -50,15 +74,48 @@ class _FakeWebSearch:
         ]
 
 
-def _hub(fake_web: _FakeWebSearch) -> AelinToolHub:
+class _FakePinchTabClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def health(self) -> dict[str, object]:
+        self.calls.append(("health", {}))
+        return {"ok": True, "status": "healthy"}
+
+    def launch_instance(self) -> dict[str, object]:
+        self.calls.append(("launch_instance", {}))
+        return {"ok": True, "instance_id": "inst-1"}
+
+    def open_tab(self, *, instance_id: str, url: str) -> dict[str, object]:
+        self.calls.append(("open_tab", {"instance_id": instance_id, "url": url}))
+        return {"ok": True, "tab_id": "tab-1"}
+
+    def snapshot(self, *, tab_id: str) -> dict[str, object]:
+        self.calls.append(("snapshot", {"tab_id": tab_id}))
+        return {"ok": True, "data": {"title": "Example"}}
+
+    def text(self, *, tab_id: str, mode: str = "readable") -> dict[str, object]:
+        self.calls.append(("text", {"tab_id": tab_id, "mode": mode}))
+        return {"ok": True, "text": "page text"}
+
+    def action(self, *, tab_id: str, kind: str, ref: str | None = None, **kwargs: object) -> dict[str, object]:
+        payload: dict[str, object] = {"tab_id": tab_id, "kind": kind}
+        if ref is not None:
+            payload["ref"] = ref
+        payload.update(kwargs)
+        self.calls.append(("action", payload))
+        return {"ok": True, "effect": "clicked"}
+
+
+def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
     return AelinToolHub(
         db=None,  # type: ignore[arg-type]
         user_id=1,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
-        tracking_service=_DummyTracking(),  # type: ignore[arg-type]
         file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
+        llm_service=llm_service,  # type: ignore[arg-type]
     )
 
 
@@ -115,6 +172,16 @@ def test_web_search_tool_search_and_fetch():
     assert fake_web.calls[0] == ("search_and_fetch", "DeepSeek 4.0", 3, 2)
 
 
+def test_tool_definitions_are_cached_per_hub_instance():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    first = hub.tool_definitions()
+    second = hub.tool_definitions()
+
+    assert first is second
+
+
 def test_web_search_tool_missing_query():
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -147,224 +214,102 @@ def test_screen_get_tool_success(monkeypatch):
     assert result["width"] == 1280
 
 
-def test_browser_state_get_tool_success(monkeypatch):
+def test_device_atomic_tools_prefer_explicit_contracts(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
     monkeypatch.setattr(
-        aelin_tools.browser_plane_adapter,
-        "state_get",
-        lambda **kwargs: {
-            "ok": True,
-            "session_id": "bs-test",
-            "url": "https://example.com",
-            "title": "Example",
-            "ready_state": "complete",
-            "interactive_targets": [{"tag": "button", "text": "Search"}],
-            "a11y_nodes": [],
-            "dom_digest": {"interactive_count": 1, "a11y_count": 0, "ready_state": "complete"},
+        aelin_tools,
+        "device_status_snapshot",
+        lambda: {
+            "platform": "windows",
+            "capabilities": {"desktop_open_url": True, "desktop_activate_module": False},
+            "notes": ["note-a"],
+            "desktop_plugin_reachable": True,
+            "desktop_plugin_configured": True,
         },
     )
+    monkeypatch.setattr(
+        aelin_tools,
+        "device_collect_process_items",
+        lambda *, sort_by, limit: [
+            SimpleNamespace(pid=321, name="Code.exe", cpu_percent=12.5, memory_mb=640.0, anomaly_score=0.3, safe_to_terminate=True)
+        ],
+    )
+    monkeypatch.setattr(
+        aelin_tools,
+        "device_apply_mode",
+        lambda mode: {
+            "mode": mode,
+            "status": "applied",
+            "summary": f"{mode} ok",
+            "steps": ["step-a"],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(
+        aelin_tools,
+        "open_desktop_external_url",
+        lambda url: {"url": url, "opened": True, "detail": "ok"},
+    )
+    monkeypatch.setattr(
+        aelin_tools,
+        "activate_desktop_module",
+        lambda route: {"route": route, "url": f"http://desktop.local{route}", "opened": True, "detail": "ok"},
+    )
 
-    result = hub.execute("browser_state_get", {"include_dom": True, "max_targets": 10})
-    assert result["ok"] is True
-    assert result["url"] == "https://example.com"
-    assert result["dom_digest"]["interactive_count"] == 1
+    status = hub.execute("device_status", {})
+    assert status["ok"] is True
+    assert status["desktop_plugin_reachable"] is True
+
+    processes = hub.execute("device_processes", {"sort_by": "memory", "limit": 5})
+    assert processes["ok"] is True
+    assert processes["items"][0]["pid"] == 321
+    assert processes["sort_by"] == "memory"
+
+    mode = hub.execute("device_mode_apply", {"mode": "focus"})
+    assert mode["ok"] is True
+    assert mode["status"] == "applied"
+    assert mode["steps"] == ["step-a"]
+
+    opened = hub.execute("desktop_open_url", {"url": "https://example.com"})
+    assert opened["ok"] is True
+    assert opened["opened"] is True
+
+    aelin_opened = hub.execute("desktop_open_aelin", {"route": "/processes"})
+    assert aelin_opened["ok"] is True
+    assert aelin_opened["route"] == "/processes"
 
 
-def test_browser_session_list_tool_success(monkeypatch):
+def test_desktop_open_url_rejects_non_http_schemes(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
+    opened_urls: list[str] = []
 
     monkeypatch.setattr(
-        aelin_tools.browser_plane_adapter,
-        "list_sessions",
-        lambda **kwargs: {
-            "ok": True,
-            "scope": "all",
-            "managed_sessions": [{"session_id": "bs1", "mode": "managed"}],
-            "system_processes": [{"pid": 1234, "name": "chrome.exe"}],
-            "cdp_enabled": True,
-            "cdp_endpoint": "http://127.0.0.1:9222",
-        },
+        aelin_tools,
+        "open_desktop_external_url",
+        lambda url: opened_urls.append(url) or {"url": url, "opened": True, "detail": "ok"},
     )
 
-    result = hub.execute("browser_session_list", {"scope": "all", "max_items": 30})
-    assert result["ok"] is True
-    assert result["scope"] == "all"
-    assert len(result["managed_sessions"]) == 1
-    assert len(result["system_processes"]) == 1
+    blocked = hub.execute("desktop_open_url", {"url": "file:///C:/Windows/System32/notepad.exe"})
+
+    assert blocked["ok"] is False
+    assert blocked["error"] == "invalid_url_scheme"
+    assert opened_urls == []
 
 
-def test_browser_use_tool_confirmation_required(monkeypatch):
+def test_legacy_device_tool_reuses_atomic_implementations(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
-    monkeypatch.setattr(
-        aelin_tools.browser_plane_adapter,
-        "use",
-        lambda **kwargs: {
-            "ok": False,
-            "error": "confirmation_required",
-            "requires_confirmation": True,
-            "risk_level": "high",
-            "action": "click",
-        },
-    )
+    monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_status", lambda self, args: {"ok": True, "summary": "status"})
+    monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_processes", lambda self, args: {"ok": True, "items": [{"pid": 1}]})
+    monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_mode_apply", lambda self, args: {"ok": True, "mode": "focus"})
 
-    result = hub.execute(
-        "browser_use",
-        {"action": "click", "target": "Delete", "confirm": False},
-    )
-    assert result["ok"] is False
-    assert result["error"] == "confirmation_required"
-    assert result["requires_confirmation"] is True
-
-
-def test_browser_use_tool_supports_external_scope(monkeypatch):
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-
-    captured: dict[str, object] = {}
-
-    def _fake_use(**kwargs):
-        captured.update(kwargs)
-        return {"ok": True, "scope": kwargs.get("scope"), "action": kwargs.get("action")}
-
-    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
-
-    result = hub.execute(
-        "browser_use",
-        {"action": "navigate", "scope": "external", "url": "https://github.com", "confirm": True},
-    )
-    assert result["ok"] is True
-    assert result["scope"] == "external"
-    assert captured["scope"] == "external"
-
-
-def test_browser_use_tool_passes_confirm_flag(monkeypatch):
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-
-    captured: dict[str, object] = {}
-
-    def _fake_use(**kwargs):
-        captured.update(kwargs)
-        return {"ok": True}
-
-    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
-
-    result = hub.execute(
-        "browser_use",
-        {"action": "navigate", "scope": "managed", "url": "https://example.com", "confirm": False},
-    )
-    assert result["ok"] is True
-    inner_args = captured.get("args")
-    assert isinstance(inner_args, dict)
-    assert inner_args.get("confirm") is False
-
-
-def test_tool_definitions_include_external_browser_scope():
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-    defs = hub.tool_definitions()
-    browser_use = next(
-        item["function"] for item in defs if str(item.get("function", {}).get("name")) == "browser_use"
-    )
-    scope_enum = list(browser_use["parameters"]["properties"]["scope"]["enum"])
-    assert "external" in scope_enum
-
-
-def test_tool_definitions_include_browser_selector_and_text():
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-    defs = hub.tool_definitions()
-    browser_use = next(
-        item["function"] for item in defs if str(item.get("function", {}).get("name")) == "browser_use"
-    )
-    properties = browser_use["parameters"]["properties"]
-    assert "selector" in properties
-    assert "text" in properties
-
-
-def test_browser_use_tool_calls_browser_plane_adapter(monkeypatch):
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-    captured: dict[str, object] = {}
-
-    def _fake_use(**kwargs):
-        captured.update(kwargs)
-        return {"ok": True, "scope": kwargs.get("scope"), "action": kwargs.get("action")}
-
-    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
-
-    result = hub.execute(
-        "browser_use",
-        {"action": "navigate", "scope": "managed", "url": "https://example.com", "confirm": True},
-    )
-    assert result["ok"] is True
-    assert captured.get("scope") == "managed"
-
-
-def test_browser_use_tool_forwards_selector_and_text(monkeypatch):
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-
-    captured: dict[str, object] = {}
-
-    def _fake_use(**kwargs):
-        captured.update(kwargs)
-        return {"ok": True}
-
-    monkeypatch.setattr(aelin_tools.browser_plane_adapter, "use", _fake_use)
-
-    result = hub.execute(
-        "browser_use",
-        {"action": "click", "selector": "[data-testid='tweet']", "text": "Pinned", "confirm": True},
-    )
-    assert result["ok"] is True
-    inner_args = captured.get("args")
-    assert isinstance(inner_args, dict)
-    assert inner_args.get("selector") == "[data-testid='tweet']"
-    assert inner_args.get("text") == "Pinned"
-
-
-def test_browser_click_optimizer_allows_selector_without_target():
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-
-    rewritten, short_circuit = aelin_loop_tools._optimize_browser_tool_call(
-        tool_hub=hub,
-        tool_name="browser_use",
-        args={"action": "click", "selector": "[data-testid='SideNav_NewTweet_Button']"},
-    )
-
-    assert rewritten["selector"] == "[data-testid='SideNav_NewTweet_Button']"
-    assert short_circuit is None
-
-
-def test_browser_record_result_does_not_mark_failed_navigate_as_observed():
-    fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-
-    aelin_loop_tools._record_browser_tool_result(
-        tool_hub=hub,
-        tool_name="browser_use",
-        args={"action": "navigate", "url": "https://x.com/following"},
-        result={"ok": False, "error": "timeout"},
-    )
-
-    state = aelin_loop_tools._browser_loop_state(hub)
-    assert state.last_observed_url == ""
-
-    rewritten, short_circuit = aelin_loop_tools._optimize_browser_tool_call(
-        tool_hub=hub,
-        tool_name="browser_use",
-        args={"action": "navigate", "url": "https://x.com/following"},
-    )
-
-    assert rewritten["url"] == "https://x.com/following"
-    assert short_circuit is None
+    assert hub.execute("device", {"action": "capabilities"})["summary"] == "status"
+    assert hub.execute("device", {"action": "processes"})["items"][0]["pid"] == 1
+    assert hub.execute("device", {"action": "mode_apply", "mode": "focus"})["mode"] == "focus"
 
 
 def test_attachment_search_uses_available_ids_fallback():
@@ -375,7 +320,6 @@ def test_attachment_search_uses_available_ids_fallback():
         user_id=7,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
-        tracking_service=_DummyTracking(),  # type: ignore[arg-type]
         file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
         attachment_service=fake_attachment,  # type: ignore[arg-type]
@@ -395,7 +339,6 @@ def test_attachment_search_prefers_explicit_ids():
         user_id=7,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
-        tracking_service=_DummyTracking(),  # type: ignore[arg-type]
         file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
         attachment_service=fake_attachment,  # type: ignore[arg-type]
@@ -410,3 +353,191 @@ def test_attachment_search_prefers_explicit_ids():
     assert fake_attachment.calls[0]["attachment_ids"] == [5, 6]
     assert fake_attachment.calls[0]["top_k"] == 6
     assert fake_attachment.calls[0]["mode"] == "hybrid"
+
+
+def test_context_get_reuses_shared_memory_primitives_without_snapshot():
+    fake_web = _FakeWebSearch()
+    calls = {"get_summary": 0, "build_focus_items": 0, "list_todos": 0, "snapshot": 0}
+
+    class _Memory:
+        def get_summary(self, db, user_id):
+            calls["get_summary"] += 1
+            return "summary"
+
+        def build_focus_items(self, db, user_id, *, query="", limit=8):
+            calls["build_focus_items"] += 1
+            return [
+                SimpleNamespace(
+                    message_id=11,
+                    source="imap",
+                    sender="alice",
+                    sender_avatar_url=None,
+                    title="mail title",
+                    received_at="2026-03-11 10:00",
+                    score=8.3,
+                )
+            ]
+
+        def list_todos(self, db, user_id, *, include_done=True, limit=100):
+            calls["list_todos"] += 1
+            return [{"id": 1, "title": "todo", "done": False, "updated_at": "2026-03-11T10:00:00+00:00"}]
+
+        def snapshot(self, db, user_id, *, query=""):
+            calls["snapshot"] += 1
+            raise AssertionError("snapshot should not be used")
+
+    hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=7,
+        workspace="default",
+        memory_service=_Memory(),  # type: ignore[arg-type]
+        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+    )
+
+    result = hub.execute("context_get", {"query": "mail", "max_items": 3})
+
+    assert result["ok"] is True
+    assert result["summary"] == "summary"
+    assert result["focus_items"][0]["source_label"] == "Email"
+    assert result["todos"][0]["title"] == "todo"
+    assert calls["get_summary"] == 1
+    assert calls["build_focus_items"] == 1
+    assert calls["list_todos"] == 1
+    assert calls["snapshot"] == 0
+
+
+def test_pinchtab_tool_calls_client_methods(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+    fake_client = _FakePinchTabClient()
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+
+    # health
+    result = hub.execute("pinchtab", {"action": "health"})
+    assert result["ok"] is True
+    assert any(call[0] == "health" for call in fake_client.calls)
+
+    # launch + open_tab
+    result = hub.execute("pinchtab", {"action": "launch_instance"})
+    assert result["ok"] is True and result.get("instance_id") == "inst-1"
+
+    result = hub.execute(
+        "pinchtab",
+        {"action": "open_tab", "instance_id": "inst-1", "url": "https://example.com"},
+    )
+    assert result["ok"] is True and result.get("tab_id") == "tab-1"
+
+    # required parameter validation
+    missing = hub.execute("pinchtab", {"action": "open_tab"})
+    assert missing["ok"] is False and "missing instance_id or url" in str(missing.get("error") or "")
+
+    # unsupported action
+    unsupported = hub.execute("pinchtab", {"action": "unknown"})
+    assert unsupported["ok"] is False
+
+
+def test_pinchtab_agent_executes_plan_with_llm_and_client(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+
+    result = hub.execute("pinchtab_agent", {"goal": "打开 example.com 并读取文本"})
+    assert result["ok"] is True
+    assert result.get("instance_id") == "inst-1"
+    assert result.get("tab_id") == "tab-1"
+    assert "last_text" in result
+    # Ensure the low-level client was actually used.
+    called_ops = [name for name, _ in fake_client.calls]
+    assert "launch_instance" in called_ops
+    assert "open_tab" in called_ops
+    assert "text" in called_ops
+
+
+def test_pinchtab_session_start_and_step_reuse_instance(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+
+    # start 会话
+    start_result = hub.execute("pinchtab_session", {"action": "start", "goal": "打开 example.com 并读取文本"})
+    assert start_result["ok"] is True
+    sid = start_result.get("session_id")
+    assert isinstance(sid, str) and sid
+    assert start_result.get("instance_id") == "inst-1"
+    assert start_result.get("tab_id") == "tab-1"
+
+    # step 应该复用同一个 instance，并再次调用 pinchtab_agent
+    _ = hub.execute("pinchtab_session", {"action": "step", "session_id": sid, "goal": "继续读取文本"})
+    # Fake client 中的 launch_instance 只会在第一次被调用一次。
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance"]
+
+
+def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    owner_hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    other_hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=2,
+        workspace="default",
+        memory_service=_DummyMemory(),  # type: ignore[arg-type]
+        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        llm_service=fake_service,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+
+    start_result = owner_hub.execute("pinchtab_session", {"action": "start", "goal": "打开 example.com 并读取文本"})
+    assert start_result["ok"] is True
+    sid = str(start_result.get("session_id") or "")
+    assert sid
+
+    blocked_status = other_hub.execute("pinchtab_session", {"action": "status", "session_id": sid})
+    blocked_step = other_hub.execute("pinchtab_session", {"action": "step", "session_id": sid, "goal": "继续"})
+    blocked_close = other_hub.execute("pinchtab_session", {"action": "close", "session_id": sid})
+
+    assert blocked_status["ok"] is False
+    assert blocked_step["ok"] is False
+    assert blocked_close["ok"] is False
+    assert blocked_status["error"] == "unknown_session_id"
+    assert blocked_step["error"] == "unknown_session_id"
+    assert blocked_close["error"] == "unknown_session_id"
+    assert sid in _PINCHTAB_SESSIONS

@@ -170,6 +170,8 @@ class AelinChatRequest(BaseModel):
     use_memory: bool = True
     max_citations: int = Field(default=6, ge=1, le=20)
     workspace: str = Field(default="default", min_length=1, max_length=64)
+    source: str = Field(default="chat_ui", min_length=1, max_length=32)
+    source_metadata: dict[str, str] = Field(default_factory=dict)
     images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
     attachment_ids: list[int] = Field(default_factory=list, max_length=20)
     history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
@@ -206,6 +208,28 @@ class AelinChatRequest(BaseModel):
                 continue
             normalized.append({"role": role[:16], "content": content[:3000]})
         return normalized
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _normalize_source(cls, value: Any) -> str:
+        clean = str(value or "chat_ui").strip().lower()
+        return clean[:32] or "chat_ui"
+
+    @field_validator("source_metadata", mode="before")
+    @classmethod
+    def _normalize_source_metadata(cls, value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, str] = {}
+        for raw_key, raw_val in list(value.items())[:12]:
+            key = str(raw_key or "").strip().lower()[:40]
+            if not key:
+                continue
+            text = str(raw_val or "").strip()
+            if not text:
+                continue
+            out[key] = text[:240]
+        return out
 
     @field_validator("attachment_ids", mode="before")
     @classmethod
@@ -397,363 +421,39 @@ class AelinChatResponse(BaseModel):
     generated_at: datetime
 
 
-class AelinTrackConfirmRequest(BaseModel):
-    target: str = Field(min_length=1, max_length=240)
-    source: str = Field(default="auto", min_length=1, max_length=32)
-    query: str = Field(default="", max_length=500)
+class RemoteControlExecuteRequest(BaseModel):
+    text: str = Field(default="", max_length=1200)
     workspace: str = Field(default="default", min_length=1, max_length=64)
-    description: str = Field(default="", max_length=1200)
-    tags: list[str] = Field(default_factory=list, max_length=20)
-    track_type: Optional[str] = Field(default=None, max_length=16)
-    interval_seconds: Optional[int] = Field(default=None, ge=30, le=86400)
-    notify_level: str = Field(default="all", min_length=1, max_length=16)
-    is_temporary: bool = False
-    temporary_days: int = Field(default=7, ge=1, le=30)
+    source: str = Field(default="manual_remote", min_length=1, max_length=32)
+    source_user_name: str = Field(default="", max_length=255)
+    source_open_id: str = Field(default="", max_length=128)
+    source_chat_id: str = Field(default="", max_length=128)
+    source_message_id: str = Field(default="", max_length=128)
+    history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
+    images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=20)
+    search_mode: str = Field(default="auto", min_length=1, max_length=16)
 
 
-class AelinTrackConfirmResponse(BaseModel):
-    status: str
-    message: str
-    provider: Optional[str] = None
-    target_id: Optional[int] = None
-    next_run_at: Optional[str] = None
-    actions: list[AelinAction] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinBrowserConfirmRequest(BaseModel):
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    action_kind: str = Field(default="confirm_browser_action", max_length=64)
-    action: str = Field(default="", max_length=32)
-    profile_id: str = Field(default="", max_length=120)
-    login_request_id: str = Field(default="", max_length=64)
-    next_call: dict[str, Any] = Field(default_factory=dict)
-    resume_request: dict[str, Any] = Field(default_factory=dict)
-    resume_query: str = Field(default="", max_length=500)
-    continue_after_confirm: bool = True
-
-
-class AelinBrowserConfirmResponse(BaseModel):
+class RemoteControlExecuteResponse(BaseModel):
     ok: bool
-    message: str = ""
-    requires_followup: bool = False
-    profile_id: str = ""
-    login_request_id: str = ""
-    login_state: dict[str, Any] = Field(default_factory=dict)
-    tool_result: dict[str, Any] = Field(default_factory=dict)
-    continued: bool = False
-    continuation_error: str = ""
-    followup_result: dict[str, Any] = Field(default_factory=dict)
+    status: str = "completed"
+    source: str = "remote_control"
+    response: AelinChatResponse
     generated_at: datetime
 
 
-class AelinBrowserLoginCheckpointItem(BaseModel):
-    request_id: str
-    profile_id: str = ""
-    workspace: str = "default"
-    domain: str = ""
-    reason: str = ""
-    status: str = "awaiting_login"
-    next_call: dict[str, Any] = Field(default_factory=dict)
-    resume_query: str = ""
-    resume_request: dict[str, Any] = Field(default_factory=dict)
-    continue_after_confirm: bool = True
-    created_at: float = 0.0
-    updated_at: float = 0.0
-
-
-class AelinBrowserLoginCheckpointListResponse(BaseModel):
-    total: int = 0
-    items: list[AelinBrowserLoginCheckpointItem] = Field(default_factory=list)
+class RemoteControlStatusResponse(BaseModel):
+    enabled: bool = True
+    source: str = "remote_control"
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+    supported_atomic_actions: list[str] = Field(default_factory=list)
+    desktop_plugin_reachable: bool = False
     generated_at: datetime
 
 
-class AelinBrowserTaskCreateRequest(BaseModel):
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    kind: str = Field(default="browser_use", min_length=1, max_length=32)
-    scope: str = Field(default="auto", min_length=1, max_length=24)
-    action: str = Field(default="", max_length=32)
-    input: dict[str, Any] = Field(default_factory=dict)
-    profile_id: str = Field(default="", max_length=120)
-    tab_id: str = Field(default="", max_length=120)
-
-
-class AelinBrowserTaskItem(BaseModel):
-    task_id: str
-    profile_id: str = ""
-    tab_id: str = ""
-    workspace: str = "default"
-    kind: str = "browser_use"
-    status: str = "pending"
-    scope: str = "auto"
-    action: str = ""
-    input: dict[str, Any] = Field(default_factory=dict)
-    result: dict[str, Any] = Field(default_factory=dict)
-    checkpoint_request_id: str = ""
-    created_at: float = 0.0
-    updated_at: float = 0.0
-
-
-class AelinBrowserTaskResponse(BaseModel):
-    ok: bool = True
-    item: AelinBrowserTaskItem | None = None
-    generated_at: datetime
-
-
-class AelinBrowserSnapshotResponse(BaseModel):
-    ok: bool = True
-    scope: str = "auto"
-    task_id: str = ""
-    profile_id: str = ""
-    snapshot: dict[str, Any] = Field(default_factory=dict)
-    generated_at: datetime
-
-
-class AelinBrowserInstanceItem(BaseModel):
-    instance_id: str
-    profile_id: str = ""
-    session_id: str = ""
-    workspace: str = "default"
-    mode: str = "cdp"
-    status: str = "ready"
-    current_tab_id: str = ""
-    created_at: float = 0.0
-    updated_at: float = 0.0
-
-
-class AelinBrowserInstanceListResponse(BaseModel):
-    total: int = 0
-    items: list[AelinBrowserInstanceItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinBrowserTabItem(BaseModel):
-    tab_id: str
-    instance_id: str = ""
-    profile_id: str = ""
-    session_id: str = ""
-    workspace: str = "default"
-    page_index: int = 0
-    url: str = ""
-    title: str = ""
-    is_active: bool = False
-    status: str = "open"
-    created_at: float = 0.0
-    updated_at: float = 0.0
-
-
-class AelinBrowserTabListResponse(BaseModel):
-    total: int = 0
-    instance_id: str = ""
-    profile_id: str = ""
-    items: list[AelinBrowserTabItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinBrowserTabOpenRequest(BaseModel):
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    url: str = Field(default="", max_length=2000)
-    profile_id: str = Field(default="", max_length=120)
-    mode: str = Field(default="cdp", min_length=1, max_length=24)
-
-
-class AelinBrowserTabOpenResponse(BaseModel):
-    ok: bool = True
-    instance_id: str = ""
-    profile_id: str = ""
-    item: AelinBrowserTabItem | None = None
-    generated_at: datetime
-
-
-class AelinBrowserTabTextResponse(BaseModel):
-    ok: bool = True
-    scope: str = "cdp"
-    instance_id: str = ""
-    tab_id: str = ""
-    profile_id: str = ""
-    mode: str = "raw"
-    text: str = ""
-    char_count: int = 0
-    generated_at: datetime
-
-
-class AelinBrowserTabEvaluateRequest(BaseModel):
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    script: str = Field(min_length=1, max_length=4000)
-
-
-class AelinBrowserTabEvaluateResponse(BaseModel):
-    ok: bool = True
-    scope: str = "cdp"
-    instance_id: str = ""
-    tab_id: str = ""
-    profile_id: str = ""
-    value: Any = None
-    generated_at: datetime
-
-
-class AelinBrowserTabLockItem(BaseModel):
-    tab_id: str
-    workspace: str = "default"
-    owner: str = ""
-    reason: str = ""
-    expires_at: float = 0.0
-    created_at: float = 0.0
-    updated_at: float = 0.0
-
-
-class AelinBrowserTabLockRequest(BaseModel):
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    owner: str = Field(min_length=1, max_length=120)
-    reason: str = Field(default="", max_length=255)
-    ttl_seconds: int = Field(default=300, ge=30, le=3600)
-    force: bool = False
-
-
-class AelinBrowserTabUnlockRequest(BaseModel):
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    owner: str = Field(default="", max_length=120)
-    force: bool = False
-
-
-class AelinBrowserTabLockResponse(BaseModel):
-    ok: bool = True
-    error: str = ""
-    released: bool | None = None
-    lock: AelinBrowserTabLockItem | None = None
-    generated_at: datetime
-
-
-class AelinBrowserTabLockListResponse(BaseModel):
-    total: int = 0
-    items: list[AelinBrowserTabLockItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinBrowserArtifactItem(BaseModel):
-    artifact_id: int
-    workspace: str = "default"
-    task_id: str = ""
-    tab_id: str = ""
-    profile_id: str = ""
-    kind: str = "result"
-    title: str = ""
-    text_content: str = ""
-    data: dict[str, Any] = Field(default_factory=dict)
-    created_at: float = 0.0
-
-
-class AelinBrowserArtifactListResponse(BaseModel):
-    total: int = 0
-    items: list[AelinBrowserArtifactItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinBrowserTaskListResponse(BaseModel):
-    total: int = 0
-    items: list[AelinBrowserTaskItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinBrowserTaskReplayResponse(BaseModel):
-    ok: bool = True
-    task: AelinBrowserTaskItem | None = None
-    artifacts: list[AelinBrowserArtifactItem] = Field(default_factory=list)
-    total_artifacts: int = 0
-    generated_at: datetime
-
-
-class AelinTrackingItem(BaseModel):
-    note_id: Optional[int] = None
-    message_id: Optional[int] = None
-    target_id: Optional[int] = None
-    target: str
-    source: str
-    query: str = ""
-    workspace: str = "default"
-    track_type: str = "term"
-    description: str = ""
-    tags: list[str] = Field(default_factory=list)
-    status: str = "active"
-    interval_seconds: int = 120
-    notify_level: str = "all"
-    unread_changes: int = 0
-    error_count: int = 0
-    next_run_at: Optional[str] = None
-    last_run_at: Optional[str] = None
-    last_checked_at: Optional[str] = None
-    last_change_at: Optional[str] = None
-    mute_until: Optional[str] = None
-    is_temporary: bool = False
-    expires_at: Optional[str] = None
-    updated_at: str
-    status_updated_at: Optional[str] = None
-
-
-class AelinTrackingListResponse(BaseModel):
-    total: int
-    items: list[AelinTrackingItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinTrackingTargetUpdateRequest(BaseModel):
-    status: Optional[str] = Field(default=None, max_length=16)
-    interval_seconds: Optional[int] = Field(default=None, ge=30, le=86400)
-    notify_level: Optional[str] = Field(default=None, max_length=16)
-    mute_until: Optional[str] = None
-    description: Optional[str] = Field(default=None, max_length=1200)
-    tags: Optional[list[str]] = Field(default=None, max_length=20)
-
-
-class AelinTrackingRunResponse(BaseModel):
-    ok: bool
-    message: str
-    generated_at: datetime
-
-
-class AelinTrackingAckBatchRequest(BaseModel):
-    change_ids: list[int] = Field(default_factory=list, max_length=200)
-
-
-class AelinTrackingChangeItem(BaseModel):
-    id: int
-    target_id: int
-    change_type: str
-    severity: str
-    title: str
-    summary: str = ""
-    diff_json: dict[str, Any] = Field(default_factory=dict)
-    dedupe_key: str = ""
-    notified: bool = False
-    acked: bool = False
-    created_at: str = ""
-
-
-class AelinTrackingChangeListResponse(BaseModel):
-    total: int
-    items: list[AelinTrackingChangeItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinTrackingSnapshotItem(BaseModel):
-    id: int
-    target_id: int
-    version_no: int
-    content_hash: str = ""
-    fetch_status: str = "ok"
-    fetch_error: str = ""
-    fetched_at: str = ""
-    normalized_payload_json: dict[str, Any] = Field(default_factory=dict)
-
-
-class AelinTrackingSnapshotListResponse(BaseModel):
-    total: int
-    items: list[AelinTrackingSnapshotItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-
-class AelinTrackingFileMemoryItem(BaseModel):
+class AelinFileMemoryItem(BaseModel):
     path: str
     title: str = ""
     preview: str = ""
@@ -767,14 +467,14 @@ class AelinTrackingFileMemoryItem(BaseModel):
     entry_kind: str = ""
 
 
-class AelinTrackingFileMemorySearchResponse(BaseModel):
+class AelinFileMemorySearchResponse(BaseModel):
     workspace: str = "default"
     total: int = 0
-    items: list[AelinTrackingFileMemoryItem] = Field(default_factory=list)
+    items: list[AelinFileMemoryItem] = Field(default_factory=list)
     generated_at: datetime
 
 
-class AelinTrackingFileMemoryContentResponse(BaseModel):
+class AelinFileMemoryContentResponse(BaseModel):
     workspace: str = "default"
     path: str
     title: str = ""
