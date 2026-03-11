@@ -3,8 +3,7 @@ import { lazy, Suspense } from 'react'
 import { RootLayout } from './layout/RootLayout'
 
 const ChatPage = lazy(() => import('./routes/ChatPage'))
-const TrackingPage = lazy(() => import('./routes/TrackingPage'))
-const TrackingDetailPage = lazy(() => import('./routes/TrackingDetailPage'))
+const DeskPage = lazy(() => import('./routes/DeskPage'))
 const ProcessesPage = lazy(() => import('./routes/ProcessesPage'))
 const DiaryPage = lazy(() => import('./routes/DiaryPage'))
 const FocusPage = lazy(() => import('./routes/FocusPage'))
@@ -24,18 +23,18 @@ export function App() {
       <Routes>
         <Route element={<RootLayout />}>
           <Route index element={<ChatPage />} />
-          <Route path="tracking" element={<TrackingPage />} />
-          <Route path="tracking/:targetId" element={<TrackingDetailPage />} />
+          <Route path="desk" element={<DeskPage />} />
           <Route path="processes" element={<ProcessesPage />} />
           <Route path="diary" element={<DiaryPage />} />
           <Route path="focus" element={<FocusPage />} />
           <Route path="settings/*" element={<SettingsPage />} />
           {/* Compat redirects */}
           <Route path="chat" element={<Navigate to="/" replace />} />
-          <Route path="desk" element={<Navigate to="/tracking?panel=desk" replace />} />
-          <Route path="dashboard" element={<Navigate to="/tracking?panel=desk" replace />} />
-          <Route path="signals" element={<Navigate to="/tracking" replace />} />
-          <Route path="signals/:contactId" element={<Navigate to="/tracking" replace />} />
+          <Route path="tracking" element={<Navigate to="/desk" replace />} />
+          <Route path="tracking/:targetId" element={<Navigate to="/desk" replace />} />
+          <Route path="dashboard" element={<Navigate to="/desk" replace />} />
+          <Route path="signals" element={<Navigate to="/desk" replace />} />
+          <Route path="signals/:contactId" element={<Navigate to="/desk" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

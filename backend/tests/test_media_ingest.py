@@ -393,6 +393,35 @@ def test_tracking_file_memory_tree_endpoint(monkeypatch):
     assert (items[0].get("children") or [{}])[0].get("entry_kind") == "tracking_insight"
 
 
+def test_tracking_file_memory_content_endpoint(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        aelin_router._tracking_file_memory,
+        "read_memory_markdown",
+        lambda **kwargs: {
+            "title": "Stephen Curry 纪要",
+            "source": "web",
+            "kind": "diary",
+            "topic_path": "体育 > NBA",
+            "entry_kind": "tracking_insight",
+            "updated_at": "2026-02-22T00:00:00+00:00",
+            "content": "## 概要\n\n本周状态回升",
+        },
+    )
+
+    resp = client.get(
+        "/api/v1/aelin/tracking/file-memory/content?workspace=default&path=%E4%BD%93%E8%82%B2/NBA/2026-02-22.md",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("title") == "Stephen Curry 纪要"
+    assert data.get("entry_kind") == "tracking_insight"
+    assert "本周状态回升" in str(data.get("content") or "")
+
+
 def test_media_ingest_detect_platforms():
     svc = MediaIngestService()
     assert svc.detect_platform("https://www.youtube.com/watch?v=1") == "youtube"

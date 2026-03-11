@@ -21,9 +21,13 @@ from app.schemas import (
     AelinAttachmentUploadResponse,
     AelinChatRequest,
     AelinChatResponse,
+    AelinDiaryTreeNode,
+    AelinDiaryTreeResponse,
+    AelinTrackingFileMemoryContentResponse,
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 from app.services.aelin_chat_worker import run_aelin_chat_with_local_session
+from app.services.openviking_bridge import tracking_file_memory_bridge
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -120,6 +124,73 @@ def aelin_chat(
     current_user: User = Depends(get_current_user),
 ):
     return _dispatch_aelin_chat(payload, db, current_user)
+
+
+@router.get("/tracking/file-memory/tree", response_model=AelinDiaryTreeResponse)
+def aelin_tracking_file_memory_tree(
+    workspace: str = "default",
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> AelinDiaryTreeResponse:
+    _ = db
+    workspace_norm = str(workspace or "default").strip() or "default"
+    tree = tracking_file_memory_bridge.list_diary_tree(
+        user_id=int(current_user.id),
+        workspace=workspace_norm,
+        max_files=200,
+    )
+
+    def _to_node(row: Any) -> AelinDiaryTreeNode:
+        return AelinDiaryTreeNode(
+            name=str(getattr(row, "name", "") or ""),
+            path=str(getattr(row, "path", "") or ""),
+            kind=str(getattr(row, "kind", "") or ""),
+            title=str(getattr(row, "title", "") or ""),
+            preview=str(getattr(row, "preview", "") or ""),
+            updated_at=str(getattr(row, "updated_at", "") or ""),
+            source=str(getattr(row, "source", "") or ""),
+            topic_path=str(getattr(row, "topic_path", "") or ""),
+            entry_kind=str(getattr(row, "entry_kind", "") or ""),
+            children=[_to_node(child) for child in getattr(row, "children", []) or []],
+        )
+
+    items = [_to_node(item) for item in list(tree or [])]
+    return AelinDiaryTreeResponse(
+        workspace=workspace_norm,
+        total=len(items),
+        items=items,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/tracking/file-memory/content", response_model=AelinTrackingFileMemoryContentResponse)
+def aelin_tracking_file_memory_content(
+    workspace: str = "default",
+    path: str = "",
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> AelinTrackingFileMemoryContentResponse:
+    _ = db
+    workspace_norm = str(workspace or "default").strip() or "default"
+    entry = tracking_file_memory_bridge.read_memory_markdown(
+        user_id=int(current_user.id),
+        workspace=workspace_norm,
+        path=path,
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail="file_memory_entry_not_found")
+    return AelinTrackingFileMemoryContentResponse(
+        workspace=workspace_norm,
+        path=str(path or "").strip(),
+        title=str(entry.get("title") or ""),
+        source=str(entry.get("source") or ""),
+        kind=str(entry.get("kind") or ""),
+        topic_path=str(entry.get("topic_path") or ""),
+        entry_kind=str(entry.get("entry_kind") or ""),
+        updated_at=str(entry.get("updated_at") or ""),
+        content=str(entry.get("content") or ""),
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 @router.post("/chat/stream")
@@ -250,4 +321,3 @@ def aelin_chat_stream(
             "Connection": "keep-alive",
         },
     )
-
