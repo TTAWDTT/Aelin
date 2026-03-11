@@ -116,27 +116,6 @@ def _summarize_result_for_log(result: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _optimize_browser_tool_call(
-    *,
-    tool_hub: AelinToolHub,
-    tool_name: str,
-    args: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    # Browser plane 已移除，当前不做任何特殊优化。
-    return args, None
-
-
-def _record_browser_tool_result(
-    *,
-    tool_hub: AelinToolHub,
-    tool_name: str,
-    args: dict[str, Any],
-    result: dict[str, Any],
-) -> None:
-    # Browser plane 已移除，不再维护浏览器状态。
-    return None
-
-
 def _truncate_model_text(value: Any, *, limit: int = _MODEL_TEXT_PREVIEW_LEN) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
@@ -218,10 +197,25 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
             ]
         return base
 
-    if tool in {"context_get", "diary", "profile", "device", "pinchtab", "pinchtab_agent"}:
-        if tool in {"pinchtab", "pinchtab_agent"}:
-            # For PinchTab, preserve identifiers so the model can chain calls
-            # across launch_instance -> open_tab -> snapshot/text -> click.
+    if tool in {
+        "context_get",
+        "diary",
+        "profile",
+        "device_status",
+        "device_processes",
+        "device_mode_apply",
+        "desktop_open_url",
+        "desktop_open_aelin",
+        "device",
+        "pinchtab",
+        "pinchtab_agent",
+        "pinchtab_session",
+    }:
+        if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
+            # For PinchTab-family tools, preserve identifiers so the model can
+            # chain calls across start/step/status and low-level operations.
+            if "session_id" in payload:
+                base["session_id"] = str(payload.get("session_id") or "")[:128]
             if "instance_id" in payload:
                 base["instance_id"] = str(payload.get("instance_id") or "")[:128]
             if "tab_id" in payload:
@@ -230,12 +224,67 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
                 base["status"] = _truncate_model_text(payload.get("status"), limit=32)
             if "mode" in payload:
                 base["mode"] = _truncate_model_text(payload.get("mode"), limit=32)
+            # Expose browser content in a compact, model-friendly form so Aelin
+            # can真正“看到” PinchTab 返回的页面信息，而不是只知道调用过工具。
+            if tool in {"pinchtab_agent", "pinchtab_session"} and isinstance(payload.get("last_text"), str):
+                base["last_text"] = _truncate_model_text(payload.get("last_text"), limit=800)
+            # For low-level pinchtab.text responses, surface a short excerpt.
+            if tool == "pinchtab" and isinstance(payload.get("text"), str):
+                base["text_excerpt"] = _truncate_model_text(payload.get("text"), limit=800)
+            # Common metadata from both primitive PinchTab calls and the agent/session wrappers.
+            if isinstance(payload.get("url"), str):
+                base["url"] = _truncate_model_text(payload.get("url"), limit=260)
+            if isinstance(payload.get("last_url"), str):
+                base["last_url"] = _truncate_model_text(payload.get("last_url"), limit=260)
+            if isinstance(payload.get("title"), str):
+                base["title"] = _truncate_model_text(payload.get("title"), limit=160)
+            # Compact snapshot nodes when present so the model can reason about
+            # what is on the page without flooding context.
+            nodes = payload.get("nodes")
+            if isinstance(nodes, list):
+                base["nodes"] = [
+                    _preview_browser_target(node)
+                    for node in nodes[:_MODEL_LIST_PREVIEW_ITEMS]
+                    if isinstance(node, dict)
+                ]
+            if "count" in payload:
+                try:
+                    base["count"] = int(payload.get("count") or 0)
+                except Exception:
+                    pass
+            # For pinchtab_agent/session, also surface a compact view of executed
+            # steps so the manager agent可以像人一样“看一眼进度”。
+            if tool in {"pinchtab_agent", "pinchtab_session"} and isinstance(payload.get("steps"), list):
+                compact_steps: list[dict[str, Any]] = []
+                for step in list(payload.get("steps") or [])[:_MODEL_LIST_PREVIEW_ITEMS]:
+                    if not isinstance(step, dict):
+                        continue
+                    s: dict[str, Any] = {}
+                    for key in ("action", "status"):
+                        if key in step:
+                            s[key] = _truncate_model_text(step.get(key), limit=32)
+                    for key in ("url", "ref"):
+                        if key in step and isinstance(step.get(key), str):
+                            s[key] = _truncate_model_text(step.get(key), limit=160)
+                    if step.get("error"):
+                        s["error"] = _truncate_model_text(step.get("error"), limit=80)
+                    if s:
+                        compact_steps.append(s)
+                if compact_steps:
+                    base["steps"] = compact_steps
         if "summary" in payload:
             base["summary"] = _truncate_model_text(payload.get("summary"), limit=260)
         if "total" in payload:
             base["total"] = int(payload.get("total") or 0)
         if "next_call" in payload and isinstance(payload.get("next_call"), dict):
-            base["next_call"] = _sanitize_for_log(payload.get("next_call"))
+            # For PinchTab-family tools we want the model to see the raw
+            # next_call (including identifiers like session_id / instance_id)
+            # so it can faithfully continue the same session. Logging is still
+            # sanitized separately via _sanitize_for_log in the logging path.
+            if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
+                base["next_call"] = payload.get("next_call")
+            else:
+                base["next_call"] = _sanitize_for_log(payload.get("next_call"))
         items = payload.get("items")
         if isinstance(items, list):
             base["items"] = [
@@ -264,7 +313,13 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
         return base
 
     if "next_call" in payload and isinstance(payload.get("next_call"), dict):
-        base["next_call"] = _sanitize_for_log(payload.get("next_call"))
+        # Same rule as above: do not redact identifiers for PinchTab-family
+        # tools when sending results to the model. This keeps the model-visible
+        # plan faithful, while logs remain sanitized.
+        if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
+            base["next_call"] = payload.get("next_call")
+        else:
+            base["next_call"] = _sanitize_for_log(payload.get("next_call"))
     if "items" in payload and isinstance(payload.get("items"), list):
         base["items"] = [
             _preview_item(row)
@@ -354,22 +409,14 @@ def execute_tool_call(
     result: dict[str, Any] = {}
     error = ""
     safe_tool_name = str(tool_name or "").strip().lower()
-    effective_args, synthetic_result = _optimize_browser_tool_call(
-        tool_hub=tool_hub,
-        tool_name=safe_tool_name,
-        args=args,
-    )
     _LOG.info(
         "agent_loop tool_call_start tool=%s args=%s",
         safe_tool_name,
-        _dump_log_json(_sanitize_tool_args_for_log(safe_tool_name, effective_args)),
+        _dump_log_json(_sanitize_tool_args_for_log(safe_tool_name, args or {})),
     )
     started = time.perf_counter()
     try:
-        if isinstance(synthetic_result, dict):
-            result = dict(synthetic_result)
-        else:
-            result = tool_hub.execute(safe_tool_name, effective_args)
+        result = tool_hub.execute(safe_tool_name, args or {})
         if not bool(result.get("ok", True)):
             status = "failed"
             error = str(result.get("error") or "tool_not_ok")[:180]
@@ -378,12 +425,6 @@ def execute_tool_call(
         error = str(exc)[:180]
         result = {"ok": False, "error": error}
     latency_ms = int((time.perf_counter() - started) * 1000)
-    _record_browser_tool_result(
-        tool_hub=tool_hub,
-        tool_name=safe_tool_name,
-        args=effective_args,
-        result=result,
-    )
     _LOG.info(
         "agent_loop tool_call_end tool=%s status=%s latency_ms=%s result=%s",
         safe_tool_name,

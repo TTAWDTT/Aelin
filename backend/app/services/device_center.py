@@ -207,6 +207,7 @@ def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
     has_psutil = psutil is not None
     has_windows_fallback = bool(is_windows)
     process_list_supported = bool(has_psutil or has_windows_fallback)
+    desktop_plugin_configured = bool(_desktop_plugin_base_url())
     capabilities = {
         "process_list": process_list_supported,
         "process_terminate": bool(has_psutil or has_windows_fallback),
@@ -215,6 +216,9 @@ def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
         "mode_silent": bool(is_windows),
         "mode_normal": True,
         "optimize_processes": process_list_supported,
+        "desktop_plugin_configured": desktop_plugin_configured,
+        "desktop_open_url": desktop_plugin_configured,
+        "desktop_activate_module": desktop_plugin_configured,
     }
     notes: list[str] = []
     if not has_psutil:
@@ -224,7 +228,20 @@ def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
             notes.append("psutil unavailable; process controls disabled")
     if not is_windows:
         notes.append("non-windows runtime: mode actions may degrade to state-only updates")
+    if not desktop_plugin_configured:
+        notes.append("desktop plugin unconfigured: open_url / activate_module unavailable")
     return platform_name, capabilities, notes
+
+
+def device_status_snapshot() -> dict[str, Any]:
+    platform_name, capabilities, notes = device_capabilities()
+    return {
+        "platform": platform_name,
+        "capabilities": capabilities,
+        "notes": notes,
+        "desktop_plugin_configured": bool(_desktop_plugin_base_url()),
+        "desktop_plugin_reachable": desktop_plugin_health(),
+    }
 
 
 def normalize_device_mode(raw: str) -> str:
@@ -520,15 +537,20 @@ def collect_device_process_items(*, sort_by: str, limit: int) -> list[AelinDevic
         rows.sort(key=lambda x: (x.anomaly_score, x.cpu_percent, x.memory_mb), reverse=True)
     return rows[:max_items]
 
-
-def apply_device_mode(mode: str) -> tuple[str, str, str, list[str], list[str]]:
+def apply_device_mode(mode: str) -> dict[str, Any]:
     mode_norm = normalize_device_mode(mode)
     steps: list[str] = []
     warnings: list[str] = []
 
     if not device_is_windows():
         warnings.append("当前仅在 Windows 提供系统级模式控制，其它系统将只记录模式状态。")
-        return mode_norm, "partial", f"模式已切换为 {mode_norm}（系统控制受限）", steps, warnings
+        return {
+            "mode": mode_norm,
+            "status": "partial",
+            "summary": f"模式已切换为 {mode_norm}（系统控制受限）",
+            "steps": steps,
+            "warnings": warnings,
+        }
 
     if mode_norm in {"meeting", "focus", "sleep"}:
         ok_toast, detail_toast = set_windows_toast_enabled(False)
@@ -579,4 +601,10 @@ def apply_device_mode(mode: str) -> tuple[str, str, str, list[str], list[str]]:
         if status == "applied"
         else f"{mode_norm} 模式已部分应用，请查看警告项。"
     )
-    return mode_norm, status, summary, steps, warnings
+    return {
+        "mode": mode_norm,
+        "status": status,
+        "summary": summary,
+        "steps": steps,
+        "warnings": warnings,
+    }

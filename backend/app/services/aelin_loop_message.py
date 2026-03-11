@@ -145,6 +145,7 @@ def build_initial_messages(
     attachment_ids: list[int] | None,
     forced_intent: str,
     forced_tool_runs: list[dict[str, Any]] | None,
+    tool_skill_bodies: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
         {
@@ -159,8 +160,12 @@ def build_initial_messages(
             "role": "system",
             "content": (
                 "工具使用规则：当用户问题涉及网页内容、网站状态，或需要在浏览器中执行点击、输入、滚动等操作时，"
-                "优先通过 pinchtab 工具在本地浏览器中完成这些步骤；对于纯搜索型问题可使用 web_search。"
-                "例如：查看 X/Twitter 关注列表或网页上的账号信息时，应使用 pinchtab 打开对应页面并读取结果，而不是直接声明自己无法访问网页。"
+                "优先考虑使用浏览器相关工具（例如 pinchtab 系列）在本地浏览器中完成这些步骤；对于纯搜索型问题可使用 web_search。"
+                "当用户问题涉及电脑状态、截图、进程、模式切换、打开链接或唤起 Aelin 页面时，优先使用原子设备工具："
+                "device_status、screen_get、device_processes、device_mode_apply、desktop_open_url、desktop_open_aelin，"
+                "不要优先退回到泛化的 device 兼容工具。"
+                "较复杂、需要多步导航或登录的网站任务，可以使用更高层的浏览器工具（如 pinchtab_agent 或会话式封装），"
+                "具体使用策略由针对这些工具的技能说明（SKILL）指导。"
             ),
         },
         {
@@ -168,6 +173,16 @@ def build_initial_messages(
             "content": f"memory_summary={str(memory_summary or '')[:600]}",
         },
     ]
+    for body in list(tool_skill_bodies or [])[:4]:
+        text = str(body or "").strip()
+        if not text:
+            continue
+        messages.append(
+            {
+                "role": "system",
+                "content": text,
+            }
+        )
     if forced_intent:
         messages.append(
             {
@@ -214,6 +229,26 @@ def build_initial_messages(
                         ),
                     }
                 )
+        if name == "pinchtab_session" and bool(result.get("session_id")):
+            sess_id = str(result.get("session_id") or "")[:64]
+            inst_id = str(result.get("instance_id") or "")[:64]
+            tab_id = str(result.get("tab_id") or "")[:64]
+            last_url = str(result.get("last_url") or result.get("url") or "")[:260]
+            last_status = str(result.get("last_status") or result.get("status") or "")[:80]
+            last_summary = str(result.get("last_summary") or result.get("summary") or "")[:200]
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "已有一个可复用的 PinchTab 浏览会话："
+                        f"session_id={sess_id}, instance_id={inst_id}, tab_id={tab_id}, "
+                        f"last_url={last_url}, status={last_status}, summary={last_summary}。"
+                        "如果当前用户的问题需要继续在网页中操作，应优先调用 pinchtab_session 工具，"
+                        f"使用 action=\"step\" 并复用这个 session_id（不要重新 start 或重新 launch_instance），"
+                        "并在 goal 中用自然语言描述本轮要完成的下一步子目标。"
+                    ),
+                }
+            )
 
     if history_turns:
         for row in history_turns[-6:]:

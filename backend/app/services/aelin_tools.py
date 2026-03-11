@@ -10,13 +10,17 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.models import AgentMemoryNote
-from app.services.agent_memory import AgentMemoryService
+from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services.device_center import (
     apply_device_mode as device_apply_mode,
+    activate_desktop_module,
     capture_device_screen as device_capture_screen,
     collect_device_process_items as device_collect_process_items,
+    DesktopPluginActionError,
     DeviceScreenCaptureError,
     device_capabilities as device_capabilities_info,
+    device_status_snapshot,
+    open_desktop_external_url,
 )
 from app.services.openviking_bridge import TrackingFileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
@@ -34,6 +38,7 @@ _TOOL_KEYWORDS = (
     "进程",
     "性能",
     "模式",
+    "status",
     "memory",
     "context",
     "检索",
@@ -48,6 +53,11 @@ _TOOL_KEYWORDS = (
     "截图",
     "screen",
     "screen_get",
+    "screenshot",
+    "open url",
+    "打开网址",
+    "打开链接",
+    "打开aelin",
     "browser",
     "网页",
     "页面",
@@ -126,9 +136,12 @@ class AelinToolHub:
         # Optional reference to the current LLM service so tools can delegate
         # sub-tasks (for example, a higher-level pinchtab agent).
         self._llm_service = llm_service
+        self._tool_definitions_cache: list[dict[str, Any]] | None = None
 
     def tool_definitions(self) -> list[dict[str, Any]]:
-        return [
+        if self._tool_definitions_cache is not None:
+            return self._tool_definitions_cache
+        self._tool_definitions_cache = [
             {
                 "type": "function",
                 "function": {
@@ -180,8 +193,77 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
+                    "name": "device_status",
+                    "description": "读取当前设备状态、能力、桌面插件可达性。这是查询电脑状态的首选原子工具。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "device_processes",
+                    "description": "读取当前设备进程列表。这是查看 CPU/内存占用的首选原子工具。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "sort_by": {"type": "string", "enum": ["cpu", "memory"]},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "device_mode_apply",
+                    "description": "切换设备模式，例如 focus/meeting/sleep/normal。这是切换模式的首选原子工具。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {"type": "string"},
+                        },
+                        "required": ["mode"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "desktop_open_url",
+                    "description": "在本机默认浏览器中打开 http/https 链接。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string"},
+                        },
+                        "required": ["url"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "desktop_open_aelin",
+                    "description": "唤起 Aelin 桌面应用并切换到指定 route；如果未配置 desktop_module_base_url，会显式返回 unsupported。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "route": {"type": "string"},
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "device",
-                    "description": "读取设备能力、进程占用，或切换设备模式。",
+                    "description": "兼容旧调用方式的设备工具。优先使用 device_status、device_processes、device_mode_apply 这些原子工具。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -298,7 +380,41 @@ class AelinToolHub:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "pinchtab_session",
+                    "description": (
+                        "为复杂的浏览器任务管理一个 PinchTab 会话。"
+                        "start: 启动会话并用自然语言 goal 交给 PinchTab；"
+                        "step: 在现有会话上继续推进任务；"
+                        "status: 仅查询当前会话状态；"
+                        "close: 结束会话并允许底层浏览器实例被释放。"
+                        "Aelin 应该像真人一样，先 start，再根据 status/steps/last_text 多轮 step，"
+                        "而不是在一个回合里反复重新规划。"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["start", "step", "status", "close"],
+                            },
+                            "goal": {
+                                "type": "string",
+                                "description": "当 action=start 或 step 时，用自然语言描述要交给 PinchTab 的目标。",
+                            },
+                            "session_id": {
+                                "type": "string",
+                                "description": "已有会话的标识，用于 step/status/close。",
+                            },
+                        },
+                        "required": ["action"],
+                    },
+                },
+            },
         ]
+        return self._tool_definitions_cache
 
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         tool = str(name or "").strip().lower()
@@ -308,6 +424,16 @@ class AelinToolHub:
             return self._tool_diary(args)
         if tool == "profile":
             return self._tool_profile(args)
+        if tool == "device_status":
+            return self._tool_device_status(args)
+        if tool == "device_processes":
+            return self._tool_device_processes(args)
+        if tool == "device_mode_apply":
+            return self._tool_device_mode_apply(args)
+        if tool == "desktop_open_url":
+            return self._tool_desktop_open_url(args)
+        if tool == "desktop_open_aelin":
+            return self._tool_desktop_open_aelin(args)
         if tool == "device":
             return self._tool_device(args)
         if tool == "web_search":
@@ -320,17 +446,24 @@ class AelinToolHub:
             return self._tool_pinchtab(args)
         if tool == "pinchtab_agent":
             return self._tool_pinchtab_agent(args)
+        if tool == "pinchtab_session":
+            # Implemented as a module-level helper to keep the session table
+            # shared across hub instances.
+            return _tool_pinchtab_session(self, args)
         return _result_error(f"unsupported tool: {tool}")
 
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()[:400]
         limit = _safe_int(args.get("max_items"), 8, low=1, high=20)
-        snapshot = self._memory.snapshot(self.db, self.user_id, query=query)
-        focus_items = list(snapshot.get("focus_items") or [])[:limit]
+        summary = str(self._memory.get_summary(self.db, self.user_id) or "")
+        focus_items = [
+            serialize_focus_item(item)
+            for item in self._memory.build_focus_items(self.db, self.user_id, query=query, limit=limit)
+        ]
         todos = self._memory.list_todos(self.db, self.user_id, include_done=False, limit=limit)
         return _result_ok(
             workspace=self.workspace,
-            summary=str(snapshot.get("summary") or ""),
+            summary=summary,
             focus_items=focus_items,
             todos=todos,
         )
@@ -416,35 +549,94 @@ class AelinToolHub:
         ]
         return _result_items(items)
 
+    def _tool_device_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        _ = args
+        snapshot = device_status_snapshot()
+        return _result_ok(
+            platform=str(snapshot.get("platform") or "unknown"),
+            capabilities=dict(snapshot.get("capabilities") or {}),
+            notes=list(snapshot.get("notes") or []),
+            desktop_plugin_reachable=bool(snapshot.get("desktop_plugin_reachable")),
+            desktop_plugin_configured=bool(snapshot.get("desktop_plugin_configured")),
+            summary=(
+                f"platform={str(snapshot.get('platform') or 'unknown')}; "
+                f"plugin_reachable={1 if bool(snapshot.get('desktop_plugin_reachable')) else 0}"
+            ),
+        )
+
+    def _tool_device_processes(self, args: dict[str, Any]) -> dict[str, Any]:
+        sort_by = str(args.get("sort_by") or "cpu").strip().lower() or "cpu"
+        limit = _safe_int(args.get("limit"), 8, low=1, high=20)
+        rows = device_collect_process_items(sort_by=sort_by, limit=limit)
+        items = [
+            {
+                "pid": int(it.pid),
+                "name": str(it.name),
+                "cpu_percent": float(it.cpu_percent or 0.0),
+                "memory_mb": float(it.memory_mb or 0.0),
+                "anomaly_score": float(it.anomaly_score or 0.0),
+                "safe_to_terminate": bool(it.safe_to_terminate),
+            }
+            for it in rows
+        ]
+        return _result_items(items, sort_by=sort_by)
+
+    def _tool_device_mode_apply(self, args: dict[str, Any]) -> dict[str, Any]:
+        mode = str(args.get("mode") or "").strip().lower()
+        if not mode:
+            return _result_error("missing mode")
+        result = device_apply_mode(mode=mode)
+        return _result_ok(
+            mode=str(result.get("mode") or mode),
+            status=str(result.get("status") or ""),
+            summary=str(result.get("summary") or ""),
+            steps=[str(x) for x in list(result.get("steps") or [])][:12],
+            warnings=[str(x) for x in list(result.get("warnings") or [])][:12],
+        )
+
+    def _tool_desktop_open_url(self, args: dict[str, Any]) -> dict[str, Any]:
+        url = str(args.get("url") or "").strip()
+        if not url:
+            return _result_error("missing url")
+        try:
+            result = open_desktop_external_url(url)
+        except DesktopPluginActionError as exc:
+            return _result_error(f"desktop_open_url_failed:{exc.detail}")
+        except Exception as exc:
+            return _result_error(f"desktop_open_url_failed:{str(exc)[:160]}")
+        return _result_ok(
+            url=str(result.get("url") or url),
+            opened=bool(result.get("opened")),
+            detail=str(result.get("detail") or ""),
+            summary=f"已尝试打开链接: {str(result.get('url') or url)[:220]}",
+        )
+
+    def _tool_desktop_open_aelin(self, args: dict[str, Any]) -> dict[str, Any]:
+        route = str(args.get("route") or "/").strip() or "/"
+        try:
+            result = activate_desktop_module(route)
+        except DesktopPluginActionError as exc:
+            return _result_error(f"desktop_open_aelin_failed:{exc.detail}")
+        except Exception as exc:
+            return _result_error(f"desktop_open_aelin_failed:{str(exc)[:160]}")
+        return _result_ok(
+            route=str(result.get("route") or route),
+            url=str(result.get("url") or ""),
+            opened=bool(result.get("opened", result.get("activated"))),
+            detail=str(result.get("detail") or ""),
+            summary=f"Aelin 已尝试切换到 {str(result.get('route') or route)[:120]}",
+        )
+
     def _tool_device(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "capabilities").strip().lower()
+        if action == "capabilities":
+            return self._tool_device_status({})
         if action == "processes":
-            sort_by = str(args.get("sort_by") or "cpu").strip().lower() or "cpu"
-            limit = _safe_int(args.get("limit"), 8, low=1, high=20)
-            rows = device_collect_process_items(sort_by=sort_by, limit=limit)
-            items = [
-                {
-                    "pid": int(it.pid),
-                    "name": str(it.name),
-                    "cpu_percent": float(it.cpu_percent or 0.0),
-                    "memory_mb": float(it.memory_mb or 0.0),
-                    "anomaly_score": float(it.anomaly_score or 0.0),
-                }
-                for it in rows
-            ]
-            return _result_items(items)
+            return self._tool_device_processes(args)
         if action == "mode_apply":
-            mode = str(args.get("mode") or "").strip().lower()
-            if not mode:
-                return _result_error("missing mode")
-            result = device_apply_mode(mode=mode)
-            return _result_ok(
-                mode=str(result.get("mode") or mode),
-                status=str(result.get("status") or ""),
-                summary=str(result.get("summary") or ""),
-                warnings=list(result.get("warnings") or []),
-            )
-        return _result_ok(**device_capabilities_info())
+            return self._tool_device_mode_apply(args)
+        platform_name, capabilities, notes = device_capabilities_info()
+        return _result_ok(platform=platform_name, capabilities=capabilities, notes=notes)
 
     def _tool_web_search(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "search_and_fetch").strip().lower()
@@ -573,7 +765,21 @@ class AelinToolHub:
             out = client.health()
             return out if isinstance(out, dict) else _result_error("pinchtab_health_failed")
         if action == "launch_instance":
-            return client.launch_instance()
+            inst = client.launch_instance()
+            if not bool(inst.get("ok", True)):
+                # Fallback: when a fresh instance cannot reach \"running\",
+                # try to reuse any existing running instance so that long-
+                # lived PinchTab servers remain usable without manual reset.
+                fallback = getattr(client, "find_running_instance", None)
+                if callable(fallback):
+                    reuse = fallback()
+                    if bool(reuse.get("ok", True)) and reuse.get("instance_id"):
+                        return {
+                            "ok": True,
+                            "instance_id": str(reuse.get("instance_id") or ""),
+                        }
+                return inst
+            return inst
         if action == "open_tab":
             instance_id = str(args.get("instance_id") or "").strip()
             url = str(args.get("url") or "").strip()
@@ -625,11 +831,29 @@ class AelinToolHub:
             instance_id = instance_id_arg
         else:
             inst = client.launch_instance()
-            if not bool(inst.get("ok")):
-                return _result_error(str(inst.get("error") or "pinchtab_agent_launch_failed"))
-            instance_id = str(inst.get("instance_id") or "").strip()
-            if not instance_id:
-                return _result_error("pinchtab_agent_missing_instance_id")
+            if not bool(inst.get("ok", True)):
+                # 如果新实例无法在预期时间内就绪，尽量复用现有的运行中实例，
+                # 避免因为历史残留实例导致整个浏览任务直接失败。
+                fallback = getattr(client, "find_running_instance", None)
+                if callable(fallback):
+                    reuse = fallback()
+                    if bool(reuse.get("ok", True)) and reuse.get("instance_id"):
+                        instance_id = str(reuse.get("instance_id") or "").strip()
+                    else:
+                        return _result_error(str(inst.get("error") or reuse.get("error") or "pinchtab_agent_launch_failed"))
+                else:
+                    return _result_error(str(inst.get("error") or "pinchtab_agent_launch_failed"))
+            else:
+                instance_id = str(inst.get("instance_id") or "").strip()
+                if not instance_id:
+                    # 同样兜底尝试复用现有实例。
+                    fallback = getattr(client, "find_running_instance", None)
+                    if callable(fallback):
+                        reuse = fallback()
+                        if bool(reuse.get("ok", True)) and reuse.get("instance_id"):
+                            instance_id = str(reuse.get("instance_id") or "").strip()
+                if not instance_id:
+                    return _result_error("pinchtab_agent_missing_instance_id")
 
         # Step 2: ask the LLM for a small plan of primitive actions.
         sys_text = (
@@ -760,7 +984,14 @@ class AelinToolHub:
                 overall_status = "partial"
                 break
 
+        login_required = _detect_login_gate(url=last_url, text=last_text)
         summary = f"pinchtab_agent executed {len(executed)} step(s) for goal: {goal[:80]}"
+        user_prompt = (
+            "检测到目标站点处于登录/验证页面，请你先在浏览器中手动完成登录（含验证码/2FA），"
+            "然后回复‘已登录，继续’。"
+            if login_required
+            else ""
+        )
         return _result_ok(
             summary=summary,
             instance_id=instance_id,
@@ -769,6 +1000,8 @@ class AelinToolHub:
             last_text=last_text[:1200],
             status=overall_status,
             steps=executed,
+            requires_user_login=login_required,
+            user_prompt=user_prompt,
         )
 
 
@@ -781,6 +1014,23 @@ def _safe_load_json(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _detect_login_gate(*, url: str, text: str) -> bool:
+    hay = f"{str(url or '').lower()}\n{str(text or '').lower()}"
+    hints = (
+        "x.com/i/flow/login",
+        "/login",
+        "sign in",
+        "log in",
+        "登录",
+        "登入",
+        "验证码",
+        "two-factor",
+        "2fa",
+        "challenge",
+    )
+    return any(token in hay for token in hints)
 
 
 def _execute_tool_call(tool_hub: AelinToolHub, *, name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any], str, int]:
@@ -799,6 +1049,35 @@ def _execute_tool_call(tool_hub: AelinToolHub, *, name: str, args: dict[str, Any
         result = _result_error(error)
     latency_ms = int((time.perf_counter() - started) * 1000)
     return status, result, error, latency_ms
+
+
+_PINCHTAB_SESSIONS: dict[str, dict[str, Any]] = {}
+# Lightweight mapping from (user_id, workspace) -> latest pinchtab_session id.
+# This allows Aelin to恢复并复用上一次浏览器会话，就像人类下次来时
+# 还会继续操作同一个浏览器窗口一样。
+_PINCHTAB_USER_SESSIONS: dict[tuple[int, str], str] = {}
+
+
+def get_active_pinchtab_session(user_id: int, workspace: str) -> dict[str, Any] | None:
+    """
+    Return the latest known PinchTab session snapshot for this user/workspace,
+    if any. Used by the agent loop to提示模型“已经有一个可以续上的浏览会话了”。
+    """
+    key = (int(user_id), str(workspace or "default"))
+    sid = _PINCHTAB_USER_SESSIONS.get(key)
+    if not sid:
+        return None
+    sess = _PINCHTAB_SESSIONS.get(sid)
+    if not sess:
+        return None
+    out = dict(sess)
+    out["session_id"] = sid
+    return out
+
+
+def _normalize_session_id(raw: str) -> str:
+    clean = " ".join(str(raw or "").strip().split())
+    return clean[:64]
 
 
 def run_aelin_structured_tools(
@@ -872,6 +1151,144 @@ def run_aelin_structured_tools(
     return out, ""
 
 
+def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Session-style wrapper around PinchTab, so Aelin can 像真人一样：
+    - start: 把一整个浏览任务外包出去；
+    - step: 在已有实例上继续推进；
+    - status: 查看当前进度；
+    - close: 结束会话。
+
+    底层仍然调用现有的 pinchtab_agent，且只在内存中维护一个轻量的会话表；
+    不做任何持久化存储。
+    """
+    from uuid import uuid4
+
+    action = str(args.get("action") or "").strip().lower()
+    session_id_raw = str(args.get("session_id") or "").strip()
+    goal = str(args.get("goal") or "").strip()
+    session_id = _normalize_session_id(session_id_raw)
+
+    def _get_session(sid: str) -> dict[str, Any] | None:
+        return _PINCHTAB_SESSIONS.get(sid) if sid else None
+
+    def _set_session(sid: str, payload: dict[str, Any]) -> None:
+        if not sid:
+            return
+        _PINCHTAB_SESSIONS[sid] = {
+            "instance_id": str(payload.get("instance_id") or payload.get("instance") or ""),
+            "tab_id": str(payload.get("tab_id") or ""),
+            "last_goal": str(payload.get("goal") or ""),
+            "last_status": str(payload.get("status") or ""),
+            "last_url": str(payload.get("last_url") or payload.get("url") or ""),
+            "last_text": str(payload.get("last_text") or payload.get("text") or ""),
+            "last_summary": str(payload.get("summary") or ""),
+        }
+
+    if action not in {"start", "step", "status", "close"}:
+        return _result_error("unsupported pinchtab_session action")
+
+    if action == "start":
+        if not goal:
+            return _result_error("missing goal")
+        sid = _normalize_session_id(session_id or f"pinch-{uuid4().hex[:12]}")
+        # First step: let pinchtab_agent propose and execute a short plan.
+        status, result, error, latency_ms = _execute_tool_call(
+            self,
+            name="pinchtab_agent",
+            args={"goal": goal[:800], "max_steps": 6},
+        )
+        if not bool(result.get("ok")):
+            return _result_error(str(result.get("error") or error or "pinchtab_session_start_failed"))
+        # Persist minimal session state.
+        payload = dict(result)
+        payload["goal"] = goal
+        _set_session(sid, payload)
+        # 记录到用户级映射，方便后续对话自动续上这个会话。
+        try:
+            _PINCHTAB_USER_SESSIONS[(int(self.user_id), str(self.workspace))] = sid
+        except Exception:
+            # 映射失败不应影响工具主流程
+            pass
+        return _result_ok(
+            session_id=sid,
+            latency_ms=latency_ms,
+            **{k: v for k, v in result.items() if k != "ok"},
+        )
+
+    # All non-start actions require a valid session.
+    sess = _get_session(session_id)
+    if sess is None:
+        return _result_error("unknown_session_id")
+
+    if action == "close":
+        _PINCHTAB_SESSIONS.pop(session_id, None)
+        # 清理用户级映射，如果它正好指向当前会话。
+        try:
+            key = (int(self.user_id), str(self.workspace))
+            if _PINCHTAB_USER_SESSIONS.get(key) == session_id:
+                _PINCHTAB_USER_SESSIONS.pop(key, None)
+        except Exception:
+            pass
+        return _result_ok(session_id=session_id, closed=True)
+
+    if action == "status":
+        # Return the last known snapshot of this session; no new browser work.
+        out = dict(sess)
+        out["session_id"] = session_id
+        return _result_ok(**out)
+
+    # action == "step"
+    # Step: continue using the same instance/tab with a refined goal.
+    if not goal:
+        # If no new goal is provided, reuse last_goal to “继续刚才的任务”。
+        goal = str(sess.get("last_goal") or "").strip()
+    if not goal:
+        return _result_error("missing goal")
+
+    agent_args = {
+        "goal": goal[:800],
+        "max_steps": 6,
+    }
+    if sess.get("instance_id"):
+        agent_args["instance_id"] = str(sess["instance_id"])
+    if sess.get("tab_id"):
+        agent_args["tab_id"] = str(sess["tab_id"])
+
+    status, result, error, latency_ms = _execute_tool_call(
+        self,
+        name="pinchtab_agent",
+        args=agent_args,
+    )
+    if not bool(result.get("ok")):
+        # Planner 或执行失败时，也要把错误状态写回会话，方便 Aelin 观察后决策。
+        payload = {
+            "instance_id": sess.get("instance_id", ""),
+            "tab_id": sess.get("tab_id", ""),
+            "goal": goal,
+            "status": f"error:{str(result.get('error') or error or 'unknown')[:80]}",
+            "summary": str(sess.get("last_summary") or ""),
+            "last_url": str(sess.get("last_url") or ""),
+            "last_text": str(sess.get("last_text") or ""),
+        }
+        _set_session(session_id, payload)
+        return _result_error(str(result.get("error") or error or "pinchtab_session_step_failed"))
+
+    payload = dict(result)
+    payload["goal"] = goal
+    _set_session(session_id, payload)
+    # 确保 step 之后也把该会话标记为“当前活跃会话”，便于后续对话续上。
+    try:
+        _PINCHTAB_USER_SESSIONS[(int(self.user_id), str(self.workspace))] = session_id
+    except Exception:
+        pass
+    return _result_ok(
+        session_id=session_id,
+        latency_ms=latency_ms,
+        **{k: v for k, v in result.items() if k != "ok"},
+    )
+
+
 def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: int = 8) -> list[str]:
     lines: list[str] = []
     for run in runs[: max(1, int(max_lines))]:
@@ -889,6 +1306,13 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
         elif name in {"diary", "profile", "context_get", "device", "screen_get"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
+            elif "summary" in result:
+                note = str(result.get("summary") or "")[:120]
+            else:
+                note = json.dumps(result, ensure_ascii=False)[:140]
+        elif name in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
+            if bool(result.get("requires_user_login")):
+                note = str(result.get("user_prompt") or "requires_user_login=true")[:160]
             elif "summary" in result:
                 note = str(result.get("summary") or "")[:120]
             else:

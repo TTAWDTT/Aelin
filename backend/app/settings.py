@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
+    desktop_module_base_url: str = ""
     pinchtab_base_url: str = "http://127.0.0.1:9867"
     aelin_attachment_storage_dir: str = "./data/aelin_attachments"
     aelin_attachment_max_size_bytes: int = 30 * 1024 * 1024

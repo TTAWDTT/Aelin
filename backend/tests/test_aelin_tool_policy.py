@@ -7,6 +7,7 @@ def test_classify_pinchtab_as_write_tool():
     # pinchtab 会驱动真实浏览器行为，应计入写操作配额。
     assert classify_tool_call("pinchtab", {"action": "click", "tab_id": "t1", "ref": "btn-login"}) is True
     assert classify_tool_call("pinchtab_agent", {"goal": "打开网页并点击登录"}) is True
+    assert classify_tool_call("pinchtab_session", {"action": "start", "goal": "打开网页"}) is True
 
 
 def test_policy_allows_screen_get_when_reads_enabled():
@@ -49,3 +50,11 @@ def test_policy_blocks_pinchtab_when_writes_disabled():
     assert decision_agent.allowed is False
     assert decision_agent.is_write is True
     assert decision_agent.reason == "write_tools_disabled"
+
+
+def test_classify_device_atomic_tools():
+    assert classify_tool_call("device_status", {}) is False
+    assert classify_tool_call("device_processes", {"sort_by": "cpu"}) is False
+    assert classify_tool_call("device_mode_apply", {"mode": "focus"}) is True
+    assert classify_tool_call("desktop_open_url", {"url": "https://example.com"}) is True
+    assert classify_tool_call("desktop_open_aelin", {"route": "/processes"}) is True
