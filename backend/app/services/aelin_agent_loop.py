@@ -227,6 +227,7 @@ class AelinAgentLoop:
         pending_confirmation: dict[str, Any] | None = None
         tool_partial_seen: dict[str, int] = {}
         tool_event_emit_lock = threading.Lock()
+        has_live_tool_feedback = tool_event_cb is not None or trace_cb is not None
 
         def _emit_trace_step(step: AgentLoopTraceStep) -> None:
             trace_steps.append(step)
@@ -291,6 +292,7 @@ class AelinAgentLoop:
                         count=0,
                     )
                     return
+
                 if phase == "partial":
                     message = str(safe_payload.get("message") or safe_payload.get("summary") or safe_payload.get("progress") or "").strip()
                     current_action = str(safe_payload.get("current_action") or "").strip()
@@ -369,6 +371,32 @@ class AelinAgentLoop:
                         detail=f"round={round_no}; tool={tool_name}; blocked={reason}",
                         count=0,
                     )
+
+        def _make_partial_tool_event_cb(
+            *,
+            round_index: int,
+            tool_name: str,
+            tc_id: str,
+            args: dict[str, Any],
+            stage: str,
+        ) -> Callable[[dict[str, Any]], None] | None:
+            if not has_live_tool_feedback:
+                return None
+
+            def _partial_cb(partial_state: dict[str, Any]) -> None:
+                _forward_tool_event(
+                    {
+                        "phase": "partial",
+                        "round_index": round_index,
+                        "tool_name": tool_name,
+                        "tc_id": tc_id,
+                        "args": args,
+                        "stage": stage,
+                        **(partial_state if isinstance(partial_state, dict) else {}),
+                    }
+                )
+
+            return _partial_cb
 
         if self._provider == "rule_based":
             return _failed_loop_result(stop_reason="provider_rule_based", detail="provider_rule_based")
@@ -532,16 +560,12 @@ class AelinAgentLoop:
                             tool_hub=self._tool_hub,
                             tool_name=tool_name,
                             args=args,
-                            partial_cb=lambda partial_state, *, _round=round_index, _tool=tool_name, _tc=tc_id, _args=args, _stage=call_stage: _forward_tool_event(
-                                {
-                                    "phase": "partial",
-                                    "round_index": _round,
-                                    "tool_name": _tool,
-                                    "tc_id": _tc,
-                                    "args": _args,
-                                    "stage": _stage,
-                                    **(partial_state if isinstance(partial_state, dict) else {}),
-                                }
+                            partial_cb=_make_partial_tool_event_cb(
+                                round_index=round_index,
+                                tool_name=tool_name,
+                                tc_id=tc_id,
+                                args=args,
+                                stage=call_stage,
                             ),
                         )
                         _forward_tool_event(
@@ -656,16 +680,12 @@ class AelinAgentLoop:
                     tool_hub=self._tool_hub,
                     tool_name=tool_name,
                     args=args,
-                    partial_cb=lambda partial_state, *, _round=round_index, _tool=tool_name, _tc=tc_id, _args=args, _stage=call_stage: _forward_tool_event(
-                        {
-                            "phase": "partial",
-                            "round_index": _round,
-                            "tool_name": _tool,
-                            "tc_id": _tc,
-                            "args": _args,
-                            "stage": _stage,
-                            **(partial_state if isinstance(partial_state, dict) else {}),
-                        }
+                    partial_cb=_make_partial_tool_event_cb(
+                        round_index=round_index,
+                        tool_name=tool_name,
+                        tc_id=tc_id,
+                        args=args,
+                        stage=call_stage,
                     ),
                 )
                 _forward_tool_event(
