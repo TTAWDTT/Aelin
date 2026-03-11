@@ -13,7 +13,11 @@ import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 
 export function ChatView() {
-  const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
+  const sessions = useChatStore(s => s.sessions)
+  const activeSessionId = useChatStore(s => s.activeSessionId)
+  const isStreaming = useChatStore(s => s.isStreaming)
+  const statusText = useChatStore(s => s.statusText)
+  const createSession = useChatStore(s => s.createSession)
   const session = sessions.find((s) => s.id === activeSessionId)
   const messages = session?.messages ?? []
   const { send, captureAndSend, uploadAttachments, sendWithAttachments, stop } = useChatStream()
@@ -25,7 +29,7 @@ export function ChatView() {
     messages.length,
     messages.at(-1)?.content,
     isStreaming,
-  ])
+  ], isStreaming ? 'auto' : 'smooth')
 
   const handleSend = (text: string) => {
     if (!text.trim()) return

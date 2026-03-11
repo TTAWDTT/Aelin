@@ -15,7 +15,13 @@ interface ChatTimelineProps {
 
 export function ChatTimeline({ scrollRef, messages, isStreaming, statusText, compact = false, viewportWidth, onQuickPrompt }: ChatTimelineProps) {
   const isEmpty = messages.length === 0
-  const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
+  let lastAssistantId = ''
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'assistant') {
+      lastAssistantId = messages[index]?.id || ''
+      break
+    }
+  }
 
   return (
     <div ref={scrollRef} className={`min-w-0 flex-1 overflow-y-auto ${compact ? 'px-2 py-2.5 max-[500px]:px-1 max-[500px]:py-2' : 'px-2.5 py-3 sm:px-5 sm:py-4'}`}>

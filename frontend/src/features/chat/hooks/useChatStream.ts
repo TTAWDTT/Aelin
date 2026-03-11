@@ -19,8 +19,8 @@ import {
 } from './chatStreamHelpers'
 
 export function useChatStream() {
-  const store = useChatStore()
   const abortRef = useRef<(() => void) | null>(null)
+  const disposeCallbacksRef = useRef<(() => void) | null>(null)
 
   const send = useCallback(
     (
@@ -28,6 +28,9 @@ export function useChatStream() {
       images?: PendingImage[],
       attachmentIds?: number[],
     ) => {
+      const store = useChatStore.getState()
+      disposeCallbacksRef.current?.()
+      disposeCallbacksRef.current = null
       abortRef.current?.()
       abortRef.current = null
 
@@ -51,22 +54,25 @@ export function useChatStream() {
       })
 
       let cancel = () => {}
+      const streamCallbacks = buildStreamCallbacks({
+        store,
+        sessionId,
+        abortRef,
+        getCancel: () => cancel,
+      })
+      disposeCallbacksRef.current = streamCallbacks.dispose
       cancel = streamChat(
         body,
-        buildStreamCallbacks({
-          store,
-          sessionId,
-          abortRef,
-          getCancel: () => cancel,
-        }),
+        streamCallbacks,
       )
 
       abortRef.current = cancel
     },
-    [store]
+    []
   )
 
   const captureAndSend = useCallback(async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
+    const store = useChatStore.getState()
     if (store.isStreaming) return
     store.setStatusText(mode === 'region' ? '等待框选截图…' : '正在全屏截图…')
     try {
@@ -77,9 +83,10 @@ export function useChatStream() {
       store.setStatusText('')
       throw error
     }
-  }, [send, store])
+  }, [send])
 
   const uploadAttachments = useCallback(async (files: File[]): Promise<AelinAttachmentUploadResponse[]> => {
+    const store = useChatStore.getState()
     if (store.isStreaming) return []
     const picked = Array.from(files || []).slice(0, MAX_PENDING_ATTACHMENTS)
     if (picked.length === 0) return []
@@ -113,9 +120,10 @@ export function useChatStream() {
       store.setStatusText('')
       throw error
     }
-  }, [store])
+  }, [])
 
   const sendWithAttachments = useCallback(async (attachments: AelinAttachmentUploadResponse[], textHint = '') => {
+    const store = useChatStore.getState()
     if (store.isStreaming) return
     const rows = Array.from(attachments || []).slice(0, MAX_PENDING_ATTACHMENTS)
     if (rows.length === 0) return
@@ -128,14 +136,17 @@ export function useChatStream() {
     }).join('\n')}`
     const finalPrompt = trimQueryForApi([String(textHint || '').trim(), attachmentBlock].filter(Boolean).join('\n\n').trim())
     send(finalPrompt || '我上传了附件，请先基于附件内容回答。', undefined, attachmentIds)
-  }, [send, store])
+  }, [send])
 
   const stop = useCallback(() => {
+    const store = useChatStore.getState()
+    disposeCallbacksRef.current?.()
+    disposeCallbacksRef.current = null
     abortRef.current?.()
     abortRef.current = null
     store.setStreaming(false)
     store.setStatusText('')
-  }, [store])
+  }, [])
 
   return { send, captureAndSend, uploadAttachments, sendWithAttachments, stop }
 }

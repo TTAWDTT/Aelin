@@ -76,9 +76,10 @@ export const useChatStore = create<ChatStore>()(
       updateLastAssistant: (sessionId, partial) => set(s => ({
         sessions: s.sessions.map(x => {
           if (x.id !== sessionId) return x
+          const lastIndex = x.messages.findLastIndex((m: ChatMessage) => m.role === 'assistant')
+          if (lastIndex < 0) return x
           const msgs = [...x.messages]
-          const last = msgs.findLast((m: ChatMessage) => m.role === 'assistant')
-          if (last) Object.assign(last, partial)
+          msgs[lastIndex] = { ...msgs[lastIndex], ...partial }
           return { ...x, messages: msgs }
         }),
       })),
@@ -86,20 +87,30 @@ export const useChatStore = create<ChatStore>()(
       appendContent: (sessionId, chunk) => set(s => ({
         sessions: s.sessions.map(x => {
           if (x.id !== sessionId) return x
+          const lastIndex = x.messages.findLastIndex((m: ChatMessage) => m.role === 'assistant')
+          if (lastIndex < 0) return x
           const msgs = [...x.messages]
-          const last = msgs.findLast((m: ChatMessage) => m.role === 'assistant')
-          if (last) last.content += chunk
+          msgs[lastIndex] = {
+            ...msgs[lastIndex],
+            content: `${msgs[lastIndex]?.content || ''}${chunk}`,
+          }
           return { ...x, messages: msgs }
         }),
       })),
 
-      setStreaming: (v) => set({ isStreaming: v }),
-      setStatusText: (v) => set({ statusText: v }),
+      setStreaming: (v) => set(s => (s.isStreaming === v ? s : { isStreaming: v })),
+      setStatusText: (v) => set(s => (s.statusText === v ? s : { statusText: v })),
       getActiveSession: () => {
         const s = get()
         return s.sessions.find(x => x.id === s.activeSessionId)
       },
     }),
-    { name: 'aelin-chat' }
+    {
+      name: 'aelin-chat',
+      partialize: (state) => ({
+        sessions: state.sessions,
+        activeSessionId: state.activeSessionId,
+      }),
+    }
   )
 )

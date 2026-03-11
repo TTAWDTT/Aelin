@@ -3,6 +3,7 @@ import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chat
 import type { AelinChatRequest, AelinToolStep } from '@/shared/api/types'
 
 const MAX_QUERY_CHARS = 1200
+const STREAM_FLUSH_DELAY_MS = 32
 
 export type PendingImage = { dataUrl: string; name: string }
 export type ChatStoreState = ReturnType<typeof useChatStore.getState>
@@ -133,27 +134,70 @@ export function buildStreamCallbacks(params: {
   abortRef: MutableRefObject<(() => void) | null>
   getCancel: () => () => void
 }) {
+  let pendingReplyChunk = ''
+  let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let active = true
+
+  const flushReplyChunk = () => {
+    if (!active) return
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    if (!pendingReplyChunk) return
+    params.store.appendContent(params.sessionId, pendingReplyChunk)
+    pendingReplyChunk = ''
+  }
+
+  const queueReplyChunk = (chunk: string) => {
+    if (!active) return
+    pendingReplyChunk += chunk
+    if (flushTimer) return
+    flushTimer = setTimeout(flushReplyChunk, STREAM_FLUSH_DELAY_MS)
+  }
+
+  const dispose = () => {
+    active = false
+    pendingReplyChunk = ''
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+  }
+
   const finalize = () => {
+    if (!active) return
+    flushReplyChunk()
     if (params.abortRef.current === params.getCancel()) {
       params.abortRef.current = null
     }
     params.store.setStreaming(false)
     params.store.setStatusText('')
+    active = false
   }
 
   return {
-    onIntent: (data: { intent_type?: string }) => params.store.setStatusText(`意图: ${data.intent_type}`),
-    onPlan: (data: { steps?: unknown[] }) => params.store.setStatusText(`计划: ${data.steps?.length || 0} 步`),
+    dispose,
+    onIntent: (data: { intent_type?: string }) => {
+      if (!active) return
+      params.store.setStatusText(`意图: ${data.intent_type}`)
+    },
+    onPlan: (data: { steps?: unknown[] }) => {
+      if (!active) return
+      params.store.setStatusText(`计划: ${data.steps?.length || 0} 步`)
+    },
     onToolStep: (step: AelinToolStep) => {
+      if (!active) return
       params.store.setStatusText(`${step.stage}…`)
       updateLatestAssistantToolTrace(params.sessionId, step)
     },
     onCitations: (citations: NonNullable<ChatMessage['citations']>) =>
-      params.store.updateLastAssistant(params.sessionId, { citations }),
+      active ? params.store.updateLastAssistant(params.sessionId, { citations }) : undefined,
     onActions: (actions: NonNullable<ChatMessage['actions']>) =>
-      params.store.updateLastAssistant(params.sessionId, { actions }),
-    onReplyChunk: (chunk: string) => params.store.appendContent(params.sessionId, chunk),
+      active ? params.store.updateLastAssistant(params.sessionId, { actions }) : undefined,
+    onReplyChunk: (chunk: string) => queueReplyChunk(chunk),
     onDone: (data: { expression?: string; memory_summary?: string }) => {
+      if (!active) return
       params.store.updateLastAssistant(params.sessionId, {
         expression: data.expression,
         memorySummary: data.memory_summary,
@@ -161,7 +205,8 @@ export function buildStreamCallbacks(params: {
       finalize()
     },
     onError: (error: { message: string }) => {
-      params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
+      if (!active) return
+      queueReplyChunk(`\n\n> ⚠️ 错误: ${error.message}`)
       finalize()
     },
   }
