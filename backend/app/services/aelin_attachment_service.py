@@ -1341,6 +1341,15 @@ class AelinAttachmentService:
                 )
             )
         if not chunks:
+            emit_progress(
+                current_action="检索完成",
+                progress_label="completed",
+                processed=0,
+                matched=0,
+                total=0,
+                found_count=0,
+                force=True,
+            )
             return {"ok": True, "content": "", "hits": [], "total": 0, "attachment_ids": sorted(allowed_ids)}
         emit_progress(
             current_action="正在筛选候选片段",

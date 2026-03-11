@@ -423,7 +423,7 @@ class AelinAgentLoop:
         for round_index in range(1, self._max_rounds + 1):
             if cancel_token is not None and getattr(cancel_token, "cancelled", False):
                 stop_reason = "client_disconnected"
-                trace_steps.append(
+                _emit_trace_step(
                     AgentLoopTraceStep(
                         stage="agent_loop_round",
                         status="failed",
