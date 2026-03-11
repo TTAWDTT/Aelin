@@ -346,6 +346,41 @@ def test_build_resume_request_payload_summarizes_images():
     assert int(summaries[0].get("byte_length") or 0) > 0
 
 
+def test_agent_loop_does_not_build_resume_payload_without_confirmation(monkeypatch):
+    rounds = [{"content": "ok"}]
+    service = _fake_service(rounds)
+    tool_hub = _FakeToolHub(sleep_seconds=0.01)
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=1,
+            max_tool_calls=1,
+            max_write_calls=0,
+            allow_write_tools=False,
+        ),
+        max_rounds=1,
+    )
+
+    monkeypatch.setattr(
+        aelin_agent_loop_module,
+        "_build_resume_request_payload",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("resume payload should stay lazy")),
+    )
+
+    result = loop.run(
+        query="直接回答",
+        memory_summary="m",
+        history_turns=[{"role": "user", "content": "上一轮"}],
+        images=[{"name": "demo.png", "data_url": "data:image/png;base64,AAA"}],
+        attachment_ids=[1, 2],
+    )
+
+    assert result.ok is True
+    assert result.answer == "ok"
+
+
 def test_serialize_tool_message_content_keeps_valid_json_when_truncated():
     payload = {"ok": True, "data": "x" * 20000}
     content = _serialize_tool_message_content(payload, max_len=8000)

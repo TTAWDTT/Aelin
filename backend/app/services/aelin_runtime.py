@@ -24,30 +24,32 @@ def default_config() -> AgentConfigOut:
     )
 
 
-def config_out(db: Session, user_id: int) -> AgentConfigOut:
-    config = crud.get_agent_config(db, user_id=user_id)
+def _config_from_row(config: Any, *, api_key: str | None = None) -> AgentConfigOut:
     if config is None:
         return default_config()
-
-    api_key = decrypt_optional(config.api_key)
+    resolved_api_key = api_key if api_key is not None else decrypt_optional(getattr(config, "api_key", None))
     return AgentConfigOut(
-        provider=(config.provider or "rule_based").lower(),
-        base_url=config.base_url or "https://api.openai.com/v1",
-        model=config.model or "gpt-4o-mini",
-        temperature=float(config.temperature or 0.2),
-        has_api_key=bool(api_key),
-        web_search_proxy_url=str(config.web_search_proxy_url or ""),
+        provider=(getattr(config, "provider", None) or "rule_based").lower(),
+        base_url=getattr(config, "base_url", None) or "https://api.openai.com/v1",
+        model=getattr(config, "model", None) or "gpt-4o-mini",
+        temperature=float(getattr(config, "temperature", 0.2) or 0.2),
+        has_api_key=bool(resolved_api_key),
+        web_search_proxy_url=str(getattr(config, "web_search_proxy_url", "") or ""),
     )
 
 
+def config_out(db: Session, user_id: int) -> AgentConfigOut:
+    config = crud.get_agent_config(db, user_id=user_id)
+    return _config_from_row(config)
+
+
 def resolve_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
-    config = config_out(db, user.id)
+    stored = crud.get_agent_config(db, user_id=user.id)
+    api_key = decrypt_optional(stored.api_key if stored else None) if stored else None
+    config = _config_from_row(stored, api_key=api_key)
     provider = (config.provider or "rule_based").lower()
     if provider in {"rule_based", "rule-based", "builtin", "local"}:
         return LLMService(config, None), "rule_based"
-
-    stored = crud.get_agent_config(db, user_id=user.id)
-    api_key = decrypt_optional(stored.api_key if stored else None) if stored else None
     if not api_key or not (config.base_url or "").strip():
         return LLMService(config, None), "openai"
     return LLMService(config, api_key), "openai"

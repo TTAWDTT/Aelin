@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
@@ -133,17 +132,6 @@ class AelinAgentLoop:
         cancel_token: Any | None = None,
     ) -> AelinAgentLoopResult:
         self._last_query = str(query or "")
-        self._resume_request_json = json.dumps(
-            _build_resume_request_payload(
-                query=query,
-                workspace=str(self._tool_hub.workspace or "default"),
-                history_turns=history_turns,
-                images=images,
-                attachment_ids=attachment_ids,
-            ),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
         trace_steps: list[AgentLoopTraceStep] = []
         tool_runs: list[AgentLoopToolRun] = []
         usage = ToolPolicyUsage()
@@ -523,5 +511,4 @@ class AelinAgentLoop:
             user_id=int(getattr(self._tool_hub, "user_id", 0) or 0),
             workspace=str(self._tool_hub.workspace),
             resume_query=str(getattr(self, "_last_query", "") or ""),
-            resume_request_json=str(getattr(self, "_resume_request_json", "") or ""),
         )
