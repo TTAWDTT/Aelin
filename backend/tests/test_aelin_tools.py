@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import app.services.aelin_tools as aelin_tools
-from app.services.aelin_tools import AelinToolHub, _PINCHTAB_SESSIONS
+from app.services.aelin_tools import AelinToolHub, _PINCHTAB_SESSIONS, _PINCHTAB_USER_SESSIONS
 from app.services.web_search import WebSearchResult
 
 
@@ -281,6 +281,24 @@ def test_device_atomic_tools_prefer_explicit_contracts(monkeypatch):
     assert aelin_opened["route"] == "/processes"
 
 
+def test_desktop_open_url_rejects_non_http_schemes(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+    opened_urls: list[str] = []
+
+    monkeypatch.setattr(
+        aelin_tools,
+        "open_desktop_external_url",
+        lambda url: opened_urls.append(url) or {"url": url, "opened": True, "detail": "ok"},
+    )
+
+    blocked = hub.execute("desktop_open_url", {"url": "file:///C:/Windows/System32/notepad.exe"})
+
+    assert blocked["ok"] is False
+    assert blocked["error"] == "invalid_url_scheme"
+    assert opened_urls == []
+
+
 def test_legacy_device_tool_reuses_atomic_implementations(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -463,6 +481,7 @@ def test_pinchtab_session_start_and_step_reuse_instance(monkeypatch):
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
     _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
 
     # start 会话
     start_result = hub.execute("pinchtab_session", {"action": "start", "goal": "打开 example.com 并读取文本"})
@@ -477,3 +496,48 @@ def test_pinchtab_session_start_and_step_reuse_instance(monkeypatch):
     # Fake client 中的 launch_instance 只会在第一次被调用一次。
     launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
     assert launch_calls == ["launch_instance"]
+
+
+def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    owner_hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    other_hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=2,
+        workspace="default",
+        memory_service=_DummyMemory(),  # type: ignore[arg-type]
+        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        llm_service=fake_service,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+
+    start_result = owner_hub.execute("pinchtab_session", {"action": "start", "goal": "打开 example.com 并读取文本"})
+    assert start_result["ok"] is True
+    sid = str(start_result.get("session_id") or "")
+    assert sid
+
+    blocked_status = other_hub.execute("pinchtab_session", {"action": "status", "session_id": sid})
+    blocked_step = other_hub.execute("pinchtab_session", {"action": "step", "session_id": sid, "goal": "继续"})
+    blocked_close = other_hub.execute("pinchtab_session", {"action": "close", "session_id": sid})
+
+    assert blocked_status["ok"] is False
+    assert blocked_step["ok"] is False
+    assert blocked_close["ok"] is False
+    assert blocked_status["error"] == "unknown_session_id"
+    assert blocked_step["error"] == "unknown_session_id"
+    assert blocked_close["error"] == "unknown_session_id"
+    assert sid in _PINCHTAB_SESSIONS

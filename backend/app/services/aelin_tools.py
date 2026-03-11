@@ -4,6 +4,7 @@ import json
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -102,6 +103,14 @@ def _result_error(message: str) -> dict[str, Any]:
 
 def _result_items(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
     return _result_ok(items=items, total=len(items), **extra)
+
+
+def _is_http_url(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    parsed = urlparse(text)
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
 
 
 def should_attempt_aelin_tools(query: str) -> bool:
@@ -598,6 +607,8 @@ class AelinToolHub:
         url = str(args.get("url") or "").strip()
         if not url:
             return _result_error("missing url")
+        if not _is_http_url(url):
+            return _result_error("invalid_url_scheme")
         try:
             result = open_desktop_external_url(url)
         except DesktopPluginActionError as exc:
@@ -1070,14 +1081,51 @@ def get_active_pinchtab_session(user_id: int, workspace: str) -> dict[str, Any] 
     sess = _PINCHTAB_SESSIONS.get(sid)
     if not sess:
         return None
-    out = dict(sess)
-    out["session_id"] = sid
-    return out
+    if not _pinchtab_session_belongs_to(sid, sess, user_id=int(user_id), workspace=str(workspace or "default")):
+        return None
+    return _pinchtab_session_visible_payload(sid, sess)
 
 
 def _normalize_session_id(raw: str) -> str:
     clean = " ".join(str(raw or "").strip().split())
     return clean[:64]
+
+
+def _pinchtab_session_owner_key(*, user_id: int, workspace: str) -> tuple[int, str]:
+    return int(user_id), _normalize_workspace(workspace)
+
+
+def _pinchtab_session_visible_payload(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "instance_id": str(payload.get("instance_id") or ""),
+        "tab_id": str(payload.get("tab_id") or ""),
+        "last_goal": str(payload.get("last_goal") or ""),
+        "last_status": str(payload.get("last_status") or ""),
+        "last_url": str(payload.get("last_url") or ""),
+        "last_text": str(payload.get("last_text") or ""),
+        "last_summary": str(payload.get("last_summary") or ""),
+    }
+
+
+def _pinchtab_session_belongs_to(
+    session_id: str,
+    payload: dict[str, Any],
+    *,
+    user_id: int,
+    workspace: str,
+) -> bool:
+    owner_key = _pinchtab_session_owner_key(user_id=user_id, workspace=workspace)
+    owner_user_id = payload.get("owner_user_id")
+    owner_workspace = str(payload.get("owner_workspace") or "").strip()
+    if owner_user_id is None and not owner_workspace:
+        return _PINCHTAB_USER_SESSIONS.get(owner_key) == session_id
+    try:
+        session_owner_user_id = int(owner_user_id)
+    except Exception:
+        return False
+    session_owner_workspace = _normalize_workspace(owner_workspace)
+    return (session_owner_user_id, session_owner_workspace) == owner_key
 
 
 def run_aelin_structured_tools(
@@ -1176,6 +1224,8 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         if not sid:
             return
         _PINCHTAB_SESSIONS[sid] = {
+            "owner_user_id": int(self.user_id),
+            "owner_workspace": str(self.workspace),
             "instance_id": str(payload.get("instance_id") or payload.get("instance") or ""),
             "tab_id": str(payload.get("tab_id") or ""),
             "last_goal": str(payload.get("goal") or ""),
@@ -1206,7 +1256,7 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         _set_session(sid, payload)
         # 记录到用户级映射，方便后续对话自动续上这个会话。
         try:
-            _PINCHTAB_USER_SESSIONS[(int(self.user_id), str(self.workspace))] = sid
+            _PINCHTAB_USER_SESSIONS[_pinchtab_session_owner_key(user_id=self.user_id, workspace=self.workspace)] = sid
         except Exception:
             # 映射失败不应影响工具主流程
             pass
@@ -1220,12 +1270,14 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
     sess = _get_session(session_id)
     if sess is None:
         return _result_error("unknown_session_id")
+    if not _pinchtab_session_belongs_to(session_id, sess, user_id=self.user_id, workspace=self.workspace):
+        return _result_error("unknown_session_id")
 
     if action == "close":
         _PINCHTAB_SESSIONS.pop(session_id, None)
         # 清理用户级映射，如果它正好指向当前会话。
         try:
-            key = (int(self.user_id), str(self.workspace))
+            key = _pinchtab_session_owner_key(user_id=self.user_id, workspace=self.workspace)
             if _PINCHTAB_USER_SESSIONS.get(key) == session_id:
                 _PINCHTAB_USER_SESSIONS.pop(key, None)
         except Exception:
@@ -1234,9 +1286,7 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
 
     if action == "status":
         # Return the last known snapshot of this session; no new browser work.
-        out = dict(sess)
-        out["session_id"] = session_id
-        return _result_ok(**out)
+        return _result_ok(**_pinchtab_session_visible_payload(session_id, sess))
 
     # action == "step"
     # Step: continue using the same instance/tab with a refined goal.
@@ -1279,7 +1329,7 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
     _set_session(session_id, payload)
     # 确保 step 之后也把该会话标记为“当前活跃会话”，便于后续对话续上。
     try:
-        _PINCHTAB_USER_SESSIONS[(int(self.user_id), str(self.workspace))] = session_id
+        _PINCHTAB_USER_SESSIONS[_pinchtab_session_owner_key(user_id=self.user_id, workspace=self.workspace)] = session_id
     except Exception:
         pass
     return _result_ok(
