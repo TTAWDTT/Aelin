@@ -65,11 +65,6 @@ from app.services.aelin_runtime import (
     normalize_workspace as _normalize_workspace,
     resolve_llm_service as _resolve_llm_service,
 )
-from app.services.aelin_tracking_events import (
-    infer_tracking_source as _infer_tracking_source,
-    load_tracking_events as _load_tracking_events,
-    normalize_track_source as _normalize_track_source,
-)
 from app.services.aelin_chat_planning import (
     _answer_has_fact_signal,
     _apply_plan_patch,
@@ -105,7 +100,6 @@ from app.services.aelin_chat_answering import (
     _rule_based_chat_answer,
 )
 from app.services.aelin_chat_memory import (
-    _maybe_write_tracking_insight,
     _save_chat_diary_entry,
     _save_parallel_draft_entry,
 )
@@ -115,7 +109,6 @@ from app.services.openviking_bridge import tracking_file_memory_bridge
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
 from app.services.web_search import WebSearchResult, WebSearchService
-from app.services.tracking_autonomy import tracking_autonomy_service
 from app.settings import settings
 from app.routers.aelin_text_helpers import (
     _AELIN_EXPRESSION_IDS,
@@ -133,7 +126,6 @@ _log = logging.getLogger(__name__)
 _memory = AgentMemoryService()
 _summarizer = RuleBasedSummarizer()
 _web_search = WebSearchService()
-_tracking = tracking_autonomy_service
 _tracking_file_memory = tracking_file_memory_bridge
 _memory_draft_executor = ThreadPoolExecutor(
     max_workers=max(1, min(8, int(getattr(settings, "aelin_parallel_memory_draft_workers", 4) or 4))),
@@ -154,14 +146,6 @@ _AELIN_BASE_CONTEXT_CACHE_TTL_SECONDS = max(
 _AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES = max(
     0,
     int(getattr(settings, "aelin_base_context_cache_max_entries", 128) or 128),
-)
-_AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS = max(
-    0.0,
-    float(getattr(settings, "aelin_tracking_snapshot_cache_ttl_seconds", 10.0) or 10.0),
-)
-_AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES = max(
-    0,
-    int(getattr(settings, "aelin_tracking_snapshot_cache_max_entries", 256) or 256),
 )
 
 _MEDIA_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
@@ -191,9 +175,6 @@ _MEDIA_SUMMARY_HINTS_EN = (
 
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
-
-_tracking_snapshot_cache_lock = threading.Lock()
-_tracking_snapshot_cache: dict[tuple[int, str, str, int], tuple[float, dict[str, Any]]] = {}
 
 
 def _scoped_web_search_service(proxy_url: str = "") -> WebSearchService:
@@ -424,46 +405,8 @@ def _build_cached_tracking_snapshot(
     include_file_memory: bool,
     include_diary_memory: bool = False,
 ) -> dict[str, Any]:
-    query_text = (query or "").strip()
-    if not query_text:
-        return _empty_tracking_snapshot()
-
-    workspace_norm = _normalize_workspace(workspace)
-    query_key = _normalize_match_text(query_text)[:220]
-    include_file_flag = 1 if include_file_memory else 0
-    include_diary_flag = 1 if include_diary_memory else 0
-    if _AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS <= 0 or _AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES <= 0:
-        return _build_planner_tracking_snapshot(
-            db,
-            user_id=user_id,
-            workspace=workspace_norm,
-            query=query_text,
-            include_file_memory=include_file_memory,
-            include_diary_memory=include_diary_memory,
-        )
-
-    cache_key = (int(user_id), workspace_norm, query_key, include_file_flag, include_diary_flag)
-    now = time.monotonic()
-    with _tracking_snapshot_cache_lock:
-        hit = _tracking_snapshot_cache.get(cache_key)
-        if hit is not None:
-            ts, cached_snapshot = hit
-            if (now - float(ts)) <= _AELIN_TRACKING_SNAPSHOT_CACHE_TTL_SECONDS and isinstance(cached_snapshot, dict):
-                return cached_snapshot
-            _tracking_snapshot_cache.pop(cache_key, None)
-
-    snapshot = _build_planner_tracking_snapshot(
-        db,
-        user_id=user_id,
-        workspace=workspace_norm,
-        query=query_text,
-        include_file_memory=include_file_memory,
-        include_diary_memory=include_diary_memory,
-    )
-    with _tracking_snapshot_cache_lock:
-        _tracking_snapshot_cache[cache_key] = (now, snapshot)
-        _prune_ttl_cache(_tracking_snapshot_cache, max_entries=_AELIN_TRACKING_SNAPSHOT_CACHE_MAX_ENTRIES)
-    return snapshot
+    # Tracking 子系统已移除，这里统一返回空快照。
+    return _empty_tracking_snapshot()
 
 
 def _to_citations(raw_focus_items: list[dict], max_items: int) -> list[AelinCitation]:
@@ -756,103 +699,10 @@ def _build_planner_tracking_snapshot(
     include_file_memory: bool = True,
     include_diary_memory: bool = False,
 ) -> dict[str, Any]:
+    # Tracking 子系统已移除，这里不再从 tracking_autonomy 加载目标，仅保留文件记忆部分。
     workspace_norm = _normalize_workspace(workspace)
-    active_items: list[dict[str, Any]] = []
-
-    try:
-        rows = _tracking.list_targets(
-            db,
-            user_id=user_id,
-            workspace=workspace_norm,
-            limit=120,
-            include_deleted=False,
-        )
-    except Exception:
-        rows = []
-
-    for row in rows:
-        if row is None:
-            continue
-        if str(getattr(row, "status", "") or "").strip().lower() == "deleted":
-            continue
-        if getattr(row, "deleted_at", None) is not None:
-            continue
-        cfg = _json_from_text(getattr(row, "config_json", "") or "{}")
-        target_text = (str(getattr(row, "display_name", "") or "") or str(getattr(row, "source_key", "") or "")).strip()
-        if not target_text:
-            continue
-        active_items.append(
-            {
-                "target_id": int(getattr(row, "id", 0) or 0),
-                "target": target_text[:255],
-                "source": (str(getattr(row, "source_type", "web") or "web").strip().lower() or "web")[:32],
-                "query": str(cfg.get("query") or "").strip()[:500],
-                "status": str(getattr(row, "status", "active") or "active").strip().lower() or "active",
-                "workspace": workspace_norm,
-                "track_type": str(getattr(row, "track_type", "term") or "term").strip().lower() or "term",
-                "updated_at": (
-                    getattr(row, "updated_at", None).isoformat()
-                    if getattr(row, "updated_at", None) is not None
-                    else ""
-                ),
-            }
-        )
-
-    # Keep legacy tracking contact events as supplemental context when available.
-    try:
-        events = _load_tracking_events(db, user_id=user_id, limit=80)
-    except Exception:
-        events = {}
-    if events:
-        seen = {
-            _tracking_key(str(it.get("source") or ""), str(it.get("target") or ""))
-            for it in active_items
-            if str(it.get("target") or "").strip()
-        }
-        for it in sorted(
-            [x for x in (events or {}).values() if str(x.get("target") or "").strip()],
-            key=lambda row: str(row.get("updated_at") or ""),
-            reverse=True,
-        ):
-            key = _tracking_key(str(it.get("source") or ""), str(it.get("target") or ""))
-            if key in seen:
-                continue
-            seen.add(key)
-            active_items.append(
-                {
-                    "target_id": 0,
-                    "target": str(it.get("target") or "").strip()[:255],
-                    "source": _normalize_track_source(str(it.get("source") or "auto")),
-                    "query": str(it.get("query") or "").strip()[:500],
-                    "status": str(it.get("status") or "active").strip().lower() or "active",
-                    "workspace": workspace_norm,
-                    "track_type": "term",
-                    "updated_at": str(it.get("updated_at") or ""),
-                }
-            )
-            if len(active_items) >= 160:
-                break
-
-    active_items.sort(key=lambda it: str(it.get("updated_at") or ""), reverse=True)
-
-    q_norm = _normalize_match_text(query)
-    matched_items: list[dict[str, Any]] = []
-    if q_norm:
-        for it in active_items:
-            target_norm = _normalize_match_text(str(it.get("target") or ""))
-            query_norm = _normalize_match_text(str(it.get("query") or ""))
-            if not target_norm and not query_norm:
-                continue
-            if target_norm and (target_norm in q_norm or q_norm in target_norm):
-                matched_items.append(it)
-            elif query_norm and (query_norm in q_norm or q_norm in query_norm):
-                matched_items.append(it)
-            if len(matched_items) >= 8:
-                break
-
     memory_hits: list[Any] = []
-    should_scan_file_memory = bool(include_file_memory and (include_diary_memory or active_items or matched_items))
-    if should_scan_file_memory:
+    if include_file_memory:
         memory_hits = _tracking_file_memory.search(
             user_id=user_id,
             workspace=workspace_norm,
@@ -877,10 +727,10 @@ def _build_planner_tracking_snapshot(
         for item in memory_hits[:12]
     ]
     return {
-        "active_items": active_items[:12],
-        "matched_items": matched_items[:8],
-        "active_count": len(active_items),
-        "matched_count": len(matched_items) + len(file_items),
+        "active_items": [],
+        "matched_items": [],
+        "active_count": 0,
+        "matched_count": len(file_items),
         "matched_file_items": file_items[:8],
         "matched_file_count": len(file_items),
     }
@@ -1749,10 +1599,10 @@ def _aelin_chat_impl(
             user_id=current_user.id,
             workspace=payload.workspace,
             memory_service=_memory,
-            tracking_service=_tracking,
             file_memory_bridge=_tracking_file_memory,
             web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
             available_attachment_ids=_normalize_attachment_ids(getattr(payload, "attachment_ids", [])),
+            llm_service=service,
         )
         runs, tool_err = run_aelin_structured_tools(
             service=service,
@@ -2439,35 +2289,11 @@ def _aelin_chat_impl(
         except Exception:
             pass
 
-    insight_write_result: dict[str, Any] = {"written": False, "reason": "not_evaluated"}
-    try:
-        insight_write_result = _maybe_write_tracking_insight(
-            db,
-            user_id=current_user.id,
-            workspace=payload.workspace,
-            query=payload.query,
-            answer=answer,
-            service=service,
-            provider=provider,
-            tracking_snapshot=tracking_snapshot,
-            file_memory_lines=file_memory_lines,
-            citations=citations,
-        )
-        if bool(insight_write_result.get("written")):
-            detail = (
-                f"target={str(insight_write_result.get('target') or '')[:80]}; "
-                f"conf={float(insight_write_result.get('confidence') or 0.0):.2f}"
-            )
-            add_trace("insight_write", status="completed", detail=detail, count=1)
-        else:
-            add_trace(
-                "insight_write",
-                status="skipped",
-                detail=str(insight_write_result.get("reason") or "planner_skip")[:160],
-                count=0,
-            )
-    except Exception as exc:
-        add_trace("insight_write", status="failed", detail=f"{str(exc)[:160]}", count=0)
+    # Tracking autonomy has been removed; keep a lightweight stubbed result so
+    # traces and downstream logic remain consistent without invoking legacy
+    # tracking DB or planner flows.
+    insight_write_result: dict[str, Any] = {"written": False, "reason": "tracking_disabled"}
+    add_trace("insight_write", status="skipped", detail="tracking_disabled", count=0)
 
     chat_diary_result: dict[str, Any] = {"written": False, "reason": "not_evaluated", "path": ""}
     try:
@@ -2792,10 +2618,10 @@ def _try_agent_loop_chat(
         user_id=current_user.id,
         workspace=workspace,
         memory_service=_memory,
-        tracking_service=_tracking,
         file_memory_bridge=_tracking_file_memory,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
         available_attachment_ids=attachment_ids,
+        llm_service=service,
     )
     _log.info(
         "agent_loop preflight phase=tool_hub_ready user_id=%s workspace=%s latency_ms=%s",

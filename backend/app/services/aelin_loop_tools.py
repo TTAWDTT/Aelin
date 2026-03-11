@@ -39,27 +39,6 @@ _SENSITIVE_KEY_TOKENS = (
 _MODEL_TOOL_RESULT_MAX_LEN = 1200
 _MODEL_LIST_PREVIEW_ITEMS = 3
 _MODEL_TEXT_PREVIEW_LEN = 220
-_BROWSER_AMBIGUOUS_CLICK_TARGETS = {
-    "window",
-    "browser window",
-    "浏览器窗口",
-    "窗口",
-    "当前窗口",
-    "window focus",
-    "个人资料头像或profile链接",
-    "profile链接",
-}
-
-
-@dataclass
-class _BrowserLoopState:
-    preferred_scope: str = ""
-    last_observed_url: str = ""
-    last_requested_navigate_url: str = ""
-    last_dom_url: str = ""
-    consecutive_same_navigate_count: int = 0
-
-
 def _normalized_key(key: str) -> str:
     return "".join(ch for ch in str(key or "").strip().lower() if ch.isalnum() or ch == "_")
 
@@ -111,16 +90,6 @@ def _sanitize_for_log(value: Any, *, key_hint: str = "") -> Any:
 
 
 def _sanitize_tool_args_for_log(tool_name: str, args: dict[str, Any]) -> Any:
-    safe_tool = str(tool_name or "").strip().lower()
-    action = str(args.get("action") or "").strip().lower()
-    if safe_tool == "browser_use" and action == "type":
-        return {
-            "action": action,
-            "scope": _sanitize_for_log(args.get("scope")),
-            "strategy": _sanitize_for_log(args.get("strategy")),
-            "confirm": bool(args.get("confirm", False)),
-            "sensitive_args": True,
-        }
     return _sanitize_for_log(args)
 
 
@@ -147,108 +116,14 @@ def _summarize_result_for_log(result: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _browser_loop_state(tool_hub: AelinToolHub) -> _BrowserLoopState:
-    state = getattr(tool_hub, "_browser_loop_state", None)
-    if isinstance(state, _BrowserLoopState):
-        return state
-    state = _BrowserLoopState()
-    setattr(tool_hub, "_browser_loop_state", state)
-    return state
-
-
-def _normalize_browser_url(raw: Any) -> str:
-    text = str(raw or "").strip()
-    if not text:
-        return ""
-    return text.rstrip("/")
-
-
-def _is_ambiguous_browser_click_target(raw: Any) -> bool:
-    target = " ".join(str(raw or "").strip().lower().split())
-    if not target:
-        return True
-    if target in _BROWSER_AMBIGUOUS_CLICK_TARGETS:
-        return True
-    if "头像" in target and "profile" in target:
-        return True
-    return False
-
-
-def _has_browser_click_locator(args: dict[str, Any]) -> bool:
-    if not isinstance(args, dict):
-        return False
-    for key in ("selector", "role", "text", "xpath"):
-        value = args.get(key)
-        if str(value or "").strip():
-            return True
-    return False
-
-
-def _browser_short_circuit_result(*, action: str, scope: str, effect_summary: str, url: str) -> dict[str, Any]:
-    normalized_url = _normalize_browser_url(url)
-    return {
-        "ok": True,
-        "action": action,
-        "scope": scope or "cdp",
-        "effect_summary": effect_summary,
-        "requires_confirmation": False,
-        "risk_level": "low",
-        "external_opened": False,
-        "before": {"url": normalized_url, "title": ""},
-        "after": {"url": normalized_url, "title": ""},
-        "session_id": "",
-    }
-
-
 def _optimize_browser_tool_call(
     *,
     tool_hub: AelinToolHub,
     tool_name: str,
     args: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    safe_tool = str(tool_name or "").strip().lower()
-    if safe_tool not in {"browser_use", "browser_state_get"}:
-        return args, None
-
-    state = _browser_loop_state(tool_hub)
-    rewritten = dict(args or {})
-
-    if safe_tool == "browser_state_get":
-        requested_scope = str(rewritten.get("scope") or "auto").strip().lower()
-        include_dom = bool(rewritten.get("include_dom", False))
-        include_a11y = bool(rewritten.get("include_a11y", False))
-        if state.preferred_scope == "cdp" and requested_scope in {"", "auto"}:
-            rewritten["scope"] = "cdp"
-        if include_a11y and not include_dom and (state.preferred_scope == "cdp" or state.last_observed_url):
-            rewritten["include_dom"] = True
-        return rewritten, None
-
-    action = str(rewritten.get("action") or "").strip().lower()
-    requested_scope = str(rewritten.get("scope") or "auto").strip().lower()
-    if state.preferred_scope == "cdp" and requested_scope in {"", "auto"}:
-        rewritten["scope"] = "cdp"
-
-    if action == "navigate":
-        target_url = _normalize_browser_url(rewritten.get("url"))
-        if target_url and target_url == state.last_observed_url:
-            return rewritten, _browser_short_circuit_result(
-                action="navigate",
-                scope=str(rewritten.get("scope") or state.preferred_scope or "cdp"),
-                effect_summary=f"already_at:{target_url}",
-                url=target_url,
-            )
-        return rewritten, None
-
-    if action == "click" and not _has_browser_click_locator(rewritten) and _is_ambiguous_browser_click_target(
-        rewritten.get("target")
-    ):
-        return rewritten, {
-            "ok": False,
-            "error": "ambiguous_browser_target",
-            "action": "click",
-            "hint": "目标过于模糊。请先读取 DOM，再基于可见文本、selector 或 role 发起点击。",
-        }
-    return rewritten, None
+    # Browser plane 已移除，当前不做任何特殊优化。
+    return args, None
 
 
 def _record_browser_tool_result(
@@ -258,43 +133,8 @@ def _record_browser_tool_result(
     args: dict[str, Any],
     result: dict[str, Any],
 ) -> None:
-    safe_tool = str(tool_name or "").strip().lower()
-    if safe_tool not in {"browser_use", "browser_state_get"}:
-        return
-    if not isinstance(result, dict):
-        return
-    state = _browser_loop_state(tool_hub)
-    scope = str(result.get("scope") or args.get("scope") or "").strip().lower()
-    if scope == "cdp":
-        state.preferred_scope = "cdp"
-    elif scope == "external" and not state.preferred_scope:
-        state.preferred_scope = "external"
-
-    if safe_tool == "browser_state_get":
-        observed_url = _normalize_browser_url(result.get("url"))
-        if observed_url:
-            state.last_observed_url = observed_url
-        include_dom = bool(args.get("include_dom", False))
-        if include_dom and observed_url:
-            state.last_dom_url = observed_url
-        return
-
-    action = str(args.get("action") or result.get("action") or "").strip().lower()
-    if action != "navigate":
-        return
-    if not bool(result.get("ok", False)):
-        return
-    target_url = _normalize_browser_url(args.get("url"))
-    if target_url:
-        if target_url == state.last_requested_navigate_url:
-            state.consecutive_same_navigate_count += 1
-        else:
-            state.last_requested_navigate_url = target_url
-            state.consecutive_same_navigate_count = 1
-    observed_after = result.get("after") if isinstance(result.get("after"), dict) else {}
-    observed_url = _normalize_browser_url(observed_after.get("url"))
-    if observed_url:
-        state.last_observed_url = observed_url
+    # Browser plane 已移除，不再维护浏览器状态。
+    return None
 
 
 def _truncate_model_text(value: Any, *, limit: int = _MODEL_TEXT_PREVIEW_LEN) -> str:
@@ -378,47 +218,24 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
             ]
         return base
 
-    if tool in {"context_get", "browser_state_get", "browser_session_list", "tracking", "diary", "profile", "device"}:
-        browser_state_payload = payload
-        if tool == "browser_state_get" and isinstance(payload.get("active_state"), dict):
-            browser_state_payload = payload.get("active_state") or payload
+    if tool in {"context_get", "diary", "profile", "device", "pinchtab", "pinchtab_agent"}:
+        if tool in {"pinchtab", "pinchtab_agent"}:
+            # For PinchTab, preserve identifiers so the model can chain calls
+            # across launch_instance -> open_tab -> snapshot/text -> click.
+            if "instance_id" in payload:
+                base["instance_id"] = str(payload.get("instance_id") or "")[:128]
+            if "tab_id" in payload:
+                base["tab_id"] = str(payload.get("tab_id") or "")[:128]
+            if "status" in payload:
+                base["status"] = _truncate_model_text(payload.get("status"), limit=32)
+            if "mode" in payload:
+                base["mode"] = _truncate_model_text(payload.get("mode"), limit=32)
         if "summary" in payload:
             base["summary"] = _truncate_model_text(payload.get("summary"), limit=260)
-        if "url" in browser_state_payload:
-            base["url"] = _truncate_model_text(browser_state_payload.get("url"), limit=240)
-        if "title" in browser_state_payload:
-            base["title"] = _truncate_model_text(browser_state_payload.get("title"), limit=200)
         if "total" in payload:
             base["total"] = int(payload.get("total") or 0)
         if "next_call" in payload and isinstance(payload.get("next_call"), dict):
             base["next_call"] = _sanitize_for_log(payload.get("next_call"))
-        if tool == "browser_state_get":
-            for key in ("session_id", "profile_id", "session_scope", "visibility", "ready_state", "scope_note"):
-                if key in browser_state_payload:
-                    base[key] = _truncate_model_text(browser_state_payload.get(key), limit=220)
-            if "is_blank_page" in browser_state_payload:
-                base["is_blank_page"] = bool(browser_state_payload.get("is_blank_page"))
-            if isinstance(browser_state_payload.get("dom_digest"), dict):
-                digest = browser_state_payload.get("dom_digest") or {}
-                base["dom_digest"] = {
-                    "interactive_count": int(digest.get("interactive_count") or 0),
-                    "a11y_count": int(digest.get("a11y_count") or 0),
-                    "ready_state": _truncate_model_text(digest.get("ready_state"), limit=80),
-                }
-            interactive_targets = browser_state_payload.get("interactive_targets")
-            if isinstance(interactive_targets, list):
-                base["interactive_targets"] = [
-                    _preview_browser_target(row)
-                    for row in interactive_targets[:_MODEL_LIST_PREVIEW_ITEMS]
-                    if isinstance(row, dict)
-                ]
-            a11y_nodes = browser_state_payload.get("a11y_nodes")
-            if isinstance(a11y_nodes, list):
-                base["a11y_nodes"] = [
-                    _preview_browser_target(row)
-                    for row in a11y_nodes[:_MODEL_LIST_PREVIEW_ITEMS]
-                    if isinstance(row, dict)
-                ]
         items = payload.get("items")
         if isinstance(items, list):
             base["items"] = [

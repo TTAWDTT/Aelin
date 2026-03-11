@@ -5,10 +5,7 @@ import type {
   AelinTrackConfirmRequest, AelinTrackConfirmResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinBrowserLoginCheckpointListResponse,
-  AelinTrackingListResponse, AelinTrackingTargetUpdateRequest,
-  AelinTrackingItem, AelinTrackingRunResponse,
-  AelinTrackingChangeListResponse, AelinTrackingSnapshotListResponse,
-  AelinTrackingFileMemorySearchResponse, AelinTrackingFileMemoryContentResponse, AelinDiaryTreeResponse,
+  AelinTrackingFileMemoryContentResponse, AelinDiaryTreeResponse,
   DeskFeedResponse, DeskTagItem, DeskTagResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
@@ -48,29 +45,6 @@ export const aelinApi = {
     fetchJson<AelinBrowserLoginCheckpointListResponse>(
       `/api/v1/aelin/agent/browser/login-checkpoints?workspace=${encodeURIComponent(workspace)}&status=${encodeURIComponent(status)}&limit=${limit}`,
     ),
-
-  trackingList: (params?: Record<string, string>) =>
-    fetchJson<AelinTrackingListResponse>(`/api/v1/aelin/tracking${params ? '?' + new URLSearchParams(params) : ''}`),
-
-  trackingUpdate: (targetId: number, body: AelinTrackingTargetUpdateRequest) =>
-    fetchJson<AelinTrackingItem>(`/api/v1/aelin/tracking/targets/${targetId}`, { method: 'PATCH', body: JSON.stringify(body) }),
-
-  trackingRun: (targetId: number) =>
-    fetchJson<AelinTrackingRunResponse>(`/api/v1/aelin/tracking/targets/${targetId}/run`, { method: 'POST' }),
-
-  trackingChanges: (targetId: number, params?: Record<string, string>) =>
-    fetchJson<AelinTrackingChangeListResponse>(`/api/v1/aelin/tracking/targets/${targetId}/changes${params ? '?' + new URLSearchParams(params) : ''}`),
-
-  trackingAck: (targetId: number, changeIds: number[]) =>
-    fetchJson<AelinTrackingRunResponse>(`/api/v1/aelin/tracking/targets/${targetId}/changes/ack`, {
-      method: 'POST', body: JSON.stringify({ change_ids: changeIds }),
-    }),
-
-  trackingSnapshots: (targetId: number, params?: Record<string, string>) =>
-    fetchJson<AelinTrackingSnapshotListResponse>(`/api/v1/aelin/tracking/targets/${targetId}/snapshots${params ? '?' + new URLSearchParams(params) : ''}`),
-
-  fileMemorySearch: (params: Record<string, string>) =>
-    fetchJson<AelinTrackingFileMemorySearchResponse>(`/api/v1/aelin/tracking/file-memory/search?${new URLSearchParams(params)}`),
 
   fileMemoryContent: (params: Record<string, string>) =>
     fetchJson<AelinTrackingFileMemoryContentResponse>(`/api/v1/aelin/tracking/file-memory/content?${new URLSearchParams(params)}`),

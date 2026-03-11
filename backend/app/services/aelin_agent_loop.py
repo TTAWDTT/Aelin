@@ -26,7 +26,7 @@ from app.services.aelin_tools import AelinToolHub
 from app.services.llm import LLMService
 
 _LOG = logging.getLogger(__name__)
-_SERIAL_READ_TOOLS = {"browser_state_get", "browser_session_list"}
+_SERIAL_READ_TOOLS: set[str] = set()
 
 
 def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResult:
@@ -96,27 +96,8 @@ def _extract_confirmation_request(
     result: dict[str, Any],
     query: str,
 ) -> dict[str, Any] | None:
-    safe_tool_name = str(tool_name or "").strip().lower()
-    if not isinstance(result, dict):
-        return None
-    if not bool(result.get("requires_confirmation")):
-        return None
-    next_call = result.get("next_call") if isinstance(result.get("next_call"), dict) else {}
-    next_tool = str(next_call.get("tool") or "").strip().lower()
-    if safe_tool_name not in {"browser_use", "browser_state_get"} and next_tool not in {"browser_use", "browser_state_get"}:
-        return None
-    prompt = str(result.get("user_prompt") or "").strip()
-    if not prompt:
-        prompt = "该任务需要你的确认才能继续执行，是否确认？"
-    return {
-        "tool": next_tool or safe_tool_name,
-        "user_prompt": prompt[:220],
-        "error": str(result.get("error") or "")[:120],
-        "confirm_kind": str(result.get("confirm_kind") or "")[:48],
-        "action": str(result.get("action") or str(args.get("action") or ""))[:48],
-        "resume_query": str(query or "").strip()[:500],
-        "next_call": next_call,
-    }
+    # Browser plane 已移除，当前不在 Agent Loop 内触发浏览器交互确认。
+    return None
 
 
 class AelinAgentLoop:

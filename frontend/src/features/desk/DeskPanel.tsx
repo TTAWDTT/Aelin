@@ -1,22 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, Search, X } from 'lucide-react'
-import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AelinTrackingChangeItem, AelinTrackingItem, DeskFeedItem } from '@/shared/api/types'
+import type { DeskFeedItem } from '@/shared/api/types'
 import { SOURCE_OPTIONS } from './constants'
-import { ChangeStreamSection } from './components/ChangeStreamSection'
 import { FeedItemsSection } from './components/FeedItemsSection'
 import { FilterChip } from './components/FilterChip'
-import { TrackingTargetsSection } from './components/TrackingTargetsSection'
-import type { DeskPanelContext, TrackingChangeRow } from './types'
-import {
-  extractChangePreview,
-  normalizeSource,
-  normalizeUrl,
-  sourceLabel,
-  toUnixTs,
-} from './utils'
+import type { DeskPanelContext } from './types'
+import { normalizeSource, sourceLabel } from './utils'
 
 export type { DeskPanelContext } from './types'
 
@@ -27,12 +18,8 @@ type Props = {
   onSelectContext?: (context: DeskPanelContext) => void
 }
 
-type TrackingStatus = 'all' | 'active' | 'paused' | 'error'
-
-export function DeskPanel({ onClose, context, onClearContext, onSelectContext }: Props) {
+export function DeskPanel({ onClose, context, onClearContext }: Props) {
   const qc = useQueryClient()
-  const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>('all')
-  const [trackingKeyword, setTrackingKeyword] = useState('')
   const [activeTag, setActiveTag] = useState('all')
   const [items, setItems] = useState<DeskFeedItem[]>([])
   const [cursor, setCursor] = useState<{ at?: string | null; id?: number | null }>({})
@@ -49,47 +36,10 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
     staleTime: 20_000,
   })
 
-  const contextTargetId = useMemo(() => Number(context?.targetId || 0), [context?.targetId])
   const contextSource = useMemo(() => normalizeSource(context?.source), [context?.source])
   const contextKeyword = useMemo(() => String(context?.keyword || '').trim(), [context?.keyword])
   const contextTitle = useMemo(() => String(context?.title || '').trim(), [context?.title])
-  const hasContext = Boolean(contextTargetId > 0 || contextSource || contextKeyword || contextTitle)
-
-  const {
-    data: linkedChangesData,
-    isFetching: linkedChangesFetching,
-    refetch: refetchLinkedChanges,
-  } = useQuery({
-    queryKey: ['desk-linked-changes', contextTargetId],
-    queryFn: () => aelinApi.trackingChanges(contextTargetId, { limit: '20' }),
-    enabled: hasContext && contextTargetId > 0,
-    staleTime: 20_000,
-  })
-
-  const {
-    data: trackingListData,
-    isFetching: trackingListFetching,
-  } = useQuery({
-    queryKey: ['desk-tracking-list', trackingStatus],
-    queryFn: () => aelinApi.trackingList({
-      limit: '200',
-      ...(trackingStatus !== 'all' ? { status: trackingStatus } : {}),
-    }),
-    staleTime: 10_000,
-    refetchInterval: 30_000,
-  })
-
-  const runTrackingNow = useMutation({
-    mutationFn: (targetId: number) => aelinApi.trackingRun(targetId),
-    onSuccess: (result, targetId) => {
-      toast.success(result.message || '已触发运行')
-      void qc.invalidateQueries({ queryKey: ['desk-tracking-list'] })
-      void qc.invalidateQueries({ queryKey: ['tracking'] })
-      void qc.invalidateQueries({ queryKey: ['desk-recent-tracking-changes'] })
-      if (targetId > 0) void qc.invalidateQueries({ queryKey: ['desk-linked-changes', targetId] })
-    },
-    onError: () => toast.error('运行失败'),
-  })
+  const hasContext = Boolean(contextSource || contextKeyword || contextTitle)
 
   const loadFeed = async (reset: boolean) => {
     const resp = await aelinApi.deskFeed({
@@ -147,66 +97,6 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
   const followedTags = useMemo(() => tags?.followed ?? [], [tags?.followed])
   const discoverTags = useMemo(() => tags?.discover ?? [], [tags?.discover])
   const recommendedTags = useMemo(() => tags?.recommended ?? [], [tags?.recommended])
-  const trackingItems = useMemo<AelinTrackingItem[]>(() => trackingListData?.items ?? [], [trackingListData?.items])
-  const linkedChanges = useMemo<AelinTrackingChangeItem[]>(
-    () => linkedChangesData?.items ?? [],
-    [linkedChangesData?.items]
-  )
-
-  const filteredTrackingItems = useMemo<AelinTrackingItem[]>(() => {
-    const keyword = trackingKeyword.trim().toLowerCase()
-    return trackingItems.filter((item) => {
-      const normalized = normalizeSource(item.source || '')
-      if (sourceFilter && normalized !== sourceFilter) return false
-      if (!keyword) return true
-      return `${item.target || ''} ${item.description || ''} ${item.source || ''}`.toLowerCase().includes(keyword)
-    })
-  }, [trackingItems, trackingKeyword, sourceFilter])
-
-  const recentTargetIds = useMemo<number[]>(
-    () => filteredTrackingItems
-      .map((item) => Number(item.target_id || 0))
-      .filter((id) => id > 0)
-      .slice(0, 12),
-    [filteredTrackingItems]
-  )
-
-  const {
-    data: recentTrackingChanges,
-    isFetching: recentTrackingChangesFetching,
-  } = useQuery<TrackingChangeRow[]>({
-    queryKey: ['desk-recent-tracking-changes', trackingStatus, sourceFilter || 'all-source', recentTargetIds.join(',')],
-    enabled: contextTargetId <= 0 && recentTargetIds.length > 0,
-    queryFn: async () => {
-      const targetMeta = new Map<number, { target_name: string; target_source: string }>()
-      for (const item of filteredTrackingItems) {
-        const targetId = Number(item.target_id || 0)
-        if (targetId <= 0 || targetMeta.has(targetId)) continue
-        targetMeta.set(targetId, {
-          target_name: String(item.target || '').trim() || `目标 #${targetId}`,
-          target_source: String(item.source || '').trim(),
-        })
-      }
-
-      const rows = await Promise.all(
-        recentTargetIds.map(async (targetId) => {
-          const response = await aelinApi.trackingChanges(targetId, { limit: '3' })
-          const meta = targetMeta.get(targetId) || { target_name: `目标 #${targetId}`, target_source: '' }
-          return (response.items || []).map((item) => ({
-            ...item,
-            target_name: meta.target_name,
-            target_source: meta.target_source,
-          }))
-        })
-      )
-
-      return rows
-        .flat()
-        .sort((a, b) => toUnixTs(b.created_at) - toUnixTs(a.created_at))
-        .slice(0, 24)
-    },
-    staleTime: 15_000,
-  })
 
   const firstRowTags = useMemo(() => {
     const seen = new Set<string>(['all'])
@@ -225,6 +115,7 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
       seen.add(tag)
       out.push(tag)
     }
+
     return out.slice(0, 12)
   }, [discoverTags, followedTags])
 
@@ -237,70 +128,17 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
     await qc.invalidateQueries({ queryKey: ['desk-tags'] })
   }
 
-  const applyTrackingContext = (item: AelinTrackingItem) => {
-    const normalizedSource = normalizeSource(item.source || '')
-    const nextContext: DeskPanelContext = {
-      targetId: typeof item.target_id === 'number' ? item.target_id : undefined,
-      source: normalizedSource || undefined,
-      keyword: String(item.query || item.target || '').trim() || undefined,
-      title: String(item.target || '').trim() || '追踪联动',
-    }
-    if (onSelectContext) {
-      onSelectContext(nextContext)
-      return
-    }
-    setActiveTag('all')
-    setSourceFilter(nextContext.source || '')
-    setSearchInput(nextContext.keyword || '')
-    setSearchQuery(nextContext.keyword || '')
-  }
-
-  const changeStreamRows = useMemo<TrackingChangeRow[]>(() => {
-    if (contextTargetId > 0) {
-      const target = trackingItems.find((item) => Number(item.target_id || 0) === contextTargetId)
-      const targetName = contextTitle || String(target?.target || '').trim() || `目标 #${contextTargetId}`
-      const targetSource = contextSource || String(target?.source || '').trim()
-      return linkedChanges.map((item) => ({
-        ...item,
-        target_name: targetName,
-        target_source: targetSource,
-      }))
-    }
-    return recentTrackingChanges ?? []
-  }, [contextTargetId, contextSource, contextTitle, linkedChanges, recentTrackingChanges, trackingItems])
-
-  const changeStreamLoading = contextTargetId > 0 ? linkedChangesFetching : recentTrackingChangesFetching
-  const changePreviewRows = useMemo(
-    () => changeStreamRows.map((row) => ({ row, preview: extractChangePreview(row, items) })),
-    [changeStreamRows, items]
-  )
-
-  const emptyHint = contextTargetId > 0
-    ? '该追踪目标暂无可展示内容，可先查看上方「追踪变更流」或点击「运行」后刷新。'
-    : searchQuery || sourceFilter
-      ? '暂未命中与当前条件相关的内容，可尝试调整关键词或来源。'
-      : '暂无可展示内容。请先绑定内容平台并同步。'
-
-  const activeSourceLabel = sourceLabel(sourceFilter)
-
-  const openExternal = (rawUrl: string | null | undefined) => {
-    const url = normalizeUrl(rawUrl)
-    if (!url) return
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
-
   const refreshDesk = () => {
     setItems([])
     setCursor({})
     setHasMore(true)
     void loadFeed(true)
-    if (contextTargetId > 0) void refetchLinkedChanges()
     void qc.invalidateQueries({ queryKey: ['desk-tags'] })
-    void qc.invalidateQueries({ queryKey: ['desk-tracking-list'] })
-    void qc.invalidateQueries({ queryKey: ['desk-recent-tracking-changes'] })
   }
 
-  const runTrackingPendingTargetId = runTrackingNow.isPending ? Number(runTrackingNow.variables || 0) : null
+  const emptyHint = searchQuery || sourceFilter
+    ? '暂未命中与当前条件相关的内容，可尝试调整关键词或来源。'
+    : '暂无可展示内容。请先绑定内容平台并同步。'
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[var(--color-panel)]">
@@ -325,10 +163,8 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
         <div className="mx-3 mt-2 rounded-[10px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-2">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 text-[11px] text-[var(--color-text-muted)]">
-              <p className="truncate text-[12px] font-medium text-[var(--color-text)]">{contextTitle || '追踪联动'}</p>
+              <p className="truncate text-[12px] font-medium text-[var(--color-text)]">{contextTitle || 'Desk 联动'}</p>
               <p className="truncate">
-                {contextTargetId > 0 ? `目标 #${contextTargetId}` : ''}
-                {contextTargetId > 0 && (contextSource || contextKeyword) ? ' · ' : ''}
                 {contextSource ? `来源: ${sourceLabel(contextSource)}` : ''}
                 {contextSource && contextKeyword ? ' · ' : ''}
                 {contextKeyword ? `关键词: ${contextKeyword}` : ''}
@@ -391,31 +227,6 @@ export function DeskPanel({ onClose, context, onClearContext, onSelectContext }:
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
-        <TrackingTargetsSection
-          activeSourceLabel={activeSourceLabel}
-          trackingItemsTotal={trackingListData?.total ?? trackingItems.length}
-          trackingStatus={trackingStatus}
-          trackingKeyword={trackingKeyword}
-          trackingListFetching={trackingListFetching}
-          filteredTrackingItems={filteredTrackingItems}
-          runTrackingPendingTargetId={runTrackingPendingTargetId}
-          onTrackingStatusChange={setTrackingStatus}
-          onTrackingKeywordChange={setTrackingKeyword}
-          onApplyTrackingContext={applyTrackingContext}
-          onRunTrackingNow={(targetId) => runTrackingNow.mutate(targetId)}
-        />
-
-        <ChangeStreamSection
-          contextTargetId={contextTargetId}
-          changeStreamLoading={changeStreamLoading}
-          changePreviewRows={changePreviewRows}
-          onOpenExternal={openExternal}
-          onLinkTarget={(targetId) => {
-            const target = trackingItems.find((item) => Number(item.target_id || 0) === Number(targetId || 0))
-            if (target) applyTrackingContext(target)
-          }}
-        />
-
         <FeedItemsSection
           items={items}
           emptyHint={emptyHint}
