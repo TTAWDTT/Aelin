@@ -20,6 +20,7 @@ import {
 
 export function useChatStream() {
   const abortRef = useRef<(() => void) | null>(null)
+  const disposeCallbacksRef = useRef<(() => void) | null>(null)
 
   const send = useCallback(
     (
@@ -28,6 +29,8 @@ export function useChatStream() {
       attachmentIds?: number[],
     ) => {
       const store = useChatStore.getState()
+      disposeCallbacksRef.current?.()
+      disposeCallbacksRef.current = null
       abortRef.current?.()
       abortRef.current = null
 
@@ -51,14 +54,16 @@ export function useChatStream() {
       })
 
       let cancel = () => {}
+      const streamCallbacks = buildStreamCallbacks({
+        store,
+        sessionId,
+        abortRef,
+        getCancel: () => cancel,
+      })
+      disposeCallbacksRef.current = streamCallbacks.dispose
       cancel = streamChat(
         body,
-        buildStreamCallbacks({
-          store,
-          sessionId,
-          abortRef,
-          getCancel: () => cancel,
-        }),
+        streamCallbacks,
       )
 
       abortRef.current = cancel
@@ -135,6 +140,8 @@ export function useChatStream() {
 
   const stop = useCallback(() => {
     const store = useChatStore.getState()
+    disposeCallbacksRef.current?.()
+    disposeCallbacksRef.current = null
     abortRef.current?.()
     abortRef.current = null
     store.setStreaming(false)
