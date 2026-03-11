@@ -204,9 +204,7 @@ def aelin_chat_stream(
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         done_token = "__done__"
-        # Simple cancellation token shared with the agent loop. When the SSE
-        # connection is interrupted, this flag is set to True so the loop can
-        # stop at the next safe checkpoint.
+
         class _CancelToken:
             cancelled: bool = False
 
@@ -225,9 +223,10 @@ def aelin_chat_stream(
         def _worker() -> None:
             try:
                 _LOG.info(
-                    "aelin_stream worker_start req=%s uid=%s workspace=%s query=%s",
+                    "aelin_stream worker_start req=%s uid=%s source=%s workspace=%s query=%s",
                     req_id,
                     int(current_user.id),
+                    str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                     str(payload.workspace or "default")[:64],
                     _preview(str(payload.query or "")),
                 )
@@ -269,6 +268,7 @@ def aelin_chat_stream(
                 "ts": _now_ms(),
                 "req_id": req_id,
                 "query": payload.query.strip()[:180],
+                "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                 "workspace": payload.workspace,
                 "search_mode": _normalize_search_mode(getattr(payload, "search_mode", "auto")),
             },
@@ -282,7 +282,6 @@ def aelin_chat_stream(
                 try:
                     event, data = event_queue.get(timeout=heartbeat_interval_s)
                 except queue.Empty:
-                    # Emit a real SSE event so proxies/clients don't treat this as idle.
                     heartbeat_count += 1
                     yield _sse_event("ping", {"ts": _now_ms(), "req_id": req_id, "hb": heartbeat_count})
                     if (not worker.is_alive()) and event_queue.empty():

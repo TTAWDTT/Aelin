@@ -35,6 +35,8 @@ export interface SyncJobStatusResponse {
 /* ─── Aelin Chat ─── */
 export interface AelinChatRequest {
   query: string; use_memory?: boolean; max_citations?: number
+  source?: string
+  source_metadata?: Record<string, string>
   workspace?: string; images?: AelinImageInput[]
   attachment_ids?: number[]
   history?: { role: string; content: string }[]

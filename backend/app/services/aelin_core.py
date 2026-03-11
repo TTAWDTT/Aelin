@@ -40,14 +40,16 @@ from app.schemas import (
     AgentFocusItemOut,
     AgentMemoryNoteOut,
 )
-from app.services.agent_memory import AgentMemoryService
+from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services import content_tagging
 from app.services.aelin_tools import (
     AelinToolHub,
+    get_active_pinchtab_session,
     run_aelin_structured_tools,
     should_attempt_aelin_tools,
     summarize_tool_results_for_prompt,
 )
+from app.services.skill_loader import get_skill_prompts_for_query_and_tools
 from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
@@ -277,8 +279,9 @@ def _build_fixed_profile_injection(bundle: dict[str, Any], *, max_items: int = 1
 
 def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: str) -> dict:
     workspace_norm = _normalize_workspace(workspace)
-    snap = _memory.snapshot(db, user_id, query=query)
+    summary = _memory.get_summary(db, user_id)
     note_rows = _memory.list_notes(db, user_id, limit=24)
+    focus_items = _memory.build_focus_items(db, user_id, query=query, limit=8)
     notes: list[AgentMemoryNoteOut] = []
     for row in note_rows:
         src = (row.source or "").strip().lower()
@@ -312,7 +315,13 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
         except Exception:
             continue
 
-    brief_raw = _memory.build_daily_brief(db, user_id)
+    layout_rows = _memory.get_latest_layout_cards(db, user_id, workspace=workspace_norm)
+    brief_raw = _memory.build_daily_brief_from_items(
+        db,
+        user_id,
+        focus_items=focus_items[:6],
+        todos=todos_raw,
+    )
     daily_brief = AelinDailyBrief(
         generated_at=brief_raw["generated_at"],
         summary=str(brief_raw.get("summary") or ""),
@@ -320,8 +329,16 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
         actions=[AelinDailyBriefAction(**item) for item in brief_raw.get("actions", [])],
     )
 
-    layout_cards = _to_layout_cards(_memory.get_latest_layout_cards(db, user_id, workspace=workspace_norm))
-    memory_layers_raw = _memory.build_memory_layers(db, user_id, workspace=workspace_norm, query=query)
+    layout_cards = _to_layout_cards(layout_rows)
+    memory_layers_raw = _memory.build_memory_layers_from_items(
+        summary=summary,
+        notes=note_rows,
+        focus_items=focus_items,
+        todos=todos_raw,
+        layout_cards=layout_rows,
+        workspace=workspace_norm,
+        query=query,
+    )
     memory_layers = AelinMemoryLayers(
         facts=[AelinMemoryLayerItem(**item) for item in (memory_layers_raw.get("facts") or [])],
         preferences=[AelinMemoryLayerItem(**item) for item in (memory_layers_raw.get("preferences") or [])],
@@ -330,14 +347,22 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
     )
     notifications = [
         AelinNotificationItem(**item)
-        for item in _memory.build_notifications(db, user_id, limit=24)
+        for item in _memory.build_notifications_from_items(
+            db,
+            user_id,
+            brief=brief_raw,
+            todos=todos_raw,
+            limit=24,
+        )
     ]
+
+    serialized_focus_items = [serialize_focus_item(item) for item in focus_items]
 
     return {
         "workspace": workspace_norm,
-        "summary": str(snap.get("summary") or ""),
-        "focus_items": [AgentFocusItemOut(**item) for item in snap.get("focus_items", [])],
-        "focus_items_raw": list(snap.get("focus_items", [])),
+        "summary": str(summary or ""),
+        "focus_items": [AgentFocusItemOut(**item) for item in serialized_focus_items],
+        "focus_items_raw": serialized_focus_items,
         "notes": notes,
         "notes_count": len(notes),
         "todos": todos,
@@ -442,19 +467,7 @@ def _fetch_local_focus_citations(
     try:
         n = max(4, min(20, int(max_citations or 6) * 2))
         focus_items = _memory.build_focus_items(local_db, user_id, query=query, limit=n)
-        rows = [
-            {
-                "message_id": int(item.message_id or 0),
-                "source": str(item.source or "unknown"),
-                "source_label": str(item.source or "unknown"),
-                "sender": str(item.sender or ""),
-                "sender_avatar_url": str(item.sender_avatar_url or "").strip() or None,
-                "title": str(item.title or ""),
-                "received_at": str(item.received_at or ""),
-                "score": float(item.score or 0.0),
-            }
-            for item in focus_items
-        ]
+        rows = [serialize_focus_item(item) for item in focus_items]
         return _to_citations(rows, max_citations), ""
     except Exception as exc:
         return [], str(exc)[:140]
@@ -2448,51 +2461,6 @@ _TRACK_CREATE_COMMAND_RE = re.compile(
 )
 
 
-def _detect_forced_tracking_create(query: str) -> dict[str, str] | None:
-    text = str(query or "").strip()
-    if not text:
-        return None
-    lower = text.lower()
-    has_track_word = any(token in text for token in ("追踪", "跟踪", "监控")) or any(
-        token in lower for token in ("track", "tracking", "monitor")
-    )
-    has_create_word = any(token in text for token in ("创建", "新建", "添加", "开始"))
-    if not has_track_word:
-        return None
-    if not (has_create_word or _TRACK_CREATE_COMMAND_RE.search(text)):
-        return None
-
-    target = ""
-    for sep in ("：", ":"):
-        if sep in text:
-            left, right = text.split(sep, 1)
-            if any(token in left for token in ("追踪", "跟踪", "监控")) or any(
-                token in left.lower() for token in ("track", "tracking", "monitor")
-            ):
-                target = right.strip()
-                break
-    if not target:
-        match = re.search(r"(?:追踪|跟踪|监控|track(?:ing)?)(?:目标|主题|一下)?\s*(.+)$", text, flags=re.I)
-        if match:
-            target = str(match.group(1) or "").strip()
-    if not target:
-        url_match = re.search(r"https?://[^\s<>()\"']+", text, flags=re.I)
-        if url_match:
-            target = str(url_match.group(0) or "").strip()
-
-    target = re.sub(r"^[\s\-:：]+|[\s，,。！？!?]+$", "", target).strip()
-    if len(target) < 2:
-        return None
-
-    source = _infer_tracking_source(target)
-    return {
-        "action": "create",
-        "target": target[:240],
-        "source": source[:32] or "web",
-        "query": text[:500],
-    }
-
-
 def _build_attachment_prefetch_fallback_response(
     *,
     payload: AelinChatRequest,
@@ -2558,6 +2526,10 @@ def _build_attachment_prefetch_fallback_response(
     )
 
 
+def _get_memory_summary_for_chat(db: Session, user_id: int) -> str:
+    return str(_memory.get_summary(db, user_id) or "")
+
+
 def _try_agent_loop_chat(
     payload: AelinChatRequest,
     db: Session,
@@ -2566,70 +2538,10 @@ def _try_agent_loop_chat(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     persist_memory: bool = True,
     force_disable_writes: bool = False,
-    forced_tracking_create: dict[str, str] | None = None,
     cancel_token: Any | None = None,
 ) -> AelinChatResponse | None:
     pre_loop_started = time.perf_counter()
     query_preview = " ".join(str(payload.query or "").split())[:120]
-
-    service, provider = _resolve_llm_service(db, current_user)
-    _log.info(
-        "agent_loop preflight phase=resolve_service user_id=%s workspace=%s provider=%s latency_ms=%s query=%s",
-        int(current_user.id),
-        _normalize_workspace(payload.workspace),
-        str(provider or ""),
-        int((time.perf_counter() - pre_loop_started) * 1000),
-        query_preview,
-    )
-    llm_available = not (provider == "rule_based" or not service.is_configured())
-    if not llm_available:
-        return None
-
-    workspace = _normalize_workspace(payload.workspace)
-    base_context_started = time.perf_counter()
-    base_bundle = _build_cached_base_context_bundle(
-        db,
-        current_user.id,
-        workspace=workspace,
-    )
-    _log.info(
-        "agent_loop preflight phase=base_context user_id=%s workspace=%s latency_ms=%s",
-        int(current_user.id),
-        workspace,
-        int((time.perf_counter() - base_context_started) * 1000),
-    )
-    memory_summary = str(base_bundle.get("summary") or "")
-    normalize_started = time.perf_counter()
-    history_turns = _normalize_history(payload.history)
-    images = _normalize_images(payload.images)
-    _log.info(
-        "agent_loop preflight phase=normalize_inputs user_id=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
-        int(current_user.id),
-        workspace,
-        len(history_turns),
-        len(images),
-        int((time.perf_counter() - normalize_started) * 1000),
-    )
-    attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
-
-    tool_hub_started = time.perf_counter()
-    tool_hub = AelinToolHub(
-        db=db,
-        user_id=current_user.id,
-        workspace=workspace,
-        memory_service=_memory,
-        file_memory_bridge=_tracking_file_memory,
-        web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
-        available_attachment_ids=attachment_ids,
-        llm_service=service,
-    )
-    _log.info(
-        "agent_loop preflight phase=tool_hub_ready user_id=%s workspace=%s latency_ms=%s",
-        int(current_user.id),
-        workspace,
-        int((time.perf_counter() - tool_hub_started) * 1000),
-    )
-
     prefixed_traces: list[AelinToolStep] = []
     prefixed_actions: list[AelinAction] = []
     forced_intent = ""
@@ -2651,42 +2563,103 @@ def _try_agent_loop_chat(
             except Exception:
                 pass
 
-    if forced_tracking_create and not force_disable_writes:
-        forced_intent = "tracking_create"
-        forced_args = {
-            "action": "create",
-            "target": str(forced_tracking_create.get("target") or "")[:240],
-            "source": str(forced_tracking_create.get("source") or "web")[:32],
-            "query": str(forced_tracking_create.get("query") or payload.query or "")[:500],
-        }
-        _emit_prefixed("intent_router", status="completed", detail="forced_tracking_create", count=1)
-        started = time.perf_counter()
-        forced_result = tool_hub.execute("tracking", forced_args)
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        forced_tool_runs.append({"name": "tracking", "args": forced_args, "result": forced_result})
-        if bool(forced_result.get("ok")) and int(forced_result.get("target_id") or 0) > 0:
-            target_id = int(forced_result.get("target_id") or 0)
-            prefixed_actions.append(
-                AelinAction(
-                    kind="open_tracking",
-                    title="已创建追踪",
-                    detail=str(forced_result.get("target") or f"target_id={target_id}")[:120],
-                    payload={"target_id": str(target_id), "workspace": workspace},
-                )
-            )
-            _emit_prefixed("forced_tool", status="completed", detail=f"tracking.create; latency_ms={latency_ms}", count=1)
-        else:
-            _emit_prefixed(
-                "forced_tool",
-                status="failed",
-                detail=f"tracking.create failed:{str(forced_result.get('error') or 'unknown')[:140]}",
-                count=0,
-            )
+    resolve_started = time.perf_counter()
+    service, provider = _resolve_llm_service(db, current_user)
+    resolve_latency_ms = int((time.perf_counter() - resolve_started) * 1000)
+    _log.info(
+        "agent_loop preflight phase=resolve_service user_id=%s source=%s workspace=%s provider=%s latency_ms=%s query=%s",
+        int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+        _normalize_workspace(payload.workspace),
+        str(provider or ""),
+        resolve_latency_ms,
+        query_preview,
+    )
+    _emit_prefixed("preflight.resolve_service", status="completed", detail=f"provider={provider}; latency_ms={resolve_latency_ms}", count=1)
+    llm_available = not (provider == "rule_based" or not service.is_configured())
 
-    def _run_attachment_prefetch() -> None:
+    workspace = _normalize_workspace(payload.workspace)
+    summary_started = time.perf_counter()
+    memory_summary = _get_memory_summary_for_chat(db, current_user.id)
+    summary_latency_ms = int((time.perf_counter() - summary_started) * 1000)
+    _log.info(
+        "agent_loop preflight phase=memory_summary user_id=%s source=%s workspace=%s latency_ms=%s",
+        int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+        workspace,
+        summary_latency_ms,
+    )
+    _emit_prefixed("preflight.memory_summary", status="completed", detail=f"latency_ms={summary_latency_ms}", count=1)
+    attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
+
+    history_turns: list[dict[str, str]] = []
+    images: list[dict[str, str]] = []
+    if llm_available:
+        normalize_started = time.perf_counter()
+        history_turns = _normalize_history(payload.history)
+        images = _normalize_images(payload.images)
+        normalize_latency_ms = int((time.perf_counter() - normalize_started) * 1000)
+        _log.info(
+            "agent_loop preflight phase=normalize_inputs user_id=%s source=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
+            int(current_user.id),
+            str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+            workspace,
+            len(history_turns),
+            len(images),
+            normalize_latency_ms,
+        )
+        _emit_prefixed(
+            "preflight.normalize_inputs",
+            status="completed",
+            detail=f"history_turns={len(history_turns)}; images={len(images)}; latency_ms={normalize_latency_ms}",
+            count=len(history_turns) + len(images),
+        )
+    elif not attachment_ids:
+        return None
+
+    tool_hub_started = time.perf_counter()
+    tool_hub = AelinToolHub(
+        db=db,
+        user_id=current_user.id,
+        workspace=workspace,
+        memory_service=_memory,
+        file_memory_bridge=_tracking_file_memory,
+        web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
+        available_attachment_ids=attachment_ids,
+        llm_service=service,
+    )
+    tool_hub_latency_ms = int((time.perf_counter() - tool_hub_started) * 1000)
+    _log.info(
+        "agent_loop preflight phase=tool_hub_ready user_id=%s source=%s workspace=%s latency_ms=%s",
+        int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+        workspace,
+        tool_hub_latency_ms,
+    )
+    _emit_prefixed("preflight.tool_hub_ready", status="completed", detail=f"latency_ms={tool_hub_latency_ms}", count=1)
+
+    tool_skill_bodies: list[str] = []
+    if llm_available:
+        # 根据当前可用工具和用户 query，按需注入技能说明（SKILL）作为额外的 system 提示。
+        # 这些技能说明是“如何正确使用工具”的可复用规范，而不是新的可执行工具。
+        tool_defs = tool_hub.tool_definitions()
+        tool_names: list[str] = []
+        for td in tool_defs:
+            fn = td.get("function") if isinstance(td, dict) else None
+            if not isinstance(fn, dict):
+                continue
+            name = str(fn.get("name") or "").strip()
+            if name:
+                tool_names.append(name)
+        tool_skill_bodies = get_skill_prompts_for_query_and_tools(payload.query, tool_names)
+
+    def _ensure_attachment_prefetch() -> dict[str, Any]:
         nonlocal attachment_prefetch_result
+        if attachment_prefetch_result:
+            return attachment_prefetch_result
         if not attachment_ids:
-            return
+            attachment_prefetch_result = {"ok": False, "error": "missing_attachment_ids"}
+            return attachment_prefetch_result
         attachment_prefetch_args = {
             "query": str(payload.query or "请总结附件主要内容")[:500],
             "attachment_ids": attachment_ids[:20],
@@ -2717,9 +2690,10 @@ def _try_agent_loop_chat(
                 detail=f"{str(attachment_prefetch_result.get('error') or 'unknown')[:140]}; latency_ms={prefetch_latency_ms}",
                 count=0,
             )
+        return attachment_prefetch_result
 
     if not llm_available:
-        _run_attachment_prefetch()
+        _ensure_attachment_prefetch()
         fallback_resp = _build_attachment_prefetch_fallback_response(
             payload=payload,
             memory_summary=memory_summary,
@@ -2731,12 +2705,25 @@ def _try_agent_loop_chat(
             return fallback_resp
         return None
 
-    _run_attachment_prefetch()
+    # 如果已经存在一个 PinchTab 浏览会话，让模型知道可以“续上”它，
+    # 而不是每次都重新 launch_instance。
+    try:
+        pinchtab_snapshot = get_active_pinchtab_session(current_user.id, workspace)
+    except Exception:
+        pinchtab_snapshot = None
+    if isinstance(pinchtab_snapshot, dict) and pinchtab_snapshot.get("session_id"):
+        forced_tool_runs.append(
+            {
+                "name": "pinchtab_session",
+                "args": {
+                    "action": "status",
+                    "session_id": pinchtab_snapshot.get("session_id"),
+                },
+                "result": {"ok": True, **pinchtab_snapshot},
+            }
+        )
 
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
-    if forced_tracking_create and not force_disable_writes:
-        # Temporarily allow writes for this request scope only.
-        allow_write_tools = True
 
     policy = AelinToolPolicy(
         max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 2) or 2),
@@ -2758,10 +2745,17 @@ def _try_agent_loop_chat(
         total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
     )
     _log.info(
-        "agent_loop preflight phase=runner_ready user_id=%s workspace=%s total_preflight_ms=%s",
+        "agent_loop preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
         int(current_user.id),
+        str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
         workspace,
         int((time.perf_counter() - pre_loop_started) * 1000),
+    )
+    _emit_prefixed(
+        "preflight.runner_ready",
+        status="completed",
+        detail=f"total_preflight_ms={int((time.perf_counter() - pre_loop_started) * 1000)}",
+        count=1,
     )
     result = runner.run(
         query=payload.query,
@@ -2771,6 +2765,7 @@ def _try_agent_loop_chat(
         attachment_ids=attachment_ids,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
+        tool_skill_bodies=tool_skill_bodies,
         cancel_token=cancel_token,
     )
 
@@ -2791,6 +2786,7 @@ def _try_agent_loop_chat(
                 pass
 
     if not bool(result.ok) or not str(result.answer or "").strip():
+        _ensure_attachment_prefetch()
         fallback_resp = _build_attachment_prefetch_fallback_response(
             payload=payload,
             memory_summary=memory_summary,

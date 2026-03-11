@@ -170,6 +170,8 @@ class AelinChatRequest(BaseModel):
     use_memory: bool = True
     max_citations: int = Field(default=6, ge=1, le=20)
     workspace: str = Field(default="default", min_length=1, max_length=64)
+    source: str = Field(default="chat_ui", min_length=1, max_length=32)
+    source_metadata: dict[str, str] = Field(default_factory=dict)
     images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
     attachment_ids: list[int] = Field(default_factory=list, max_length=20)
     history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
@@ -206,6 +208,28 @@ class AelinChatRequest(BaseModel):
                 continue
             normalized.append({"role": role[:16], "content": content[:3000]})
         return normalized
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _normalize_source(cls, value: Any) -> str:
+        clean = str(value or "chat_ui").strip().lower()
+        return clean[:32] or "chat_ui"
+
+    @field_validator("source_metadata", mode="before")
+    @classmethod
+    def _normalize_source_metadata(cls, value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, str] = {}
+        for raw_key, raw_val in list(value.items())[:12]:
+            key = str(raw_key or "").strip().lower()[:40]
+            if not key:
+                continue
+            text = str(raw_val or "").strip()
+            if not text:
+                continue
+            out[key] = text[:240]
+        return out
 
     @field_validator("attachment_ids", mode="before")
     @classmethod
@@ -394,6 +418,37 @@ class AelinChatResponse(BaseModel):
     actions: list[AelinAction] = Field(default_factory=list)
     tool_trace: list[AelinToolStep] = Field(default_factory=list)
     memory_summary: str = ""
+    generated_at: datetime
+
+
+class RemoteControlExecuteRequest(BaseModel):
+    text: str = Field(default="", max_length=1200)
+    workspace: str = Field(default="default", min_length=1, max_length=64)
+    source: str = Field(default="manual_remote", min_length=1, max_length=32)
+    source_user_name: str = Field(default="", max_length=255)
+    source_open_id: str = Field(default="", max_length=128)
+    source_chat_id: str = Field(default="", max_length=128)
+    source_message_id: str = Field(default="", max_length=128)
+    history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
+    images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=20)
+    search_mode: str = Field(default="auto", min_length=1, max_length=16)
+
+
+class RemoteControlExecuteResponse(BaseModel):
+    ok: bool
+    source: str = "remote_control"
+    response: AelinChatResponse
+    generated_at: datetime
+
+
+class RemoteControlStatusResponse(BaseModel):
+    enabled: bool = True
+    source: str = "remote_control"
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+    supported_atomic_actions: list[str] = Field(default_factory=list)
+    desktop_plugin_reachable: bool = False
     generated_at: datetime
 
 
@@ -602,59 +657,6 @@ class AelinDeviceScreenCaptureRequest(BaseModel):
     image_format: str = Field(default="jpeg", min_length=3, max_length=8)
     quality: int = Field(default=72, ge=35, le=95)
     selection_timeout_ms: int = Field(default=45000, ge=5000, le=180000)
-
-
-class RemoteControlExecuteRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=1000)
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-
-
-class RemoteControlCommandItem(BaseModel):
-    id: int
-    workspace: str = "default"
-    source: str = "manual"
-    source_user_name: str = ""
-    source_open_id: str = ""
-    source_chat_id: str = ""
-    source_message_id: str = ""
-    raw_text: str = ""
-    normalized_text: str = ""
-    command_type: str = ""
-    risk_level: str = "low"
-    status: str = "pending"
-    summary: str = ""
-    result: dict[str, Any] = Field(default_factory=dict)
-    error_detail: str = ""
-    created_at: str = ""
-    started_at: str = ""
-    completed_at: str = ""
-
-
-class RemoteControlExecuteResponse(BaseModel):
-    ok: bool
-    reply_text: str
-    item: RemoteControlCommandItem
-    generated_at: datetime
-
-
-class RemoteControlCommandListResponse(BaseModel):
-    total: int = 0
-    items: list[RemoteControlCommandItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class RemoteControlStatusResponse(BaseModel):
-    enabled: bool = False
-    running: bool = False
-    configured: bool = False
-    sdk_available: bool = False
-    workspace: str = "default"
-    bound_user_email: str = ""
-    plugin_base_url: str = ""
-    plugin_reachable: bool = False
-    commands: list[str] = Field(default_factory=list)
-    last_error: str = ""
-    generated_at: datetime
 
 
 class AgentCardLayoutItem(BaseModel):

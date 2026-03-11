@@ -10,7 +10,12 @@ from typing import Any
 import httpx
 
 from app.db import create_session
-from app.services.remote_control import RemoteCommandSource, execute_remote_command, resolve_remote_control_user
+from app.schemas import RemoteControlExecuteRequest
+from app.services.remote_control import (
+    RemoteCommandSource,
+    execute_remote_control_request,
+    resolve_remote_control_user,
+)
 from app.settings import settings
 
 try:
@@ -315,11 +320,14 @@ class FeishuBotService:
         with self._command_lock:
             with create_session() as db:
                 user = resolve_remote_control_user(db)
-                row, result = execute_remote_command(
+                result = execute_remote_control_request(
                     db,
-                    user=user,
-                    text=text,
-                    workspace=str(getattr(settings, "feishu_bot_workspace", "default") or "default"),
+                    current_user=user,
+                    payload=RemoteControlExecuteRequest(
+                        text=text,
+                        workspace=str(getattr(settings, "feishu_bot_workspace", "default") or "default"),
+                        source="feishu",
+                    ),
                     source=RemoteCommandSource(
                         source="feishu",
                         open_id=open_id,
@@ -327,11 +335,9 @@ class FeishuBotService:
                         message_id=message_id,
                         user_name=user_name,
                     ),
-                    prefix=prefix,
-                    allow_without_prefix=not require_prefix,
                 )
-                _ = row
-        self._send_text(chat_id, result.reply_text)
+        reply_text = str(result.answer or "").strip() or "Aelin 已收到消息，但当前没有生成可用回复。"
+        self._send_text(chat_id, reply_text)
 
 
 feishu_bot_service = FeishuBotService()
