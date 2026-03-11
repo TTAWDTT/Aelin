@@ -10,10 +10,9 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.models import User
-from app.schemas import AelinChatRequest, AelinChatResponse, RemoteControlExecuteRequest
+from app.schemas import AelinChatRequest, AelinChatResponse, AelinToolStep, RemoteControlExecuteRequest
 from app.services.aelin_chat_dispatch import dispatch_aelin_chat
 from app.services.aelin_core import (
-    _detect_forced_tracking_create,
     _now_ms,
     _pick_expression,
     _try_agent_loop_chat,
@@ -38,6 +37,13 @@ class RemoteCommandSource:
     open_id: str = ""
     chat_id: str = ""
     message_id: str = ""
+
+
+@dataclass(slots=True)
+class RemoteControlExecutionResult:
+    ok: bool
+    status: str
+    response: AelinChatResponse
 
 
 def _now() -> datetime:
@@ -111,6 +117,23 @@ def build_remote_control_status() -> dict[str, Any]:
     }
 
 
+def _derive_remote_execution_status(response: AelinChatResponse) -> tuple[bool, str]:
+    answer = str(getattr(response, "answer", "") or "").strip()
+    trace = list(getattr(response, "tool_trace", []) or [])
+    fallback_failed = any(
+        str(getattr(step, "stage", "") or "") == "agent_loop"
+        and str(getattr(step, "status", "") or "") == "failed"
+        and "agent_loop_no_result" in str(getattr(step, "detail", "") or "")
+        for step in trace
+        if isinstance(step, AelinToolStep)
+    )
+    if fallback_failed:
+        return False, "agent_loop_no_result"
+    if not answer:
+        return False, "empty_answer"
+    return True, "completed"
+
+
 def execute_remote_control_request(
     db: Session,
     *,
@@ -119,16 +142,17 @@ def execute_remote_control_request(
     source: RemoteCommandSource | None = None,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
-) -> AelinChatResponse:
+) -> RemoteControlExecutionResult:
     chat_payload = build_remote_chat_request(payload, source=source)
-    return dispatch_aelin_chat(
+    response = dispatch_aelin_chat(
         chat_payload,
         db,
         current_user,
         event_cb=event_cb,
         cancel_token=cancel_token,
-        detect_forced_tracking_create=_detect_forced_tracking_create,
         try_agent_loop_chat=_try_agent_loop_chat,
         pick_expression=_pick_expression,
         now_ms=_now_ms,
     )
+    ok, status = _derive_remote_execution_status(response)
+    return RemoteControlExecutionResult(ok=ok, status=status, response=response)

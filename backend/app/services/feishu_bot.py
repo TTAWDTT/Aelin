@@ -336,7 +336,8 @@ class FeishuBotService:
                         user_name=user_name,
                     ),
                 )
-        reply_text = str(result.answer or "").strip() or "Aelin 已收到消息，但当前没有生成可用回复。"
+        response = getattr(result, "response", result)
+        reply_text = str(getattr(response, "answer", "") or "").strip() or "Aelin 已收到消息，但当前没有生成可用回复。"
         self._send_text(chat_id, reply_text)
 
 

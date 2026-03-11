@@ -437,6 +437,7 @@ class RemoteControlExecuteRequest(BaseModel):
 
 class RemoteControlExecuteResponse(BaseModel):
     ok: bool
+    status: str = "completed"
     source: str = "remote_control"
     response: AelinChatResponse
     generated_at: datetime

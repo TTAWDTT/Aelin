@@ -35,7 +35,6 @@ _SYNC_SYMBOLS = [
     "_start_agent_loop_shadow",
     "_should_use_agent_loop",
     "_should_use_agent_loop_shadow",
-    "_detect_forced_tracking_create",
     "_tracking_file_memory",
     "_memory",
     "_web_search",

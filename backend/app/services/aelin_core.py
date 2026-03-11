@@ -2455,17 +2455,6 @@ def _aelin_chat_impl(
     return response
 
 
-_TRACK_CREATE_COMMAND_RE = re.compile(
-    r"^(?:请|帮我|麻烦|给我)?\s*(?:创建|新建|添加|开始)?\s*(?:一个)?\s*(?:追踪|跟踪|监控|track(?:ing)?)",
-    flags=re.I,
-)
-
-
-def _detect_forced_tracking_create(query: str) -> dict[str, str] | None:
-    _ = query
-    return None
-
-
 def _build_attachment_prefetch_fallback_response(
     *,
     payload: AelinChatRequest,
@@ -2871,7 +2860,6 @@ def _dispatch_aelin_chat(
         current_user,
         event_cb=event_cb,
         cancel_token=cancel_token,
-        detect_forced_tracking_create=_detect_forced_tracking_create,
         try_agent_loop_chat=_try_agent_loop_chat,
         pick_expression=_pick_expression,
         now_ms=_now_ms,

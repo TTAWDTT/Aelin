@@ -36,7 +36,7 @@ def execute_remote_control(
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    response = execute_remote_control_request(
+    result = execute_remote_control_request(
         db,
         current_user=current_user,
         payload=payload,
@@ -49,8 +49,9 @@ def execute_remote_control(
         ),
     )
     return RemoteControlExecuteResponse(
-        ok=bool(str(response.answer or "").strip()),
+        ok=result.ok,
+        status=result.status,
         source="remote_control",
-        response=response,
+        response=result.response,
         generated_at=datetime.now(timezone.utc),
     )

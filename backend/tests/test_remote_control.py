@@ -48,12 +48,50 @@ def test_remote_control_execute_routes_into_agent_loop_dispatch(monkeypatch):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data.get("ok") is True
+    assert data.get("status") == "completed"
     response = data.get("response") or {}
     assert response.get("answer") == "remote ok"
     assert captured["source"] == "feishu_remote"
     assert captured["query"] == "帮我看下当前电脑状态"
     assert captured["workspace"] == "default"
     assert (captured["source_metadata"] or {}).get("source_chat_id") == "oc_xxx"
+
+
+def test_remote_control_execute_reports_agent_loop_failure(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    def _fake_dispatch(payload, db, current_user, **kwargs):
+        _ = payload, db, current_user, kwargs
+        return AelinChatResponse(
+            answer="当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。",
+            expression="exp-04",
+            citations=[],
+            actions=[],
+            tool_trace=[
+                {
+                    "stage": "agent_loop",
+                    "status": "failed",
+                    "detail": "agent_loop_no_result",
+                    "count": 0,
+                    "ts": 0,
+                }
+            ],
+            memory_summary="",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(remote_control, "dispatch_aelin_chat", _fake_dispatch)
+
+    resp = client.post(
+        "/api/v1/aelin/remote-control/execute",
+        json={"text": "帮我做一件事", "workspace": "default"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("ok") is False
+    assert data.get("status") == "agent_loop_no_result"
 
 
 def test_remote_control_status_exposes_atomic_actions(monkeypatch):
