@@ -2461,6 +2461,11 @@ _TRACK_CREATE_COMMAND_RE = re.compile(
 )
 
 
+def _detect_forced_tracking_create(query: str) -> dict[str, str] | None:
+    _ = query
+    return None
+
+
 def _build_attachment_prefetch_fallback_response(
     *,
     payload: AelinChatRequest,

@@ -50,6 +50,20 @@ class FocusItem:
     score: float
 
 
+def serialize_focus_item(item: FocusItem) -> dict[str, Any]:
+    source = _truncate(_clean_text(getattr(item, "source", "")), 32) or "unknown"
+    return {
+        "message_id": int(getattr(item, "message_id", 0) or 0),
+        "source": source,
+        "source_label": _SOURCE_LABELS.get(source, source.title() if source else "Unknown"),
+        "sender": _truncate(_clean_text(getattr(item, "sender", "")), 60),
+        "sender_avatar_url": getattr(item, "sender_avatar_url", None),
+        "title": _truncate(_clean_text(getattr(item, "title", "")), 140),
+        "received_at": _truncate(_clean_text(getattr(item, "received_at", "")), 32),
+        "score": float(getattr(item, "score", 0.0) or 0.0),
+    }
+
+
 class AgentMemoryService:
     def get_summary(self, db: Session, user_id: int) -> str:
         row = db.get(AgentConversationMemory, user_id)
@@ -552,6 +566,58 @@ class AgentMemoryService:
             "actions": actions[:10],
         }
 
+    def build_daily_brief_from_items(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        focus_items: list[FocusItem] | None = None,
+        todos: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        focus_rows = list(focus_items or self.build_focus_items(db, user_id, query="", limit=6))
+        todo_rows = list(todos or self.list_todos(db, user_id, include_done=False, limit=20))
+
+        actions: list[dict[str, Any]] = []
+        for item in focus_rows[:3]:
+            actions.append(
+                {
+                    "kind": "review",
+                    "title": f"查看: {item.title}",
+                    "detail": f"来源 {_SOURCE_LABELS.get(item.source, item.source)}，发送者 {item.sender}",
+                    "message_id": item.message_id,
+                    "priority": "high" if item.score >= 8 else "normal",
+                }
+            )
+
+        for todo in todo_rows[:4]:
+            actions.append(
+                {
+                    "kind": "todo",
+                    "title": todo["title"],
+                    "detail": todo.get("detail") or "",
+                    "contact_id": todo.get("contact_id"),
+                    "message_id": todo.get("message_id"),
+                    "priority": todo.get("priority") or "normal",
+                }
+            )
+
+        total_unread = db.scalar(
+            select(func.count(Message.id)).where(Message.user_id == user_id, Message.is_read.is_(False))
+        )
+        unread_count = int(total_unread or 0)
+        summary_parts = [
+            f"今天你有 {unread_count} 条未读消息",
+            f"高价值更新 {len(focus_rows[:3])} 条",
+            f"待跟进事项 {len(todo_rows)} 项",
+        ]
+
+        return {
+            "generated_at": datetime.now(timezone.utc),
+            "summary": "；".join(summary_parts) + "。",
+            "top_updates": [serialize_focus_item(item) for item in focus_rows],
+            "actions": actions[:10],
+        }
+
     def advanced_search(
         self,
         db: Session,
@@ -837,6 +903,144 @@ class AgentMemoryService:
             "in_progress": in_progress[:14],
         }
 
+    def build_memory_layers_from_items(
+        self,
+        *,
+        summary: str,
+        notes: list[AgentMemoryNote] | None,
+        focus_items: list[FocusItem] | None,
+        todos: list[dict[str, Any]] | None,
+        layout_cards: list[dict[str, Any]] | None,
+        workspace: str = "default",
+        query: str = "",
+    ) -> dict[str, list[dict[str, Any]]]:
+        _ = workspace, query
+        now_iso = datetime.now(timezone.utc).isoformat()
+        facts: list[dict[str, Any]] = []
+        preferences: list[dict[str, Any]] = []
+        in_progress: list[dict[str, Any]] = []
+
+        def _push(
+            bucket: list[dict[str, Any]],
+            *,
+            item_id: str,
+            layer: str,
+            title: str,
+            detail: str,
+            source: str,
+            confidence: float,
+            updated_at: str,
+            meta: dict[str, str] | None = None,
+            max_items: int = 12,
+        ) -> None:
+            clean_title = _truncate(_clean_text(title), 140)
+            if not clean_title:
+                return
+            clean_detail = _truncate(_clean_text(detail), 280)
+            if any((row.get("title") or "") == clean_title for row in bucket):
+                return
+            bucket.append(
+                {
+                    "id": item_id,
+                    "layer": layer,
+                    "title": clean_title,
+                    "detail": clean_detail,
+                    "source": _truncate(_clean_text(source), 64),
+                    "confidence": max(0.0, min(1.0, float(confidence))),
+                    "updated_at": updated_at or now_iso,
+                    "meta": meta or {},
+                }
+            )
+            if len(bucket) > max_items:
+                del bucket[max_items:]
+
+        if summary:
+            _push(
+                facts,
+                item_id="summary",
+                layer="fact",
+                title="近期对话摘要",
+                detail=str(summary),
+                source="chat_summary",
+                confidence=0.66,
+                updated_at=now_iso,
+                max_items=14,
+            )
+
+        for row in list(notes or [])[:24]:
+            kind = _truncate(_clean_text(str(getattr(row, "kind", "") or "")), 32).lower()
+            source = _truncate(_clean_text(str(getattr(row, "source", "") or "")), 64) or kind or "memory"
+            content = _truncate(_clean_text(str(getattr(row, "content", "") or "")), 280)
+            if not content:
+                continue
+            bucket = preferences if kind in {"preference", "profile"} else in_progress if kind in {"in_progress", "todo"} else facts
+            layer = "preference" if bucket is preferences else "in_progress" if bucket is in_progress else "fact"
+            _push(
+                bucket,
+                item_id=f"note-{int(getattr(row, 'id', 0) or 0)}",
+                layer=layer,
+                title=content[:80],
+                detail=content,
+                source=source,
+                confidence=0.62,
+                updated_at=_iso_or_empty(getattr(row, "updated_at", None)) or now_iso,
+            )
+
+        for item in list(focus_items or [])[:10]:
+            _push(
+                in_progress,
+                item_id=f"focus-{int(getattr(item, 'message_id', 0) or 0)}",
+                layer="in_progress",
+                title=str(getattr(item, "title", "") or ""),
+                detail=f"{_SOURCE_LABELS.get(str(getattr(item, 'source', '') or ''), str(getattr(item, 'source', '') or '消息'))} · {str(getattr(item, 'sender', '') or '')}",
+                source=str(getattr(item, "source", "") or "focus"),
+                confidence=min(0.95, max(0.4, float(getattr(item, "score", 0.0) or 0.0) / 10.0)),
+                updated_at=str(getattr(item, "received_at", "") or now_iso),
+                meta={"message_id": str(int(getattr(item, "message_id", 0) or 0))},
+                max_items=14,
+            )
+
+        for todo in list(todos or [])[:12]:
+            _push(
+                in_progress,
+                item_id=f"todo-{int(todo.get('id') or 0)}",
+                layer="in_progress",
+                title=str(todo.get("title") or ""),
+                detail=str(todo.get("detail") or ""),
+                source="todo",
+                confidence=0.88 if str(todo.get("priority") or "").lower() == "high" else 0.78,
+                updated_at=str(todo.get("updated_at") or now_iso),
+                meta={
+                    "todo_id": str(todo.get("id") or ""),
+                    "priority": str(todo.get("priority") or "normal"),
+                },
+                max_items=14,
+            )
+
+        pinned_names = [
+            str(row.get("display_name") or row.get("contact_id") or "")
+            for row in list(layout_cards or [])
+            if isinstance(row, dict) and bool(row.get("pinned"))
+        ][:8]
+        if pinned_names:
+            _push(
+                preferences,
+                item_id="layout-pinned",
+                layer="preference",
+                title="卡片关注顺序偏好",
+                detail="优先关注: " + "、".join([name for name in pinned_names if name]),
+                source="layout",
+                confidence=0.72,
+                updated_at=now_iso,
+                max_items=12,
+            )
+
+        return {
+            "facts": facts[:14],
+            "preferences": preferences[:12],
+            "in_progress": in_progress[:14],
+        }
+
     def build_notifications(self, db: Session, user_id: int, *, limit: int = 20) -> list[dict[str, Any]]:
         max_items = max(1, min(100, int(limit or 20)))
         now = datetime.now(timezone.utc)
@@ -881,6 +1085,125 @@ class AgentMemoryService:
 
         todos = self.list_todos(db, user_id, include_done=False, limit=20)
         for todo in todos[:8]:
+            todo_id = int(todo.get("id") or 0)
+            priority = str(todo.get("priority") or "normal").lower()
+            title = _truncate(_clean_text(str(todo.get("title") or "")), 120)
+            if not title:
+                continue
+            items.append(
+                {
+                    "id": f"todo-{todo_id}",
+                    "level": "warning" if priority == "high" else "info",
+                    "title": f"待跟进: {title}",
+                    "detail": _truncate(_clean_text(str(todo.get("detail") or "")), 180) or "你有一个待办事项待处理",
+                    "source": "todo",
+                    "ts": str(todo.get("updated_at") or now.isoformat()),
+                    "action_kind": "open_todo",
+                    "action_payload": {"todo_id": str(todo_id)},
+                }
+            )
+
+        tracking_notes = db.scalars(
+            select(AgentMemoryNote)
+            .where(
+                AgentMemoryNote.user_id == user_id,
+                AgentMemoryNote.kind == "tracking",
+            )
+            .order_by(desc(AgentMemoryNote.updated_at), desc(AgentMemoryNote.id))
+            .limit(16)
+        ).all()
+        seen_tracking: set[str] = set()
+        for row in tracking_notes:
+            parsed = _parse_tracking_payload(row.content or "")
+            target = _truncate(_clean_text(parsed.get("target") or ""), 120)
+            if not target:
+                continue
+            key = target.lower()
+            if key in seen_tracking:
+                continue
+            seen_tracking.add(key)
+            status = _truncate(_clean_text(parsed.get("status") or "active"), 40)
+            source = _truncate(_clean_text(parsed.get("source") or row.source or "tracking"), 40)
+            items.append(
+                {
+                    "id": f"track-{row.id}",
+                    "level": "success" if status in {"active", "sync_started", "tracking_enabled"} else "info",
+                    "title": f"跟踪中: {target}",
+                    "detail": f"{source} · 状态 {status}",
+                    "source": "tracking",
+                    "ts": _iso_or_empty(row.updated_at) or now.isoformat(),
+                    "action_kind": "open_tracking",
+                    "action_payload": {"target": target, "source": source},
+                }
+            )
+            if len(seen_tracking) >= 8:
+                break
+
+        items.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
+        dedup: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for row in items:
+            row_id = str(row.get("id") or "")
+            if not row_id or row_id in seen_ids:
+                continue
+            seen_ids.add(row_id)
+            dedup.append(row)
+            if len(dedup) >= max_items:
+                break
+        return dedup
+
+    def build_notifications_from_items(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        brief: dict[str, Any] | None = None,
+        todos: list[dict[str, Any]] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        max_items = max(1, min(100, int(limit or 20)))
+        now = datetime.now(timezone.utc)
+        items: list[dict[str, Any]] = []
+
+        brief_payload = brief or self.build_daily_brief(db, user_id)
+        summary = _truncate(_clean_text(str(brief_payload.get("summary") or "")), 220)
+        if summary:
+            items.append(
+                {
+                    "id": "brief-summary",
+                    "level": "info",
+                    "title": "每日简报已更新",
+                    "detail": summary,
+                    "source": "daily_brief",
+                    "ts": now.isoformat(),
+                    "action_kind": "open_brief",
+                    "action_payload": {"path": "/"},
+                }
+            )
+
+        for idx, item in enumerate((brief_payload.get("top_updates") or [])[:4], start=1):
+            try:
+                message_id = int(item.get("message_id") or 0)
+            except Exception:
+                message_id = 0
+            title = _truncate(_clean_text(str(item.get("title") or "")), 120)
+            if not title:
+                continue
+            items.append(
+                {
+                    "id": f"brief-top-{idx}-{message_id or idx}",
+                    "level": "info",
+                    "title": f"高价值更新: {title}",
+                    "detail": f"{item.get('source_label') or item.get('source') or '来源'} · {item.get('sender') or 'unknown'}",
+                    "source": "focus",
+                    "ts": now.isoformat(),
+                    "action_kind": "open_message" if message_id > 0 else "open_brief",
+                    "action_payload": {"message_id": str(message_id)} if message_id > 0 else {"path": "/"},
+                }
+            )
+
+        todo_rows = list(todos or self.list_todos(db, user_id, include_done=False, limit=20))
+        for todo in todo_rows[:8]:
             todo_id = int(todo.get("id") or 0)
             priority = str(todo.get("priority") or "normal").lower()
             title = _truncate(_clean_text(str(todo.get("title") or "")), 120)
