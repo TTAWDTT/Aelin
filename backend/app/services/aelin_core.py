@@ -2588,6 +2588,7 @@ def _try_agent_loop_chat(
         detail=f"total_preflight_ms={int((time.perf_counter() - pre_loop_started) * 1000)}",
         count=1,
     )
+    live_event_consumer = event_cb is not None
     result = runner.run(
         query=payload.query,
         memory_summary=memory_summary,
@@ -2596,9 +2597,9 @@ def _try_agent_loop_chat(
         attachment_ids=attachment_ids,
         forced_intent=forced_intent,
         forced_tool_runs=forced_tool_runs,
-        trace_cb=_emit_loop_trace,
-        reply_chunk_cb=_emit_reply_chunk,
-        tool_event_cb=_emit_tool_event,
+        trace_cb=_emit_loop_trace if live_event_consumer else None,
+        reply_chunk_cb=_emit_reply_chunk if live_event_consumer else None,
+        tool_event_cb=_emit_tool_event if live_event_consumer else None,
         tool_skill_bodies=tool_skill_bodies,
         cancel_token=cancel_token,
     )

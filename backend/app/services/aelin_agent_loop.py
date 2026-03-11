@@ -144,6 +144,14 @@ def _emit_text_chunks(text: str, callback: Callable[[str], None] | None, *, chun
             break
 
 
+def _shared_prefix_length(left: str, right: str) -> int:
+    limit = min(len(left), len(right))
+    idx = 0
+    while idx < limit and left[idx] == right[idx]:
+        idx += 1
+    return idx
+
+
 def _split_tool_partial_messages(summary: str, *, max_part_len: int = 80) -> list[str]:
     text = " ".join(str(summary or "").split())
     if not text:
@@ -830,6 +838,20 @@ class AelinAgentLoop:
         reply_chunk_cb: Callable[[str], None] | None = None,
         fallback_on_error: bool = True,
     ) -> str:
+        stream_text_parts: list[str] = []
+
+        def _emit_delta_only(text: str) -> None:
+            if reply_chunk_cb is None:
+                return
+            raw = str(text or "")
+            if not raw:
+                return
+            already_sent = "".join(stream_text_parts)
+            shared = _shared_prefix_length(already_sent, raw)
+            if shared >= len(raw):
+                return
+            _emit_text_chunks(raw[shared:], reply_chunk_cb, chunk_size=64)
+
         try:
             final_messages = list(messages)
             final_messages.append(
@@ -839,7 +861,6 @@ class AelinAgentLoop:
                 }
             )
             _LOG.info("agent_loop final_answer_request messages=%s", len(final_messages))
-            stream_text_parts: list[str] = []
             try:
                 stream_resp = self._service.client.chat.completions.create(
                     model=self._service.config.model,
@@ -880,14 +901,14 @@ class AelinAgentLoop:
             text_out = extract_message_text(getattr(message, "content", ""))
             if text_out:
                 _LOG.info("agent_loop final_answer_response text=%s", safe_preview(text_out))
-                _emit_text_chunks(text_out, reply_chunk_cb, chunk_size=64)
+                _emit_delta_only(text_out)
                 return text_out
         except Exception as exc:
             _LOG.warning("agent_loop final_answer_failed error=%s", str(exc)[:200])
         if not fallback_on_error:
             return ""
         fallback = self._fallback_answer(query=query)
-        _emit_text_chunks(fallback, reply_chunk_cb, chunk_size=64)
+        _emit_delta_only(fallback)
         return fallback
 
     def _fallback_answer(self, *, query: str) -> str:
