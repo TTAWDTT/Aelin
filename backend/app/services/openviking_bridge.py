@@ -313,9 +313,6 @@ class FileMemoryBridge:
     def _memory_root(self, *, user_id: int, workspace: str) -> Path:
         return self._workspace_root(user_id=user_id, workspace=workspace) / "memory"
 
-    def _legacy_memory_root(self, *, user_id: int, workspace: str) -> Path:
-        return self._workspace_root(user_id=user_id, workspace=workspace) / "tracking"
-
     def _diary_root(self, *, user_id: int, workspace: str) -> Path:
         return self._workspace_root(user_id=user_id, workspace=workspace) / "diary"
 
@@ -365,28 +362,14 @@ class FileMemoryBridge:
         include_diary: bool,
     ) -> list[Path]:
         memory_root = self._memory_root(user_id=user_id, workspace=workspace)
-        legacy_root = self._legacy_memory_root(user_id=user_id, workspace=workspace)
         out: list[Path] = []
-        seen: set[str] = set()
         source_norm = str(source or "").strip().lower()
-
-        def _append_unique(path: Path) -> None:
-            key = str(path).lower()
-            if key in seen:
-                return
-            seen.add(key)
-            out.append(path)
-
-        roots = [memory_root, legacy_root]
         if source_norm:
-            source_slug = _slug(source_norm, fallback="web")
-            for root in roots:
-                _append_unique(root / source_slug)
+            out.append(memory_root / _slug(source_norm, fallback="web"))
         else:
-            for root in roots:
-                _append_unique(root)
+            out.append(memory_root)
         if include_diary:
-            _append_unique(self._diary_root(user_id=user_id, workspace=workspace))
+            out.append(self._diary_root(user_id=user_id, workspace=workspace))
         return out
 
     def _extract_openviking_uri(self, payload: dict[str, Any]) -> str:

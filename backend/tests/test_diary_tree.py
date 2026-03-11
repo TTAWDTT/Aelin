@@ -236,29 +236,3 @@ def test_chat_diary_rollup_merges_closed_day_and_cleans_raw(monkeypatch):
         today_raw_dir = root / "raw" / "2026" / "02" / "23"
         assert today_raw_dir.exists()
         assert any(today_raw_dir.glob("*.md"))
-
-
-def test_search_reads_legacy_tracking_tree_as_fallback(monkeypatch):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        monkeypatch.setattr(settings, "openviking_enabled", True)
-        monkeypatch.setattr(settings, "openviking_data_dir", str(Path(tmpdir)))
-        bridge = FileMemoryBridge()
-        bridge._openviking = None
-
-        legacy_dir = Path(tmpdir) / "users" / "1" / "workspaces" / "default" / "tracking" / "web" / "legacy-target"
-        legacy_dir.mkdir(parents=True, exist_ok=True)
-        legacy_file = legacy_dir / "legacy-note.md"
-        legacy_token = "legacy_tracking_token_20260311"
-        legacy_file.write_text(f"# Legacy Memory\n\n{legacy_token}\n", encoding="utf-8")
-
-        hits = bridge.search(
-            user_id=1,
-            workspace="default",
-            query=legacy_token,
-            limit=10,
-            source="web",
-            include_diary=False,
-        )
-
-        assert hits
-        assert any(Path(hit.path) == legacy_file for hit in hits)
