@@ -12,8 +12,8 @@ description: Aelin 与 Agent 核心接口一览。
 - `POST /api/v1/aelin/chat/stream`
 - `GET /api/v1/aelin/context`
 - `GET /api/v1/aelin/proactive/poll`
-- `GET /api/v1/aelin/tracking`
-- `POST /api/v1/aelin/track/confirm`
+- `GET /api/v1/aelin/memory/file-memory/tree`
+- `GET /api/v1/aelin/memory/file-memory/content`
 
 ## 设备能力
 
