@@ -107,6 +107,14 @@ class _FakePinchTabClient:
         return {"ok": True, "effect": "clicked"}
 
 
+def _patch_pinchtab_runtime_ready(monkeypatch):
+    monkeypatch.setattr(
+        aelin_tools,
+        "ensure_pinchtab_started",
+        lambda: {"ok": True, "status": "started"},
+    )
+
+
 def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
     return AelinToolHub(
         db=None,  # type: ignore[arg-type]
@@ -411,6 +419,7 @@ def test_pinchtab_tool_calls_client_methods(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
     fake_client = _FakePinchTabClient()
+    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
 
     # health
@@ -451,6 +460,7 @@ def test_pinchtab_agent_executes_plan_with_llm_and_client(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
 
     result = hub.execute("pinchtab_agent", {"goal": "打开 example.com 并读取文本"})
@@ -479,6 +489,7 @@ def test_pinchtab_session_start_and_step_reuse_instance(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
@@ -521,6 +532,7 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=fake_service,  # type: ignore[arg-type]
     )
+    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
@@ -541,3 +553,19 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
     assert blocked_step["error"] == "unknown_session_id"
     assert blocked_close["error"] == "unknown_session_id"
     assert sid in _PINCHTAB_SESSIONS
+
+
+def test_pinchtab_tool_surfaces_runtime_start_failure(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    monkeypatch.setattr(
+        aelin_tools,
+        "ensure_pinchtab_started",
+        lambda: {"ok": False, "error": "pinchtab_runtime_missing"},
+    )
+
+    result = hub.execute("pinchtab", {"action": "health"})
+
+    assert result["ok"] is False
+    assert result["error"] == "pinchtab_runtime_missing"

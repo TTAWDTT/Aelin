@@ -30,6 +30,7 @@ from app.routers import (
 )
 from app.settings import settings
 from app.services.feishu_bot import feishu_bot_service
+from app.services.pinchtab_launcher import shutdown_pinchtab_launcher
 
 _log = logging.getLogger(__name__)
 
@@ -88,6 +89,10 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         feishu_bot_service.stop()
+        try:
+            shutdown_pinchtab_launcher()
+        except Exception as exc:
+            _log.warning("pinchtab launcher shutdown failed: %s", str(exc)[:200])
 
 
 def create_app() -> FastAPI:
