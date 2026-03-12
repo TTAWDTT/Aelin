@@ -316,9 +316,17 @@ function latestAssistantTraceForSession(store: ChatStoreState, sessionId: string
   return targetSession?.messages.findLast((message: ChatMessage) => message.role === 'assistant')?.toolTrace || []
 }
 
+function latestAssistantTraceForSessionState(sessionId: string): AelinToolStep[] {
+  return latestAssistantTraceForSession(useChatStore.getState(), sessionId)
+}
+
 function latestAssistantContentForSession(store: ChatStoreState, sessionId: string): string {
   const targetSession = store.sessions.find((session) => session.id === sessionId)
   return String(targetSession?.messages.findLast((message: ChatMessage) => message.role === 'assistant')?.content || '')
+}
+
+function latestAssistantContentForSessionState(sessionId: string): string {
+  return latestAssistantContentForSession(useChatStore.getState(), sessionId)
 }
 
 function hasRecentEquivalentStep(trace: AelinToolStep[], step: AelinToolStep): boolean {
@@ -411,7 +419,7 @@ export function buildStreamCallbacks(params: {
       if (!shouldDisplayTraceStep(step)) return
       const rawStatus = String(step.status || '').trim().toLowerCase()
       if (rawStatus === 'completed' || rawStatus === 'failed') {
-        const existingTrace = latestAssistantTraceForSession(params.store, params.sessionId)
+        const existingTrace = latestAssistantTraceForSessionState(params.sessionId)
         if (!hasRunningStepForStage(existingTrace, step.stage)) {
           updateLatestAssistantToolTrace(params.sessionId, {
             stage: String(step.stage || ''),
@@ -428,7 +436,7 @@ export function buildStreamCallbacks(params: {
     onToolEvent: (event: ToolEventPayload) => {
       const traceStep = buildToolEventTraceStep(event)
       if (!traceStep || !shouldDisplayTraceStep(traceStep)) return
-      const existingTrace = latestAssistantTraceForSession(params.store, params.sessionId)
+      const existingTrace = latestAssistantTraceForSessionState(params.sessionId)
       if (hasRecentEquivalentStep(existingTrace, traceStep)) return
       params.store.setStatusText(stageStatusText(traceStep.stage))
       updateLatestAssistantToolTrace(params.sessionId, traceStep)
@@ -470,7 +478,7 @@ export function buildStreamCallbacks(params: {
         })
       }
       const finalAnswer = String(data.answer || '')
-      const currentContent = latestAssistantContentForSession(params.store, params.sessionId)
+      const currentContent = latestAssistantContentForSessionState(params.sessionId)
       const delta = appendOnlyDeltaContent(currentContent, finalAnswer)
       if (delta) {
         params.store.appendContent(params.sessionId, delta)
