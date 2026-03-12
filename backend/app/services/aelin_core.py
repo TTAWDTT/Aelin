@@ -2498,7 +2498,7 @@ def _try_agent_loop_chat(
     # 如果已经存在一个活跃 plane task，让模型知道可以“续上”它，
     # 而不是每次都重新开始委派。
     try:
-        plane_snapshot = get_active_plane_task(current_user.id, workspace, plane="browser")
+        plane_snapshot = get_active_plane_task(current_user.id, workspace, plane="browser", db=db)
     except Exception:
         plane_snapshot = None
     if isinstance(plane_snapshot, dict) and plane_snapshot.get("task_id"):
