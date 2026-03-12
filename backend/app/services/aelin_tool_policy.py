@@ -30,18 +30,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "profile":
         return action == "append_note"
-    if tool == "device_status":
-        return False
-    if tool == "device_processes":
-        return False
-    if tool == "device_mode_apply":
-        return True
-    if tool == "desktop_open_url":
-        return True
-    if tool == "desktop_open_aelin":
-        return True
     if tool == "device":
-        return action == "mode_apply"
+        return action in {"mode_apply", "open_url", "open_aelin"}
     if tool == "web_search":
         return False
     if tool == "attachment_search":
@@ -80,11 +70,6 @@ class AelinToolPolicy:
             "context_get",
             "diary",
             "profile",
-            "device_status",
-            "device_processes",
-            "device_mode_apply",
-            "desktop_open_url",
-            "desktop_open_aelin",
             "device",
             "web_search",
             "attachment_search",
