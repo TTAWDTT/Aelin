@@ -52,9 +52,9 @@ def test_policy_blocks_pinchtab_when_writes_disabled():
     assert decision_agent.reason == "write_tools_disabled"
 
 
-def test_classify_device_atomic_tools():
-    assert classify_tool_call("device_status", {}) is False
-    assert classify_tool_call("device_processes", {"sort_by": "cpu"}) is False
-    assert classify_tool_call("device_mode_apply", {"mode": "focus"}) is True
-    assert classify_tool_call("desktop_open_url", {"url": "https://example.com"}) is True
-    assert classify_tool_call("desktop_open_aelin", {"route": "/processes"}) is True
+def test_classify_device_actions():
+    assert classify_tool_call("device", {"action": "status"}) is False
+    assert classify_tool_call("device", {"action": "processes", "sort_by": "cpu"}) is False
+    assert classify_tool_call("device", {"action": "mode_apply", "mode": "focus"}) is True
+    assert classify_tool_call("device", {"action": "open_url", "url": "https://example.com"}) is True
+    assert classify_tool_call("device", {"action": "open_aelin", "route": "/processes"}) is True

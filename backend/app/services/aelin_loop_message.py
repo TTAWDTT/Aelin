@@ -161,9 +161,10 @@ def build_initial_messages(
             "content": (
                 "工具使用规则：当用户问题涉及网页内容、网站状态，或需要在浏览器中执行点击、输入、滚动等操作时，"
                 "优先考虑使用浏览器相关工具（例如 pinchtab 系列）在本地浏览器中完成这些步骤；对于纯搜索型问题可使用 web_search。"
-                "当用户问题涉及电脑状态、截图、进程、模式切换、打开链接或唤起 Aelin 页面时，优先使用原子设备工具："
-                "device_status、screen_get、device_processes、device_mode_apply、desktop_open_url、desktop_open_aelin，"
-                "不要优先退回到泛化的 device 兼容工具。"
+                "当用户问题涉及电脑状态、截图、进程、模式切换、打开链接或唤起 Aelin 页面时，"
+                "优先使用 device 与 screen_get。"
+                "其中 device.action=status 用于状态查询，processes 用于进程查看，"
+                "mode_apply 用于切换模式，open_url 用于打开网页，open_aelin 用于唤起 Aelin 页面。"
                 "较复杂、需要多步导航或登录的网站任务，可以使用更高层的浏览器工具（如 pinchtab_agent 或会话式封装），"
                 "具体使用策略由针对这些工具的技能说明（SKILL）指导。"
             ),

@@ -19,7 +19,6 @@ from app.services.device_center import (
     collect_device_process_items as device_collect_process_items,
     DesktopPluginActionError,
     DeviceScreenCaptureError,
-    device_capabilities as device_capabilities_info,
     device_status_snapshot,
     open_desktop_external_url,
 )
@@ -202,84 +201,25 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
-                    "name": "device_status",
-                    "description": "读取当前设备状态、能力、桌面插件可达性。这是查询电脑状态的首选原子工具。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "device_processes",
-                    "description": "读取当前设备进程列表。这是查看 CPU/内存占用的首选原子工具。",
+                    "name": "device",
+                    "description": (
+                        "统一的设备工具。"
+                        "使用 action=status 查询设备状态，action=processes 查看进程，"
+                        "action=mode_apply 切换模式，action=open_url 打开网页，"
+                        "action=open_aelin 唤起 Aelin 桌面页。"
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["status", "processes", "mode_apply", "open_url", "open_aelin"],
+                            },
                             "sort_by": {"type": "string", "enum": ["cpu", "memory"]},
                             "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-                        },
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "device_mode_apply",
-                    "description": "切换设备模式，例如 focus/meeting/sleep/normal。这是切换模式的首选原子工具。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
                             "mode": {"type": "string"},
-                        },
-                        "required": ["mode"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "desktop_open_url",
-                    "description": "在本机默认浏览器中打开 http/https 链接。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
                             "url": {"type": "string"},
-                        },
-                        "required": ["url"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "desktop_open_aelin",
-                    "description": "唤起 Aelin 桌面应用并切换到指定 route；如果未配置 desktop_module_base_url，会显式返回 unsupported。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
                             "route": {"type": "string"},
-                        },
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "device",
-                    "description": "兼容旧调用方式的设备工具。优先使用 device_status、device_processes、device_mode_apply 这些原子工具。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {"type": "string", "enum": ["capabilities", "processes", "mode_apply"]},
-                            "sort_by": {"type": "string"},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-                            "mode": {"type": "string"},
                         },
                         "required": ["action"],
                     },
@@ -433,16 +373,6 @@ class AelinToolHub:
             return self._tool_diary(args)
         if tool == "profile":
             return self._tool_profile(args)
-        if tool == "device_status":
-            return self._tool_device_status(args)
-        if tool == "device_processes":
-            return self._tool_device_processes(args)
-        if tool == "device_mode_apply":
-            return self._tool_device_mode_apply(args)
-        if tool == "desktop_open_url":
-            return self._tool_desktop_open_url(args)
-        if tool == "desktop_open_aelin":
-            return self._tool_desktop_open_aelin(args)
         if tool == "device":
             return self._tool_device(args)
         if tool == "web_search":
@@ -639,15 +569,18 @@ class AelinToolHub:
         )
 
     def _tool_device(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "capabilities").strip().lower()
-        if action == "capabilities":
-            return self._tool_device_status({})
+        action = str(args.get("action") or "").strip().lower()
+        if action == "status":
+            return self._tool_device_status(args)
         if action == "processes":
             return self._tool_device_processes(args)
         if action == "mode_apply":
             return self._tool_device_mode_apply(args)
-        platform_name, capabilities, notes = device_capabilities_info()
-        return _result_ok(platform=platform_name, capabilities=capabilities, notes=notes)
+        if action == "open_url":
+            return self._tool_desktop_open_url(args)
+        if action == "open_aelin":
+            return self._tool_desktop_open_aelin(args)
+        return _result_error("unsupported device action")
 
     def _tool_web_search(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "search_and_fetch").strip().lower()

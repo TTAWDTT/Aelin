@@ -20,13 +20,17 @@ from app.services.aelin_core import (
 from app.services.device_center import device_status_snapshot
 from app.settings import settings
 
-_SUPPORTED_ATOMIC_ACTIONS = [
-    "device_status",
+_SUPPORTED_TOOLS = [
+    "device",
     "screen_get",
-    "device_processes",
-    "device_mode_apply",
-    "desktop_open_url",
-    "desktop_open_aelin",
+]
+
+_SUPPORTED_DEVICE_ACTIONS = [
+    "status",
+    "processes",
+    "mode_apply",
+    "open_url",
+    "open_aelin",
 ]
 
 
@@ -50,8 +54,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def supported_atomic_actions() -> list[str]:
-    return list(_SUPPORTED_ATOMIC_ACTIONS)
+def supported_tools() -> list[str]:
+    return list(_SUPPORTED_TOOLS)
+
+
+def supported_device_actions() -> list[str]:
+    return list(_SUPPORTED_DEVICE_ACTIONS)
 
 
 def resolve_remote_control_user(db: Session) -> User:
@@ -111,7 +119,8 @@ def build_remote_control_status() -> dict[str, Any]:
         "source": "remote_control",
         "capabilities": dict(snapshot.get("capabilities") or {}),
         "notes": list(snapshot.get("notes") or []),
-        "supported_atomic_actions": supported_atomic_actions(),
+        "supported_tools": supported_tools(),
+        "supported_device_actions": supported_device_actions(),
         "desktop_plugin_reachable": bool(snapshot.get("desktop_plugin_reachable")),
         "generated_at": _now(),
     }

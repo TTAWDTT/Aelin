@@ -182,6 +182,21 @@ def test_tool_definitions_are_cached_per_hub_instance():
     assert first is second
 
 
+def test_tool_definitions_only_expose_unified_device_tool():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    names = [row["function"]["name"] for row in hub.tool_definitions()]
+
+    assert "device" in names
+    assert "screen_get" in names
+    assert "device_status" not in names
+    assert "device_processes" not in names
+    assert "device_mode_apply" not in names
+    assert "desktop_open_url" not in names
+    assert "desktop_open_aelin" not in names
+
+
 def test_web_search_tool_missing_query():
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -214,7 +229,7 @@ def test_screen_get_tool_success(monkeypatch):
     assert result["width"] == 1280
 
 
-def test_device_atomic_tools_prefer_explicit_contracts(monkeypatch):
+def test_device_tool_supports_all_device_actions(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
@@ -258,30 +273,30 @@ def test_device_atomic_tools_prefer_explicit_contracts(monkeypatch):
         lambda route: {"route": route, "url": f"http://desktop.local{route}", "opened": True, "detail": "ok"},
     )
 
-    status = hub.execute("device_status", {})
+    status = hub.execute("device", {"action": "status"})
     assert status["ok"] is True
     assert status["desktop_plugin_reachable"] is True
 
-    processes = hub.execute("device_processes", {"sort_by": "memory", "limit": 5})
+    processes = hub.execute("device", {"action": "processes", "sort_by": "memory", "limit": 5})
     assert processes["ok"] is True
     assert processes["items"][0]["pid"] == 321
     assert processes["sort_by"] == "memory"
 
-    mode = hub.execute("device_mode_apply", {"mode": "focus"})
+    mode = hub.execute("device", {"action": "mode_apply", "mode": "focus"})
     assert mode["ok"] is True
     assert mode["status"] == "applied"
     assert mode["steps"] == ["step-a"]
 
-    opened = hub.execute("desktop_open_url", {"url": "https://example.com"})
+    opened = hub.execute("device", {"action": "open_url", "url": "https://example.com"})
     assert opened["ok"] is True
     assert opened["opened"] is True
 
-    aelin_opened = hub.execute("desktop_open_aelin", {"route": "/processes"})
+    aelin_opened = hub.execute("device", {"action": "open_aelin", "route": "/processes"})
     assert aelin_opened["ok"] is True
     assert aelin_opened["route"] == "/processes"
 
 
-def test_desktop_open_url_rejects_non_http_schemes(monkeypatch):
+def test_device_open_url_rejects_non_http_schemes(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
     opened_urls: list[str] = []
@@ -292,24 +307,38 @@ def test_desktop_open_url_rejects_non_http_schemes(monkeypatch):
         lambda url: opened_urls.append(url) or {"url": url, "opened": True, "detail": "ok"},
     )
 
-    blocked = hub.execute("desktop_open_url", {"url": "file:///C:/Windows/System32/notepad.exe"})
+    blocked = hub.execute("device", {"action": "open_url", "url": "file:///C:/Windows/System32/notepad.exe"})
 
     assert blocked["ok"] is False
     assert blocked["error"] == "invalid_url_scheme"
     assert opened_urls == []
 
 
-def test_legacy_device_tool_reuses_atomic_implementations(monkeypatch):
+def test_device_tool_dispatches_to_internal_handlers(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
     monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_status", lambda self, args: {"ok": True, "summary": "status"})
     monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_processes", lambda self, args: {"ok": True, "items": [{"pid": 1}]})
     monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_mode_apply", lambda self, args: {"ok": True, "mode": "focus"})
+    monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_desktop_open_url", lambda self, args: {"ok": True, "url": args["url"]})
+    monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_desktop_open_aelin", lambda self, args: {"ok": True, "route": args.get("route", "/")})
 
-    assert hub.execute("device", {"action": "capabilities"})["summary"] == "status"
+    assert hub.execute("device", {"action": "status"})["summary"] == "status"
     assert hub.execute("device", {"action": "processes"})["items"][0]["pid"] == 1
     assert hub.execute("device", {"action": "mode_apply", "mode": "focus"})["mode"] == "focus"
+    assert hub.execute("device", {"action": "open_url", "url": "https://example.com"})["url"] == "https://example.com"
+    assert hub.execute("device", {"action": "open_aelin", "route": "/processes"})["route"] == "/processes"
+
+
+def test_device_tool_rejects_unknown_action():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    result = hub.execute("device", {"action": "capabilities"})
+
+    assert result["ok"] is False
+    assert result["error"] == "unsupported device action"
 
 
 def test_attachment_search_uses_available_ids_fallback():
