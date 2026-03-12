@@ -42,6 +42,9 @@ class PinchTabClient:
         self._open_tab_max_attempts = int(open_tab_max_attempts)
         self._open_tab_retry_interval = float(open_tab_retry_interval)
 
+    def runtime_status(self) -> dict[str, Any]:
+        return {"base_url": self._base}
+
     def _url(self, path: str) -> str:
         return f"{self._base}{path}"
 

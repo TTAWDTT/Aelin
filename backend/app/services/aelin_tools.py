@@ -25,6 +25,7 @@ from app.services.device_center import (
 from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.aelin_utils import normalize_positive_ints
+from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
@@ -117,6 +118,17 @@ def should_attempt_aelin_tools(query: str) -> bool:
     if not text:
         return False
     return any(token in text for token in _TOOL_KEYWORDS)
+
+
+def _ensure_pinchtab_runtime() -> dict[str, Any] | None:
+    try:
+        status = ensure_pinchtab_started()
+    except Exception as exc:
+        return _result_error(f"pinchtab_runtime_failed:{str(exc)[:160]}")
+    if bool(status.get("ok")):
+        return None
+    error = str(status.get("error") or "pinchtab_runtime_unavailable")[:160]
+    return _result_error(error)
 
 
 class AelinToolHub:
@@ -702,6 +714,9 @@ class AelinToolHub:
 
     def _tool_pinchtab(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()
+        startup_error = _ensure_pinchtab_runtime()
+        if startup_error is not None:
+            return startup_error
         client = get_pinchtab_client()
         if not action:
             return _result_error("missing action")
@@ -764,6 +779,9 @@ class AelinToolHub:
         tab_id_arg = str(args.get("tab_id") or "").strip()
         if not goal:
             return _result_error("missing goal")
+        startup_error = _ensure_pinchtab_runtime()
+        if startup_error is not None:
+            return startup_error
 
         service: LLMService | None = getattr(self, "_llm_service", None)
         client = get_pinchtab_client()

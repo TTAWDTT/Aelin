@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
+_PINCHTAB_EXE = "pinchtab.exe" if sys.platform.startswith("win") else "pinchtab"
 
 
 class Settings(BaseSettings):
@@ -93,6 +95,11 @@ class Settings(BaseSettings):
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
     desktop_module_base_url: str = ""
     pinchtab_base_url: str = "http://127.0.0.1:9867"
+    pinchtab_executable_path: str = f"./bin/{_PINCHTAB_EXE}"
+    pinchtab_source_dir: str = "./.pinchtab"
+    pinchtab_data_dir: str = "../data/pinchtab"
+    pinchtab_startup_timeout_seconds: float = 20.0
+    pinchtab_shutdown_timeout_seconds: float = 8.0
     aelin_attachment_storage_dir: str = "./data/aelin_attachments"
     aelin_attachment_max_size_bytes: int = 30 * 1024 * 1024
     aelin_attachment_chunk_size: int = 700
