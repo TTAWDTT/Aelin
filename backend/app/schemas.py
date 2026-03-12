@@ -448,7 +448,8 @@ class RemoteControlStatusResponse(BaseModel):
     source: str = "remote_control"
     capabilities: dict[str, bool] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
-    supported_atomic_actions: list[str] = Field(default_factory=list)
+    supported_tools: list[str] = Field(default_factory=list)
+    supported_device_actions: list[str] = Field(default_factory=list)
     desktop_plugin_reachable: bool = False
     generated_at: datetime
 

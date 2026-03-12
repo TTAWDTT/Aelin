@@ -94,7 +94,7 @@ def test_remote_control_execute_reports_agent_loop_failure(monkeypatch):
     assert data.get("status") == "agent_loop_no_result"
 
 
-def test_remote_control_status_exposes_atomic_actions(monkeypatch):
+def test_remote_control_status_exposes_unified_device_contract(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -114,7 +114,14 @@ def test_remote_control_status_exposes_atomic_actions(monkeypatch):
     data = resp.json()
     assert data.get("enabled") is True
     assert data.get("desktop_plugin_reachable") is True
-    assert "device_status" in (data.get("supported_atomic_actions") or [])
+    assert data.get("supported_tools") == ["device", "screen_get"]
+    assert data.get("supported_device_actions") == [
+        "status",
+        "processes",
+        "mode_apply",
+        "open_url",
+        "open_aelin",
+    ]
 
 
 def test_feishu_bot_group_prefix_gate(monkeypatch):
