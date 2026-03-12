@@ -159,14 +159,14 @@ def build_initial_messages(
         {
             "role": "system",
             "content": (
-                "工具使用规则：当用户问题涉及网页内容、网站状态，或需要在浏览器中执行点击、输入、滚动等操作时，"
-                "优先考虑使用浏览器相关工具（例如 pinchtab 系列）在本地浏览器中完成这些步骤；对于纯搜索型问题可使用 web_search。"
+                "工具使用规则：当用户问题涉及网页内容、网站状态，或需要在浏览器中执行登录、导航、滚动、继续已有网页任务等复杂流程时，"
+                "优先考虑使用 plane 工具，把任务委派给 browser plane；对于纯搜索型问题可使用 web_search。"
                 "当用户问题涉及电脑状态、截图、进程、模式切换、打开链接或唤起 Aelin 页面时，"
                 "优先使用 device 与 screen_get。"
                 "其中 device.action=status 用于状态查询，processes 用于进程查看，"
                 "mode_apply 用于切换模式，open_url 用于打开网页，open_aelin 用于唤起 Aelin 页面。"
-                "较复杂、需要多步导航或登录的网站任务，可以使用更高层的浏览器工具（如 pinchtab_agent 或会话式封装），"
-                "具体使用策略由针对这些工具的技能说明（SKILL）指导。"
+                "对于复杂网站任务，不要自己微操浏览器步骤，优先委派给 browser plane，"
+                "具体使用策略由 plane catalog 与相关技能说明（SKILL）指导。"
             ),
         },
         {
@@ -230,23 +230,20 @@ def build_initial_messages(
                         ),
                     }
                 )
-        if name == "pinchtab_session" and bool(result.get("session_id")):
-            sess_id = str(result.get("session_id") or "")[:64]
-            inst_id = str(result.get("instance_id") or "")[:64]
-            tab_id = str(result.get("tab_id") or "")[:64]
+        if name == "plane" and str(result.get("plane") or "").strip().lower() == "browser" and bool(result.get("task_id")):
+            task_id = str(result.get("task_id") or "")[:64]
+            state = str(result.get("state") or "")[:80]
             last_url = str(result.get("last_url") or result.get("url") or "")[:260]
-            last_status = str(result.get("last_status") or result.get("status") or "")[:80]
-            last_summary = str(result.get("last_summary") or result.get("summary") or "")[:200]
+            last_summary = str(result.get("summary") or "")[:200]
             messages.append(
                 {
                     "role": "system",
                     "content": (
-                        "已有一个可复用的 PinchTab 浏览会话："
-                        f"session_id={sess_id}, instance_id={inst_id}, tab_id={tab_id}, "
-                        f"last_url={last_url}, status={last_status}, summary={last_summary}。"
-                        "如果当前用户的问题需要继续在网页中操作，应优先调用 pinchtab_session 工具，"
-                        f"使用 action=\"step\" 并复用这个 session_id（不要重新 start 或重新 launch_instance），"
-                        "并在 goal 中用自然语言描述本轮要完成的下一步子目标。"
+                        "已有一个可复用的 browser plane task："
+                        f"task_id={task_id}, state={state}, last_url={last_url}, summary={last_summary}。"
+                        "如果当前用户的问题需要继续网页任务，应优先调用 plane 工具，"
+                        "使用 action=\"continue\"、plane=\"browser\" 并复用这个 task_id，"
+                        "而不是重新 delegate 一个新的 browser plane task。"
                     ),
                 }
             )

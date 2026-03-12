@@ -38,6 +38,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "screen_get":
         return False
+    if tool == "plane":
+        return action in {"delegate", "continue", "close"}
     if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
         # PinchTab 调用会驱动真实浏览器行为，统一视为写操作以纳入配额控制。
         return True
@@ -74,6 +76,7 @@ class AelinToolPolicy:
             "web_search",
             "attachment_search",
             "screen_get",
+            "plane",
             "pinchtab",
             "pinchtab_agent",
             "pinchtab_session",

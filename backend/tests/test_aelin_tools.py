@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import app.services.aelin_tools as aelin_tools
+import app.services.aelin_planes as aelin_planes
 from app.services.aelin_tools import AelinToolHub, _PINCHTAB_SESSIONS, _PINCHTAB_USER_SESSIONS
 from app.services.web_search import WebSearchResult
 
@@ -107,14 +108,6 @@ class _FakePinchTabClient:
         return {"ok": True, "effect": "clicked"}
 
 
-def _patch_pinchtab_runtime_ready(monkeypatch):
-    monkeypatch.setattr(
-        aelin_tools,
-        "ensure_pinchtab_started",
-        lambda: {"ok": True, "status": "started"},
-    )
-
-
 def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
     return AelinToolHub(
         db=None,  # type: ignore[arg-type]
@@ -203,6 +196,18 @@ def test_tool_definitions_only_expose_unified_device_tool():
     assert "device_mode_apply" not in names
     assert "desktop_open_url" not in names
     assert "desktop_open_aelin" not in names
+
+
+def test_tool_definitions_expose_plane_instead_of_pinchtab_family():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    names = [row["function"]["name"] for row in hub.tool_definitions()]
+
+    assert "plane" in names
+    assert "pinchtab" not in names
+    assert "pinchtab_agent" not in names
+    assert "pinchtab_session" not in names
 
 
 def test_web_search_tool_missing_query():
@@ -448,7 +453,6 @@ def test_pinchtab_tool_calls_client_methods(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
     fake_client = _FakePinchTabClient()
-    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
 
     # health
@@ -489,7 +493,6 @@ def test_pinchtab_agent_executes_plan_with_llm_and_client(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
 
     result = hub.execute("pinchtab_agent", {"goal": "打开 example.com 并读取文本"})
@@ -518,7 +521,6 @@ def test_pinchtab_session_start_and_step_reuse_instance(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
@@ -561,7 +563,6 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=fake_service,  # type: ignore[arg-type]
     )
-    _patch_pinchtab_runtime_ready(monkeypatch)
     monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
@@ -584,17 +585,43 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
     assert sid in _PINCHTAB_SESSIONS
 
 
-def test_pinchtab_tool_surfaces_runtime_start_failure(monkeypatch):
+def test_plane_browser_delegate_and_continue_reuse_same_session(monkeypatch):
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
 
-    monkeypatch.setattr(
-        aelin_tools,
-        "ensure_pinchtab_started",
-        lambda: {"ok": False, "error": "pinchtab_runtime_missing"},
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    assert task_id
+    assert delegated["plane"] == "browser"
+    assert delegated["task_id"] == task_id
+
+    status = hub.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+    assert status["ok"] is True
+    assert status["task_id"] == task_id
+
+    continued = hub.execute(
+        "plane",
+        {"action": "continue", "plane": "browser", "task_id": task_id, "goal": "继续读取文本"},
     )
+    assert continued["ok"] is True
+    assert continued["task_id"] == task_id
 
-    result = hub.execute("pinchtab", {"action": "health"})
-
-    assert result["ok"] is False
-    assert result["error"] == "pinchtab_runtime_missing"
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance"]

@@ -202,10 +202,24 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
         "diary",
         "profile",
         "device",
+        "plane",
         "pinchtab",
         "pinchtab_agent",
         "pinchtab_session",
     }:
+        if tool == "plane":
+            if "plane" in payload:
+                base["plane"] = _truncate_model_text(payload.get("plane"), limit=32)
+            if "task_id" in payload:
+                base["task_id"] = str(payload.get("task_id") or "")[:128]
+            if "state" in payload:
+                base["state"] = _truncate_model_text(payload.get("state"), limit=32)
+            if isinstance(payload.get("last_text"), str):
+                base["last_text"] = _truncate_model_text(payload.get("last_text"), limit=800)
+            if isinstance(payload.get("last_url"), str):
+                base["last_url"] = _truncate_model_text(payload.get("last_url"), limit=260)
+            if isinstance(payload.get("user_prompt"), str):
+                base["user_prompt"] = _truncate_model_text(payload.get("user_prompt"), limit=260)
         if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
             # For PinchTab-family tools, preserve identifiers so the model can
             # chain calls across start/step/status and low-level operations.

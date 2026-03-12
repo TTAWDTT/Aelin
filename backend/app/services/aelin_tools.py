@@ -24,6 +24,7 @@ from app.services.device_center import (
 )
 from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
+from app.services.aelin_planes import close_plane_task, get_plane_task, plane_catalog_entries, set_plane_task, visible_plane_task_payload
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
@@ -296,78 +297,30 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
-                    "name": "pinchtab",
+                    "name": "plane",
                     "description": (
-                        "通过本地 PinchTab 服务在真实浏览器中打开网页、查看内容并点击元素。"
-                        "用于所有需要“上网”“浏览网页”“操作 X/Twitter 等网站”的任务，这是你唯一的网页浏览方式。"
+                        "将复杂任务委派给完整的执行子系统（plane）。"
+                        "当前支持 browser plane，由 PinchTab 负责复杂网页登录、导航、滚动和多步网页流程。"
+                        "对于复杂网站任务，应优先用 plane，而不是自己微操浏览器动作。"
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["health", "launch_instance", "open_tab", "snapshot", "text", "click"],
+                                "enum": ["catalog", "delegate", "status", "continue", "close"],
                             },
-                            "instance_id": {"type": "string"},
-                            "tab_id": {"type": "string"},
-                            "url": {"type": "string"},
-                            "ref": {"type": "string"},
-                        },
-                        "required": ["action"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "pinchtab_agent",
-                    "description": (
-                        "将需要在网页中完成的多步骤任务整体外包给 PinchTab 代理。"
-                        "你只需描述高层目标（例如“在某站点搜索并整理列表”），该工具会在内部使用 pinchtab 浏览器原语完成尽量多的步骤，"
-                        "并返回简要结果与执行过的动作列表。"
-                        "适用于复杂浏览任务；简单的一次性打开/点击仍可直接使用 pinchtab。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "goal": {"type": "string"},
-                            "max_steps": {"type": "integer", "minimum": 1, "maximum": 8},
-                            # Optional: reuse an existing browser instance / tab across calls
-                            # so Aelin can分多轮把任务持续外包给同一个 PinchTab 会话。
-                            "instance_id": {"type": "string"},
-                            "tab_id": {"type": "string"},
-                        },
-                        "required": ["goal"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "pinchtab_session",
-                    "description": (
-                        "为复杂的浏览器任务管理一个 PinchTab 会话。"
-                        "start: 启动会话并用自然语言 goal 交给 PinchTab；"
-                        "step: 在现有会话上继续推进任务；"
-                        "status: 仅查询当前会话状态；"
-                        "close: 结束会话并允许底层浏览器实例被释放。"
-                        "Aelin 应该像真人一样，先 start，再根据 status/steps/last_text 多轮 step，"
-                        "而不是在一个回合里反复重新规划。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {
+                            "plane": {
                                 "type": "string",
-                                "enum": ["start", "step", "status", "close"],
+                                "enum": ["browser"],
+                                "description": "当前支持 browser plane。",
                             },
                             "goal": {
-                                "type": "string",
-                                "description": "当 action=start 或 step 时，用自然语言描述要交给 PinchTab 的目标。",
+                                "type": "string"
                             },
-                            "session_id": {
+                            "task_id": {
                                 "type": "string",
-                                "description": "已有会话的标识，用于 step/status/close。",
+                                "description": "已有 plane 任务的标识，用于 status/continue/close。",
                             },
                         },
                         "required": ["action"],
@@ -393,6 +346,8 @@ class AelinToolHub:
             return self._tool_attachment_search(args)
         if tool == "screen_get":
             return self._tool_screen_get(args)
+        if tool == "plane":
+            return self._tool_plane(args)
         if tool == "pinchtab":
             return self._tool_pinchtab(args)
         if tool == "pinchtab_agent":
@@ -712,6 +667,86 @@ class AelinToolHub:
             captured_at=str(shot.get("captured_at") or "")[:64],
         )
 
+    def _tool_plane(self, args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "").strip().lower()
+        plane = str(args.get("plane") or "browser").strip().lower() or "browser"
+        goal = str(args.get("goal") or "").strip()
+        task_id = " ".join(str(args.get("task_id") or "").strip().split())[:96]
+
+        if action == "catalog":
+            planes = plane_catalog_entries()
+            return _result_ok(planes=planes, total=len(planes))
+
+        if plane != "browser":
+            return _result_error("unsupported_plane")
+
+        if action == "delegate":
+            if not goal:
+                return _result_error("missing goal")
+            status, result, error, latency_ms = _execute_tool_call(
+                self,
+                name="pinchtab_session",
+                args={"action": "start", "goal": goal[:800]},
+            )
+            if not bool(result.get("ok")):
+                return _result_error(str(result.get("error") or error or "plane_delegate_failed"))
+            backend_task_id = str(result.get("session_id") or "").strip()
+            if not backend_task_id:
+                return _result_error("plane_missing_task_backend_id")
+            payload = _browser_plane_payload_from_session_result(goal=goal, result=result)
+            set_plane_task(backend_task_id, payload, user_id=self.user_id, workspace=self.workspace, plane="browser")
+            stored = get_plane_task(backend_task_id, user_id=self.user_id, workspace=self.workspace, plane="browser") or payload
+            return _result_ok(latency_ms=latency_ms, **visible_plane_task_payload(backend_task_id, stored))
+
+        if action not in {"status", "continue", "close"}:
+            return _result_error("unsupported plane action")
+        if not task_id:
+            return _result_error("missing task_id")
+
+        task = get_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser")
+        if task is None:
+            return _result_error("unknown_task_id")
+        session_id = str(task.get("session_id") or "").strip()
+        if not session_id:
+            return _result_error("plane_missing_session_id")
+
+        if action == "status":
+            status, result, error, latency_ms = _execute_tool_call(
+                self,
+                name="pinchtab_session",
+                args={"action": "status", "session_id": session_id},
+            )
+            if not bool(result.get("ok")):
+                return _result_error(str(result.get("error") or error or "plane_status_failed"))
+            payload = _browser_plane_payload_from_session_result(goal=str(task.get("goal") or ""), result=result)
+            set_plane_task(task_id, payload, user_id=self.user_id, workspace=self.workspace, plane="browser")
+            stored = get_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser") or payload
+            return _result_ok(latency_ms=latency_ms, **visible_plane_task_payload(task_id, stored))
+
+        if action == "continue":
+            next_goal = goal or str(task.get("goal") or "").strip()
+            if not next_goal:
+                return _result_error("missing goal")
+            status, result, error, latency_ms = _execute_tool_call(
+                self,
+                name="pinchtab_session",
+                args={"action": "step", "session_id": session_id, "goal": next_goal[:800]},
+            )
+            if not bool(result.get("ok")):
+                return _result_error(str(result.get("error") or error or "plane_continue_failed"))
+            payload = _browser_plane_payload_from_session_result(goal=next_goal, result=result)
+            set_plane_task(task_id, payload, user_id=self.user_id, workspace=self.workspace, plane="browser")
+            stored = get_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser") or payload
+            return _result_ok(latency_ms=latency_ms, **visible_plane_task_payload(task_id, stored))
+
+        _execute_tool_call(
+            self,
+            name="pinchtab_session",
+            args={"action": "close", "session_id": session_id},
+        )
+        close_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser")
+        return _result_ok(task_id=task_id, plane="browser", state="closed", closed=True)
+
     def _tool_pinchtab(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()
         startup_error = _ensure_pinchtab_runtime()
@@ -993,6 +1028,36 @@ def _detect_login_gate(*, url: str, text: str) -> bool:
         "challenge",
     )
     return any(token in hay for token in hints)
+
+
+def _browser_plane_state_from_session_result(result: dict[str, Any]) -> str:
+    if bool(result.get("requires_user_login")):
+        return "waiting_user"
+    status = str(result.get("status") or result.get("last_status") or "").strip().lower()
+    if status.startswith("error"):
+        return "failed"
+    if status in {"completed", "done", "closed"}:
+        return "completed"
+    if status in {"partial", "running", "started", "in_progress"}:
+        return "running"
+    return "running"
+
+
+def _browser_plane_payload_from_session_result(*, goal: str, result: dict[str, Any]) -> dict[str, Any]:
+    summary = str(result.get("summary") or result.get("last_summary") or "")[:260]
+    return {
+        "plane": "browser",
+        "state": _browser_plane_state_from_session_result(result),
+        "summary": summary,
+        "goal": str(goal or result.get("last_goal") or "").strip()[:800],
+        "user_prompt": str(result.get("user_prompt") or "").strip()[:260],
+        "requires_user_input": bool(result.get("requires_user_login")),
+        "last_url": str(result.get("last_url") or result.get("url") or "").strip()[:260],
+        "last_text": str(result.get("last_text") or result.get("text") or "").strip()[:1200],
+        "session_id": str(result.get("session_id") or "").strip()[:128],
+        "instance_id": str(result.get("instance_id") or "").strip()[:128],
+        "tab_id": str(result.get("tab_id") or "").strip()[:128],
+    }
 
 
 def _execute_tool_call(tool_hub: AelinToolHub, *, name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any], str, int]:

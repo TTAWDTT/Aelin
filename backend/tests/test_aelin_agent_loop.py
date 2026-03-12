@@ -397,3 +397,14 @@ def test_compact_tool_result_for_model_preserves_pinchtab_ids():
     result2 = _compact_tool_result_for_model("pinchtab", {"ok": True, "tab_id": "tab_456"})
     assert result2.get("ok") is True
     assert result2.get("tab_id") == "tab_456"
+
+
+def test_compact_tool_result_for_model_preserves_plane_ids():
+    result = _compact_tool_result_for_model(
+        "plane",
+        {"ok": True, "plane": "browser", "task_id": "task_123", "state": "running", "last_url": "https://x.com"},
+    )
+    assert result.get("ok") is True
+    assert result.get("plane") == "browser"
+    assert result.get("task_id") == "task_123"
+    assert result.get("state") == "running"
