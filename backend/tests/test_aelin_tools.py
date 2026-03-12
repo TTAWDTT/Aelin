@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
 import app.services.aelin_tools as aelin_tools
 import app.services.aelin_planes as aelin_planes
 from app.services.aelin_tools import AelinToolHub, _PINCHTAB_SESSIONS, _PINCHTAB_USER_SESSIONS
+from app.models import Base
 from app.services.web_search import WebSearchResult
 
 
@@ -108,9 +113,9 @@ class _FakePinchTabClient:
         return {"ok": True, "effect": "clicked"}
 
 
-def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
+def _hub(fake_web: _FakeWebSearch, llm_service=None, db=None) -> AelinToolHub:
     return AelinToolHub(
-        db=None,  # type: ignore[arg-type]
+        db=db,  # type: ignore[arg-type]
         user_id=1,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
@@ -118,6 +123,18 @@ def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=llm_service,  # type: ignore[arg-type]
     )
+
+
+def _create_db_session():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    return engine, SessionLocal()
 
 
 class _FakeAttachmentService:
@@ -625,3 +642,87 @@ def test_plane_browser_delegate_and_continue_reuse_same_session(monkeypatch):
 
     launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
     assert launch_calls == ["launch_instance"]
+
+
+def test_plane_browser_delegate_uses_plane_task_id_instead_of_session_id(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    assert task_id
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    assert str(task.get("backing_task_id") or "")
+    assert str(task.get("backing_task_id") or "") != task_id
+
+
+def test_plane_tasks_can_be_recovered_from_db_without_memory_registry(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+    engine, db1 = _create_db_session()
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    db2 = SessionLocal()
+
+    try:
+        hub1 = _hub(fake_web, llm_service=fake_service, db=db1)  # type: ignore[arg-type]
+        hub2 = AelinToolHub(
+            db=db2,  # type: ignore[arg-type]
+            user_id=1,
+            workspace="default",
+            memory_service=_DummyMemory(),  # type: ignore[arg-type]
+            file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+            web_search_service=fake_web,  # type: ignore[arg-type]
+            llm_service=fake_service,  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+        _PINCHTAB_SESSIONS.clear()
+        _PINCHTAB_USER_SESSIONS.clear()
+        aelin_planes._PLANE_TASKS.clear()
+        aelin_planes._PLANE_USER_TASKS.clear()
+
+        delegated = hub1.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+        assert delegated["ok"] is True
+        task_id = str(delegated.get("task_id") or "")
+        assert task_id
+
+        aelin_planes._PLANE_TASKS.clear()
+        aelin_planes._PLANE_USER_TASKS.clear()
+
+        status = hub2.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+        assert status["ok"] is True
+        assert status["task_id"] == task_id
+
+        persisted = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser", db=db2)
+        assert persisted is not None
+        assert str(persisted.get("backing_task_id") or "")
+    finally:
+        db2.close()
+        db1.close()

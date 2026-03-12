@@ -24,7 +24,8 @@ from app.services.device_center import (
 )
 from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
-from app.services.aelin_planes import close_plane_task, get_plane_task, plane_catalog_entries, set_plane_task, visible_plane_task_payload
+from app.services.aelin_planes import plane_catalog_entries
+from app.services.browser_plane_adapter import PinchTabBrowserPlaneAdapter
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
@@ -680,72 +681,35 @@ class AelinToolHub:
         if plane != "browser":
             return _result_error("unsupported_plane")
 
+        adapter = PinchTabBrowserPlaneAdapter(
+            db=self.db,
+            user_id=self.user_id,
+            workspace=self.workspace,
+            session_executor=lambda *, action, session_id="", goal="": _execute_pinchtab_session_action(
+                self,
+                action=action,
+                session_id=session_id,
+                goal=goal,
+            ),
+        )
+
         if action == "delegate":
             if not goal:
                 return _result_error("missing goal")
-            status, result, error, latency_ms = _execute_tool_call(
-                self,
-                name="pinchtab_session",
-                args={"action": "start", "goal": goal[:800]},
-            )
-            if not bool(result.get("ok")):
-                return _result_error(str(result.get("error") or error or "plane_delegate_failed"))
-            backend_task_id = str(result.get("session_id") or "").strip()
-            if not backend_task_id:
-                return _result_error("plane_missing_task_backend_id")
-            payload = _browser_plane_payload_from_session_result(goal=goal, result=result)
-            set_plane_task(backend_task_id, payload, user_id=self.user_id, workspace=self.workspace, plane="browser")
-            stored = get_plane_task(backend_task_id, user_id=self.user_id, workspace=self.workspace, plane="browser") or payload
-            return _result_ok(latency_ms=latency_ms, **visible_plane_task_payload(backend_task_id, stored))
+            return adapter.delegate(goal=goal[:800])
 
         if action not in {"status", "continue", "close"}:
             return _result_error("unsupported plane action")
         if not task_id:
             return _result_error("missing task_id")
 
-        task = get_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser")
-        if task is None:
-            return _result_error("unknown_task_id")
-        session_id = str(task.get("session_id") or "").strip()
-        if not session_id:
-            return _result_error("plane_missing_session_id")
-
         if action == "status":
-            status, result, error, latency_ms = _execute_tool_call(
-                self,
-                name="pinchtab_session",
-                args={"action": "status", "session_id": session_id},
-            )
-            if not bool(result.get("ok")):
-                return _result_error(str(result.get("error") or error or "plane_status_failed"))
-            payload = _browser_plane_payload_from_session_result(goal=str(task.get("goal") or ""), result=result)
-            set_plane_task(task_id, payload, user_id=self.user_id, workspace=self.workspace, plane="browser")
-            stored = get_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser") or payload
-            return _result_ok(latency_ms=latency_ms, **visible_plane_task_payload(task_id, stored))
+            return adapter.status(task_id=task_id)
 
         if action == "continue":
-            next_goal = goal or str(task.get("goal") or "").strip()
-            if not next_goal:
-                return _result_error("missing goal")
-            status, result, error, latency_ms = _execute_tool_call(
-                self,
-                name="pinchtab_session",
-                args={"action": "step", "session_id": session_id, "goal": next_goal[:800]},
-            )
-            if not bool(result.get("ok")):
-                return _result_error(str(result.get("error") or error or "plane_continue_failed"))
-            payload = _browser_plane_payload_from_session_result(goal=next_goal, result=result)
-            set_plane_task(task_id, payload, user_id=self.user_id, workspace=self.workspace, plane="browser")
-            stored = get_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser") or payload
-            return _result_ok(latency_ms=latency_ms, **visible_plane_task_payload(task_id, stored))
+            return adapter.continue_task(task_id=task_id, goal=goal[:800])
 
-        _execute_tool_call(
-            self,
-            name="pinchtab_session",
-            args={"action": "close", "session_id": session_id},
-        )
-        close_plane_task(task_id, user_id=self.user_id, workspace=self.workspace, plane="browser")
-        return _result_ok(task_id=task_id, plane="browser", state="closed", closed=True)
+        return adapter.close(task_id=task_id)
 
     def _tool_pinchtab(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()
@@ -1029,37 +993,6 @@ def _detect_login_gate(*, url: str, text: str) -> bool:
     )
     return any(token in hay for token in hints)
 
-
-def _browser_plane_state_from_session_result(result: dict[str, Any]) -> str:
-    if bool(result.get("requires_user_login")):
-        return "waiting_user"
-    status = str(result.get("status") or result.get("last_status") or "").strip().lower()
-    if status.startswith("error"):
-        return "failed"
-    if status in {"completed", "done", "closed"}:
-        return "completed"
-    if status in {"partial", "running", "started", "in_progress"}:
-        return "running"
-    return "running"
-
-
-def _browser_plane_payload_from_session_result(*, goal: str, result: dict[str, Any]) -> dict[str, Any]:
-    summary = str(result.get("summary") or result.get("last_summary") or "")[:260]
-    return {
-        "plane": "browser",
-        "state": _browser_plane_state_from_session_result(result),
-        "summary": summary,
-        "goal": str(goal or result.get("last_goal") or "").strip()[:800],
-        "user_prompt": str(result.get("user_prompt") or "").strip()[:260],
-        "requires_user_input": bool(result.get("requires_user_login")),
-        "last_url": str(result.get("last_url") or result.get("url") or "").strip()[:260],
-        "last_text": str(result.get("last_text") or result.get("text") or "").strip()[:1200],
-        "session_id": str(result.get("session_id") or "").strip()[:128],
-        "instance_id": str(result.get("instance_id") or "").strip()[:128],
-        "tab_id": str(result.get("tab_id") or "").strip()[:128],
-    }
-
-
 def _execute_tool_call(tool_hub: AelinToolHub, *, name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any], str, int]:
     status = "completed"
     result: dict[str, Any] = {}
@@ -1215,23 +1148,18 @@ def run_aelin_structured_tools(
     return out, ""
 
 
-def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Session-style wrapper around PinchTab, so Aelin can 像真人一样：
-    - start: 把一整个浏览任务外包出去；
-    - step: 在已有实例上继续推进；
-    - status: 查看当前进度；
-    - close: 结束会话。
-
-    底层仍然调用现有的 pinchtab_agent，且只在内存中维护一个轻量的会话表；
-    不做任何持久化存储。
-    """
+def _execute_pinchtab_session_action(
+    self: AelinToolHub,
+    *,
+    action: str,
+    session_id: str = "",
+    goal: str = "",
+) -> tuple[str, dict[str, Any], str, int]:
     from uuid import uuid4
 
-    action = str(args.get("action") or "").strip().lower()
-    session_id_raw = str(args.get("session_id") or "").strip()
-    goal = str(args.get("goal") or "").strip()
-    session_id = _normalize_session_id(session_id_raw)
+    action = str(action or "").strip().lower()
+    session_id = _normalize_session_id(session_id)
+    goal = str(goal or "").strip()
 
     def _get_session(sid: str) -> dict[str, Any] | None:
         return _PINCHTAB_SESSIONS.get(sid) if sid else None
@@ -1251,21 +1179,28 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
             "last_summary": str(payload.get("summary") or ""),
         }
 
+    started = time.perf_counter()
+    status = "completed"
+    error = ""
+
     if action not in {"start", "step", "status", "close"}:
-        return _result_error("unsupported pinchtab_session action")
+        result = _result_error("unsupported pinchtab_session action")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     if action == "start":
         if not goal:
-            return _result_error("missing goal")
+            result = _result_error("missing goal")
+            return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
         sid = _normalize_session_id(session_id or f"pinch-{uuid4().hex[:12]}")
         # First step: let pinchtab_agent propose and execute a short plan.
-        status, result, error, latency_ms = _execute_tool_call(
+        _, result, error, _ = _execute_tool_call(
             self,
             name="pinchtab_agent",
             args={"goal": goal[:800], "max_steps": 6},
         )
         if not bool(result.get("ok")):
-            return _result_error(str(result.get("error") or error or "pinchtab_session_start_failed"))
+            failed = _result_error(str(result.get("error") or error or "pinchtab_session_start_failed"))
+            return "failed", failed, str(failed.get("error") or ""), int((time.perf_counter() - started) * 1000)
         # Persist minimal session state.
         payload = dict(result)
         payload["goal"] = goal
@@ -1276,18 +1211,20 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         except Exception:
             # 映射失败不应影响工具主流程
             pass
-        return _result_ok(
+        output = _result_ok(
             session_id=sid,
-            latency_ms=latency_ms,
             **{k: v for k, v in result.items() if k != "ok"},
         )
+        return status, output, error, int((time.perf_counter() - started) * 1000)
 
     # All non-start actions require a valid session.
     sess = _get_session(session_id)
     if sess is None:
-        return _result_error("unknown_session_id")
+        result = _result_error("unknown_session_id")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
     if not _pinchtab_session_belongs_to(session_id, sess, user_id=self.user_id, workspace=self.workspace):
-        return _result_error("unknown_session_id")
+        result = _result_error("unknown_session_id")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     if action == "close":
         _PINCHTAB_SESSIONS.pop(session_id, None)
@@ -1298,11 +1235,11 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
                 _PINCHTAB_USER_SESSIONS.pop(key, None)
         except Exception:
             pass
-        return _result_ok(session_id=session_id, closed=True)
+        return status, _result_ok(session_id=session_id, closed=True), error, int((time.perf_counter() - started) * 1000)
 
     if action == "status":
         # Return the last known snapshot of this session; no new browser work.
-        return _result_ok(**_pinchtab_session_visible_payload(session_id, sess))
+        return status, _result_ok(**_pinchtab_session_visible_payload(session_id, sess)), error, int((time.perf_counter() - started) * 1000)
 
     # action == "step"
     # Step: continue using the same instance/tab with a refined goal.
@@ -1310,7 +1247,8 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         # If no new goal is provided, reuse last_goal to “继续刚才的任务”。
         goal = str(sess.get("last_goal") or "").strip()
     if not goal:
-        return _result_error("missing goal")
+        result = _result_error("missing goal")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     agent_args = {
         "goal": goal[:800],
@@ -1321,7 +1259,7 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
     if sess.get("tab_id"):
         agent_args["tab_id"] = str(sess["tab_id"])
 
-    status, result, error, latency_ms = _execute_tool_call(
+    _, result, error, _ = _execute_tool_call(
         self,
         name="pinchtab_agent",
         args=agent_args,
@@ -1338,7 +1276,8 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
             "last_text": str(sess.get("last_text") or ""),
         }
         _set_session(session_id, payload)
-        return _result_error(str(result.get("error") or error or "pinchtab_session_step_failed"))
+        failed = _result_error(str(result.get("error") or error or "pinchtab_session_step_failed"))
+        return "failed", failed, str(failed.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     payload = dict(result)
     payload["goal"] = goal
@@ -1348,11 +1287,29 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         _PINCHTAB_USER_SESSIONS[_pinchtab_session_owner_key(user_id=self.user_id, workspace=self.workspace)] = session_id
     except Exception:
         pass
-    return _result_ok(
+    output = _result_ok(
         session_id=session_id,
-        latency_ms=latency_ms,
         **{k: v for k, v in result.items() if k != "ok"},
     )
+    return status, output, error, int((time.perf_counter() - started) * 1000)
+
+
+def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Legacy session-style wrapper kept for compatibility.
+
+    The browser plane now talks to PinchTab through a dedicated adapter, while
+    this tool remains as an internal/compat surface backed by the same runtime.
+    """
+    _, result, _, latency_ms = _execute_pinchtab_session_action(
+        self,
+        action=str(args.get("action") or "").strip().lower(),
+        session_id=str(args.get("session_id") or "").strip(),
+        goal=str(args.get("goal") or "").strip(),
+    )
+    if isinstance(result, dict) and bool(result.get("ok")):
+        result = {**result, "latency_ms": latency_ms}
+    return result
 
 
 def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: int = 8) -> list[str]:
