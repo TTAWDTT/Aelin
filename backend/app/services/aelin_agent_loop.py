@@ -158,6 +158,8 @@ class AelinAgentLoop:
         max_rounds: int,
         round_timeout_seconds: float = 10.0,
         total_timeout_seconds: float = 12.0,
+        max_plane_supervision_calls_per_round: int = 1,
+        max_plane_supervision_calls: int = 6,
     ) -> None:
         self._service = service
         self._provider = str(provider or "").strip().lower()
@@ -166,6 +168,8 @@ class AelinAgentLoop:
         self._max_rounds = max(1, int(max_rounds or 1))
         self._round_timeout_seconds = max(2.0, float(round_timeout_seconds or 10.0))
         self._total_timeout_seconds = max(3.0, float(total_timeout_seconds or 12.0))
+        self._max_plane_supervision_calls_per_round = max(1, int(max_plane_supervision_calls_per_round or 1))
+        self._max_plane_supervision_calls = max(1, int(max_plane_supervision_calls or 1))
 
     def run(
         self,
@@ -204,6 +208,7 @@ class AelinAgentLoop:
             isinstance(supervised_plane_task, dict)
             and str(supervised_plane_task.get("state") or "") == "waiting_user"
         )
+        plane_supervision_calls_total = 0
 
         if self._provider == "rule_based":
             return _failed_loop_result(stop_reason="provider_rule_based", detail="provider_rule_based")
@@ -265,6 +270,7 @@ class AelinAgentLoop:
 
             rounds = round_index
             usage.round_calls = 0
+            plane_supervision_calls_round = 0
             trace_steps.append(AgentLoopTraceStep(stage="agent_loop_round", status="running", detail=f"round={round_index}", count=0))
             response, retried_without_images, llm_error_reason = request_round_response(
                 client=client,
@@ -310,30 +316,30 @@ class AelinAgentLoop:
                             )
                             break
                         waiting_plane_resume_probe_pending = False
-                    decision = self._policy.evaluate(
-                        name="plane",
-                        args={
-                            "action": "status",
-                            "plane": str(active_plane.get("plane") or "browser"),
-                            "task_id": str(active_plane.get("task_id") or ""),
-                        },
-                        usage=usage,
-                    )
-                    if not decision.allowed:
-                        stop_reason = "total_call_limit" if str(decision.reason or "").endswith("call_limit") else "plane_supervision_blocked"
+                    if plane_supervision_calls_total >= self._max_plane_supervision_calls:
+                        stop_reason = "plane_supervision_limit"
                         trace_steps.append(
                             AgentLoopTraceStep(
                                 stage="agent_loop_plane",
                                 status="failed",
-                                detail=f"task={active_plane.get('task_id')}; policy={decision.reason or 'blocked'}",
+                                detail=f"task={active_plane.get('task_id')}; scope=total",
                                 count=0,
                             )
                         )
                         break
-                    usage.round_calls += 1
-                    usage.total_calls += 1
-                    if decision.is_write:
-                        usage.write_calls += 1
+                    if plane_supervision_calls_round >= self._max_plane_supervision_calls_per_round:
+                        stop_reason = "plane_supervision_limit"
+                        trace_steps.append(
+                            AgentLoopTraceStep(
+                                stage="agent_loop_plane",
+                                status="failed",
+                                detail=f"task={active_plane.get('task_id')}; scope=round",
+                                count=0,
+                            )
+                        )
+                        break
+                    plane_supervision_calls_total += 1
+                    plane_supervision_calls_round += 1
                     trace_steps.append(
                         AgentLoopTraceStep(
                             stage="agent_loop_plane",
@@ -360,7 +366,7 @@ class AelinAgentLoop:
                             "task_id": str(active_plane.get("task_id") or ""),
                         },
                         tc_id=f"plane-status:{active_plane.get('task_id')}",
-                        is_write=bool(decision.is_write),
+                        is_write=False,
                         status=status,
                         result=result,
                         error=error,
@@ -572,11 +578,17 @@ class AelinAgentLoop:
                 AgentLoopTraceStep(
                     stage="agent_loop_round",
                     status="completed",
-                    detail=f"round={round_index}; calls={usage.round_calls}; successful={successful_calls}",
-                    count=usage.round_calls,
+                    detail=f"round={round_index}; calls={usage.round_calls + plane_supervision_calls_round}; successful={successful_calls}",
+                    count=usage.round_calls + plane_supervision_calls_round,
                 )
             )
-            if reached_total_limit or usage.total_calls >= self._policy.max_tool_calls:
+            active_plane_after_round = (
+                dict(supervised_plane_task)
+                if isinstance(supervised_plane_task, dict)
+                and str(supervised_plane_task.get("state") or "") in _ACTIVE_PLANE_STATES
+                else None
+            )
+            if (reached_total_limit or usage.total_calls >= self._policy.max_tool_calls) and active_plane_after_round is None:
                 stop_reason = "total_call_limit"
                 break
             if idle_rounds >= 2:
@@ -592,7 +604,7 @@ class AelinAgentLoop:
                 stop_reason = "requires_confirmation"
             elif stop_reason == "total_timeout":
                 answer = "我已达到本轮时限，先返回阶段性结论。你可以缩小问题范围后我继续执行。"
-            elif usage.total_calls > 0 and stop_reason in {"total_call_limit", "no_progress", "max_rounds"}:
+            elif (usage.total_calls > 0 or plane_supervision_calls_total > 0) and stop_reason in {"total_call_limit", "plane_supervision_limit", "no_progress", "max_rounds"}:
                 answer = self._partial_answer_from_runs(tool_runs=tool_runs, query=query)
                 stop_reason = "partial_result"
             else:
@@ -613,7 +625,7 @@ class AelinAgentLoop:
             "agent_loop end stop=%s rounds=%s total_calls=%s write_calls=%s answer=%s",
             stop_reason,
             rounds,
-            usage.total_calls,
+            usage.total_calls + plane_supervision_calls_total,
             usage.write_calls,
             safe_preview(answer),
         )
@@ -622,7 +634,7 @@ class AelinAgentLoop:
             answer=answer,
             stop_reason=stop_reason,
             rounds=rounds,
-            total_calls=usage.total_calls,
+            total_calls=usage.total_calls + plane_supervision_calls_total,
             write_calls=usage.write_calls,
             tool_runs=tool_runs,
             trace_steps=trace_steps,

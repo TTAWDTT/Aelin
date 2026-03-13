@@ -2534,6 +2534,10 @@ def _try_agent_loop_chat(
         max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 3) or 3),
         round_timeout_seconds=float(getattr(settings, "aelin_agent_loop_round_timeout_seconds", 10.0) or 10.0),
         total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
+        max_plane_supervision_calls=int(getattr(settings, "aelin_agent_loop_max_plane_supervision_calls", 6) or 6),
+        max_plane_supervision_calls_per_round=int(
+            getattr(settings, "aelin_agent_loop_max_plane_supervision_calls_per_round", 1) or 1
+        ),
     )
     _log.info(
         "agent_loop preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",

@@ -695,3 +695,38 @@ def test_agent_loop_resumes_waiting_plane_with_status_probe_on_next_user_turn():
     assert result.answer == "恢复后的最终结果"
     assert result.total_calls == 1
     assert [call[1].get("action") for call in tool_hub.calls] == ["status"]
+
+
+def test_agent_loop_plane_supervision_budget_is_separate_from_regular_tool_budget():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "p1", "name": "plane", "arguments": '{"action":"delegate","plane":"browser","goal":"总结 example 页面"}'},
+            ]
+        },
+        {"content": "我先直接总结。"},
+        {"content": "预算分离后的最终结果"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakePlaneToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=1,
+            max_tool_calls=1,
+            max_write_calls=1,
+            allow_write_tools=True,
+        ),
+        max_rounds=4,
+        max_plane_supervision_calls=2,
+        max_plane_supervision_calls_per_round=1,
+    )
+
+    result = loop.run(query="总结 example 页面", memory_summary="m", history_turns=[])
+
+    assert result.ok is True
+    assert result.answer == "预算分离后的最终结果"
+    assert result.total_calls == 2
+    assert [call[1].get("action") for call in tool_hub.calls] == ["delegate", "status"]
