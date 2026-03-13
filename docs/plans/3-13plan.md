@@ -48,11 +48,11 @@
 
 ## 7. 明确 plane metadata 与 skill 的分工
 
-- [ ] 实现：为 plane 建立清晰的 metadata 结构，用于描述能力、适用场景、动作与边界
-- [ ] 实现：保留 skill 作为“如何更好使用该 plane”的增强说明层
-- [ ] 验收：Aelin 可以同时获得 plane 的能力信息与使用策略信息
-- [ ] 验收：代码结构上能明确区分 plane metadata 与 skill prompt 的职责
-- [ ] 验收：至少 browser plane 完成这一分层落地
+- [x] 实现：为 plane 建立清晰的 metadata 结构，用于描述能力、适用场景、动作与边界
+- [x] 实现：保留 skill 作为“如何更好使用该 plane”的增强说明层
+- [x] 验收：Aelin 可以同时获得 plane 的能力信息与使用策略信息
+- [x] 验收：代码结构上能明确区分 plane metadata 与 skill prompt 的职责
+- [x] 验收：至少 browser plane 完成这一分层落地
 
 ## 8. 将 skill 从直接注入逐步演进为目录式资源
 

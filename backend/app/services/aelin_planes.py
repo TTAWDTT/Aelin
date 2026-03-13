@@ -69,11 +69,14 @@ def plane_catalog_prompt() -> str:
         lines.append(
             f"- {meta.slug}: 由 {meta.backing_system} 支撑，负责{meta.summary}"
         )
+        if meta.skill_slug:
+            lines.append(f"  usage_skill={meta.skill_slug}")
     lines.extend(
         [
-            "使用原则：",
+            "catalog 只描述 plane 的能力边界、动作与适用场景。",
+            "更具体的使用策略、goal 写法与协作注意事项，请参考对应 skill。",
+            "基础使用原则：",
             "- 对复杂网页任务，优先调用 plane 工具，把高层 goal 委派给合适的 plane。",
-            "- 只有当任务是纯搜索或明显原子时，才优先考虑普通工具。",
             "- 一旦已有可复用的 plane task，优先继续该 task，而不是重新开始。",
         ]
     )

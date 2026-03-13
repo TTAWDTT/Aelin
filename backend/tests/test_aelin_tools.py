@@ -245,6 +245,9 @@ def test_plane_registry_exposes_browser_entry_and_catalog_metadata():
     browser = next(row for row in catalog if row.get("plane") == "browser")
     assert browser["backing_system"] == "PinchTab"
     assert browser["skill_slug"] == "pinchtab"
+    prompt = aelin_planes.plane_catalog_prompt()
+    assert "usage_skill=pinchtab" in prompt
+    assert "catalog 只描述 plane 的能力边界" in prompt
 
 
 def test_web_search_tool_missing_query():
