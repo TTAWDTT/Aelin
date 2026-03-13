@@ -24,7 +24,7 @@ from app.services.device_center import (
 )
 from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
-from app.services.aelin_planes import plane_catalog_entries
+from app.services.aelin_planes import get_active_plane_task, plane_catalog_entries
 from app.services.browser_plane_adapter import PinchTabBrowserPlaneAdapter
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_launcher import ensure_pinchtab_started
@@ -322,6 +322,10 @@ class AelinToolHub:
                             "task_id": {
                                 "type": "string",
                                 "description": "已有 plane 任务的标识，用于 status/continue/close。",
+                            },
+                            "force_new": {
+                                "type": "boolean",
+                                "description": "仅在明确需要放弃当前活跃 plane task 并重新开始时才设为 true。",
                             },
                         },
                         "required": ["action"],
@@ -673,6 +677,7 @@ class AelinToolHub:
         plane = str(args.get("plane") or "browser").strip().lower() or "browser"
         goal = str(args.get("goal") or "").strip()
         task_id = " ".join(str(args.get("task_id") or "").strip().split())[:96]
+        force_new = bool(args.get("force_new"))
 
         if action == "catalog":
             planes = plane_catalog_entries()
@@ -696,6 +701,31 @@ class AelinToolHub:
         if action == "delegate":
             if not goal:
                 return _result_error("missing goal")
+            if not force_new:
+                active_task = get_active_plane_task(
+                    self.user_id,
+                    self.workspace,
+                    plane="browser",
+                    db=self.db,
+                )
+                active_task_id = " ".join(str((active_task or {}).get("task_id") or "").strip().split())[:96]
+                active_state = str((active_task or {}).get("state") or "").strip().lower()
+                if active_task_id:
+                    if active_state == "waiting_user":
+                        status_result = adapter.status(task_id=active_task_id)
+                        if bool(status_result.get("ok")):
+                            status_result["reused_existing_task"] = True
+                            status_result["reused_action"] = "status"
+                            return status_result
+                        reused_snapshot = {"ok": True, **dict(active_task or {})}
+                        reused_snapshot["reused_existing_task"] = True
+                        reused_snapshot["reused_action"] = "status"
+                        return reused_snapshot
+                    continued = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
+                    if bool(continued.get("ok")):
+                        continued["reused_existing_task"] = True
+                        continued["reused_action"] = "continue"
+                        return continued
             return adapter.delegate(goal=goal[:800])
 
         if action not in {"status", "continue", "close"}:

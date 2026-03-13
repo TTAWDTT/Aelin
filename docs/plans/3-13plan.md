@@ -11,10 +11,10 @@
 
 ## 2. 强化 active plane task 的复用机制
 
-- [ ] 实现：当 workspace 中已有活跃 plane task 时，优先复用而不是重新 `delegate`
-- [ ] 验收：同一类连续网页任务默认续跑已有 task，而不是创建第二个 task
-- [ ] 验收：仅在明确需要时才重新新建 plane task
-- [ ] 验收：测试覆盖“已有 active task 时继续任务”的行为
+- [x] 实现：当 workspace 中已有活跃 plane task 时，优先复用而不是重新 `delegate`
+- [x] 验收：同一类连续网页任务默认续跑已有 task，而不是创建第二个 task
+- [x] 验收：仅在明确需要时才重新新建 plane task
+- [x] 验收：测试覆盖“已有 active task 时继续任务”的行为
 
 ## 3. 将 waiting_user 做成正式暂停协议
 

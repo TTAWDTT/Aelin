@@ -649,6 +649,103 @@ def test_plane_browser_delegate_and_continue_reuse_same_session(monkeypatch):
     assert launch_calls == ["launch_instance"]
 
 
+def test_plane_delegate_reuses_existing_active_task_by_default(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+    assert first["ok"] is True
+    task_id = str(first.get("task_id") or "")
+    assert task_id
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    aelin_planes.set_plane_task(
+        task_id,
+        {
+            **task,
+            "state": "running",
+            "summary": "browser task still running",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+
+    second = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "继续读取详情"})
+
+    assert second["ok"] is True
+    assert second["task_id"] == task_id
+    assert second["reused_existing_task"] is True
+    assert second["reused_action"] == "continue"
+
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance"]
+
+
+def test_plane_delegate_force_new_creates_fresh_task(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+    assert first["ok"] is True
+    first_task_id = str(first.get("task_id") or "")
+    assert first_task_id
+    first_task = aelin_planes.get_plane_task(first_task_id, user_id=1, workspace="default", plane="browser")
+    assert first_task is not None
+    aelin_planes.set_plane_task(
+        first_task_id,
+        {
+            **first_task,
+            "state": "running",
+            "summary": "browser task still running",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+
+    second = hub.execute(
+        "plane",
+        {"action": "delegate", "plane": "browser", "goal": "重新开始一个新网页任务", "force_new": True},
+    )
+
+    assert second["ok"] is True
+    assert str(second.get("task_id") or "") != first_task_id
+    assert second.get("reused_existing_task") in {None, False}
+
+
 def test_plane_browser_delegate_uses_plane_task_id_instead_of_session_id(monkeypatch):
     fake_web = _FakeWebSearch()
     fake_client = _FakePinchTabClient()
