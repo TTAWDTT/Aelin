@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 import json
 import re
 import time
@@ -24,7 +25,7 @@ from app.services.device_center import (
 )
 from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
-from app.services.aelin_planes import get_active_plane_task, plane_catalog_entries
+from app.services.aelin_planes import close_plane_task, get_active_plane_task, plane_catalog_entries
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
@@ -81,6 +82,57 @@ _TOOL_KEYWORDS = (
     "pptx",
     "xlsx",
 )
+_PLANE_CONTINUATION_HINTS = (
+    "continue",
+    "resume",
+    "pick up",
+    "pick-up",
+    "follow up",
+    "same task",
+    "same browser task",
+    "keep going",
+    "继续",
+    "接着",
+    "恢复",
+    "继续处理",
+    "继续这个任务",
+    "接着做",
+    "刚才",
+    "上一个",
+    "之前那个",
+    "同一个任务",
+)
+_GOAL_COMMON_TOKENS = {
+    "open",
+    "read",
+    "check",
+    "view",
+    "look",
+    "browse",
+    "page",
+    "website",
+    "site",
+    "task",
+    "summary",
+    "summarize",
+    "continue",
+    "resume",
+    "login",
+    "log",
+    "in",
+    "and",
+    "the",
+    "a",
+    "an",
+    "to",
+    "for",
+    "with",
+    "on",
+    "my",
+    "your",
+    "help",
+}
+_STALE_PLANE_ERRORS = {"unknown_session_id", "plane_missing_session_id", "unknown_task_id"}
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -114,6 +166,97 @@ def _is_http_url(value: str) -> bool:
         return False
     parsed = urlparse(text)
     return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
+
+
+def _normalize_goal_text(raw: str) -> str:
+    return re.sub(r"\s+", " ", str(raw or "").strip().lower())[:800]
+
+
+def _extract_goal_tokens(raw: str) -> set[str]:
+    text = _normalize_goal_text(raw)
+    if not text:
+        return set()
+    tokens = {
+        token
+        for token in re.findall(r"\b[a-z][a-z0-9_-]{1,31}\b", text)
+        if token not in _GOAL_COMMON_TOKENS
+    }
+    if re.search(r"(^|[^a-z0-9])x([^a-z0-9]|$)", text):
+        tokens.add("x")
+    return tokens
+
+
+def _extract_host_tokens_from_value(raw: str) -> set[str]:
+    tokens: set[str] = set()
+    text = _normalize_goal_text(raw)
+    if not text:
+        return tokens
+    candidates = re.findall(r"https?://[^\s]+", text)
+    if not candidates:
+        candidates = re.findall(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", text)
+    for candidate in candidates[:8]:
+        parsed = urlparse(candidate if "://" in candidate else f"https://{candidate}")
+        host = str(parsed.netloc or parsed.path or "").strip().lower()
+        if not host:
+            continue
+        if host.startswith("www."):
+            host = host[4:]
+        parts = [part for part in host.split(".") if part]
+        for part in parts:
+            if part in {"com", "cn", "net", "org", "io", "co", "app"}:
+                continue
+            tokens.add(part)
+    return tokens
+
+
+def _goal_has_continuation_hint(goal: str) -> bool:
+    text = _normalize_goal_text(goal)
+    if not text:
+        return False
+    return any(hint in text for hint in _PLANE_CONTINUATION_HINTS)
+
+
+def _goals_look_related(*, active_task: dict[str, Any], new_goal: str) -> bool:
+    old_goal = _normalize_goal_text(str(active_task.get("goal") or ""))
+    new_goal_normalized = _normalize_goal_text(new_goal)
+    if not old_goal or not new_goal_normalized:
+        return False
+    if _goal_has_continuation_hint(new_goal_normalized):
+        return True
+
+    shorter_len = min(len(old_goal), len(new_goal_normalized))
+    if shorter_len >= 8 and (old_goal in new_goal_normalized or new_goal_normalized in old_goal):
+        return True
+
+    similarity = SequenceMatcher(a=old_goal, b=new_goal_normalized).ratio()
+    if similarity >= 0.82:
+        return True
+
+    shared_tokens = _extract_goal_tokens(old_goal) & _extract_goal_tokens(new_goal_normalized)
+    if len(shared_tokens) >= 2:
+        return True
+
+    host_tokens = _extract_host_tokens_from_value(str(active_task.get("last_url") or "")) | _extract_host_tokens_from_value(old_goal)
+    if host_tokens and similarity >= 0.6 and any(token in new_goal_normalized for token in host_tokens):
+        return True
+    return False
+
+
+def _should_reuse_active_plane_task(active_task: dict[str, Any] | None, *, goal: str) -> bool:
+    if not isinstance(active_task, dict):
+        return False
+    task_id = " ".join(str(active_task.get("task_id") or "").strip().split())[:96]
+    state = str(active_task.get("state") or "").strip().lower()
+    if not task_id:
+        return False
+    if state not in {"queued", "running", "waiting_user", "blocked"}:
+        return False
+    return _goals_look_related(active_task=active_task, new_goal=goal)
+
+
+def _should_restart_plane_task_after_reuse_failure(result: dict[str, Any]) -> bool:
+    error = str((result or {}).get("error") or "").strip().lower()
+    return error in _STALE_PLANE_ERRORS
 
 
 def should_attempt_aelin_tools(query: str) -> bool:
@@ -753,22 +896,46 @@ class AelinToolHub:
                 )
                 active_task_id = " ".join(str((active_task or {}).get("task_id") or "").strip().split())[:96]
                 active_state = str((active_task or {}).get("state") or "").strip().lower()
-                if active_task_id:
+                if active_task_id and _should_reuse_active_plane_task(active_task, goal=goal):
                     if active_state == "waiting_user":
                         status_result = adapter.status(task_id=active_task_id)
                         if bool(status_result.get("ok")):
                             status_result["reused_existing_task"] = True
                             status_result["reused_action"] = "status"
                             return status_result
-                        reused_snapshot = {"ok": True, **dict(active_task or {})}
-                        reused_snapshot["reused_existing_task"] = True
-                        reused_snapshot["reused_action"] = "status"
-                        return reused_snapshot
+                        if _should_restart_plane_task_after_reuse_failure(status_result):
+                            close_plane_task(
+                                active_task_id,
+                                user_id=self.user_id,
+                                workspace=self.workspace,
+                                plane=entry.metadata.slug,
+                                db=self.db,
+                            )
+                            restarted = adapter.delegate(goal=goal[:800])
+                            if bool(restarted.get("ok")):
+                                restarted["restarted_after_stale_task"] = True
+                                restarted["previous_task_id"] = active_task_id
+                            return restarted
+                        return status_result
                     continued = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
                     if bool(continued.get("ok")):
                         continued["reused_existing_task"] = True
                         continued["reused_action"] = "continue"
                         return continued
+                    if _should_restart_plane_task_after_reuse_failure(continued):
+                        close_plane_task(
+                            active_task_id,
+                            user_id=self.user_id,
+                            workspace=self.workspace,
+                            plane=entry.metadata.slug,
+                            db=self.db,
+                        )
+                        restarted = adapter.delegate(goal=goal[:800])
+                        if bool(restarted.get("ok")):
+                            restarted["restarted_after_stale_task"] = True
+                            restarted["previous_task_id"] = active_task_id
+                        return restarted
+                    return continued
             return adapter.delegate(goal=goal[:800])
 
         if action not in {"status", "continue", "close"}:

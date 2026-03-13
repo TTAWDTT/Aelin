@@ -790,6 +790,41 @@ def test_plane_delegate_force_new_creates_fresh_task(monkeypatch):
     assert second.get("reused_existing_task") in {None, False}
 
 
+def test_plane_delegate_starts_new_task_for_distinct_goal(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 github.com 并查看 issue 列表"})
+    assert first["ok"] is True
+    first_task_id = str(first.get("task_id") or "")
+    assert first_task_id
+
+    second = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 docs.python.org 查看 asyncio 教程"})
+
+    assert second["ok"] is True
+    assert str(second.get("task_id") or "") != first_task_id
+    assert second.get("reused_existing_task") in {None, False}
+
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance", "launch_instance"]
+
+
 def test_plane_browser_delegate_uses_plane_task_id_instead_of_session_id(monkeypatch):
     fake_web = _FakeWebSearch()
     fake_client = _FakePinchTabClient()
@@ -933,6 +968,61 @@ def test_plane_status_preserves_waiting_user_when_session_snapshot_lacks_login_f
     assert status["state"] == "waiting_user"
     assert status["requires_user_input"] is True
     assert status["user_prompt"] == "请先完成登录"
+
+
+def test_plane_delegate_restarts_when_waiting_task_session_is_stale(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "帮我总结我的 X 关注列表"})
+    assert delegated["ok"] is True
+    first_task_id = str(delegated.get("task_id") or "")
+    assert first_task_id
+
+    task = aelin_planes.get_plane_task(first_task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    session_id = str(task.get("backing_task_id") or "")
+    assert session_id
+    aelin_planes.set_plane_task(
+        first_task_id,
+        {
+            **task,
+            "state": "waiting_user",
+            "requires_user_input": True,
+            "user_prompt": "请先完成登录",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+    _PINCHTAB_SESSIONS.pop(session_id, None)
+
+    restarted = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "继续总结我的 X 关注列表"})
+
+    assert restarted["ok"] is True
+    assert str(restarted.get("task_id") or "") != first_task_id
+    assert restarted["restarted_after_stale_task"] is True
+    assert restarted["previous_task_id"] == first_task_id
+
+    first_task = aelin_planes.get_plane_task(first_task_id, user_id=1, workspace="default", plane="browser")
+    assert first_task is not None
+    assert first_task["state"] == "closed"
 
 
 def test_plane_runtime_persists_events_and_artifacts(monkeypatch):
