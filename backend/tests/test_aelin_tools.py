@@ -860,6 +860,31 @@ def test_plane_delegate_does_not_reuse_unrelated_task_just_because_goal_says_con
     assert launch_calls == ["launch_instance", "launch_instance"]
 
 
+def test_should_resume_active_plane_for_query_ignores_unrelated_query():
+    active_task = {
+        "task_id": "browser-task-1",
+        "state": "waiting_user",
+        "goal": "帮我查看淘宝订单",
+        "user_prompt": "请先完成登录",
+        "last_url": "https://www.taobao.com/member",
+    }
+
+    assert aelin_tools.should_resume_active_plane_for_query(active_task, "继续看京东订单") is False
+    assert aelin_tools.should_resume_active_plane_for_query(active_task, "今天的新闻有什么") is False
+
+
+def test_should_resume_active_plane_for_query_allows_checkpoint_reply():
+    active_task = {
+        "task_id": "browser-task-2",
+        "state": "waiting_user",
+        "goal": "登录 X 后继续总结关注列表",
+        "user_prompt": "请先完成登录",
+        "last_url": "https://x.com/i/flow/login",
+    }
+
+    assert aelin_tools.should_resume_active_plane_for_query(active_task, "我已经登录好了") is True
+
+
 def test_plane_browser_delegate_uses_plane_task_id_instead_of_session_id(monkeypatch):
     fake_web = _FakeWebSearch()
     fake_client = _FakePinchTabClient()

@@ -132,7 +132,84 @@ _GOAL_COMMON_TOKENS = {
     "your",
     "help",
 }
+_GOAL_COMMON_CJK_PHRASES = (
+    "帮我看看",
+    "帮我查看",
+    "帮我处理",
+    "继续处理",
+    "关注列表",
+    "继续这个任务",
+    "同一个任务",
+    "我已经",
+    "已完成",
+    "完成了",
+    "帮我",
+    "查看",
+    "看看",
+    "看下",
+    "打开",
+    "读取",
+    "阅读",
+    "继续",
+    "接着",
+    "恢复",
+    "处理",
+    "总结",
+    "概括",
+    "分析",
+    "已经",
+    "好了",
+    "完成",
+    "订单",
+    "列表",
+    "关注",
+    "页面",
+    "网站",
+    "网页",
+    "链接",
+    "网址",
+    "详情",
+    "任务",
+    "内容",
+    "文本",
+    "教程",
+    "文档",
+    "邮件",
+    "附件",
+    "一下",
+    "我的",
+    "这个",
+    "那个",
+    "当前",
+    "继续",
+    "接着",
+    "恢复",
+    "登录后",
+    "然后",
+    "并且",
+    "并",
+    "看",
+)
 _STALE_PLANE_ERRORS = {"unknown_session_id", "plane_missing_session_id", "unknown_task_id"}
+_CHECKPOINT_RESPONSE_HINTS = (
+    "我已经",
+    "已经",
+    "好了",
+    "完成了",
+    "完成",
+    "继续",
+    "恢复",
+    "resume",
+    "done",
+    "ok",
+    "logged in",
+    "login",
+    "验证码",
+    "验证",
+    "2fa",
+    "code",
+)
+_CHECKPOINT_GENERIC_ANCHORS = {"登录", "验证", "验证码", "2fa", "code", "login", "logged", "done", "ok"}
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -183,6 +260,14 @@ def _extract_goal_tokens(raw: str) -> set[str]:
     }
     if re.search(r"(^|[^a-z0-9])x([^a-z0-9]|$)", text):
         tokens.add("x")
+    for chunk in re.findall(r"[\u4e00-\u9fff]{2,20}", text):
+        cleaned = str(chunk)
+        for phrase in _GOAL_COMMON_CJK_PHRASES:
+            cleaned = cleaned.replace(phrase, " ")
+        for part in cleaned.split():
+            normalized = part.strip()
+            if 2 <= len(normalized) <= 8:
+                tokens.add(normalized)
     return tokens
 
 
@@ -262,6 +347,38 @@ def _should_reuse_active_plane_task(active_task: dict[str, Any] | None, *, goal:
     if state not in {"queued", "running", "waiting_user", "blocked"}:
         return False
     return _goals_look_related(active_task=active_task, new_goal=goal)
+
+
+def _query_looks_like_checkpoint_response(query: str) -> bool:
+    text = _normalize_goal_text(query)
+    if not text:
+        return False
+    return any(hint in text for hint in _CHECKPOINT_RESPONSE_HINTS)
+
+
+def should_resume_active_plane_for_query(active_task: dict[str, Any] | None, query: str) -> bool:
+    if not isinstance(active_task, dict):
+        return False
+    normalized_query = _normalize_goal_text(query)
+    if not normalized_query:
+        return False
+    if _goals_look_related(active_task=active_task, new_goal=normalized_query):
+        return True
+    if str(active_task.get("state") or "").strip().lower() != "waiting_user":
+        return False
+    if not _query_looks_like_checkpoint_response(normalized_query):
+        return False
+    prompt = _normalize_goal_text(str(active_task.get("user_prompt") or ""))
+    goal = _normalize_goal_text(str(active_task.get("goal") or ""))
+    loginish = any(token in f"{prompt}\n{goal}" for token in ("login", "登录", "验证码", "2fa", "验证"))
+    if not loginish:
+        return False
+    old_anchors = _extract_goal_tokens(goal) | _extract_host_tokens_from_value(str(active_task.get("last_url") or ""))
+    query_anchors = _extract_goal_tokens(normalized_query) | _extract_host_tokens_from_value(normalized_query)
+    extra_query_anchors = {token for token in query_anchors if token not in _CHECKPOINT_GENERIC_ANCHORS}
+    if not extra_query_anchors:
+        return True
+    return bool(old_anchors & extra_query_anchors)
 
 
 def _should_restart_plane_task_after_reuse_failure(result: dict[str, Any]) -> bool:

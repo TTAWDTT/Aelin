@@ -46,6 +46,7 @@ from app.services.aelin_tools import (
     AelinToolHub,
     run_aelin_structured_tools,
     should_attempt_aelin_tools,
+    should_resume_active_plane_for_query,
     summarize_tool_results_for_prompt,
 )
 from app.services.aelin_planes import get_active_plane_task, plane_catalog_prompt
@@ -2502,7 +2503,11 @@ def _try_agent_loop_chat(
         plane_snapshot = get_active_plane_task(current_user.id, workspace, plane="browser", db=db)
     except Exception:
         plane_snapshot = None
-    if isinstance(plane_snapshot, dict) and plane_snapshot.get("task_id"):
+    if (
+        isinstance(plane_snapshot, dict)
+        and plane_snapshot.get("task_id")
+        and should_resume_active_plane_for_query(plane_snapshot, payload.query)
+    ):
         forced_tool_runs.append(
             {
                 "name": "plane",
