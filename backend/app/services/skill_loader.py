@@ -16,6 +16,7 @@ class LoadedSkill:
     version: str
     applies_to_tools: tuple[str, ...]
     trigger_keywords: tuple[str, ...]
+    summary: str
     body: str
     path: Path
 
@@ -92,6 +93,28 @@ def _format_skill_prompt(skill: LoadedSkill) -> str:
     return "\n".join([*header_lines, "", skill.body]).strip()
 
 
+def _skill_summary_from_body(body: str) -> str:
+    for raw in str(body or "").split("\n"):
+        line = str(raw or "").strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            continue
+        return line[:220]
+    return ""
+
+
+def _skill_to_catalog_entry(skill: LoadedSkill) -> dict[str, object]:
+    return {
+        "name": skill.name,
+        "slug": skill.slug,
+        "version": skill.version,
+        "summary": skill.summary,
+        "applies_to_tools": list(skill.applies_to_tools),
+        "trigger_keywords": list(skill.trigger_keywords),
+    }
+
+
 @lru_cache(maxsize=1)
 def _load_all_skills() -> tuple[LoadedSkill, ...]:
     skills: list[LoadedSkill] = []
@@ -108,6 +131,7 @@ def _load_all_skills() -> tuple[LoadedSkill, ...]:
         version = str(meta.get("version") or "").strip()
         applies = _split_csv(meta.get("applies_to_tools") or "")
         triggers = _split_csv(meta.get("trigger_keywords") or "")
+        summary = str(meta.get("summary") or "").strip()[:220]
         if not body:
             continue
         skills.append(
@@ -117,6 +141,7 @@ def _load_all_skills() -> tuple[LoadedSkill, ...]:
                 version=version,
                 applies_to_tools=applies,
                 trigger_keywords=triggers,
+                summary=summary or _skill_summary_from_body(body),
                 body=body,
                 path=path,
             )
@@ -144,3 +169,41 @@ def get_skill_prompts_for_query_and_tools(query: str, tool_names: list[str] | No
             continue
         prompts.append(_format_skill_prompt(skill))
     return prompts
+
+
+def list_skill_catalog_for_query_and_tools(query: str, tool_names: list[str] | None = None) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for skill in _load_all_skills():
+        if not _matches_tools(skill, tool_names):
+            continue
+        if query and not _matches_query(skill, query):
+            continue
+        entries.append(_skill_to_catalog_entry(skill))
+    return entries
+
+
+def render_skill_catalog_prompt(query: str, tool_names: list[str] | None = None) -> str:
+    entries = list_skill_catalog_for_query_and_tools(query, tool_names)
+    if not entries:
+        return ""
+    lines = [
+        "[AELIN SKILL CATALOG]",
+        "以下是当前可按需展开的 skill 摘要；如需细节，应调用 skill 工具读取正文：",
+    ]
+    for item in entries[:8]:
+        applies = ",".join([str(x) for x in list(item.get("applies_to_tools") or [])[:6]])
+        lines.append(
+            f"- {str(item.get('slug') or '')}: {str(item.get('summary') or '')[:160]}"
+            + (f" (applies_to_tools={applies})" if applies else "")
+        )
+    return "\n".join(lines).strip()
+
+
+def get_skill_prompt_by_slug(slug: str) -> str:
+    normalized = str(slug or "").strip().lower()
+    if not normalized:
+        return ""
+    for skill in _load_all_skills():
+        if skill.slug.lower() == normalized:
+            return _format_skill_prompt(skill)
+    return ""

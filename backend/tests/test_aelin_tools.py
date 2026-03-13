@@ -233,6 +233,15 @@ def test_tool_definitions_expose_plane_instead_of_pinchtab_family():
     assert "pinchtab_session" not in names
 
 
+def test_tool_definitions_expose_skill_tool():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    names = [row["function"]["name"] for row in hub.tool_definitions()]
+
+    assert "skill" in names
+
+
 def test_plane_registry_exposes_browser_entry_and_catalog_metadata():
     entry = plane_runtime.get_plane_registry_entry("browser")
     assert entry is not None
@@ -248,6 +257,23 @@ def test_plane_registry_exposes_browser_entry_and_catalog_metadata():
     prompt = aelin_planes.plane_catalog_prompt()
     assert "usage_skill=pinchtab" in prompt
     assert "catalog 只描述 plane 的能力边界" in prompt
+
+
+def test_skill_tool_supports_catalog_and_read():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    catalog = hub.execute("skill", {"action": "catalog", "query": "浏览器网页登录"})
+    assert catalog["ok"] is True
+    assert int(catalog.get("total") or 0) >= 1
+    items = catalog.get("items")
+    assert isinstance(items, list)
+    assert any(str(item.get("slug") or "") == "pinchtab" for item in items if isinstance(item, dict))
+
+    read = hub.execute("skill", {"action": "read", "slug": "pinchtab"})
+    assert read["ok"] is True
+    assert read["slug"] == "pinchtab"
+    assert "[AELIN SKILL]" in str(read.get("prompt") or "")
 
 
 def test_web_search_tool_missing_query():

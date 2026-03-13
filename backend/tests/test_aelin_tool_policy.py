@@ -27,6 +27,14 @@ def test_policy_allows_screen_get_when_reads_enabled():
     assert decision.allowed is True
     assert decision.is_write is False
 
+    skill_decision = policy.evaluate(
+        name="skill",
+        args={"action": "catalog", "query": "浏览器"},
+        usage=ToolPolicyUsage(round_calls=0, total_calls=0, write_calls=0),
+    )
+    assert skill_decision.allowed is True
+    assert skill_decision.is_write is False
+
 
 def test_policy_blocks_pinchtab_when_writes_disabled():
     policy = AelinToolPolicy(

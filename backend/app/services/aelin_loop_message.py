@@ -166,7 +166,7 @@ def build_initial_messages(
                 "其中 device.action=status 用于状态查询，processes 用于进程查看，"
                 "mode_apply 用于切换模式，open_url 用于打开网页，open_aelin 用于唤起 Aelin 页面。"
                 "对于复杂网站任务，不要自己微操浏览器步骤，优先委派给 browser plane，"
-                "具体使用策略由 plane catalog 与相关技能说明（SKILL）指导。"
+                "具体使用策略由 plane catalog 与相关 skill 目录指导；如需细节，可调用 skill 工具查看 catalog 或读取 skill 正文。"
             ),
         },
         {

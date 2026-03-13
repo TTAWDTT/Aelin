@@ -56,8 +56,8 @@
 
 ## 8. 将 skill 从直接注入逐步演进为目录式资源
 
-- [ ] 实现：先提供 skill catalog 级别的信息，而不是只把 skill 正文直接注入
-- [ ] 实现：支持按需展开 skill 正文，而不是始终整段注入
-- [ ] 验收：Aelin 可以先看到 skill 摘要/元数据，再决定是否深入使用
-- [ ] 验收：skill 与 tool、plane 在资源层级上更统一
-- [ ] 验收：测试覆盖 skill catalog、按需展开与筛选逻辑
+- [x] 实现：先提供 skill catalog 级别的信息，而不是只把 skill 正文直接注入
+- [x] 实现：支持按需展开 skill 正文，而不是始终整段注入
+- [x] 验收：Aelin 可以先看到 skill 摘要/元数据，再决定是否深入使用
+- [x] 验收：skill 与 tool、plane 在资源层级上更统一
+- [x] 验收：测试覆盖 skill catalog、按需展开与筛选逻辑

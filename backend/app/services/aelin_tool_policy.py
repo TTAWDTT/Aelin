@@ -38,6 +38,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "screen_get":
         return False
+    if tool == "skill":
+        return False
     if tool == "plane":
         return action in {"delegate", "continue", "close"}
     if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
@@ -76,6 +78,7 @@ class AelinToolPolicy:
             "web_search",
             "attachment_search",
             "screen_get",
+            "skill",
             "plane",
             "pinchtab",
             "pinchtab_agent",

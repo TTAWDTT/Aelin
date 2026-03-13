@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from app.services.skill_loader import (
     get_skill_bodies_for_query_and_tools,
+    get_skill_prompt_by_slug,
     get_skill_prompts_for_query_and_tools,
+    list_skill_catalog_for_query_and_tools,
+    render_skill_catalog_prompt,
 )
 
 
@@ -63,3 +66,24 @@ def test_skill_loader_injects_pinchtab_plane_skill_for_browser_plane_queries():
     prompt = "\n".join(prompts)
     assert "PinchTab" in prompt
     assert "browser plane" in prompt.lower()
+
+
+def test_skill_loader_builds_catalog_prompt_and_can_read_by_slug():
+    entries = list_skill_catalog_for_query_and_tools(
+        "帮我总结我的 X 关注列表，并在登录后继续处理",
+        ["plane", "skill"],
+    )
+
+    assert entries
+    pinchtab = next(item for item in entries if item.get("slug") == "pinchtab")
+    assert "summary" in pinchtab
+    catalog_prompt = render_skill_catalog_prompt(
+        "帮我总结我的 X 关注列表，并在登录后继续处理",
+        ["plane", "skill"],
+    )
+    assert "[AELIN SKILL CATALOG]" in catalog_prompt
+    assert "pinchtab" in catalog_prompt
+
+    prompt = get_skill_prompt_by_slug("pinchtab")
+    assert "[AELIN SKILL]" in prompt
+    assert "slug=pinchtab" in prompt

@@ -203,10 +203,18 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
         "profile",
         "device",
         "plane",
+        "skill",
         "pinchtab",
         "pinchtab_agent",
         "pinchtab_session",
     }:
+        if tool == "skill":
+            if "slug" in payload:
+                base["slug"] = _truncate_model_text(payload.get("slug"), limit=64)
+            if "summary" in payload:
+                base["summary"] = _truncate_model_text(payload.get("summary"), limit=260)
+            if "prompt" in payload:
+                base["prompt_excerpt"] = _truncate_model_text(payload.get("prompt"), limit=800)
         if tool == "plane":
             if "plane" in payload:
                 base["plane"] = _truncate_model_text(payload.get("plane"), limit=32)

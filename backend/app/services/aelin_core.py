@@ -49,7 +49,7 @@ from app.services.aelin_tools import (
     summarize_tool_results_for_prompt,
 )
 from app.services.aelin_planes import get_active_plane_task, plane_catalog_prompt
-from app.services.skill_loader import get_skill_prompts_for_query_and_tools
+from app.services.skill_loader import render_skill_catalog_prompt
 from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
@@ -2439,7 +2439,8 @@ def _try_agent_loop_chat(
             name = str(fn.get("name") or "").strip()
             if name:
                 tool_names.append(name)
-        tool_skill_bodies = get_skill_prompts_for_query_and_tools(payload.query, tool_names)
+        skill_catalog_prompt = render_skill_catalog_prompt(payload.query, tool_names)
+        tool_skill_bodies = [skill_catalog_prompt] if skill_catalog_prompt else []
         if "plane" in tool_names:
             tool_skill_bodies = [plane_catalog_prompt(), *tool_skill_bodies]
 
