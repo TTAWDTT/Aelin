@@ -113,6 +113,11 @@ class _FakePinchTabClient:
         return {"ok": True, "effect": "clicked"}
 
 
+def _patch_pinchtab_runtime(monkeypatch, fake_client: _FakePinchTabClient) -> None:
+    monkeypatch.setattr(aelin_tools, "ensure_pinchtab_started", lambda: {"ok": True, "status": "running"})
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+
+
 def _hub(fake_web: _FakeWebSearch, llm_service=None, db=None) -> AelinToolHub:
     return AelinToolHub(
         db=db,  # type: ignore[arg-type]
@@ -470,7 +475,7 @@ def test_pinchtab_tool_calls_client_methods(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
     fake_client = _FakePinchTabClient()
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
 
     # health
     result = hub.execute("pinchtab", {"action": "health"})
@@ -510,7 +515,7 @@ def test_pinchtab_agent_executes_plan_with_llm_and_client(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
 
     result = hub.execute("pinchtab_agent", {"goal": "打开 example.com 并读取文本"})
     assert result["ok"] is True
@@ -538,7 +543,7 @@ def test_pinchtab_session_start_and_step_reuse_instance(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
 
@@ -580,7 +585,7 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=fake_service,  # type: ignore[arg-type]
     )
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
 
@@ -616,7 +621,7 @@ def test_plane_browser_delegate_and_continue_reuse_same_session(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
     aelin_planes._PLANE_TASKS.clear()
@@ -658,7 +663,7 @@ def test_plane_browser_delegate_uses_plane_task_id_instead_of_session_id(monkeyp
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
     aelin_planes._PLANE_TASKS.clear()
@@ -702,7 +707,7 @@ def test_plane_tasks_can_be_recovered_from_db_without_memory_registry(monkeypatc
             web_search_service=fake_web,  # type: ignore[arg-type]
             llm_service=fake_service,  # type: ignore[arg-type]
         )
-        monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+        _patch_pinchtab_runtime(monkeypatch, fake_client)
         _PINCHTAB_SESSIONS.clear()
         _PINCHTAB_USER_SESSIONS.clear()
         aelin_planes._PLANE_TASKS.clear()
