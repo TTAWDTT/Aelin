@@ -80,6 +80,55 @@ class _CaptureBrowserToolHub(_FakeToolHub):
         super().__init__(sleep_seconds=0.0)
 
 
+class _FakePlaneToolHub(_FakeToolHub):
+    def __init__(self) -> None:
+        super().__init__(sleep_seconds=0.0)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self._status_count = 0
+
+    def tool_definitions(self) -> list[dict[str, Any]]:
+        return [
+            {"type": "function", "function": {"name": "plane", "parameters": {"type": "object"}}},
+        ]
+
+    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((str(name), dict(args)))
+        if str(name) != "plane":
+            return {"ok": False, "error": "unsupported"}
+        action = str(args.get("action") or "").strip().lower()
+        if action == "delegate":
+            return {
+                "ok": True,
+                "plane": "browser",
+                "task_id": "browser-task-1",
+                "state": "running",
+                "summary": "browser task running",
+                "last_url": "https://example.com",
+            }
+        if action == "status":
+            self._status_count += 1
+            return {
+                "ok": True,
+                "plane": "browser",
+                "task_id": "browser-task-1",
+                "state": "completed" if self._status_count >= 1 else "running",
+                "summary": "browser task completed",
+                "last_url": "https://example.com/final",
+                "last_text": "final page text",
+            }
+        if action == "continue":
+            return {
+                "ok": True,
+                "plane": "browser",
+                "task_id": "browser-task-1",
+                "state": "completed",
+                "summary": "browser task completed after continue",
+                "last_url": "https://example.com/continued",
+                "last_text": "continued page text",
+            }
+        return {"ok": False, "error": f"unsupported:{action}"}
+
+
 def _fake_service(rounds: list[dict[str, Any]]):
     completions = _FakeCompletions(rounds)
     return SimpleNamespace(
@@ -408,3 +457,122 @@ def test_compact_tool_result_for_model_preserves_plane_ids():
     assert result.get("plane") == "browser"
     assert result.get("task_id") == "task_123"
     assert result.get("state") == "running"
+
+
+def test_agent_loop_keeps_supervising_active_plane_before_accepting_final_answer():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "p1", "name": "plane", "arguments": '{"action":"delegate","plane":"browser","goal":"总结 example 页面"}'},
+            ]
+        },
+        {"content": "我先直接总结。"},
+        {"content": "最终结果"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakePlaneToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=4,
+    )
+
+    result = loop.run(query="总结 example 页面", memory_summary="m", history_turns=[])
+
+    assert result.ok is True
+    assert result.answer == "最终结果"
+    assert result.total_calls == 2
+    assert [call[1].get("action") for call in tool_hub.calls] == ["delegate", "status"]
+    assert len(service._completions.calls) == 3
+    assert any(run.name == "plane" and str(run.result.get("state") or "") == "completed" for run in result.tool_runs)
+
+
+def test_agent_loop_prioritizes_existing_active_plane_task_before_finalizing():
+    rounds = [
+        {"content": "我直接回答。"},
+        {"content": "真正最终结果"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakePlaneToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=3,
+    )
+
+    result = loop.run(
+        query="继续总结这个网页任务",
+        memory_summary="m",
+        history_turns=[],
+        forced_tool_runs=[
+            {
+                "name": "plane",
+                "args": {"action": "status", "plane": "browser", "task_id": "browser-task-1"},
+                "result": {
+                    "ok": True,
+                    "plane": "browser",
+                    "task_id": "browser-task-1",
+                    "state": "running",
+                    "summary": "browser task running",
+                    "last_url": "https://example.com",
+                },
+            }
+        ],
+    )
+
+    assert result.ok is True
+    assert result.answer == "真正最终结果"
+    assert result.total_calls == 1
+    assert [call[1].get("action") for call in tool_hub.calls] == ["status"]
+    assert len(service._completions.calls) == 2
+
+
+def test_agent_loop_allows_continue_on_supervised_plane_task_before_terminal_answer():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "p1", "name": "plane", "arguments": '{"action":"delegate","plane":"browser","goal":"进入后台页面"}'},
+            ]
+        },
+        {
+            "tool_calls": [
+                {"id": "p2", "name": "plane", "arguments": '{"action":"continue","plane":"browser","task_id":"browser-task-1","goal":"继续读取详情"}'},
+            ]
+        },
+        {"content": "继续后的最终结果"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakePlaneToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=3,
+            allow_write_tools=True,
+        ),
+        max_rounds=4,
+    )
+
+    result = loop.run(query="进入后台页面并继续读取详情", memory_summary="m", history_turns=[])
+
+    assert result.ok is True
+    assert result.answer == "继续后的最终结果"
+    assert result.total_calls == 2
+    assert [call[1].get("action") for call in tool_hub.calls] == ["delegate", "continue"]
