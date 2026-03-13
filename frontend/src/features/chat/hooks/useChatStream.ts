@@ -4,13 +4,13 @@ import { streamChat } from '@/shared/api/sse'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
-import { formatBytes } from '../utils/formatBytes'
 import {
   buildAssistantMessage,
   buildChatRequest,
   buildHistory,
   buildStreamCallbacks,
   buildUserMessage,
+  formatBytes,
   maybeRenameFreshSession,
   normalizeAttachmentIds,
   resolveSessionForSend,

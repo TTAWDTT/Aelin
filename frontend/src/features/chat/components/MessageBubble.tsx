@@ -25,9 +25,6 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth, onQuickPrompt }: MessageBubbleProps) {
   const isUser = message.role === 'user'
-  const hasTrace = !isUser && Array.isArray(message.toolTrace) && message.toolTrace.length > 0
-  const hasAnswerContent = String(message.content || '').trim().length > 0
-  const showFinalAnswer = isUser || hasAnswerContent || !isThinking || !hasTrace
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
   const stickerLabel = message.expression ? (EXPRESSION_LABELS[message.expression] ?? 'Aelin 表情') : 'Aelin 表情'
@@ -78,10 +75,6 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           </div>
         )}
 
-        {hasTrace && (
-          <AgentTracePanel trace={message.toolTrace || []} live={isThinking} />
-        )}
-
         {/* Images */}
         {message.images && message.images.length > 0 && (
           <div className="mb-2.5 flex gap-2">
@@ -91,23 +84,16 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           </div>
         )}
 
-        {showFinalAnswer && (
-          <div
-            className={cn(
-              'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
-            )}
-            style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : '…')}</ReactMarkdown>
-          </div>
-        )}
+        {/* Content */}
+        <div
+          className={cn(
+            'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
+          )}
+          style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
+        </div>
 
-        {!showFinalAnswer && (
-          <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
-            正在汇总工具结果，稍后给出最终回答…
-          </div>
-        )}
-
-        {!isUser && stickerSrc && !isThinking && showFinalAnswer && (
+        {!isUser && stickerSrc && !isThinking && (
           <div className="mt-2">
             <img
               src={stickerSrc}
@@ -126,6 +112,10 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           isBrowserPending={confirmBrowser.isPending}
           onBrowserConfirm={(action) => confirmBrowser.mutate(action)}
         />
+        {/* Tool trace */}
+        {message.toolTrace && message.toolTrace.length > 0 && (
+          <AgentTracePanel trace={message.toolTrace} live={isThinking} />
+        )}
 
         <div className="mt-2 text-[10px] tracking-wide text-[var(--color-text-muted)]">
           {formatMessageTime(message.timestamp)}
