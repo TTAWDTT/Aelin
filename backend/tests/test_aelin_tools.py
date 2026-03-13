@@ -731,3 +731,64 @@ def test_plane_tasks_can_be_recovered_from_db_without_memory_registry(monkeypatc
     finally:
         db2.close()
         db1.close()
+
+
+def test_plane_status_preserves_waiting_user_when_session_snapshot_lacks_login_flags(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 X 并检查登录状态"})
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    assert task_id
+
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    session_id = str(task.get("backing_task_id") or "")
+    assert session_id
+    aelin_planes.set_plane_task(
+        task_id,
+        {
+            **task,
+            "state": "waiting_user",
+            "requires_user_input": True,
+            "user_prompt": "请先完成登录",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+    aelin_tools._PINCHTAB_SESSIONS[session_id] = {
+        "owner_user_id": 1,
+        "owner_workspace": "default",
+        "instance_id": "inst-1",
+        "tab_id": "tab-1",
+        "last_goal": "打开 X 并检查登录状态",
+        "last_status": "running",
+        "last_url": "https://x.com/i/flow/login",
+        "last_text": "login page",
+        "last_summary": "still waiting",
+    }
+
+    status = hub.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+
+    assert status["ok"] is True
+    assert status["state"] == "waiting_user"
+    assert status["requires_user_input"] is True
+    assert status["user_prompt"] == "请先完成登录"

@@ -37,6 +37,9 @@ def _browser_plane_payload_from_session_result(
     summary = str(result.get("summary") or result.get("last_summary") or "")[:260]
     existing_instance_id = str(existing_task.get("instance_id") or "").strip()[:128] if isinstance(existing_task, dict) else ""
     existing_tab_id = str(existing_task.get("tab_id") or "").strip()[:128] if isinstance(existing_task, dict) else ""
+    existing_state = str(existing_task.get("state") or "").strip().lower() if isinstance(existing_task, dict) else ""
+    existing_requires_user_input = bool(existing_task.get("requires_user_input")) if isinstance(existing_task, dict) else False
+    existing_user_prompt = str(existing_task.get("user_prompt") or "").strip()[:260] if isinstance(existing_task, dict) else ""
     instance_id = str(result.get("instance_id") or existing_instance_id or "").strip()[:128]
     tab_id = str(result.get("tab_id") or existing_tab_id or "").strip()[:128]
     backing_task_id = str(
@@ -45,13 +48,21 @@ def _browser_plane_payload_from_session_result(
         or (existing_task.get("session_id") if isinstance(existing_task, dict) else "")
         or ""
     ).strip()[:128]
+    has_login_signal = any(key in result for key in ("requires_user_login", "user_prompt"))
+    requires_user_input = bool(result.get("requires_user_login"))
+    user_prompt = str(result.get("user_prompt") or "").strip()[:260]
+    state = _browser_plane_state_from_session_result(result)
+    if not has_login_signal and existing_requires_user_input and existing_state == "waiting_user":
+        requires_user_input = True
+        user_prompt = existing_user_prompt
+        state = "waiting_user"
     return {
         "plane": "browser",
-        "state": _browser_plane_state_from_session_result(result),
+        "state": state,
         "summary": summary,
         "goal": str(goal or result.get("last_goal") or "").strip()[:800],
-        "user_prompt": str(result.get("user_prompt") or "").strip()[:260],
-        "requires_user_input": bool(result.get("requires_user_login")),
+        "user_prompt": user_prompt,
+        "requires_user_input": requires_user_input,
         "last_url": str(result.get("last_url") or result.get("url") or "").strip()[:260],
         "last_text": str(result.get("last_text") or result.get("text") or "").strip()[:1200],
         "backing_task_id": backing_task_id,
