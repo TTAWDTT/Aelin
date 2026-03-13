@@ -825,6 +825,41 @@ def test_plane_delegate_starts_new_task_for_distinct_goal(monkeypatch):
     assert launch_calls == ["launch_instance", "launch_instance"]
 
 
+def test_plane_delegate_does_not_reuse_unrelated_task_just_because_goal_says_continue(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 github.com 并查看 issue 列表"})
+    assert first["ok"] is True
+    first_task_id = str(first.get("task_id") or "")
+    assert first_task_id
+
+    second = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "继续总结我的 X 关注列表"})
+
+    assert second["ok"] is True
+    assert str(second.get("task_id") or "") != first_task_id
+    assert second.get("reused_existing_task") in {None, False}
+
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance", "launch_instance"]
+
+
 def test_plane_browser_delegate_uses_plane_task_id_instead_of_session_id(monkeypatch):
     fake_web = _FakeWebSearch()
     fake_client = _FakePinchTabClient()

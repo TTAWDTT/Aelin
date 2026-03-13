@@ -221,8 +221,20 @@ def _goals_look_related(*, active_task: dict[str, Any], new_goal: str) -> bool:
     new_goal_normalized = _normalize_goal_text(new_goal)
     if not old_goal or not new_goal_normalized:
         return False
+    old_goal_tokens = _extract_goal_tokens(old_goal)
+    new_goal_tokens = _extract_goal_tokens(new_goal_normalized)
+    shared_tokens = old_goal_tokens & new_goal_tokens
+    host_tokens = _extract_host_tokens_from_value(str(active_task.get("last_url") or "")) | _extract_host_tokens_from_value(old_goal)
+    new_host_tokens = _extract_host_tokens_from_value(new_goal_normalized)
+    shared_host = host_tokens and any(token in new_goal_normalized for token in host_tokens)
+
     if _goal_has_continuation_hint(new_goal_normalized):
-        return True
+        old_anchors = old_goal_tokens | host_tokens
+        new_anchors = new_goal_tokens | new_host_tokens
+        if old_anchors and new_anchors and not (old_anchors & new_anchors):
+            return False
+        if shared_host or len(shared_tokens) >= 1 or not new_anchors:
+            return True
 
     shorter_len = min(len(old_goal), len(new_goal_normalized))
     if shorter_len >= 8 and (old_goal in new_goal_normalized or new_goal_normalized in old_goal):
@@ -232,12 +244,10 @@ def _goals_look_related(*, active_task: dict[str, Any], new_goal: str) -> bool:
     if similarity >= 0.82:
         return True
 
-    shared_tokens = _extract_goal_tokens(old_goal) & _extract_goal_tokens(new_goal_normalized)
     if len(shared_tokens) >= 2:
         return True
 
-    host_tokens = _extract_host_tokens_from_value(str(active_task.get("last_url") or "")) | _extract_host_tokens_from_value(old_goal)
-    if host_tokens and similarity >= 0.6 and any(token in new_goal_normalized for token in host_tokens):
+    if shared_host and similarity >= 0.6:
         return True
     return False
 
