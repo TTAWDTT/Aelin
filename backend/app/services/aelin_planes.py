@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import PlaneTask, PlaneTaskArtifact, PlaneTaskCheckpoint, PlaneTaskEvent
+from app.services.plane_runtime import plane_catalog_metadata
 
 _PLANE_TASKS: dict[str, dict[str, Any]] = {}
 _PLANE_USER_TASKS: dict[tuple[int, str, str], str] = {}
@@ -45,33 +46,38 @@ def new_plane_task_id(plane: str) -> str:
 
 
 def plane_catalog_entries() -> list[dict[str, Any]]:
-    return [
-        {
-            "plane": "browser",
-            "name": "Browser Plane",
-            "backing_system": "PinchTab",
-            "summary": "负责网页登录、导航、滚动、抽取页面内容等复杂浏览器任务。",
-            "delegation_hint": "复杂网站任务优先整单委派给 browser plane，而不是自己微操浏览器步骤。",
-            "when_to_use": [
-                "需要登录网站",
-                "需要多步导航或滚动加载",
-                "需要持续复用同一个网页会话",
-            ],
-            "actions": ["catalog", "delegate", "status", "continue", "close"],
-        }
-    ]
+    rows: list[dict[str, Any]] = []
+    for meta in plane_catalog_metadata():
+        rows.append(
+            {
+                "plane": meta.slug,
+                "name": meta.name,
+                "backing_system": meta.backing_system,
+                "summary": meta.summary,
+                "delegation_hint": meta.delegation_hint,
+                "when_to_use": list(meta.when_to_use),
+                "actions": list(meta.actions),
+                "skill_slug": meta.skill_slug,
+            }
+        )
+    return rows
 
 
 def plane_catalog_prompt() -> str:
-    return (
-        "[AELIN PLANE CATALOG]\n"
-        "当前可委派 plane:\n"
-        "- browser: 由 PinchTab 支撑，负责复杂浏览器任务（登录、导航、滚动、抽取、持续网页会话）。\n"
-        "使用原则：\n"
-        "- 对复杂网页任务，优先调用 plane 工具，把高层 goal 委派给 browser plane。\n"
-        "- 只有当任务是纯搜索或明显原子时，才优先考虑普通工具。\n"
-        "- 一旦已有 browser plane task，优先继续该 task，而不是重新开始。"
+    lines = ["[AELIN PLANE CATALOG]", "当前可委派 plane:"]
+    for meta in plane_catalog_metadata():
+        lines.append(
+            f"- {meta.slug}: 由 {meta.backing_system} 支撑，负责{meta.summary}"
+        )
+    lines.extend(
+        [
+            "使用原则：",
+            "- 对复杂网页任务，优先调用 plane 工具，把高层 goal 委派给合适的 plane。",
+            "- 只有当任务是纯搜索或明显原子时，才优先考虑普通工具。",
+            "- 一旦已有可复用的 plane task，优先继续该 task，而不是重新开始。",
+        ]
     )
+    return "\n".join(lines)
 
 
 def _owner_key(*, user_id: int, workspace: str, plane: str) -> tuple[int, str, str]:

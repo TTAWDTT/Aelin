@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.services.aelin_tools as aelin_tools
 import app.services.aelin_planes as aelin_planes
+import app.services.plane_runtime as plane_runtime
 from app.services.aelin_tools import AelinToolHub, _PINCHTAB_SESSIONS, _PINCHTAB_USER_SESSIONS
 from app.models import Base
 from app.services.web_search import WebSearchResult
@@ -230,6 +231,20 @@ def test_tool_definitions_expose_plane_instead_of_pinchtab_family():
     assert "pinchtab" not in names
     assert "pinchtab_agent" not in names
     assert "pinchtab_session" not in names
+
+
+def test_plane_registry_exposes_browser_entry_and_catalog_metadata():
+    entry = plane_runtime.get_plane_registry_entry("browser")
+    assert entry is not None
+    assert entry.metadata.slug == "browser"
+    assert entry.metadata.backing_system == "PinchTab"
+    assert entry.metadata.skill_slug == "pinchtab"
+
+    catalog = aelin_planes.plane_catalog_entries()
+    assert catalog
+    browser = next(row for row in catalog if row.get("plane") == "browser")
+    assert browser["backing_system"] == "PinchTab"
+    assert browser["skill_slug"] == "pinchtab"
 
 
 def test_web_search_tool_missing_query():

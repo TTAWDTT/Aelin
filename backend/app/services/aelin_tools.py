@@ -25,10 +25,10 @@ from app.services.device_center import (
 from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.aelin_planes import get_active_plane_task, plane_catalog_entries
-from app.services.browser_plane_adapter import PinchTabBrowserPlaneAdapter
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
+from app.services.plane_runtime import get_plane_registry_entry
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 
@@ -683,10 +683,11 @@ class AelinToolHub:
             planes = plane_catalog_entries()
             return _result_ok(planes=planes, total=len(planes))
 
-        if plane != "browser":
+        entry = get_plane_registry_entry(plane)
+        if entry is None:
             return _result_error("unsupported_plane")
 
-        adapter = PinchTabBrowserPlaneAdapter(
+        adapter = entry.adapter_factory(
             db=self.db,
             user_id=self.user_id,
             workspace=self.workspace,
@@ -705,7 +706,7 @@ class AelinToolHub:
                 active_task = get_active_plane_task(
                     self.user_id,
                     self.workspace,
-                    plane="browser",
+                    plane=entry.metadata.slug,
                     db=self.db,
                 )
                 active_task_id = " ".join(str((active_task or {}).get("task_id") or "").strip().split())[:96]

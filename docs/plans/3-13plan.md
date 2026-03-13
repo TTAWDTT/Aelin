@@ -40,11 +40,11 @@
 
 ## 6. 将 browser plane 继续上提为通用 plane runtime
 
-- [ ] 实现：抽象出更统一的 plane runtime、registry、adapter 协议
-- [ ] 实现：降低当前 browser/PinchTab 路径中的特化逻辑占比
-- [ ] 验收：新增一个 plane 时，无需重写整套监督、持久化与恢复机制
-- [ ] 验收：browser plane 仍保持现有行为不回退
-- [ ] 验收：测试覆盖 registry/adapter 的基本通用能力
+- [x] 实现：抽象出更统一的 plane runtime、registry、adapter 协议
+- [x] 实现：降低当前 browser/PinchTab 路径中的特化逻辑占比
+- [x] 验收：新增一个 plane 时，无需重写整套监督、持久化与恢复机制
+- [x] 验收：browser plane 仍保持现有行为不回退
+- [x] 验收：测试覆盖 registry/adapter 的基本通用能力
 
 ## 7. 明确 plane metadata 与 skill 的分工
 
