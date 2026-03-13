@@ -489,10 +489,11 @@ def list_plane_events(
             store_session.scalars(
                 select(PlaneTaskEvent)
                 .where(PlaneTaskEvent.task_id == normalized_task_id)
-                .order_by(PlaneTaskEvent.created_at.asc(), PlaneTaskEvent.id.asc())
+                .order_by(PlaneTaskEvent.created_at.desc(), PlaneTaskEvent.id.desc())
                 .limit(max(1, min(100, int(limit or 20))))
             )
         )
+        rows.reverse()
         return [
             {
                 "id": int(item.id),
@@ -533,10 +534,11 @@ def list_plane_artifacts(
             store_session.scalars(
                 select(PlaneTaskArtifact)
                 .where(PlaneTaskArtifact.task_id == normalized_task_id)
-                .order_by(PlaneTaskArtifact.created_at.asc(), PlaneTaskArtifact.id.asc())
+                .order_by(PlaneTaskArtifact.created_at.desc(), PlaneTaskArtifact.id.desc())
                 .limit(max(1, min(100, int(limit or 20))))
             )
         )
+        rows.reverse()
         return [
             {
                 "id": int(item.id),

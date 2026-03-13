@@ -1025,18 +1025,18 @@ class AelinToolHub:
                 active_state = str((active_task or {}).get("state") or "").strip().lower()
                 if active_task_id and _should_reuse_active_plane_task(active_task, goal=goal):
                     if active_state == "waiting_user":
-                        status_result = adapter.status(task_id=active_task_id)
-                        if bool(status_result.get("ok")) and not bool(status_result.get("stale_backing_task")):
-                            status_result["reused_existing_task"] = True
-                            status_result["reused_action"] = "status"
-                            return status_result
-                        if bool(status_result.get("stale_backing_task")):
+                        resumed = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
+                        if bool(resumed.get("ok")) and not bool(resumed.get("stale_backing_task")):
+                            resumed["reused_existing_task"] = True
+                            resumed["reused_action"] = "continue"
+                            return resumed
+                        if bool(resumed.get("stale_backing_task")):
                             restarted = adapter.delegate(goal=goal[:800])
                             if bool(restarted.get("ok")):
                                 restarted["restarted_after_stale_task"] = True
                                 restarted["previous_task_id"] = active_task_id
                             return restarted
-                        if _should_restart_plane_task_after_reuse_failure(status_result):
+                        if _should_restart_plane_task_after_reuse_failure(resumed):
                             close_plane_task(
                                 active_task_id,
                                 user_id=self.user_id,
@@ -1049,7 +1049,7 @@ class AelinToolHub:
                                 restarted["restarted_after_stale_task"] = True
                                 restarted["previous_task_id"] = active_task_id
                             return restarted
-                        return status_result
+                        return resumed
                     continued = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
                     if bool(continued.get("ok")) and not bool(continued.get("stale_backing_task")):
                         continued["reused_existing_task"] = True

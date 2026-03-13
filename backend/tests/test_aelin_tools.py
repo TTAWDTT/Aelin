@@ -1085,6 +1085,52 @@ def test_plane_delegate_restarts_when_waiting_task_session_is_stale(monkeypatch)
     assert first_task["state"] == "closed"
 
 
+def test_plane_delegate_waiting_user_resumes_with_continue(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "帮我总结我的 X 关注列表"})
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    aelin_planes.set_plane_task(
+        task_id,
+        {
+            **task,
+            "state": "waiting_user",
+            "requires_user_input": True,
+            "user_prompt": "请先完成登录",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+
+    resumed = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "我已经登录好了，继续总结我的 X 关注列表"})
+
+    assert resumed["ok"] is True
+    assert resumed["task_id"] == task_id
+    assert resumed["reused_existing_task"] is True
+    assert resumed["reused_action"] == "continue"
+
+
 def test_plane_runtime_persists_events_and_artifacts(monkeypatch):
     fake_web = _FakeWebSearch()
     fake_client = _FakePinchTabClient()
@@ -1136,5 +1182,52 @@ def test_plane_runtime_persists_events_and_artifacts(monkeypatch):
         artifact_kinds = [str(item.get("kind") or "") for item in artifacts]
         assert "page_text" in artifact_kinds
         assert "page_location" in artifact_kinds
+    finally:
+        db.close()
+
+
+def test_plane_runtime_list_functions_return_latest_rows_in_chronological_order():
+    engine, db = _create_db_session()
+    try:
+        task_id = "browser-task-history"
+        aelin_planes.set_plane_task(
+            task_id,
+            {
+                "plane": "browser",
+                "state": "running",
+                "goal": "history task",
+                "summary": "running",
+                "backing_task_id": "session-history",
+            },
+            user_id=1,
+            workspace="default",
+            plane="browser",
+            db=db,
+        )
+        for idx in range(5):
+            aelin_planes.append_plane_event(
+                task_id,
+                event_type=f"event_{idx}",
+                summary=f"event {idx}",
+                user_id=1,
+                workspace="default",
+                plane="browser",
+                db=db,
+            )
+            aelin_planes.append_plane_artifact(
+                task_id,
+                kind=f"artifact_{idx}",
+                content={"idx": idx},
+                user_id=1,
+                workspace="default",
+                plane="browser",
+                db=db,
+            )
+
+        events = aelin_planes.list_plane_events(task_id, user_id=1, workspace="default", plane="browser", db=db, limit=3)
+        artifacts = aelin_planes.list_plane_artifacts(task_id, user_id=1, workspace="default", plane="browser", db=db, limit=3)
+
+        assert [row["event_type"] for row in events] == ["event_2", "event_3", "event_4"]
+        assert [row["kind"] for row in artifacts] == ["artifact_2", "artifact_3", "artifact_4"]
     finally:
         db.close()
