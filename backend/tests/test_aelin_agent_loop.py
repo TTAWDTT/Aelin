@@ -170,6 +170,33 @@ class _FakeWaitingPlaneToolHub(_FakeToolHub):
         return {"ok": False, "error": f"unsupported:{action}"}
 
 
+class _FakeStalePlaneToolHub(_FakeToolHub):
+    def __init__(self) -> None:
+        super().__init__(sleep_seconds=0.0)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def tool_definitions(self) -> list[dict[str, Any]]:
+        return [
+            {"type": "function", "function": {"name": "plane", "parameters": {"type": "object"}}},
+        ]
+
+    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((str(name), dict(args)))
+        if str(name) != "plane":
+            return {"ok": False, "error": "unsupported"}
+        action = str(args.get("action") or "").strip().lower()
+        if action == "status":
+            return {
+                "ok": True,
+                "plane": "browser",
+                "task_id": "browser-task-stale",
+                "state": "closed",
+                "summary": "backing browser session became unavailable",
+                "stale_backing_task": True,
+            }
+        return {"ok": False, "error": f"unsupported:{action}"}
+
+
 def _fake_service(rounds: list[dict[str, Any]]):
     completions = _FakeCompletions(rounds)
     return SimpleNamespace(
@@ -697,6 +724,53 @@ def test_agent_loop_resumes_waiting_plane_with_status_probe_on_next_user_turn():
     assert result.answer == "恢复后的最终结果"
     assert result.total_calls == 1
     assert [call[1].get("action") for call in tool_hub.calls] == ["status"]
+
+
+def test_agent_loop_stops_supervising_when_plane_task_becomes_stale_and_closed():
+    rounds = [
+        {"content": "我先直接回答。"},
+        {"content": "真正最终结果"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakeStalePlaneToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=3,
+    )
+
+    result = loop.run(
+        query="继续刚才的网页任务",
+        memory_summary="m",
+        history_turns=[],
+        forced_tool_runs=[
+            {
+                "name": "plane",
+                "args": {"action": "status", "plane": "browser", "task_id": "browser-task-stale"},
+                "result": {
+                    "ok": True,
+                    "plane": "browser",
+                    "task_id": "browser-task-stale",
+                    "state": "running",
+                    "summary": "browser task running",
+                    "last_url": "https://example.com",
+                },
+            }
+        ],
+    )
+
+    assert result.ok is True
+    assert result.answer == "真正最终结果"
+    assert result.total_calls == 1
+    assert [call[1].get("action") for call in tool_hub.calls] == ["status"]
+    assert any(run.name == "plane" and str(run.result.get("state") or "") == "closed" for run in result.tool_runs)
 
 
 def test_agent_loop_plane_supervision_budget_is_separate_from_regular_tool_budget():

@@ -15,6 +15,7 @@ from app.services.aelin_planes import (
 )
 
 _BROWSER_PLANE_ACTIVE_STATES = {"queued", "running", "waiting_user", "blocked"}
+_STALE_BACKING_TASK_ERRORS = {"unknown_session_id", "plane_missing_session_id"}
 
 
 def _snapshot_artifact_payload(payload: dict[str, Any]) -> tuple[str, str]:
@@ -128,6 +129,40 @@ class PinchTabBrowserPlaneAdapter:
         self._workspace = str(workspace or "default")
         self._session_executor = session_executor
 
+    def _close_stale_backing_task(
+        self,
+        *,
+        task_id: str,
+        task: dict[str, Any],
+        action: str,
+        error: str,
+    ) -> dict[str, Any]:
+        close_plane_task(task_id, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db)
+        append_plane_event(
+            task_id,
+            event_type="stale_backing_task",
+            from_state=str(task.get("state") or ""),
+            to_state="closed",
+            summary=f"Backing browser session became unavailable during {action}",
+            payload={"action": action, "error": error[:180]},
+            user_id=self._user_id,
+            workspace=self._workspace,
+            plane="browser",
+            db=self._db,
+        )
+        stored = get_plane_task(task_id, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db) or {
+            **task,
+            "state": "closed",
+        }
+        visible = visible_plane_task_payload(task_id, stored)
+        return {
+            "ok": True,
+            "closed": True,
+            "stale_backing_task": True,
+            "stale_error": error[:180],
+            **visible,
+        }
+
     def delegate(self, *, goal: str) -> dict[str, Any]:
         status, result, error, latency_ms = self._session_executor(action="start", goal=goal)
         if not bool(result.get("ok")):
@@ -174,7 +209,12 @@ class PinchTabBrowserPlaneAdapter:
             return {"ok": False, "error": "plane_missing_session_id"}
         status, result, error, latency_ms = self._session_executor(action="status", session_id=backing_task_id)
         if not bool(result.get("ok")):
-            return {"ok": False, "error": str(result.get("error") or error or "plane_status_failed")}
+            failure = str(result.get("error") or error or "plane_status_failed")
+            if failure in _STALE_BACKING_TASK_ERRORS:
+                closed = self._close_stale_backing_task(task_id=task_id, task=task, action="status", error=failure)
+                closed["latency_ms"] = latency_ms
+                return closed
+            return {"ok": False, "error": failure}
         payload = _browser_plane_payload_from_session_result(goal=str(task.get("goal") or ""), result=result, existing_task=task)
         set_plane_task(task_id, payload, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db)
         append_plane_event(
@@ -220,7 +260,12 @@ class PinchTabBrowserPlaneAdapter:
             goal=next_goal,
         )
         if not bool(result.get("ok")):
-            return {"ok": False, "error": str(result.get("error") or error or "plane_continue_failed")}
+            failure = str(result.get("error") or error or "plane_continue_failed")
+            if failure in _STALE_BACKING_TASK_ERRORS:
+                closed = self._close_stale_backing_task(task_id=task_id, task=task, action="continue", error=failure)
+                closed["latency_ms"] = latency_ms
+                return closed
+            return {"ok": False, "error": failure}
         payload = _browser_plane_payload_from_session_result(goal=next_goal, result=result, existing_task=task)
         set_plane_task(task_id, payload, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db)
         append_plane_event(

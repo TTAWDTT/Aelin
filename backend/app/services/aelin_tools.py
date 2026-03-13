@@ -909,10 +909,16 @@ class AelinToolHub:
                 if active_task_id and _should_reuse_active_plane_task(active_task, goal=goal):
                     if active_state == "waiting_user":
                         status_result = adapter.status(task_id=active_task_id)
-                        if bool(status_result.get("ok")):
+                        if bool(status_result.get("ok")) and not bool(status_result.get("stale_backing_task")):
                             status_result["reused_existing_task"] = True
                             status_result["reused_action"] = "status"
                             return status_result
+                        if bool(status_result.get("stale_backing_task")):
+                            restarted = adapter.delegate(goal=goal[:800])
+                            if bool(restarted.get("ok")):
+                                restarted["restarted_after_stale_task"] = True
+                                restarted["previous_task_id"] = active_task_id
+                            return restarted
                         if _should_restart_plane_task_after_reuse_failure(status_result):
                             close_plane_task(
                                 active_task_id,
@@ -928,10 +934,16 @@ class AelinToolHub:
                             return restarted
                         return status_result
                     continued = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
-                    if bool(continued.get("ok")):
+                    if bool(continued.get("ok")) and not bool(continued.get("stale_backing_task")):
                         continued["reused_existing_task"] = True
                         continued["reused_action"] = "continue"
                         return continued
+                    if bool(continued.get("stale_backing_task")):
+                        restarted = adapter.delegate(goal=goal[:800])
+                        if bool(restarted.get("ok")):
+                            restarted["restarted_after_stale_task"] = True
+                            restarted["previous_task_id"] = active_task_id
+                        return restarted
                     if _should_restart_plane_task_after_reuse_failure(continued):
                         close_plane_task(
                             active_task_id,
