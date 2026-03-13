@@ -4,10 +4,11 @@ interface StreamCallbacks {
   onIntent?: (data: { intent_type: string; time_sensitivity?: string }) => void
   onPlan?: (data: { steps: string[] }) => void
   onToolStep?: (step: AelinToolStep) => void
+  onToolEvent?: (event: Record<string, unknown>) => void
   onCitations?: (citations: AelinCitation[]) => void
   onActions?: (actions: AelinAction[]) => void
   onReplyChunk?: (text: string) => void
-  onDone?: (data: { expression: string; memory_summary: string }) => void
+  onDone?: (data: { answer?: string; expression?: string; memory_summary?: string }) => void
   onError?: (error: { message: string; code?: string }) => void
 }
 
@@ -59,12 +60,40 @@ function parseSseChunks(chunkText: string, pending = ''): { events: ParsedSseEve
 
 function toEventPayload(raw: string): any {
   const text = String(raw || '').trim()
-  if (!text || text === '[DONE]') return null
+  if (!text) return null
+  if (text === '[DONE]') return { __streamDone: true }
   try {
     return JSON.parse(text)
   } catch {
     return { message: text }
   }
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    const raf =
+      typeof globalThis !== 'undefined' &&
+      typeof (globalThis as { requestAnimationFrame?: (callback: FrameRequestCallback) => number }).requestAnimationFrame === 'function'
+        ? (globalThis as { requestAnimationFrame: (callback: FrameRequestCallback) => number }).requestAnimationFrame.bind(globalThis)
+        : (callback: () => void) => setTimeout(callback, 0)
+    raf(() => resolve())
+  })
+}
+
+async function emitReplyChunked(text: string, onReplyChunk?: (text: string) => void): Promise<boolean> {
+  const raw = String(text || '')
+  if (!raw || !onReplyChunk) return false
+  const chunkSize = 28
+  const maxAnimatedChars = chunkSize * 10
+  const glyphs = Array.from(raw)
+  const animateByFrame = glyphs.length <= maxAnimatedChars
+  for (let idx = 0; idx < glyphs.length; idx += chunkSize) {
+    onReplyChunk(glyphs.slice(idx, idx + chunkSize).join(''))
+    if (animateByFrame && idx + chunkSize < glyphs.length) {
+      await nextAnimationFrame()
+    }
+  }
+  return true
 }
 
 export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, signal?: AbortSignal): () => void {
@@ -113,11 +142,14 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     const decoder = new TextDecoder()
     let buffer = ''
     let finalized = false
+    let hasStreamedReply = false
+    let hasStreamedTrace = false
 
     const emitDone = (payload?: any) => {
       if (finalized) return
       finalized = true
       callbacks.onDone?.({
+        answer: typeof payload?.answer === 'string' ? payload.answer : '',
         expression: String(payload?.expression || 'exp-04'),
         memory_summary: String(payload?.memory_summary || ''),
       })
@@ -133,60 +165,79 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       callbacks.onError?.({ message })
     }
 
-    const dispatch = (sseEvent: string, payload: any) => {
-      if (!payload) return
+    const dispatch = async (sseEvent: string, payload: any): Promise<string> => {
+      if (payload?.__streamDone) {
+        emitDone({})
+        return 'done'
+      }
       const envelopeType = String(payload?.type || payload?.event || '').trim()
       const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
       debugLog('event', { sseEvent, eventType })
 
+      if (!payload) {
+        if (eventType === 'done' || eventType === 'final') {
+          emitDone({})
+          return eventType
+        }
+        return eventType
+      }
+
       switch (eventType) {
         case 'intent':
           callbacks.onIntent?.(payload.data ?? payload)
-          return
+          return eventType
         case 'plan':
           callbacks.onPlan?.(payload.data ?? payload)
-          return
+          return eventType
         case 'trace':
         case 'tool_step':
+          hasStreamedTrace = true
           callbacks.onToolStep?.((payload.data?.step ?? payload.step ?? payload.data ?? payload) as AelinToolStep)
-          return
+          return eventType
+        case 'tool_event':
+          hasStreamedTrace = true
+          callbacks.onToolEvent?.((payload.data ?? payload) as Record<string, unknown>)
+          return eventType
         case 'citations':
           callbacks.onCitations?.((payload.data ?? payload) as AelinCitation[])
-          return
+          return eventType
         case 'actions':
           callbacks.onActions?.((payload.data ?? payload) as AelinAction[])
-          return
+          return eventType
         case 'reply': {
           const chunk = payload.data?.chunk ?? payload.chunk ?? payload.data ?? ''
+          if (String(chunk).length > 0) hasStreamedReply = true
           callbacks.onReplyChunk?.(String(chunk))
-          return
+          return eventType
         }
         case 'ping':
           // Keepalive heartbeat from backend; no UI mutation needed.
-          return
+          return eventType
         case 'final': {
           const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
-          if (Array.isArray(result.tool_trace)) {
+          if (!hasStreamedTrace && Array.isArray(result.tool_trace)) {
             for (const step of result.tool_trace) {
               callbacks.onToolStep?.(step as AelinToolStep)
+              await nextAnimationFrame()
             }
           }
           if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
           if (Array.isArray(result.actions)) callbacks.onActions?.(result.actions as AelinAction[])
-          if (typeof result.answer === 'string' && result.answer) {
-            callbacks.onReplyChunk?.(result.answer)
+          if (!hasStreamedReply && typeof result.answer === 'string' && result.answer) {
+            const streamed = await emitReplyChunked(String(result.answer), callbacks.onReplyChunk)
+            if (streamed) hasStreamedReply = true
           }
           emitDone(result)
-          return
+          return eventType
         }
         case 'error':
           emitError(payload.data ?? payload)
-          return
+          return eventType
         case 'done':
           emitDone(payload.data ?? payload)
-          return
+          return eventType
         default:
-          return
+          return eventType
       }
     }
 
@@ -199,7 +250,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       for (const evt of parsed.events) {
         const payload = toEventPayload(evt.data)
         try {
-          dispatch(evt.event, payload)
+          await dispatch(evt.event, payload)
         } catch (callbackError: any) {
           // Callback exceptions should not be misreported as transport failures.
           // eslint-disable-next-line no-console

@@ -3,6 +3,7 @@ import { Send, Square, Camera, Loader2, Paperclip, X, Crop, Monitor } from 'luci
 import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
+import { ATTACHMENT_ACCEPT_ATTR, resolveAttachmentVisual } from '../utils/attachmentVisual'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
 interface UploadingAttachmentItem {
   id: string
   name: string
+  mimeType: string
+  sizeBytes: number
 }
 
 export function ComposerBar({
@@ -192,6 +195,8 @@ export function ComposerBar({
     const uploadingItems: UploadingAttachmentItem[] = picked.map((file, index) => ({
       id: `${file.name}-${file.size}-${file.lastModified}-${Date.now()}-${index}`,
       name: file.name || `attachment-${index + 1}`,
+      mimeType: String(file.type || ''),
+      sizeBytes: Number(file.size || 0),
     }))
     setUploadingAttachments((prev) => [...prev, ...uploadingItems].slice(0, MAX_PENDING_ATTACHMENTS))
     inFlightUploadBatchesRef.current += 1
@@ -200,13 +205,25 @@ export function ComposerBar({
       .then((uploaded) => {
         setPendingAttachments((prev) => [...prev, ...uploaded].slice(0, MAX_PENDING_ATTACHMENTS))
         if (uploaded.length < picked.length) {
-          const uploadedNames = new Set(uploaded.map((item) => String(item.file_name || '').trim()).filter(Boolean))
-          const failedNames = picked
-            .map((file) => file.name || '')
-            .filter((name) => name && !uploadedNames.has(name))
-          if (failedNames.length > 0) {
-            toast(`部分附件上传失败：${failedNames.join('、')}`)
+          const uploadedNameCount = new Map<string, number>()
+          for (const item of uploaded) {
+            const name = String(item.file_name || '').trim()
+            if (!name) continue
+            uploadedNameCount.set(name, (uploadedNameCount.get(name) || 0) + 1)
           }
+          const failedNames: string[] = []
+          for (const file of picked) {
+            const name = String(file.name || '').trim()
+            const remain = uploadedNameCount.get(name) || 0
+            if (!name || remain <= 0) {
+              failedNames.push(name || '未命名文件')
+              continue
+            }
+            uploadedNameCount.set(name, remain - 1)
+          }
+          const preview = failedNames.slice(0, 3).join('、')
+          const suffix = failedNames.length > 3 ? ` 等 ${failedNames.length} 个` : ''
+          toast(`部分附件上传失败：${preview}${suffix}`)
         }
       })
       .catch((error) => {
@@ -250,43 +267,72 @@ export function ComposerBar({
             type="file"
             multiple
             className="hidden"
-            accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.doc,.docx,.ppt,.pptx,.xls,.xlsx"
+            accept={ATTACHMENT_ACCEPT_ATTR}
             onChange={handleAttachmentChange}
           />
 
           {(uploadingAttachments.length > 0 || pendingAttachments.length > 0) && (
-            <div className={cn('mb-2.5 flex flex-wrap items-center gap-1.5 max-[500px]:mb-2', isAttaching && 'pointer-events-none opacity-70')}>
-              {uploadingAttachments.map((attachment) => (
-                <span
-                  key={attachment.id}
-                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1 text-[11px] text-[var(--color-text)]"
-                  title={attachment.name}
-                >
-                  <span className="h-2.5 w-2.5 animate-pulse rounded-full border border-[var(--color-accent)] bg-[var(--color-accent-soft)]" />
-                  <span className="max-w-[220px] truncate">{attachment.name}</span>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">处理中</span>
-                </span>
-              ))}
-              {pendingAttachments.map((attachment, index) => (
-                <span
-                  key={`${attachment.attachment_id}-${attachment.file_name}-${index}`}
-                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2 py-1 text-[11px] text-[var(--color-text)]"
-                  title={attachment.file_name}
-                >
-                  <span className="h-2.5 w-2.5 rounded-full border border-[var(--color-border)] bg-[var(--color-text-muted)]/60" />
-                  <span className="max-w-[220px] truncate">{attachment.file_name}</span>
-                  <button
-                    type="button"
-                    onClick={() => removePendingAttachment(index)}
-                    disabled={isAttaching}
-                    className="rounded-full p-0.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
-                    aria-label={`移除附件 ${attachment.file_name}`}
-                    title="移除附件"
+            <div className={cn('mb-2.5 flex items-stretch gap-2 overflow-x-auto pb-1 max-[500px]:mb-2', isAttaching && 'pointer-events-none opacity-70')}>
+              {uploadingAttachments.map((attachment) => {
+                const visual = resolveAttachmentVisual(attachment.name, attachment.mimeType, attachment.sizeBytes)
+                return (
+                  <div
+                    key={attachment.id}
+                    className="flex w-[250px] shrink-0 min-w-0 items-center gap-2 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-3 py-2"
+                    title={attachment.name}
                   >
-                    <X size={11} />
-                  </button>
-                </span>
-              ))}
+                    <span
+                      className="h-4 w-4 shrink-0 rounded-full border-2 border-[var(--color-border-strong)] border-t-[var(--color-accent)] animate-spin"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{attachment.name}</span>
+                      <span className="block text-[11px] text-[var(--color-text-muted)]">上传中 · {visual.typeLabel} · {visual.sizeLabel}</span>
+                    </span>
+                  </div>
+                )
+              })}
+              {pendingAttachments.map((attachment, index) => {
+                const visual = resolveAttachmentVisual(attachment.file_name, attachment.mime_type, attachment.size_bytes)
+                return (
+                  <div
+                    key={`${attachment.attachment_id}-${attachment.file_name}-${index}`}
+                    className="group flex w-[280px] shrink-0 min-w-0 items-center gap-2 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-3 py-2"
+                    title={attachment.file_name}
+                  >
+                    <span
+                      className="relative inline-flex h-10 w-8 shrink-0"
+                      aria-hidden="true"
+                    >
+                      <span className="absolute inset-0 rounded-[11px] border-2 border-[var(--color-border)] bg-[var(--color-panel)]" />
+                      <span
+                        className="absolute left-[6px] top-[6px] h-[20px] w-[20px] rounded-[7px]"
+                        style={{ backgroundImage: `linear-gradient(135deg, ${visual.previewFrom}, ${visual.previewTo})` }}
+                      />
+                      <span
+                        className="absolute left-[-7px] bottom-[-3px] inline-flex h-[28px] w-[28px] items-center justify-center rounded-[9px] shadow-[0_3px_10px_rgba(13,57,163,0.25)]"
+                        style={{ backgroundImage: `linear-gradient(165deg, ${visual.badgeFrom}, ${visual.badgeTo})`, color: visual.badgeTextColor }}
+                      >
+                        <span className={cn('leading-none', visual.badgeTextClass)}>{visual.badgeText}</span>
+                      </span>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14px] font-medium text-[var(--color-text)]">{attachment.file_name}</span>
+                      <span className="block text-[12px] text-[var(--color-text-muted)]">{visual.typeLabel} · {visual.sizeLabel}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removePendingAttachment(index)}
+                      disabled={isAttaching}
+                      className="shrink-0 rounded-full p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
+                      aria-label={`移除附件 ${attachment.file_name}`}
+                      title="移除附件"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
 
@@ -402,3 +448,4 @@ export function ComposerBar({
     </div>
   )
 }
+

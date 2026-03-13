@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -377,7 +378,13 @@ class AelinToolHub:
         ]
         return self._tool_definitions_cache
 
-    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    def execute(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        progress_cb: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         tool = str(name or "").strip().lower()
         if tool == "context_get":
             return self._tool_context_get(args)
@@ -390,7 +397,7 @@ class AelinToolHub:
         if tool == "web_search":
             return self._tool_web_search(args)
         if tool == "attachment_search":
-            return self._tool_attachment_search(args)
+            return self._tool_attachment_search(args, progress_cb=progress_cb)
         if tool == "screen_get":
             return self._tool_screen_get(args)
         if tool == "pinchtab":
@@ -652,7 +659,12 @@ class AelinToolHub:
             fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
         )
 
-    def _tool_attachment_search(self, args: dict[str, Any]) -> dict[str, Any]:
+    def _tool_attachment_search(
+        self,
+        args: dict[str, Any],
+        *,
+        progress_cb: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()[:500]
         if not query:
             return _result_error("missing query")
@@ -674,6 +686,7 @@ class AelinToolHub:
             attachment_ids=attachment_ids,
             top_k=top_k,
             mode=mode,
+            progress_cb=progress_cb,
         )
         if not bool(result.get("ok")):
             return _result_error(str(result.get("error") or "attachment_search_failed"))

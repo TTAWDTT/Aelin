@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     # 建议通过环境变量显式覆盖，而不是在代码里硬编码过大的默认值。
     aelin_agent_loop_round_timeout_seconds: float = 40.0
     aelin_agent_loop_total_timeout_seconds: float = 120.0
+    aelin_agent_loop_round_max_tokens: int = 700
+    aelin_agent_loop_final_max_tokens: int = 1400
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
@@ -154,6 +156,7 @@ class Settings(BaseSettings):
     browser_tool_default_timeout_ms: int = 12_000
     browser_tool_idle_ttl_seconds: int = 900
     browser_tool_profile_dir: str = "./browser_data/agent_browser"
+    aelin_agent_loop_progress_min_visible_ms: int = 320
 
     # Optional Fernet key used to encrypt stored secrets (OAuth tokens, IMAP passwords).
     # Generate one via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
