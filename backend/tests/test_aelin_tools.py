@@ -792,3 +792,58 @@ def test_plane_status_preserves_waiting_user_when_session_snapshot_lacks_login_f
     assert status["state"] == "waiting_user"
     assert status["requires_user_input"] is True
     assert status["user_prompt"] == "请先完成登录"
+
+
+def test_plane_runtime_persists_events_and_artifacts(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+    engine, db = _create_db_session()
+
+    try:
+        hub = _hub(fake_web, llm_service=fake_service, db=db)  # type: ignore[arg-type]
+        _patch_pinchtab_runtime(monkeypatch, fake_client)
+        _PINCHTAB_SESSIONS.clear()
+        _PINCHTAB_USER_SESSIONS.clear()
+        aelin_planes._PLANE_TASKS.clear()
+        aelin_planes._PLANE_USER_TASKS.clear()
+
+        delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+        assert delegated["ok"] is True
+        task_id = str(delegated.get("task_id") or "")
+        assert task_id
+
+        status = hub.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+        assert status["ok"] is True
+
+        continued = hub.execute(
+            "plane",
+            {"action": "continue", "plane": "browser", "task_id": task_id, "goal": "继续读取文本"},
+        )
+        assert continued["ok"] is True
+
+        closed = hub.execute("plane", {"action": "close", "plane": "browser", "task_id": task_id})
+        assert closed["ok"] is True
+
+        events = aelin_planes.list_plane_events(task_id, user_id=1, workspace="default", plane="browser", db=db)
+        artifacts = aelin_planes.list_plane_artifacts(task_id, user_id=1, workspace="default", plane="browser", db=db)
+
+        event_types = [str(item.get("event_type") or "") for item in events]
+        assert "delegated" in event_types
+        assert "status_sync" in event_types
+        assert "continued" in event_types
+        assert "closed" in event_types
+
+        artifact_kinds = [str(item.get("kind") or "") for item in artifacts]
+        assert "page_text" in artifact_kinds
+        assert "page_location" in artifact_kinds
+    finally:
+        db.close()

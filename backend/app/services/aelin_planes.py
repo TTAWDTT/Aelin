@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import PlaneTask, PlaneTaskCheckpoint
+from app.models import PlaneTask, PlaneTaskArtifact, PlaneTaskCheckpoint, PlaneTaskEvent
 
 _PLANE_TASKS: dict[str, dict[str, Any]] = {}
 _PLANE_USER_TASKS: dict[tuple[int, str, str], str] = {}
@@ -107,6 +107,8 @@ def visible_plane_task_payload(task_id: str, payload: dict[str, Any]) -> dict[st
         "requires_user_input": bool(payload.get("requires_user_input")),
         "last_url": str(payload.get("last_url") or "")[:260],
         "last_text": str(payload.get("last_text") or payload.get("last_text_excerpt") or "")[:1200],
+        "artifact_count": max(0, int(payload.get("artifact_count") or 0)),
+        "event_count": max(0, int(payload.get("event_count") or 0)),
     }
 
 
@@ -285,6 +287,8 @@ def _plane_task_to_payload(row: PlaneTask) -> dict[str, Any]:
         "backing_task_id": str(row.backing_task_id or ""),
         "metadata_json": str(row.metadata_json or "{}"),
         "metadata": metadata,
+        "artifact_count": len(list(getattr(row, "artifacts", []) or [])),
+        "event_count": len(list(getattr(row, "events", []) or [])),
     }
     instance_id = str(metadata.get("instance_id") or "").strip()
     tab_id = str(metadata.get("tab_id") or "").strip()
@@ -293,6 +297,44 @@ def _plane_task_to_payload(row: PlaneTask) -> dict[str, Any]:
     if tab_id:
         payload["tab_id"] = tab_id
     return payload
+
+
+def _append_event_row(
+    session: Session,
+    *,
+    task_id: str,
+    event_type: str,
+    from_state: str = "",
+    to_state: str = "",
+    summary: str = "",
+    payload: dict[str, Any] | None = None,
+) -> PlaneTaskEvent:
+    row = PlaneTaskEvent(
+        task_id=_normalize_task_id(task_id),
+        event_type=" ".join(str(event_type or "").strip().split()).lower()[:32] or "status_sync",
+        from_state=_normalize_state(from_state) if from_state else None,
+        to_state=_normalize_state(to_state) if to_state else None,
+        summary=str(summary or "")[:500],
+        payload_json=_json_dumps(payload or {}),
+    )
+    session.add(row)
+    return row
+
+
+def _append_artifact_row(
+    session: Session,
+    *,
+    task_id: str,
+    kind: str,
+    content: dict[str, Any],
+) -> PlaneTaskArtifact:
+    row = PlaneTaskArtifact(
+        task_id=_normalize_task_id(task_id),
+        kind=" ".join(str(kind or "").strip().split()).lower()[:32] or "text",
+        content_json=_json_dumps(content),
+    )
+    session.add(row)
+    return row
 
 
 def set_plane_task(
@@ -331,6 +373,170 @@ def set_plane_task(
         row.closed_at = datetime.now(timezone.utc) if row.status == "closed" else None
         _sync_checkpoint(store_session, task_id=normalized_task_id, payload=stored)
         store_session.commit()
+    finally:
+        store_session.close()
+
+
+def append_plane_event(
+    task_id: str,
+    *,
+    event_type: str,
+    summary: str = "",
+    from_state: str = "",
+    to_state: str = "",
+    payload: dict[str, Any] | None = None,
+    user_id: int,
+    workspace: str,
+    plane: str,
+    db: Session | None = None,
+) -> None:
+    normalized_task_id = _normalize_task_id(task_id)
+    if not normalized_task_id:
+        return
+    store_session = _open_store_session(db)
+    if store_session is None:
+        payload_row = _PLANE_TASKS.get(normalized_task_id)
+        if isinstance(payload_row, dict):
+            payload_row["event_count"] = max(0, int(payload_row.get("event_count") or 0)) + 1
+        return
+    try:
+        row = store_session.get(PlaneTask, normalized_task_id)
+        if row is None:
+            return
+        owner_payload = _plane_task_to_payload(row)
+        if not task_belongs_to(task_id, owner_payload, user_id=user_id, workspace=workspace, plane=plane):
+            return
+        _append_event_row(
+            store_session,
+            task_id=normalized_task_id,
+            event_type=event_type,
+            from_state=from_state,
+            to_state=to_state,
+            summary=summary,
+            payload=payload,
+        )
+        store_session.commit()
+        refreshed = _plane_task_to_payload(row)
+        _store_memory_snapshot(task_id, refreshed, user_id=user_id, workspace=workspace, plane=plane)
+    finally:
+        store_session.close()
+
+
+def append_plane_artifact(
+    task_id: str,
+    *,
+    kind: str,
+    content: dict[str, Any],
+    user_id: int,
+    workspace: str,
+    plane: str,
+    db: Session | None = None,
+) -> None:
+    normalized_task_id = _normalize_task_id(task_id)
+    if not normalized_task_id:
+        return
+    store_session = _open_store_session(db)
+    if store_session is None:
+        payload_row = _PLANE_TASKS.get(normalized_task_id)
+        if isinstance(payload_row, dict):
+            payload_row["artifact_count"] = max(0, int(payload_row.get("artifact_count") or 0)) + 1
+        return
+    try:
+        row = store_session.get(PlaneTask, normalized_task_id)
+        if row is None:
+            return
+        owner_payload = _plane_task_to_payload(row)
+        if not task_belongs_to(task_id, owner_payload, user_id=user_id, workspace=workspace, plane=plane):
+            return
+        _append_artifact_row(store_session, task_id=normalized_task_id, kind=kind, content=content)
+        store_session.commit()
+        refreshed = _plane_task_to_payload(row)
+        _store_memory_snapshot(task_id, refreshed, user_id=user_id, workspace=workspace, plane=plane)
+    finally:
+        store_session.close()
+
+
+def list_plane_events(
+    task_id: str,
+    *,
+    user_id: int,
+    workspace: str,
+    plane: str,
+    db: Session | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    normalized_task_id = _normalize_task_id(task_id)
+    store_session = _open_store_session(db)
+    if store_session is None:
+        return []
+    try:
+        row = store_session.get(PlaneTask, normalized_task_id)
+        if row is None:
+            return []
+        owner_payload = _plane_task_to_payload(row)
+        if not task_belongs_to(task_id, owner_payload, user_id=user_id, workspace=workspace, plane=plane):
+            return []
+        rows = list(
+            store_session.scalars(
+                select(PlaneTaskEvent)
+                .where(PlaneTaskEvent.task_id == normalized_task_id)
+                .order_by(PlaneTaskEvent.created_at.asc(), PlaneTaskEvent.id.asc())
+                .limit(max(1, min(100, int(limit or 20))))
+            )
+        )
+        return [
+            {
+                "id": int(item.id),
+                "event_type": str(item.event_type or ""),
+                "from_state": str(item.from_state or ""),
+                "to_state": str(item.to_state or ""),
+                "summary": str(item.summary or ""),
+                "payload": _json_loads(str(item.payload_json or "{}")),
+                "created_at": item.created_at.isoformat() if getattr(item, "created_at", None) else "",
+            }
+            for item in rows
+        ]
+    finally:
+        store_session.close()
+
+
+def list_plane_artifacts(
+    task_id: str,
+    *,
+    user_id: int,
+    workspace: str,
+    plane: str,
+    db: Session | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    normalized_task_id = _normalize_task_id(task_id)
+    store_session = _open_store_session(db)
+    if store_session is None:
+        return []
+    try:
+        row = store_session.get(PlaneTask, normalized_task_id)
+        if row is None:
+            return []
+        owner_payload = _plane_task_to_payload(row)
+        if not task_belongs_to(task_id, owner_payload, user_id=user_id, workspace=workspace, plane=plane):
+            return []
+        rows = list(
+            store_session.scalars(
+                select(PlaneTaskArtifact)
+                .where(PlaneTaskArtifact.task_id == normalized_task_id)
+                .order_by(PlaneTaskArtifact.created_at.asc(), PlaneTaskArtifact.id.asc())
+                .limit(max(1, min(100, int(limit or 20))))
+            )
+        )
+        return [
+            {
+                "id": int(item.id),
+                "kind": str(item.kind or ""),
+                "content": _json_loads(str(item.content_json or "{}")),
+                "created_at": item.created_at.isoformat() if getattr(item, "created_at", None) else "",
+            }
+            for item in rows
+        ]
     finally:
         store_session.close()
 

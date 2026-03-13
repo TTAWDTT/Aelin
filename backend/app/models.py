@@ -291,6 +291,14 @@ class PlaneTask(Base):
         back_populates="task",
         cascade="all, delete-orphan",
     )
+    artifacts: Mapped[list["PlaneTaskArtifact"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    events: Mapped[list["PlaneTaskEvent"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
 
 
 class PlaneTaskCheckpoint(Base):
@@ -311,6 +319,41 @@ class PlaneTaskCheckpoint(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     task: Mapped["PlaneTask"] = relationship(back_populates="checkpoints")
+
+
+class PlaneTaskArtifact(Base):
+    __tablename__ = "plane_task_artifacts"
+    __table_args__ = (
+        Index("ix_plane_task_artifacts_task_created", "task_id", "created_at"),
+        Index("ix_plane_task_artifacts_kind_created", "kind", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("plane_tasks.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="text")
+    content_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    task: Mapped["PlaneTask"] = relationship(back_populates="artifacts")
+
+
+class PlaneTaskEvent(Base):
+    __tablename__ = "plane_task_events"
+    __table_args__ = (
+        Index("ix_plane_task_events_task_created", "task_id", "created_at"),
+        Index("ix_plane_task_events_type_created", "event_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("plane_tasks.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String(32), default="status_sync")
+    from_state: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    to_state: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    task: Mapped["PlaneTask"] = relationship(back_populates="events")
 
 
 class Contact(Base):

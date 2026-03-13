@@ -5,6 +5,8 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from app.services.aelin_planes import (
+    append_plane_artifact,
+    append_plane_event,
     close_plane_task,
     get_plane_task,
     new_plane_task_id,
@@ -13,6 +15,47 @@ from app.services.aelin_planes import (
 )
 
 _BROWSER_PLANE_ACTIVE_STATES = {"queued", "running", "waiting_user", "blocked"}
+
+
+def _snapshot_artifact_payload(payload: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(payload.get("last_text") or "").strip(),
+        str(payload.get("last_url") or "").strip(),
+    )
+
+
+def _persist_snapshot_artifacts(
+    *,
+    task_id: str,
+    current_payload: dict[str, Any],
+    previous_payload: dict[str, Any] | None,
+    user_id: int,
+    workspace: str,
+    db: Session | None,
+) -> None:
+    current_text, current_url = _snapshot_artifact_payload(current_payload)
+    previous_text, previous_url = _snapshot_artifact_payload(previous_payload or {})
+
+    if current_text and current_text != previous_text:
+        append_plane_artifact(
+            task_id,
+            kind="page_text",
+            content={"text": current_text},
+            user_id=user_id,
+            workspace=workspace,
+            plane="browser",
+            db=db,
+        )
+    if current_url and current_url != previous_url:
+        append_plane_artifact(
+            task_id,
+            kind="page_location",
+            content={"url": current_url},
+            user_id=user_id,
+            workspace=workspace,
+            plane="browser",
+            db=db,
+        )
 
 
 def _browser_plane_state_from_session_result(result: dict[str, Any]) -> str:
@@ -95,6 +138,30 @@ class PinchTabBrowserPlaneAdapter:
         task_id = new_plane_task_id("browser")
         payload = _browser_plane_payload_from_session_result(goal=goal, result=result)
         set_plane_task(task_id, payload, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db)
+        append_plane_event(
+            task_id,
+            event_type="delegated",
+            from_state="queued",
+            to_state=str(payload.get("state") or ""),
+            summary=str(payload.get("summary") or "") or f"Delegated goal: {goal}"[:500],
+            payload={
+                "goal": str(goal or "")[:800],
+                "session_status": status,
+                "latency_ms": latency_ms,
+            },
+            user_id=self._user_id,
+            workspace=self._workspace,
+            plane="browser",
+            db=self._db,
+        )
+        _persist_snapshot_artifacts(
+            task_id=task_id,
+            current_payload=payload,
+            previous_payload=None,
+            user_id=self._user_id,
+            workspace=self._workspace,
+            db=self._db,
+        )
         stored = get_plane_task(task_id, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db) or payload
         return {"ok": True, "latency_ms": latency_ms, **visible_plane_task_payload(task_id, stored)}
 
@@ -110,6 +177,30 @@ class PinchTabBrowserPlaneAdapter:
             return {"ok": False, "error": str(result.get("error") or error or "plane_status_failed")}
         payload = _browser_plane_payload_from_session_result(goal=str(task.get("goal") or ""), result=result, existing_task=task)
         set_plane_task(task_id, payload, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db)
+        append_plane_event(
+            task_id,
+            event_type="status_sync",
+            from_state=str(task.get("state") or ""),
+            to_state=str(payload.get("state") or ""),
+            summary=str(payload.get("summary") or "") or "Status synchronized from backing browser runtime",
+            payload={
+                "session_status": status,
+                "latency_ms": latency_ms,
+                "requires_user_input": bool(payload.get("requires_user_input")),
+            },
+            user_id=self._user_id,
+            workspace=self._workspace,
+            plane="browser",
+            db=self._db,
+        )
+        _persist_snapshot_artifacts(
+            task_id=task_id,
+            current_payload=payload,
+            previous_payload=task,
+            user_id=self._user_id,
+            workspace=self._workspace,
+            db=self._db,
+        )
         stored = get_plane_task(task_id, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db) or payload
         return {"ok": True, "latency_ms": latency_ms, **visible_plane_task_payload(task_id, stored)}
 
@@ -132,6 +223,30 @@ class PinchTabBrowserPlaneAdapter:
             return {"ok": False, "error": str(result.get("error") or error or "plane_continue_failed")}
         payload = _browser_plane_payload_from_session_result(goal=next_goal, result=result, existing_task=task)
         set_plane_task(task_id, payload, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db)
+        append_plane_event(
+            task_id,
+            event_type="continued",
+            from_state=str(task.get("state") or ""),
+            to_state=str(payload.get("state") or ""),
+            summary=str(payload.get("summary") or "") or f"Continued with goal: {next_goal}"[:500],
+            payload={
+                "goal": next_goal[:800],
+                "session_status": status,
+                "latency_ms": latency_ms,
+            },
+            user_id=self._user_id,
+            workspace=self._workspace,
+            plane="browser",
+            db=self._db,
+        )
+        _persist_snapshot_artifacts(
+            task_id=task_id,
+            current_payload=payload,
+            previous_payload=task,
+            user_id=self._user_id,
+            workspace=self._workspace,
+            db=self._db,
+        )
         stored = get_plane_task(task_id, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db) or payload
         return {"ok": True, "latency_ms": latency_ms, **visible_plane_task_payload(task_id, stored)}
 
@@ -143,6 +258,20 @@ class PinchTabBrowserPlaneAdapter:
         if backing_task_id:
             self._session_executor(action="close", session_id=backing_task_id)
         close_plane_task(task_id, user_id=self._user_id, workspace=self._workspace, plane="browser", db=self._db)
+        append_plane_event(
+            task_id,
+            event_type="closed",
+            from_state=str(task.get("state") or ""),
+            to_state="closed",
+            summary="Browser plane task closed",
+            payload={
+                "backing_task_id": backing_task_id,
+            },
+            user_id=self._user_id,
+            workspace=self._workspace,
+            plane="browser",
+            db=self._db,
+        )
         return {"ok": True, "task_id": task_id, "plane": "browser", "state": "closed", "closed": True}
 
     def has_active_task(self, *, task_id: str) -> bool:
