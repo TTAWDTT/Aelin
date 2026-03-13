@@ -129,6 +129,45 @@ class _FakePlaneToolHub(_FakeToolHub):
         return {"ok": False, "error": f"unsupported:{action}"}
 
 
+class _FakeWaitingPlaneToolHub(_FakeToolHub):
+    def __init__(self) -> None:
+        super().__init__(sleep_seconds=0.0)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def tool_definitions(self) -> list[dict[str, Any]]:
+        return [
+            {"type": "function", "function": {"name": "plane", "parameters": {"type": "object"}}},
+        ]
+
+    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((str(name), dict(args)))
+        if str(name) != "plane":
+            return {"ok": False, "error": "unsupported"}
+        action = str(args.get("action") or "").strip().lower()
+        if action == "delegate":
+            return {
+                "ok": True,
+                "plane": "browser",
+                "task_id": "browser-task-waiting",
+                "state": "waiting_user",
+                "summary": "waiting for login",
+                "user_prompt": "请先完成登录",
+                "requires_user_input": True,
+                "last_url": "https://x.com/i/flow/login",
+            }
+        if action == "status":
+            return {
+                "ok": True,
+                "plane": "browser",
+                "task_id": "browser-task-waiting",
+                "state": "completed",
+                "summary": "login completed",
+                "last_url": "https://x.com/home",
+                "last_text": "home page",
+            }
+        return {"ok": False, "error": f"unsupported:{action}"}
+
+
 def _fake_service(rounds: list[dict[str, Any]]):
     completions = _FakeCompletions(rounds)
     return SimpleNamespace(
@@ -576,3 +615,83 @@ def test_agent_loop_allows_continue_on_supervised_plane_task_before_terminal_ans
     assert result.answer == "继续后的最终结果"
     assert result.total_calls == 2
     assert [call[1].get("action") for call in tool_hub.calls] == ["delegate", "continue"]
+
+
+def test_agent_loop_stops_with_user_prompt_when_plane_enters_waiting_user():
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "p1", "name": "plane", "arguments": '{"action":"delegate","plane":"browser","goal":"登录 X 后继续"}'},
+            ]
+        },
+        {"content": "我先自己总结。"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakeWaitingPlaneToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=3,
+    )
+
+    result = loop.run(query="登录 X 后继续", memory_summary="m", history_turns=[])
+
+    assert result.ok is True
+    assert result.answer == "请先完成登录"
+    assert result.stop_reason == "plane_waiting_user"
+    assert [call[1].get("action") for call in tool_hub.calls] == ["delegate"]
+
+
+def test_agent_loop_resumes_waiting_plane_with_status_probe_on_next_user_turn():
+    rounds = [
+        {"content": "我已经登录好了"},
+        {"content": "恢复后的最终结果"},
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakeWaitingPlaneToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=3,
+    )
+
+    result = loop.run(
+        query="我已经登录好了",
+        memory_summary="m",
+        history_turns=[],
+        forced_tool_runs=[
+            {
+                "name": "plane",
+                "args": {"action": "status", "plane": "browser", "task_id": "browser-task-waiting"},
+                "result": {
+                    "ok": True,
+                    "plane": "browser",
+                    "task_id": "browser-task-waiting",
+                    "state": "waiting_user",
+                    "summary": "waiting for login",
+                    "user_prompt": "请先完成登录",
+                    "requires_user_input": True,
+                    "last_url": "https://x.com/i/flow/login",
+                },
+            }
+        ],
+    )
+
+    assert result.ok is True
+    assert result.answer == "恢复后的最终结果"
+    assert result.total_calls == 1
+    assert [call[1].get("action") for call in tool_hub.calls] == ["status"]

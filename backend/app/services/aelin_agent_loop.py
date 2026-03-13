@@ -200,6 +200,10 @@ class AelinAgentLoop:
         answer = ""
         pending_confirmation: dict[str, Any] | None = None
         supervised_plane_task = _supervised_plane_from_forced_tool_runs(forced_tool_runs)
+        waiting_plane_resume_probe_pending = bool(
+            isinstance(supervised_plane_task, dict)
+            and str(supervised_plane_task.get("state") or "") == "waiting_user"
+        )
 
         if self._provider == "rule_based":
             return _failed_loop_result(stop_reason="provider_rule_based", detail="provider_rule_based")
@@ -293,17 +297,19 @@ class AelinAgentLoop:
                 )
                 if active_plane is not None:
                     if str(active_plane.get("state") or "") == "waiting_user":
-                        answer = str(active_plane.get("user_prompt") or "").strip() or "当前网页任务需要你先完成人工操作后我再继续。"
-                        stop_reason = "plane_waiting_user"
-                        trace_steps.append(
-                            AgentLoopTraceStep(
-                                stage="agent_loop_plane",
-                                status="completed",
-                                detail=f"task={active_plane.get('task_id')}; state=waiting_user",
-                                count=1,
+                        if not waiting_plane_resume_probe_pending:
+                            answer = str(active_plane.get("user_prompt") or "").strip() or "当前网页任务需要你先完成人工操作后我再继续。"
+                            stop_reason = "plane_waiting_user"
+                            trace_steps.append(
+                                AgentLoopTraceStep(
+                                    stage="agent_loop_plane",
+                                    status="completed",
+                                    detail=f"task={active_plane.get('task_id')}; state=waiting_user",
+                                    count=1,
+                                )
                             )
-                        )
-                        break
+                            break
+                        waiting_plane_resume_probe_pending = False
                     decision = self._policy.evaluate(
                         name="plane",
                         args={
@@ -369,6 +375,11 @@ class AelinAgentLoop:
                             status=status,
                             result=result,
                         )
+                        if (
+                            isinstance(supervised_plane_task, dict)
+                            and str(supervised_plane_task.get("state") or "") == "waiting_user"
+                        ):
+                            waiting_plane_resume_probe_pending = False
                     continue
                 answer = text_out
                 stop_reason = "final_answer" if answer else "empty_answer"
@@ -452,6 +463,11 @@ class AelinAgentLoop:
                                 status=status,
                                 result=result,
                             )
+                            if (
+                                isinstance(supervised_plane_task, dict)
+                                and str(supervised_plane_task.get("state") or "") == "waiting_user"
+                            ):
+                                waiting_plane_resume_probe_pending = False
                         if pending_confirmation is None:
                             pending_confirmation = _extract_confirmation_request(
                                 tool_name=tool_name,
@@ -515,6 +531,11 @@ class AelinAgentLoop:
                         status=status,
                         result=result,
                     )
+                    if (
+                        isinstance(supervised_plane_task, dict)
+                        and str(supervised_plane_task.get("state") or "") == "waiting_user"
+                    ):
+                        waiting_plane_resume_probe_pending = False
                 if pending_confirmation is None:
                     pending_confirmation = _extract_confirmation_request(
                         tool_name=tool_name,

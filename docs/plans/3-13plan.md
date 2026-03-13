@@ -18,11 +18,11 @@
 
 ## 3. 将 waiting_user 做成正式暂停协议
 
-- [ ] 实现：当 plane 返回 `waiting_user` 时，agent loop 本轮停止继续推进该任务之外的动作
-- [ ] 实现：用户下一次回复时，默认视为继续当前 waiting task
-- [ ] 验收：Aelin 能清晰向用户说明所需配合事项
-- [ ] 验收：登录、验证码、人工确认等场景可以从 `waiting_user` 平滑恢复
-- [ ] 验收：测试覆盖 `waiting_user -> 用户补充输入 -> continue/status` 的恢复流程
+- [x] 实现：当 plane 返回 `waiting_user` 时，agent loop 本轮停止继续推进该任务之外的动作
+- [x] 实现：用户下一次回复时，默认视为继续当前 waiting task
+- [x] 验收：Aelin 能清晰向用户说明所需配合事项
+- [x] 验收：登录、验证码、人工确认等场景可以从 `waiting_user` 平滑恢复
+- [x] 验收：测试覆盖 `waiting_user -> 用户补充输入 -> continue/status` 的恢复流程
 
 ## 4. 为 plane supervision 分离独立预算
 
