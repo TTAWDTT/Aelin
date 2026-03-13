@@ -48,6 +48,8 @@ class _FakeCompletions:
 class _FakeToolHub:
     def __init__(self, *, sleep_seconds: float = 0.15) -> None:
         self.workspace = "default"
+        self.user_id = 1
+        self.db = None
         self._sleep_seconds = float(sleep_seconds)
         self.events: list[tuple[str, str, float]] = []
         self._lock = threading.Lock()
@@ -730,3 +732,66 @@ def test_agent_loop_plane_supervision_budget_is_separate_from_regular_tool_budge
     assert result.answer == "预算分离后的最终结果"
     assert result.total_calls == 2
     assert [call[1].get("action") for call in tool_hub.calls] == ["delegate", "status"]
+
+
+def test_agent_loop_injects_terminal_plane_runtime_context_into_followup_round(monkeypatch):
+    rounds = [
+        {
+            "tool_calls": [
+                {"id": "p1", "name": "plane", "arguments": '{"action":"delegate","plane":"browser","goal":"进入后台页面"}'},
+            ]
+        },
+        {
+            "tool_calls": [
+                {"id": "p2", "name": "plane", "arguments": '{"action":"continue","plane":"browser","task_id":"browser-task-1","goal":"继续读取详情"}'},
+            ]
+        },
+        {"content": "基于运行时结果的最终总结"},
+    ]
+    monkeypatch.setattr(
+        aelin_agent_loop_module,
+        "list_plane_events",
+        lambda *args, **kwargs: [
+            {"event_type": "continued", "summary": "continued into details"},
+            {"event_type": "status_sync", "summary": "task completed"},
+        ],
+    )
+    monkeypatch.setattr(
+        aelin_agent_loop_module,
+        "list_plane_artifacts",
+        lambda *args, **kwargs: [
+            {"kind": "page_location", "content": {"url": "https://example.com/details"}},
+            {"kind": "page_text", "content": {"text": "detail page text"}},
+        ],
+    )
+
+    service = _fake_service(rounds)
+    tool_hub = _FakePlaneToolHub()
+    tool_hub.db = object()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=3,
+            allow_write_tools=True,
+        ),
+        max_rounds=4,
+    )
+
+    result = loop.run(query="进入后台页面并继续读取详情", memory_summary="m", history_turns=[])
+
+    assert result.ok is True
+    assert result.answer == "基于运行时结果的最终总结"
+    third_call_messages = service._completions.calls[2]["messages"]
+    runtime_msgs = [
+        row
+        for row in third_call_messages
+        if row.get("role") == "system" and "[AELIN PLANE RUNTIME]" in str(row.get("content") or "")
+    ]
+    assert runtime_msgs
+    runtime_text = str(runtime_msgs[-1].get("content") or "")
+    assert "continued into details" in runtime_text
+    assert "detail page text" in runtime_text

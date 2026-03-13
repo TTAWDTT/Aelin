@@ -33,10 +33,10 @@
 
 ## 5. 让最终总结建立在 plane runtime 产物之上
 
-- [ ] 实现：最终回答优先基于 plane 的 `events`、`artifacts`、`state` 等 runtime 数据
-- [ ] 验收：plane 未完成时，Aelin 不会将阶段性进展误当作最终结论
-- [ ] 验收：plane 完成后，Aelin 的总结能反映最近的产物与状态变化
-- [ ] 验收：测试覆盖“有 artifacts/events 时优先基于其总结”的行为
+- [x] 实现：最终回答优先基于 plane 的 `events`、`artifacts`、`state` 等 runtime 数据
+- [x] 验收：plane 未完成时，Aelin 不会将阶段性进展误当作最终结论
+- [x] 验收：plane 完成后，Aelin 的总结能反映最近的产物与状态变化
+- [x] 验收：测试覆盖“有 artifacts/events 时优先基于其总结”的行为
 
 ## 6. 将 browser plane 继续上提为通用 plane runtime
 

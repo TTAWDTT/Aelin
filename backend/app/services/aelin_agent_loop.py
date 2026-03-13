@@ -8,6 +8,7 @@ from typing import Any
 from app.services.aelin_loop_actions import build_actions as _build_actions_from_runs
 from app.services.aelin_loop_logging import safe_preview
 from app.services.aelin_loop_message import build_initial_messages, extract_message_text
+from app.services.aelin_planes import list_plane_artifacts, list_plane_events
 from app.services.aelin_loop_round import request_round_response
 from app.services.aelin_loop_tools import (
     append_tool_result,
@@ -145,6 +146,88 @@ def _update_supervised_plane_task(
         return current
     snapshot = _plane_task_snapshot_from_payload(result)
     return snapshot if snapshot is not None else current
+
+
+def _build_plane_runtime_context_message(
+    *,
+    tool_hub: AelinToolHub,
+    result: dict[str, Any],
+) -> str:
+    snapshot = _plane_task_snapshot_from_payload(result)
+    if snapshot is None:
+        return ""
+    if str(snapshot.get("state") or "") not in _TERMINAL_PLANE_STATES:
+        return ""
+
+    task_id = str(snapshot.get("task_id") or "")
+    plane = str(snapshot.get("plane") or "browser")
+    workspace = str(getattr(tool_hub, "workspace", "default") or "default")
+    user_id = int(getattr(tool_hub, "user_id", 0) or 0)
+    db = getattr(tool_hub, "db", None)
+
+    event_lines: list[str] = []
+    artifact_lines: list[str] = []
+    if db is not None and user_id > 0:
+        try:
+            for row in list_plane_events(
+                task_id,
+                user_id=user_id,
+                workspace=workspace,
+                plane=plane,
+                db=db,
+                limit=6,
+            ):
+                event_type = str(row.get("event_type") or "").strip()
+                summary = str(row.get("summary") or "").strip()
+                event_lines.append(f"- {event_type}: {summary[:120] or 'event'}")
+        except Exception:
+            event_lines = []
+        try:
+            for row in list_plane_artifacts(
+                task_id,
+                user_id=user_id,
+                workspace=workspace,
+                plane=plane,
+                db=db,
+                limit=6,
+            ):
+                kind = str(row.get("kind") or "").strip()
+                content = row.get("content") if isinstance(row.get("content"), dict) else {}
+                preview = ""
+                if kind == "page_text":
+                    preview = str(content.get("text") or "").strip()[:200]
+                elif kind == "page_location":
+                    preview = str(content.get("url") or "").strip()[:200]
+                else:
+                    preview = str(content)[:200]
+                artifact_lines.append(f"- {kind}: {preview or 'artifact'}")
+        except Exception:
+            artifact_lines = []
+
+    if not event_lines:
+        event_lines = [f"- terminal_state: {str(snapshot.get('state') or '')}"]
+    if not artifact_lines:
+        fallback_artifacts: list[str] = []
+        last_url = str(result.get("last_url") or "").strip()
+        last_text = str(result.get("last_text") or "").strip()
+        if last_url:
+            fallback_artifacts.append(f"- page_location: {last_url[:200]}")
+        if last_text:
+            fallback_artifacts.append(f"- page_text: {last_text[:200]}")
+        artifact_lines = fallback_artifacts or ["- none"]
+
+    lines = [
+        "[AELIN PLANE RUNTIME]",
+        f"plane={plane}",
+        f"task_id={task_id}",
+        f"state={str(snapshot.get('state') or '')}",
+        f"summary={str(snapshot.get('summary') or '')[:260]}",
+        "events:",
+        *event_lines[:6],
+        "artifacts:",
+        *artifact_lines[:6],
+    ]
+    return "\n".join(lines).strip()
 
 
 class AelinAgentLoop:
@@ -381,6 +464,12 @@ class AelinAgentLoop:
                             status=status,
                             result=result,
                         )
+                        runtime_context = _build_plane_runtime_context_message(
+                            tool_hub=self._tool_hub,
+                            result=result,
+                        )
+                        if runtime_context:
+                            messages.append({"role": "system", "content": runtime_context})
                         if (
                             isinstance(supervised_plane_task, dict)
                             and str(supervised_plane_task.get("state") or "") == "waiting_user"
@@ -469,6 +558,12 @@ class AelinAgentLoop:
                                 status=status,
                                 result=result,
                             )
+                            runtime_context = _build_plane_runtime_context_message(
+                                tool_hub=self._tool_hub,
+                                result=result,
+                            )
+                            if runtime_context:
+                                messages.append({"role": "system", "content": runtime_context})
                             if (
                                 isinstance(supervised_plane_task, dict)
                                 and str(supervised_plane_task.get("state") or "") == "waiting_user"
@@ -537,6 +632,12 @@ class AelinAgentLoop:
                         status=status,
                         result=result,
                     )
+                    runtime_context = _build_plane_runtime_context_message(
+                        tool_hub=self._tool_hub,
+                        result=result,
+                    )
+                    if runtime_context:
+                        messages.append({"role": "system", "content": runtime_context})
                     if (
                         isinstance(supervised_plane_task, dict)
                         and str(supervised_plane_task.get("state") or "") == "waiting_user"
