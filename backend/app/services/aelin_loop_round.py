@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from typing import Any
 
 from app.services.aelin_loop_logging import safe_preview
@@ -72,22 +71,10 @@ def request_round_response(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     round_timeout_seconds: float,
-    round_max_tokens: int,
     round_index: int,
     trace_steps: list[AgentLoopTraceStep],
     retried_without_images: bool,
-    trace_emit_cb: Callable[[AgentLoopTraceStep], None] | None = None,
 ) -> tuple[Any | None, bool, str]:
-    max_tokens = max(220, int(round_max_tokens or 320))
-
-    def _append_trace(step: AgentLoopTraceStep) -> None:
-        trace_steps.append(step)
-        if trace_emit_cb is not None:
-            try:
-                trace_emit_cb(step)
-            except Exception:
-                pass
-
     try:
         _LOG.info(
             "agent_loop llm_request round=%s messages=%s tools=%s image_parts=%s timeout_s=%.1f",
@@ -101,7 +88,7 @@ def request_round_response(
             model=service.config.model,
             messages=messages,
             temperature=service.config.temperature,
-            max_tokens=max_tokens,
+            max_tokens=320,
             tools=tools,
             tool_choice="auto",
             timeout=round_timeout_seconds,
@@ -121,7 +108,7 @@ def request_round_response(
         )
         if can_retry_without_images:
             _LOG.info("agent_loop llm_retry_without_images round=%s", round_index)
-            _append_trace(
+            trace_steps.append(
                 AgentLoopTraceStep(
                     stage="agent_loop_round",
                     status="running",
@@ -134,7 +121,7 @@ def request_round_response(
                     model=service.config.model,
                     messages=messages,
                     temperature=service.config.temperature,
-                    max_tokens=max_tokens,
+                    max_tokens=320,
                     tools=tools,
                     tool_choice="auto",
                     timeout=round_timeout_seconds,
@@ -147,7 +134,7 @@ def request_round_response(
                     round_index,
                     str(retry_exc)[:200],
                 )
-                _append_trace(
+                trace_steps.append(
                     AgentLoopTraceStep(
                         stage="agent_loop_round",
                         status="failed",
@@ -156,7 +143,7 @@ def request_round_response(
                     )
                 )
                 return None, True, "llm_error"
-        _append_trace(
+        trace_steps.append(
             AgentLoopTraceStep(
                 stage="agent_loop_round",
                 status="failed",

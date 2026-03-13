@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-import hashlib
-import threading
-from collections.abc import Callable
 from typing import Any
 
 from app.services.aelin_loop_actions import build_actions as _build_actions_from_runs
@@ -13,8 +10,6 @@ from app.services.aelin_loop_logging import safe_preview
 from app.services.aelin_loop_message import build_initial_messages, extract_message_text
 from app.services.aelin_loop_round import request_round_response
 from app.services.aelin_loop_tools import (
-    _compact_tool_result_for_model,
-    _sanitize_tool_args_for_log,
     append_tool_result,
     build_tool_calls_payload,
     execute_tool_call,
@@ -105,75 +100,6 @@ def _extract_confirmation_request(
     return None
 
 
-def _json_compact(value: Any, *, limit: int = 220) -> str:
-    try:
-        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    except Exception:
-        text = str(value or "")
-    normalized = " ".join(str(text).split())
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[: max(0, limit - 1)]}…"
-
-
-def _tool_result_summary(result: dict[str, Any]) -> str:
-    if not isinstance(result, dict):
-        return _json_compact(result, limit=180)
-    for key in ("effect_summary", "summary", "message", "error", "hint"):
-        value = str(result.get(key) or "").strip()
-        if value:
-            return _json_compact(value, limit=180)
-    keys = [str(k) for k in list(result.keys())[:6]]
-    return _json_compact({"ok": bool(result.get("ok", True)), "keys": keys}, limit=180)
-
-
-def _emit_text_chunks(text: str, callback: Callable[[str], None] | None, *, chunk_size: int = 48) -> None:
-    if callback is None:
-        return
-    raw = str(text or "")
-    if not raw:
-        return
-    size = max(8, min(120, int(chunk_size or 48)))
-    for idx in range(0, len(raw), size):
-        piece = raw[idx : idx + size]
-        if not piece:
-            continue
-        try:
-            callback(piece)
-        except Exception:
-            break
-
-
-def _shared_prefix_length(left: str, right: str) -> int:
-    limit = min(len(left), len(right))
-    idx = 0
-    while idx < limit and left[idx] == right[idx]:
-        idx += 1
-    return idx
-
-
-def _split_tool_partial_messages(summary: str, *, max_part_len: int = 80) -> list[str]:
-    text = " ".join(str(summary or "").split())
-    if not text:
-        return []
-    segments: list[str] = []
-    cursor = 0
-    size = max(24, min(120, int(max_part_len or 80)))
-    while cursor < len(text):
-        remaining = text[cursor : cursor + size]
-        if len(remaining) < size:
-            segments.append(remaining)
-            break
-        split_idx = max(remaining.rfind("，"), remaining.rfind(","), remaining.rfind("。"), remaining.rfind(";"))
-        if split_idx < 24:
-            split_idx = size
-        part = text[cursor : cursor + split_idx].strip()
-        if part:
-            segments.append(part)
-        cursor += max(1, split_idx)
-    return segments[:6]
-
-
 class AelinAgentLoop:
     def __init__(
         self,
@@ -185,8 +111,6 @@ class AelinAgentLoop:
         max_rounds: int,
         round_timeout_seconds: float = 10.0,
         total_timeout_seconds: float = 12.0,
-        round_max_tokens: int = 320,
-        final_max_tokens: int = 320,
     ) -> None:
         self._service = service
         self._provider = str(provider or "").strip().lower()
@@ -195,8 +119,6 @@ class AelinAgentLoop:
         self._max_rounds = max(1, int(max_rounds or 1))
         self._round_timeout_seconds = max(2.0, float(round_timeout_seconds or 10.0))
         self._total_timeout_seconds = max(3.0, float(total_timeout_seconds or 12.0))
-        self._round_max_tokens = max(220, int(round_max_tokens or 320))
-        self._final_max_tokens = max(320, int(final_max_tokens or 320))
 
     def run(
         self,
@@ -208,9 +130,6 @@ class AelinAgentLoop:
         attachment_ids: list[int] | None = None,
         forced_intent: str = "",
         forced_tool_runs: list[dict[str, Any]] | None = None,
-        trace_cb: Callable[[AgentLoopTraceStep], None] | None = None,
-        reply_chunk_cb: Callable[[str], None] | None = None,
-        tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
         tool_skill_bodies: list[str] | None = None,
         cancel_token: Any | None = None,
     ) -> AelinAgentLoopResult:
@@ -233,178 +152,6 @@ class AelinAgentLoop:
         stop_reason = "unknown"
         answer = ""
         pending_confirmation: dict[str, Any] | None = None
-        tool_partial_seen: dict[str, int] = {}
-        tool_event_emit_lock = threading.Lock()
-        has_live_tool_feedback = tool_event_cb is not None or trace_cb is not None
-
-        def _emit_trace_step(step: AgentLoopTraceStep) -> None:
-            trace_steps.append(step)
-            if trace_cb is not None:
-                try:
-                    trace_cb(step)
-                except Exception:
-                    pass
-
-        def _emit_trace_only(step: AgentLoopTraceStep) -> None:
-            if trace_cb is not None:
-                try:
-                    trace_cb(step)
-                except Exception:
-                    pass
-
-        def _emit_trace(*, stage: str, status: str, detail: str = "", count: int = 0) -> None:
-            _emit_trace_step(
-                AgentLoopTraceStep(
-                    stage=str(stage or "agent_loop")[:80],
-                    status=str(status or "completed")[:24],
-                    detail=str(detail or "")[:240],
-                    count=max(0, int(count or 0)),
-                )
-            )
-
-        def _tool_stage(round_index: int, tool_name: str, tc_id: str) -> str:
-            safe_tool = str(tool_name or "tool").strip().lower()[:24] or "tool"
-            base_key = f"{round_index}:{safe_tool}:{tc_id}"
-            digest = hashlib.sha1(base_key.encode("utf-8", errors="ignore")).hexdigest()[:8]
-            return f"tool_call:{safe_tool}:{digest}"
-
-        def _forward_tool_event(payload: dict[str, Any]) -> None:
-            with tool_event_emit_lock:
-                raw_tool_name = str(payload.get("tool_name") or "tool").strip().lower()
-                raw_args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
-                safe_args = (
-                    _sanitize_tool_args_for_log(raw_tool_name, raw_args)
-                    if isinstance(raw_args, dict)
-                    else {}
-                )
-                safe_payload = dict(payload)
-                safe_payload["tool_name"] = raw_tool_name
-                safe_payload["args"] = safe_args
-                if tool_event_cb is not None:
-                    try:
-                        tool_event_cb(safe_payload)
-                    except Exception:
-                        pass
-                phase = str(safe_payload.get("phase") or "").strip().lower()
-                round_no = max(1, int(safe_payload.get("round_index") or 1))
-                tool_name = raw_tool_name
-                tc_id = str(safe_payload.get("tc_id") or "")
-                args = safe_args if isinstance(safe_args, dict) else {}
-                stage = str(safe_payload.get("stage") or "").strip() or _tool_stage(round_no, tool_name, tc_id)
-                if phase == "start":
-                    tool_partial_seen[stage] = 0
-                    _emit_trace(
-                        stage=stage,
-                        status="running",
-                        detail=f"round={round_no}; tool={tool_name}; args={_json_compact(args, limit=160)}",
-                        count=0,
-                    )
-                    return
-
-                if phase == "partial":
-                    message = str(safe_payload.get("message") or safe_payload.get("summary") or safe_payload.get("progress") or "").strip()
-                    current_action = str(safe_payload.get("current_action") or "").strip()
-                    progress_label = str(safe_payload.get("progress_label") or "").strip()
-                    tick = max(0, int(safe_payload.get("tick") or 0))
-                    elapsed_ms = max(0, int(safe_payload.get("elapsed_ms") or 0))
-                    found_count = max(0, int(safe_payload.get("found_count") or 0))
-                    processed = max(0, int(safe_payload.get("processed") or 0))
-                    matched = max(0, int(safe_payload.get("matched") or 0))
-                    total = max(0, int(safe_payload.get("total") or 0))
-                    if message or current_action or progress_label:
-                        tool_partial_seen[stage] = max(0, int(tool_partial_seen.get(stage, 0))) + 1
-                        detail_parts = [f"round={round_no}", f"tool={tool_name}"]
-                        if current_action:
-                            detail_parts.append(f"current_action={_json_compact(current_action, limit=120)}")
-                        if progress_label:
-                            detail_parts.append(f"progress_label={progress_label}")
-                        if tick > 0:
-                            detail_parts.append(f"tick={tick}")
-                        if found_count > 0:
-                            detail_parts.append(f"found_count={found_count}")
-                        if processed > 0:
-                            detail_parts.append(f"processed={processed}")
-                        if matched > 0:
-                            detail_parts.append(f"matched={matched}")
-                        if total > 0:
-                            detail_parts.append(f"total={total}")
-                        if elapsed_ms > 0:
-                            detail_parts.append(f"elapsed_ms={elapsed_ms}")
-                        if message:
-                            detail_parts.append(f"partial={_json_compact(message, limit=140)}")
-                        _emit_trace(
-                            stage=stage,
-                            status="running",
-                            detail="; ".join(detail_parts),
-                            count=0,
-                        )
-                    return
-                if phase == "end":
-                    result_payload = safe_payload.get("result") if isinstance(safe_payload.get("result"), dict) else {}
-                    status_raw = str(safe_payload.get("status") or "").strip().lower()
-                    status_norm = "completed" if status_raw == "completed" else "failed"
-                    latency_ms = max(0, int(safe_payload.get("latency_ms") or 0))
-                    summary_text = _tool_result_summary(result_payload)
-                    if status_norm == "completed" and int(tool_partial_seen.get(stage, 0) or 0) <= 0:
-                        for partial in _split_tool_partial_messages(summary_text):
-                            partial_payload = {
-                                "phase": "partial",
-                                "round_index": round_no,
-                                "tool_name": tool_name,
-                                "tc_id": tc_id,
-                                "args": args,
-                                "message": partial,
-                                "stage": stage,
-                            }
-                            if tool_event_cb is not None:
-                                try:
-                                    tool_event_cb(partial_payload)
-                                except Exception:
-                                    pass
-                    _emit_trace(
-                        stage=stage,
-                        status=status_norm,
-                        detail=(
-                            f"round={round_no}; tool={tool_name}; latency_ms={latency_ms}; "
-                            f"summary={summary_text}"
-                        ),
-                        count=1 if status_norm == "completed" else 0,
-                    )
-                    return
-                if phase == "blocked":
-                    reason = str(safe_payload.get("reason") or "policy_denied").strip()
-                    _emit_trace(
-                        stage=stage,
-                        status="failed",
-                        detail=f"round={round_no}; tool={tool_name}; blocked={reason}",
-                        count=0,
-                    )
-
-        def _make_partial_tool_event_cb(
-            *,
-            round_index: int,
-            tool_name: str,
-            tc_id: str,
-            args: dict[str, Any],
-            stage: str,
-        ) -> Callable[[dict[str, Any]], None] | None:
-            if not has_live_tool_feedback:
-                return None
-
-            def _partial_cb(partial_state: dict[str, Any]) -> None:
-                _forward_tool_event(
-                    {
-                        "phase": "partial",
-                        "round_index": round_index,
-                        "tool_name": tool_name,
-                        "tc_id": tc_id,
-                        "args": args,
-                        "stage": stage,
-                        **(partial_state if isinstance(partial_state, dict) else {}),
-                    }
-                )
-
-            return _partial_cb
 
         if self._provider == "rule_based":
             return _failed_loop_result(stop_reason="provider_rule_based", detail="provider_rule_based")
@@ -435,14 +182,14 @@ class AelinAgentLoop:
             tool_skill_bodies=tool_skill_bodies,
         )
         retried_without_images = False
-        _emit_trace(stage="agent_loop", status="running", detail="start", count=0)
+        trace_steps.append(AgentLoopTraceStep(stage="agent_loop", status="running", detail="start", count=0))
 
         loop_started = time.perf_counter()
         idle_rounds = 0
         for round_index in range(1, self._max_rounds + 1):
             if cancel_token is not None and getattr(cancel_token, "cancelled", False):
                 stop_reason = "client_disconnected"
-                _emit_trace_step(
+                trace_steps.append(
                     AgentLoopTraceStep(
                         stage="agent_loop_round",
                         status="failed",
@@ -454,28 +201,28 @@ class AelinAgentLoop:
             elapsed_total = time.perf_counter() - loop_started
             if elapsed_total >= self._total_timeout_seconds:
                 stop_reason = "total_timeout"
-                _emit_trace(
-                    stage="agent_loop_round",
-                    status="failed",
-                    detail=f"total_timeout={self._total_timeout_seconds:.1f}s",
-                    count=0,
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_round",
+                        status="failed",
+                        detail=f"total_timeout={self._total_timeout_seconds:.1f}s",
+                        count=0,
+                    )
                 )
                 break
 
             rounds = round_index
             usage.round_calls = 0
-            _emit_trace(stage="agent_loop_round", status="running", detail=f"round={round_index}", count=0)
+            trace_steps.append(AgentLoopTraceStep(stage="agent_loop_round", status="running", detail=f"round={round_index}", count=0))
             response, retried_without_images, llm_error_reason = request_round_response(
                 client=client,
                 service=self._service,
                 messages=messages,
                 tools=tools,
                 round_timeout_seconds=self._round_timeout_seconds,
-                round_max_tokens=self._round_max_tokens,
                 round_index=round_index,
                 trace_steps=trace_steps,
                 retried_without_images=retried_without_images,
-                trace_emit_cb=_emit_trace_only,
             )
             if llm_error_reason:
                 stop_reason = llm_error_reason
@@ -498,13 +245,14 @@ class AelinAgentLoop:
                     stop_reason,
                     safe_preview(answer),
                 )
-                _emit_trace(
-                    stage="agent_loop_round",
-                    status="completed" if answer else "failed",
-                    detail=f"round={round_index}; stop={stop_reason}",
-                    count=0,
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_round",
+                        status="completed" if answer else "failed",
+                        detail=f"round={round_index}; stop={stop_reason}",
+                        count=0,
+                    )
                 )
-                _emit_text_chunks(answer, reply_chunk_cb, chunk_size=48)
                 break
 
             tool_calls_payload = build_tool_calls_payload(raw_tool_calls)
@@ -521,12 +269,6 @@ class AelinAgentLoop:
                 tool_calls_payload=tool_calls_payload,
                 policy=self._policy,
                 usage=usage,
-            )
-            _emit_trace(
-                stage="tool_scheduler",
-                status="completed" if planned_calls else "skipped",
-                detail=f"round={round_index}; planned_calls={len(planned_calls)}; reached_limit={1 if reached_total_limit else 0}",
-                count=len(planned_calls),
             )
             pending_reads: list[dict[str, Any]] = []
 
@@ -550,45 +292,11 @@ class AelinAgentLoop:
                             messages=messages,
                             tool_runs=tool_runs,
                             trace_steps=trace_steps,
-                            tool_event_cb=_forward_tool_event,
-                            trace_emit_cb=_emit_trace_only,
-                        )
-                        call_stage = _tool_stage(round_index, tool_name, tc_id)
-                        _forward_tool_event(
-                            {
-                                "phase": "start",
-                                "round_index": round_index,
-                                "tool_name": tool_name,
-                                "tc_id": tc_id,
-                                "args": args,
-                                "stage": call_stage,
-                            }
                         )
                         status, result, error, latency_ms = execute_tool_call(
                             tool_hub=self._tool_hub,
                             tool_name=tool_name,
                             args=args,
-                            partial_cb=_make_partial_tool_event_cb(
-                                round_index=round_index,
-                                tool_name=tool_name,
-                                tc_id=tc_id,
-                                args=args,
-                                stage=call_stage,
-                            ),
-                        )
-                        _forward_tool_event(
-                            {
-                                "phase": "end",
-                                "round_index": round_index,
-                                "tool_name": tool_name,
-                                "tc_id": tc_id,
-                                "args": args,
-                                "status": status,
-                                "result": result,
-                                "error": error,
-                                "latency_ms": latency_ms,
-                                "stage": call_stage,
-                            }
                         )
                         if append_tool_result(
                             round_index=round_index,
@@ -603,7 +311,6 @@ class AelinAgentLoop:
                             messages=messages,
                             tool_runs=tool_runs,
                             trace_steps=trace_steps,
-                            trace_emit_cb=_emit_trace_only,
                         ):
                             successful_calls += 1
                         if pending_confirmation is None:
@@ -614,12 +321,7 @@ class AelinAgentLoop:
                                 query=query,
                             )
                         continue
-                    pending_reads.append(
-                        {
-                            **planned,
-                            "stage": _tool_stage(round_index, tool_name, tc_id),
-                        }
-                    )
+                    pending_reads.append(planned)
                     continue
 
                 successful_calls += flush_pending_reads(
@@ -629,32 +331,8 @@ class AelinAgentLoop:
                     messages=messages,
                     tool_runs=tool_runs,
                     trace_steps=trace_steps,
-                    tool_event_cb=_forward_tool_event,
-                    trace_emit_cb=_emit_trace_only,
                 )
                 if not allowed:
-                    call_stage = _tool_stage(round_index, tool_name, tc_id)
-                    _forward_tool_event(
-                        {
-                            "phase": "start",
-                            "round_index": round_index,
-                            "tool_name": tool_name,
-                            "tc_id": tc_id,
-                            "args": args,
-                            "stage": call_stage,
-                        }
-                    )
-                    _forward_tool_event(
-                        {
-                            "phase": "blocked",
-                            "round_index": round_index,
-                            "tool_name": tool_name,
-                            "tc_id": tc_id,
-                            "args": args,
-                            "reason": f"policy:{reason}",
-                            "stage": call_stage,
-                        }
-                    )
                     if append_tool_result(
                         round_index=round_index,
                         tool_name=tool_name,
@@ -668,50 +346,14 @@ class AelinAgentLoop:
                         messages=messages,
                         tool_runs=tool_runs,
                         trace_steps=trace_steps,
-                        trace_emit_cb=_emit_trace_only,
                     ):
                         successful_calls += 1
                     continue
 
-                call_stage = _tool_stage(round_index, tool_name, tc_id)
-                _forward_tool_event(
-                    {
-                        "phase": "start",
-                        "round_index": round_index,
-                        "tool_name": tool_name,
-                        "tc_id": tc_id,
-                        "args": args,
-                        "stage": call_stage,
-                    }
-                )
                 status, result, error, latency_ms = execute_tool_call(
                     tool_hub=self._tool_hub,
                     tool_name=tool_name,
                     args=args,
-                    partial_cb=_make_partial_tool_event_cb(
-                        round_index=round_index,
-                        tool_name=tool_name,
-                        tc_id=tc_id,
-                        args=args,
-                        stage=call_stage,
-                    ),
-                )
-                _forward_tool_event(
-                    {
-                        "phase": "end",
-                        "round_index": round_index,
-                        "tool_name": tool_name,
-                        "tc_id": tc_id,
-                        "args": args,
-                        "status": status,
-                        "result": _compact_tool_result_for_model(
-                            tool_name,
-                            result if isinstance(result, dict) else {},
-                        ),
-                        "error": error,
-                        "latency_ms": latency_ms,
-                        "stage": call_stage,
-                    }
                 )
                 if append_tool_result(
                     round_index=round_index,
@@ -726,7 +368,6 @@ class AelinAgentLoop:
                     messages=messages,
                     tool_runs=tool_runs,
                     trace_steps=trace_steps,
-                    trace_emit_cb=_emit_trace_only,
                 ):
                     successful_calls += 1
                 if pending_confirmation is None:
@@ -739,11 +380,13 @@ class AelinAgentLoop:
 
             if pending_confirmation is not None:
                 stop_reason = "requires_confirmation"
-                _emit_trace(
-                    stage="agent_loop_confirm",
-                    status="completed",
-                    detail=f"tool={pending_confirmation.get('tool')}; kind={pending_confirmation.get('confirm_kind') or '-'}",
-                    count=1,
+                trace_steps.append(
+                    AgentLoopTraceStep(
+                        stage="agent_loop_confirm",
+                        status="completed",
+                        detail=f"tool={pending_confirmation.get('tool')}; kind={pending_confirmation.get('confirm_kind') or '-'}",
+                        count=1,
+                    )
                 )
                 break
             successful_calls += flush_pending_reads(
@@ -753,19 +396,19 @@ class AelinAgentLoop:
                 messages=messages,
                 tool_runs=tool_runs,
                 trace_steps=trace_steps,
-                tool_event_cb=_forward_tool_event,
-                trace_emit_cb=_emit_trace_only,
             )
 
             if successful_calls <= 0:
                 idle_rounds += 1
             else:
                 idle_rounds = 0
-            _emit_trace(
-                stage="agent_loop_round",
-                status="completed",
-                detail=f"round={round_index}; calls={usage.round_calls}; successful={successful_calls}",
-                count=usage.round_calls,
+            trace_steps.append(
+                AgentLoopTraceStep(
+                    stage="agent_loop_round",
+                    status="completed",
+                    detail=f"round={round_index}; calls={usage.round_calls}; successful={successful_calls}",
+                    count=usage.round_calls,
+                )
             )
             if reached_total_limit or usage.total_calls >= self._policy.max_tool_calls:
                 stop_reason = "total_call_limit"
@@ -784,30 +427,21 @@ class AelinAgentLoop:
             elif stop_reason == "total_timeout":
                 answer = "我已达到本轮时限，先返回阶段性结论。你可以缩小问题范围后我继续执行。"
             elif usage.total_calls > 0 and stop_reason in {"total_call_limit", "no_progress", "max_rounds"}:
-                synthesized = self._final_answer(
-                    messages,
-                    query=query,
-                    reply_chunk_cb=reply_chunk_cb,
-                    fallback_on_error=False,
-                )
-                if synthesized:
-                    answer = synthesized
-                    stop_reason = "finalized_after_tools"
-                else:
-                    answer = self._partial_answer_from_runs(tool_runs=tool_runs, query=query)
-                    stop_reason = "partial_result"
-                    _emit_text_chunks(answer, reply_chunk_cb, chunk_size=64)
+                answer = self._partial_answer_from_runs(tool_runs=tool_runs, query=query)
+                stop_reason = "partial_result"
             else:
-                answer = self._final_answer(messages, query=query, reply_chunk_cb=reply_chunk_cb)
+                answer = self._final_answer(messages, query=query)
                 if answer and stop_reason == "empty_answer":
                     stop_reason = "finalized_after_tools"
 
         actions = self._build_actions(tool_runs)
-        _emit_trace(
-            stage="agent_loop",
-            status="completed" if answer else "failed",
-            detail=f"stop={stop_reason}; rounds={rounds}; calls={usage.total_calls}",
-            count=usage.total_calls,
+        trace_steps.append(
+            AgentLoopTraceStep(
+                stage="agent_loop",
+                status="completed" if answer else "failed",
+                detail=f"stop={stop_reason}; rounds={rounds}; calls={usage.total_calls}",
+                count=usage.total_calls,
+            )
         )
         _LOG.info(
             "agent_loop end stop=%s rounds=%s total_calls=%s write_calls=%s answer=%s",
@@ -830,28 +464,7 @@ class AelinAgentLoop:
             error="" if answer else "empty_answer",
         )
 
-    def _final_answer(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        query: str,
-        reply_chunk_cb: Callable[[str], None] | None = None,
-        fallback_on_error: bool = True,
-    ) -> str:
-        stream_text_parts: list[str] = []
-
-        def _emit_delta_only(text: str) -> None:
-            if reply_chunk_cb is None:
-                return
-            raw = str(text or "")
-            if not raw:
-                return
-            already_sent = "".join(stream_text_parts)
-            shared = _shared_prefix_length(already_sent, raw)
-            if shared >= len(raw):
-                return
-            _emit_text_chunks(raw[shared:], reply_chunk_cb, chunk_size=64)
-
+    def _final_answer(self, messages: list[dict[str, Any]], *, query: str) -> str:
         try:
             final_messages = list(messages)
             final_messages.append(
@@ -861,39 +474,11 @@ class AelinAgentLoop:
                 }
             )
             _LOG.info("agent_loop final_answer_request messages=%s", len(final_messages))
-            try:
-                stream_resp = self._service.client.chat.completions.create(
-                    model=self._service.config.model,
-                    messages=final_messages,
-                    temperature=self._service.config.temperature,
-                    max_tokens=self._final_max_tokens,
-                    timeout=self._round_timeout_seconds,
-                    stream=True,
-                )
-                for chunk in stream_resp:
-                    choice = chunk.choices[0] if getattr(chunk, "choices", None) else None
-                    delta = getattr(choice, "delta", None) if choice else None
-                    piece = extract_message_text(getattr(delta, "content", ""))
-                    if not piece:
-                        continue
-                    stream_text_parts.append(piece)
-                    if reply_chunk_cb is not None:
-                        try:
-                            reply_chunk_cb(piece)
-                        except Exception:
-                            pass
-                stream_text = "".join(stream_text_parts).strip()
-                if stream_text:
-                    _LOG.info("agent_loop final_answer_response text=%s", safe_preview(stream_text))
-                    return stream_text
-            except Exception as stream_exc:
-                _LOG.warning("agent_loop final_answer_stream_failed error=%s", str(stream_exc)[:200])
-
             response = self._service.client.chat.completions.create(
                 model=self._service.config.model,
                 messages=final_messages,
                 temperature=self._service.config.temperature,
-                max_tokens=self._final_max_tokens,
+                max_tokens=320,
                 timeout=self._round_timeout_seconds,
             )
             choice = response.choices[0] if getattr(response, "choices", None) else None
@@ -901,15 +486,10 @@ class AelinAgentLoop:
             text_out = extract_message_text(getattr(message, "content", ""))
             if text_out:
                 _LOG.info("agent_loop final_answer_response text=%s", safe_preview(text_out))
-                _emit_delta_only(text_out)
                 return text_out
         except Exception as exc:
             _LOG.warning("agent_loop final_answer_failed error=%s", str(exc)[:200])
-        if not fallback_on_error:
-            return ""
-        fallback = self._fallback_answer(query=query)
-        _emit_delta_only(fallback)
-        return fallback
+        return self._fallback_answer(query=query)
 
     def _fallback_answer(self, *, query: str) -> str:
         safe_q = str(query or "").strip()
