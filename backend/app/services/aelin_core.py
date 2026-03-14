@@ -576,14 +576,8 @@ def _build_actions(
     *,
     has_todos: bool,
 ) -> list[AelinAction]:
-    actions: list[AelinAction] = [
-        AelinAction(
-            kind="open_desk",
-            title="在 Desk 查看可视化证据",
-            detail="打开 /desk，在卡片与时间线里核验上下文",
-            payload={"path": "/desk", "query": query.strip()[:180]},
-        ),
-    ]
+    _ = has_todos
+    actions: list[AelinAction] = []
     if citations:
         actions.insert(
             0,
@@ -593,15 +587,6 @@ def _build_actions(
                 detail=f"查看：{citations[0].title}",
                 payload={"message_id": str(citations[0].message_id), "query": query.strip()[:180]},
             ),
-        )
-    if has_todos:
-        actions.append(
-            AelinAction(
-                kind="open_todos",
-                title="查看待办跟进",
-                detail="在 Desk 的 Agent 面板里处理待办",
-                payload={"path": "/desk", "query": query.strip()[:180]},
-            )
         )
     return actions[:4]
 
@@ -910,23 +895,6 @@ def _aelin_chat_impl(
         )
         expression = _pick_expression(payload.query, answer)
         actions: list[AelinAction] = []
-        if media_save_state.get("written"):
-            actions.append(
-                AelinAction(
-                    kind="open_desk",
-                    title="打开 Aelinの日记",
-                    detail=str(media_save_state.get("diary_path") or "")[:220],
-                    payload={"workspace": _normalize_workspace(payload.workspace)},
-                )
-            )
-        actions.append(
-            AelinAction(
-                kind="open_desk",
-                title="在 Desk 查看日记上下文",
-                detail="打开 /desk 检索刚刚沉淀的摘要",
-                payload={"path": "/desk", "query": media_result.title[:120]},
-            )
-        )
         chat_diary_media = _save_chat_diary_entry(
             db,
             user_id=current_user.id,
@@ -935,15 +903,6 @@ def _aelin_chat_impl(
             answer=answer,
             citations=[],
         )
-        if bool(chat_diary_media.get("written")):
-            actions.append(
-                AelinAction(
-                    kind="open_desk",
-                    title="打开聊天日记",
-                    detail=str(chat_diary_media.get("path") or "")[:220],
-                    payload={"workspace": _normalize_workspace(payload.workspace)},
-                )
-            )
         try:
             _memory.update_after_turn(
                 db,
@@ -1613,18 +1572,6 @@ def _aelin_chat_impl(
             )
             if isinstance(first_diary, dict):
                 diary_result = first_diary.get("result") if isinstance(first_diary.get("result"), dict) else {}
-                first_item = (diary_result.get("items") or [None])[0] if isinstance(diary_result.get("items"), list) else None
-                if isinstance(first_item, dict):
-                    detail_path = str(first_item.get("path") or "").strip()[:220]
-                    if detail_path:
-                        structured_tool_actions.append(
-                            AelinAction(
-                                kind="open_desk",
-                                title="查看工具命中的日记",
-                                detail=detail_path,
-                                payload={"workspace": payload.workspace, "path": detail_path},
-                            )
-                        )
     else:
         add_trace("structured_tools", status="skipped", detail="query not tool-oriented", count=0)
 
@@ -2191,44 +2138,6 @@ def _aelin_chat_impl(
         citations,
         has_todos=bool(todo_titles),
     )]
-    if media_result is not None:
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_desk",
-                title="查看 Aelinの日记摘要",
-                detail=(
-                    str(media_save_state.get("diary_path") or "").strip()[:220]
-                    if media_save_state.get("written")
-                    else f"{media_result.platform} 摘要已生成（未落盘）"
-                ),
-                payload={"workspace": payload.workspace, "query": media_result.title[:120]},
-            ),
-        )
-    if bool(insight_write_result.get("written")):
-        target_id = int(insight_write_result.get("target_id") or 0)
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_desk",
-                title="已沉淀长期洞察",
-                detail=str(insight_write_result.get("path") or "").strip()[:220],
-                payload={
-                    "target_id": str(target_id) if target_id > 0 else "",
-                    "workspace": payload.workspace,
-                },
-            ),
-        )
-    if bool(parallel_draft_commit.get("written")):
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_desk",
-                title="查看并行记忆草稿",
-                detail=str(parallel_draft_commit.get("path") or "").strip()[:220],
-                payload={"workspace": payload.workspace, "query": payload.query[:120]},
-            ),
-        )
 
     response = AelinChatResponse(
         answer=answer,

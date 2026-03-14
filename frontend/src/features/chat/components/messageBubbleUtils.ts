@@ -34,15 +34,9 @@ export function formatMessageTime(timestamp: number) {
 
 export function resolveActionHref(action: AelinAction): string {
   const kind = String(action.kind || '').trim().toLowerCase()
-  if (kind === 'open_desk' || kind === 'open_todos') {
-    return '/desk'
-  }
   if (kind === 'open_settings') {
     const payload = action.payload || {}
     return String(payload.path || '').trim() || '/settings'
-  }
-  if (kind === 'open_message') {
-    return '/desk'
   }
   return ''
 }
