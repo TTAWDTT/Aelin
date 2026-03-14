@@ -199,7 +199,6 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
 
     if tool in {
         "context_get",
-        "diary",
         "profile",
         "device",
         "pinchtab",

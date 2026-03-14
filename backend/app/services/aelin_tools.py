@@ -22,7 +22,6 @@ from app.services.device_center import (
     device_status_snapshot,
     open_desktop_external_url,
 )
-from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_launcher import ensure_pinchtab_started
@@ -31,8 +30,6 @@ from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 
 _TOOL_KEYWORDS = (
-    "日记",
-    "diary",
     "profile",
     "画像",
     "device",
@@ -139,7 +136,6 @@ class AelinToolHub:
         user_id: int,
         workspace: str,
         memory_service: AgentMemoryService,
-        file_memory_bridge: FileMemoryBridge,
         web_search_service: WebSearchService | None = None,
         attachment_service: AelinAttachmentService | None = None,
         available_attachment_ids: list[int] | None = None,
@@ -149,7 +145,6 @@ class AelinToolHub:
         self.user_id = int(user_id)
         self.workspace = _normalize_workspace(workspace)
         self._memory = memory_service
-        self._file_memory = file_memory_bridge
         self._web_search = web_search_service or WebSearchService()
         self._attachments = attachment_service or get_aelin_attachment_service()
         self._available_attachment_ids = normalize_positive_ints(available_attachment_ids, cap=20)
@@ -174,23 +169,6 @@ class AelinToolHub:
                             "max_items": {"type": "integer", "minimum": 1, "maximum": 20},
                         },
                         "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "diary",
-                    "description": "检索或读取 Aelin 的日记文件记忆。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {"type": "string", "enum": ["search", "read"]},
-                            "query": {"type": "string"},
-                            "path": {"type": "string"},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-                        },
-                        "required": ["action"],
                     },
                 },
             },
@@ -381,8 +359,6 @@ class AelinToolHub:
         tool = str(name or "").strip().lower()
         if tool == "context_get":
             return self._tool_context_get(args)
-        if tool == "diary":
-            return self._tool_diary(args)
         if tool == "profile":
             return self._tool_profile(args)
         if tool == "device":
@@ -418,48 +394,6 @@ class AelinToolHub:
             focus_items=focus_items,
             todos=todos,
         )
-
-    def _tool_diary(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "search").strip().lower()
-        if action == "read":
-            path = str(args.get("path") or "").strip()
-            if not path:
-                return _result_error("missing path")
-            row = self._file_memory.read_memory_markdown(
-                user_id=self.user_id,
-                workspace=self.workspace,
-                path=path,
-            )
-            if not row:
-                return _result_error("not found")
-            return _result_ok(
-                title=str(row.get("title") or ""),
-                path=str(row.get("path") or ""),
-                content=str(row.get("content") or "")[:4000],
-                entry_kind=str(row.get("entry_kind") or ""),
-            )
-
-        query = str(args.get("query") or "").strip()[:240]
-        limit = _safe_int(args.get("limit"), 8, low=1, high=20)
-        hits = self._file_memory.search(
-            user_id=self.user_id,
-            workspace=self.workspace,
-            query=query,
-            limit=limit,
-            include_diary=True,
-        )
-        items = [
-            {
-                "title": str(it.title),
-                "path": str(it.path),
-                "preview": str(it.preview)[:220],
-                "score": float(it.score),
-                "entry_kind": str(it.entry_kind),
-                "topic_path": str(it.topic_path),
-            }
-            for it in hits[:limit]
-        ]
-        return _result_items(items)
 
     def _tool_profile(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "get").strip().lower()
@@ -1103,7 +1037,7 @@ def run_aelin_structured_tools(
             "role": "system",
             "content": (
                 "You are a tool planner for Aelin. "
-                "Only call tools when the user query clearly needs memory/profile/diary/device/screen/browser/attachment operations. "
+                "Only call tools when the user query clearly needs memory/profile/device/screen/browser/attachment operations. "
                 "At most call 2 tools. If no tool is needed, respond directly without tool calls."
             ),
         },
@@ -1304,7 +1238,7 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
             note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
         elif name == "attachment_search":
             note = f"total={result.get('total')}, attachments={','.join([str(x) for x in list(result.get('attachment_ids') or [])[:6]])}"
-        elif name in {"diary", "profile", "context_get", "device", "screen_get"}:
+        elif name in {"profile", "context_get", "device", "screen_get"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
             elif "summary" in result:

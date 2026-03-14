@@ -488,26 +488,6 @@ class AelinFileMemoryContentResponse(BaseModel):
     generated_at: datetime
 
 
-class AelinDiaryTreeNode(BaseModel):
-    name: str
-    path: str
-    kind: str
-    title: str = ""
-    preview: str = ""
-    updated_at: str = ""
-    source: str = ""
-    topic_path: str = ""
-    entry_kind: str = ""
-    children: list["AelinDiaryTreeNode"] = Field(default_factory=list)
-
-
-class AelinDiaryTreeResponse(BaseModel):
-    workspace: str = "default"
-    total: int = 0
-    items: list[AelinDiaryTreeNode] = Field(default_factory=list)
-    generated_at: datetime
-
-
 class AelinMediaIngestRequest(BaseModel):
     url: str = Field(min_length=5, max_length=3000)
     workspace: str = Field(default="default", min_length=1, max_length=64)
@@ -533,7 +513,6 @@ class AelinMediaIngestResponse(BaseModel):
     quality_usable: bool = False
     needs_review: bool = True
     written: bool = False
-    diary_path: str = ""
     limitations: list[str] = Field(default_factory=list)
     generated_at: datetime
 

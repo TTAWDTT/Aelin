@@ -15,62 +15,12 @@ from app.services.memory_draft import ParallelMemoryDraftResult
 from app.services.openviking_bridge import file_memory_bridge
 from app.settings import settings
 from app.routers.aelin_text_helpers import (
-    _build_chat_diary_entry,
     _build_source_indices_from_citations,
     _extract_first_json_object,
-    _sanitize_diary_answer,
 )
 
 _memory = AgentMemoryService()
 _file_memory = file_memory_bridge
-
-def _save_chat_diary_entry(
-    db: Session,
-    *,
-    user_id: int,
-    workspace: str,
-    query: str,
-    answer: str,
-    citations: list[AelinCitation],
-) -> dict[str, Any]:
-    if not query.strip() or not answer.strip():
-        return {"written": False, "reason": "empty_turn", "path": ""}
-    now = datetime.now(timezone.utc)
-    topic_path = ["与主人的聊天日记", now.strftime("%Y"), now.strftime("%m"), now.strftime("%d")]
-    title, markdown = _build_chat_diary_entry(query, answer, citations)
-    target = SimpleNamespace(
-        user_id=user_id,
-        workspace=workspace,
-        source_type="chat",
-        track_type="conversation",
-        source_key=f"chat:{now.strftime('%Y-%m-%d')}",
-        display_name="与主人的聊天日记",
-    )
-    source_indices = _build_source_indices_from_citations(citations)
-    out_path = _file_memory.append_insight(
-        target=target,
-        title=title,
-        markdown=markdown,
-        reason="chat_diary",
-        confidence=0.82,
-        source_query=query,
-        topic_path=topic_path,
-        source_indices=source_indices,
-        entry_kind="chat_diary",
-    )
-    if out_path is None:
-        return {"written": False, "reason": "file_write_failed", "path": ""}
-    try:
-        _memory.add_note(
-            db,
-            user_id,
-            f"[chat-diary] {title}\npath: {str(out_path)}",
-            kind="memory_insight",
-            source="chat:diary",
-        )
-    except Exception:
-        pass
-    return {"written": True, "reason": "", "path": str(out_path)}
 
 def _save_parallel_draft_entry(
     db: Session,
@@ -148,7 +98,7 @@ def _save_parallel_draft_entry(
             "",
             "## 最终回答归档",
             "",
-            _sanitize_diary_answer(answer),
+            str(answer or "").strip(),
         ]
     ).strip()
     out_path = _file_memory.append_insight(
@@ -160,7 +110,7 @@ def _save_parallel_draft_entry(
         source_query=query_text,
         topic_path=topic_path,
         source_indices=source_indices[:28],
-        entry_kind="chat_parallel_draft",
+        entry_kind="memory_insight",
     )
     if out_path is None:
         return {"written": False, "reason": "file_write_failed", "path": ""}

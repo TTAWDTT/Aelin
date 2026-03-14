@@ -4,7 +4,6 @@ import type {
   AelinNotificationResponse, AelinProactivePollResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinBrowserLoginCheckpointListResponse,
-  AelinFileMemoryContentResponse, AelinDiaryTreeResponse,
   AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
   AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
   AelinAttachmentUploadResponse,
@@ -40,12 +39,6 @@ export const aelinApi = {
     fetchJson<AelinBrowserLoginCheckpointListResponse>(
       `/api/v1/aelin/agent/browser/login-checkpoints?workspace=${encodeURIComponent(workspace)}&status=${encodeURIComponent(status)}&limit=${limit}`,
     ),
-
-  fileMemoryContent: (params: Record<string, string>) =>
-    fetchJson<AelinFileMemoryContentResponse>(`/api/v1/aelin/memory/file-memory/content?${new URLSearchParams(params)}`),
-
-  fileMemoryTree: (params: Record<string, string>) =>
-    fetchJson<AelinDiaryTreeResponse>(`/api/v1/aelin/memory/file-memory/tree?${new URLSearchParams(params)}`),
 
   // Device
   deviceCapabilities: () =>

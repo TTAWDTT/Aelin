@@ -25,9 +25,6 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
 
     if tool == "context_get":
         return False
-    if tool == "diary":
-        # Current diary tool only supports read/search actions.
-        return False
     if tool == "profile":
         return action == "append_note"
     if tool == "device":
@@ -68,7 +65,6 @@ class AelinToolPolicy:
         tool = str(name or "").strip().lower()
         if tool not in {
             "context_get",
-            "diary",
             "profile",
             "device",
             "web_search",

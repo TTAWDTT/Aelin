@@ -11,10 +11,6 @@ class _DummyMemory:
     pass
 
 
-class _DummyFileMemory:
-    pass
-
-
 class _FakeLLMCompletions:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -117,7 +113,6 @@ def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
         user_id=1,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
-        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=llm_service,  # type: ignore[arg-type]
     )
@@ -353,7 +348,6 @@ def test_attachment_search_uses_available_ids_fallback():
         user_id=7,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
-        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
         attachment_service=fake_attachment,  # type: ignore[arg-type]
         available_attachment_ids=[3, "2", 3, 0],  # type: ignore[list-item]
@@ -372,7 +366,6 @@ def test_attachment_search_prefers_explicit_ids():
         user_id=7,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
-        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
         attachment_service=fake_attachment,  # type: ignore[arg-type]
         available_attachment_ids=[9, 10],
@@ -424,7 +417,6 @@ def test_context_get_reuses_shared_memory_primitives_without_snapshot():
         user_id=7,
         workspace="default",
         memory_service=_Memory(),  # type: ignore[arg-type]
-        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
     )
 
@@ -553,7 +545,6 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
         user_id=2,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
-        file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=fake_service,  # type: ignore[arg-type]
     )

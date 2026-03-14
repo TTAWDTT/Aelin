@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -63,15 +63,3 @@ class FileMemoryHit:
     entry_kind: str = ""
 
 
-@dataclass(slots=True)
-class DiaryTreeNode:
-    name: str
-    path: str
-    kind: str
-    title: str = ""
-    preview: str = ""
-    updated_at: str = ""
-    source: str = ""
-    topic_path: str = ""
-    entry_kind: str = ""
-    children: list["DiaryTreeNode"] = field(default_factory=list)

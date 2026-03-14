@@ -4,7 +4,6 @@ import { RootLayout } from './layout/RootLayout'
 
 const ChatPage = lazy(() => import('./routes/ChatPage'))
 const ProcessesPage = lazy(() => import('./routes/ProcessesPage'))
-const DiaryPage = lazy(() => import('./routes/DiaryPage'))
 const FocusPage = lazy(() => import('./routes/FocusPage'))
 const SettingsPage = lazy(() => import('./routes/SettingsPage'))
 
@@ -23,7 +22,6 @@ export function App() {
         <Route element={<RootLayout />}>
           <Route index element={<ChatPage />} />
           <Route path="processes" element={<ProcessesPage />} />
-          <Route path="diary" element={<DiaryPage />} />
           <Route path="focus" element={<FocusPage />} />
           <Route path="settings/*" element={<SettingsPage />} />
           {/* Compat redirects */}

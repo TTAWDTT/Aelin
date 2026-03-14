@@ -176,24 +176,6 @@ export interface AelinFileMemoryContentResponse {
   source: string; kind: string; topic_path: string; entry_kind: string
   updated_at: string; content: string; generated_at: string
 }
-export interface AelinDiaryTreeNode {
-  name: string
-  path: string
-  kind: string
-  title: string
-  preview: string
-  updated_at: string
-  source: string
-  topic_path: string
-  entry_kind: string
-  children: AelinDiaryTreeNode[]
-}
-export interface AelinDiaryTreeResponse {
-  workspace: string
-  total: number
-  items: AelinDiaryTreeNode[]
-  generated_at: string
-}
 
 /* ─── Device Center ─── */
 export interface AelinDeviceProcessItem {
