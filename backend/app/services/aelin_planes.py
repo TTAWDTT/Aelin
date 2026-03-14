@@ -281,6 +281,13 @@ def _sync_checkpoint(session: Session, *, task_id: str, payload: dict[str, Any])
 
 def _plane_task_to_payload(row: PlaneTask) -> dict[str, Any]:
     metadata = _json_loads(str(row.metadata_json or "{}"))
+    # Avoid materializing full relationship collections just to compute counters.
+    # Use in-memory counts when relationships are already loaded; otherwise fall
+    # back to a cheap 0 so status/continue flows stay O(1) on long-running tasks.
+    raw_artifacts = getattr(row, "__dict__", {}).get("artifacts")
+    raw_events = getattr(row, "__dict__", {}).get("events")
+    artifact_count = len(list(raw_artifacts)) if isinstance(raw_artifacts, list) else 0
+    event_count = len(list(raw_events)) if isinstance(raw_events, list) else 0
     payload = {
         "owner_user_id": int(row.user_id),
         "owner_workspace": str(row.workspace or "default"),
@@ -296,8 +303,8 @@ def _plane_task_to_payload(row: PlaneTask) -> dict[str, Any]:
         "backing_task_id": str(row.backing_task_id or ""),
         "metadata_json": str(row.metadata_json or "{}"),
         "metadata": metadata,
-        "artifact_count": len(list(getattr(row, "artifacts", []) or [])),
-        "event_count": len(list(getattr(row, "events", []) or [])),
+        "artifact_count": artifact_count,
+        "event_count": event_count,
     }
     instance_id = str(metadata.get("instance_id") or "").strip()
     tab_id = str(metadata.get("tab_id") or "").strip()

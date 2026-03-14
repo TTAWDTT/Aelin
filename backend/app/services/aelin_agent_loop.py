@@ -440,24 +440,35 @@ class AelinAgentLoop:
                             "task_id": str(active_plane.get("task_id") or ""),
                         },
                     )
-                    if append_tool_result(
-                        round_index=round_index,
-                        tool_name="plane",
-                        args={
-                            "action": "status",
-                            "plane": str(active_plane.get("plane") or "browser"),
-                            "task_id": str(active_plane.get("task_id") or ""),
-                        },
-                        tc_id=f"plane-status:{active_plane.get('task_id')}",
-                        is_write=False,
-                        status=status,
-                        result=result,
-                        error=error,
-                        latency_ms=latency_ms,
-                        messages=messages,
-                        tool_runs=tool_runs,
-                        trace_steps=trace_steps,
-                    ):
+                    # For supervision-driven plane.status calls we only record the
+                    # run and tracing metadata; we deliberately avoid emitting a
+                    # model-visible tool message because本轮并没有对应的
+                    # assistant.tool_calls，防止产生不合法的对话序列。
+                    tool_runs.append(
+                        AgentLoopToolRun(
+                            round_index=round_index,
+                            name="plane",
+                            args={
+                                "action": "status",
+                                "plane": str(active_plane.get("plane") or "browser"),
+                                "task_id": str(active_plane.get("task_id") or ""),
+                            },
+                            status=status,
+                            result=result,
+                            error=error,
+                            is_write=False,
+                            latency_ms=latency_ms,
+                        )
+                    )
+                    trace_steps.append(
+                        AgentLoopTraceStep(
+                            stage="agent_loop_tool",
+                            status=status,
+                            detail=f"plane:{error or 'ok'}",
+                            count=1,
+                        )
+                    )
+                    if status == "completed":
                         supervised_plane_task = _update_supervised_plane_task(
                             supervised_plane_task,
                             tool_name="plane",
