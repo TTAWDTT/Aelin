@@ -163,33 +163,6 @@ export interface AelinBrowserLoginCheckpointListResponse {
   items: AelinBrowserLoginCheckpointItem[]
   generated_at: string
 }
-export interface AelinTrackingItem {
-  target_id?: number; target: string; source: string; query?: string
-  workspace?: string; track_type?: string; description?: string
-  tags: string[]; status: string; interval_seconds: number
-  notify_level: string; unread_changes: number; error_count: number
-  next_run_at?: string; last_run_at?: string; last_checked_at?: string
-  last_change_at?: string; mute_until?: string
-  is_temporary: boolean; expires_at?: string; updated_at: string
-}
-export interface AelinTrackingListResponse { total: number; items: AelinTrackingItem[]; generated_at: string }
-export interface AelinTrackingTargetUpdateRequest {
-  status?: string; interval_seconds?: number; notify_level?: string
-  mute_until?: string; description?: string; tags?: string[]
-}
-export interface AelinTrackingRunResponse { ok: boolean; message: string; generated_at: string }
-export interface AelinTrackingChangeItem {
-  id: number; target_id: number; change_type: string; severity: string
-  title: string; summary?: string; diff_json?: Record<string, unknown>
-  dedupe_key?: string; notified: boolean; acked: boolean; created_at?: string
-}
-export interface AelinTrackingChangeListResponse { total: number; items: AelinTrackingChangeItem[]; generated_at: string }
-export interface AelinTrackingSnapshotItem {
-  id: number; target_id: number; version_no: number
-  content_hash?: string; fetch_status: string; fetch_error?: string
-  fetched_at?: string; normalized_payload_json?: Record<string, unknown>
-}
-export interface AelinTrackingSnapshotListResponse { total: number; items: AelinTrackingSnapshotItem[]; generated_at: string }
 export interface AelinFileMemoryItem {
   path: string; title: string; preview: string; score: number
   updated_at: string; canonical_id: string; target: string

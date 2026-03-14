@@ -671,10 +671,6 @@ def _is_media_summary_intent(query: str, media_url: str) -> bool:
     return len(stripped) <= 6
 
 
-def _tracking_key(source: str, target: str) -> str:
-    return f"{(source or 'auto').strip().lower()}::{(target or '').strip().lower()}"
-
-
 def _build_planner_memory_snapshot(
     db: Session,
     *,
@@ -2097,9 +2093,6 @@ def _aelin_chat_impl(
         except Exception:
             pass
 
-    # Tracking autonomy has been removed; keep a lightweight stubbed result so
-    # traces and downstream logic remain consistent without invoking legacy
-    # legacy memory DB or planner flows.
     insight_write_result: dict[str, Any] = {"written": False, "reason": "memory_write_disabled"}
     add_trace("insight_write", status="skipped", detail="memory_write_disabled", count=0)
 
