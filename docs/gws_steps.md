@@ -84,10 +84,10 @@
 
 ## 6. 测试与验证
 
-- [ ] 单元测试
-  - [ ] 为 `GoogleWorkspaceCliService` 中的每个方法编写测试（使用 monkeypatch 替换 `subprocess.run`）
-  - [ ] 测试安装缺失、超时、JSON 解析失败等边界情况
-  - [ ] 测试 `google_workspace` 工具各 action 的正常返回与错误返回
+- [x] 单元测试
+  - [x] 为 `GoogleWorkspaceCliService` 中的每个方法编写测试（使用 monkeypatch 替换 `subprocess.run`）
+  - [x] 测试安装缺失、超时、JSON 解析失败等边界情况
+  - [x] 测试 `google_workspace` 工具各 action 的正常返回与错误返回
 - [ ] 集成测试（本地手动）
   - [ ] 在本机安装并配置 gws（含登录）
   - [ ] 通过 Aelin Chat 输入例如“帮我列一下最近 10 封 Gmail 邮件”，观察是否自动选择 gws 工具
