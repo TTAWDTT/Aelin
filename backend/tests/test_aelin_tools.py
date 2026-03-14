@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
 import app.services.aelin_tools as aelin_tools
+import app.services.aelin_planes as aelin_planes
+import app.services.plane_runtime as plane_runtime
 from app.services.aelin_tools import AelinToolHub, _PINCHTAB_SESSIONS, _PINCHTAB_USER_SESSIONS
+from app.models import Base
 from app.services.web_search import WebSearchResult
 
 
@@ -107,17 +114,14 @@ class _FakePinchTabClient:
         return {"ok": True, "effect": "clicked"}
 
 
-def _patch_pinchtab_runtime_ready(monkeypatch):
-    monkeypatch.setattr(
-        aelin_tools,
-        "ensure_pinchtab_started",
-        lambda: {"ok": True, "status": "started"},
-    )
+def _patch_pinchtab_runtime(monkeypatch, fake_client: _FakePinchTabClient) -> None:
+    monkeypatch.setattr(aelin_tools, "ensure_pinchtab_started", lambda: {"ok": True, "status": "running"})
+    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
 
 
-def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
+def _hub(fake_web: _FakeWebSearch, llm_service=None, db=None) -> AelinToolHub:
     return AelinToolHub(
-        db=None,  # type: ignore[arg-type]
+        db=db,  # type: ignore[arg-type]
         user_id=1,
         workspace="default",
         memory_service=_DummyMemory(),  # type: ignore[arg-type]
@@ -125,6 +129,18 @@ def _hub(fake_web: _FakeWebSearch, llm_service=None) -> AelinToolHub:
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=llm_service,  # type: ignore[arg-type]
     )
+
+
+def _create_db_session():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    return engine, SessionLocal()
 
 
 class _FakeAttachmentService:
@@ -203,6 +219,61 @@ def test_tool_definitions_only_expose_unified_device_tool():
     assert "device_mode_apply" not in names
     assert "desktop_open_url" not in names
     assert "desktop_open_aelin" not in names
+
+
+def test_tool_definitions_expose_plane_instead_of_pinchtab_family():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    names = [row["function"]["name"] for row in hub.tool_definitions()]
+
+    assert "plane" in names
+    assert "pinchtab" not in names
+    assert "pinchtab_agent" not in names
+    assert "pinchtab_session" not in names
+
+
+def test_tool_definitions_expose_skill_tool():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    names = [row["function"]["name"] for row in hub.tool_definitions()]
+
+    assert "skill" in names
+
+
+def test_plane_registry_exposes_browser_entry_and_catalog_metadata():
+    entry = plane_runtime.get_plane_registry_entry("browser")
+    assert entry is not None
+    assert entry.metadata.slug == "browser"
+    assert entry.metadata.backing_system == "PinchTab"
+    assert entry.metadata.skill_slug == "pinchtab"
+
+    catalog = aelin_planes.plane_catalog_entries()
+    assert catalog
+    browser = next(row for row in catalog if row.get("plane") == "browser")
+    assert browser["backing_system"] == "PinchTab"
+    assert browser["skill_slug"] == "pinchtab"
+    prompt = aelin_planes.plane_catalog_prompt()
+    assert "usage_skill=pinchtab" in prompt
+    assert "catalog 只描述 plane 的能力边界" in prompt
+
+
+def test_skill_tool_supports_catalog_and_read():
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    catalog = hub.execute("skill", {"action": "catalog", "query": "浏览器网页登录"})
+    assert catalog["ok"] is True
+    assert int(catalog.get("total") or 0) >= 1
+    items = catalog.get("items")
+    assert isinstance(items, list)
+    assert any(str(item.get("slug") or "") == "pinchtab" for item in items if isinstance(item, dict))
+
+    read = hub.execute("skill", {"action": "read", "slug": "pinchtab"})
+    assert read["ok"] is True
+    assert read["slug"] == "pinchtab"
+    assert "[AELIN SKILL]" in str(read.get("prompt") or "")
 
 
 def test_web_search_tool_missing_query():
@@ -448,8 +519,7 @@ def test_pinchtab_tool_calls_client_methods(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
     fake_client = _FakePinchTabClient()
-    _patch_pinchtab_runtime_ready(monkeypatch)
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
 
     # health
     result = hub.execute("pinchtab", {"action": "health"})
@@ -489,8 +559,7 @@ def test_pinchtab_agent_executes_plan_with_llm_and_client(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    _patch_pinchtab_runtime_ready(monkeypatch)
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
 
     result = hub.execute("pinchtab_agent", {"goal": "打开 example.com 并读取文本"})
     assert result["ok"] is True
@@ -518,8 +587,7 @@ def test_pinchtab_session_start_and_step_reuse_instance(monkeypatch):
     )()
 
     hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
-    _patch_pinchtab_runtime_ready(monkeypatch)
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
 
@@ -561,8 +629,7 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
         web_search_service=fake_web,  # type: ignore[arg-type]
         llm_service=fake_service,  # type: ignore[arg-type]
     )
-    _patch_pinchtab_runtime_ready(monkeypatch)
-    monkeypatch.setattr(aelin_tools, "get_pinchtab_client", lambda: fake_client)
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
     _PINCHTAB_SESSIONS.clear()
     _PINCHTAB_USER_SESSIONS.clear()
 
@@ -584,17 +651,583 @@ def test_pinchtab_session_rejects_cross_user_access(monkeypatch):
     assert sid in _PINCHTAB_SESSIONS
 
 
-def test_pinchtab_tool_surfaces_runtime_start_failure(monkeypatch):
+def test_plane_browser_delegate_and_continue_reuse_same_session(monkeypatch):
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
 
-    monkeypatch.setattr(
-        aelin_tools,
-        "ensure_pinchtab_started",
-        lambda: {"ok": False, "error": "pinchtab_runtime_missing"},
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    assert task_id
+    assert delegated["plane"] == "browser"
+    assert delegated["task_id"] == task_id
+
+    status = hub.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+    assert status["ok"] is True
+    assert status["task_id"] == task_id
+
+    continued = hub.execute(
+        "plane",
+        {"action": "continue", "plane": "browser", "task_id": task_id, "goal": "继续读取文本"},
+    )
+    assert continued["ok"] is True
+    assert continued["task_id"] == task_id
+
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance"]
+
+
+def test_plane_delegate_reuses_existing_active_task_by_default(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+    assert first["ok"] is True
+    task_id = str(first.get("task_id") or "")
+    assert task_id
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    aelin_planes.set_plane_task(
+        task_id,
+        {
+            **task,
+            "state": "running",
+            "summary": "browser task still running",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
     )
 
-    result = hub.execute("pinchtab", {"action": "health"})
+    second = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "继续读取详情"})
 
-    assert result["ok"] is False
-    assert result["error"] == "pinchtab_runtime_missing"
+    assert second["ok"] is True
+    assert second["task_id"] == task_id
+    assert second["reused_existing_task"] is True
+    assert second["reused_action"] == "continue"
+
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance"]
+
+
+def test_plane_delegate_force_new_creates_fresh_task(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+    assert first["ok"] is True
+    first_task_id = str(first.get("task_id") or "")
+    assert first_task_id
+    first_task = aelin_planes.get_plane_task(first_task_id, user_id=1, workspace="default", plane="browser")
+    assert first_task is not None
+    aelin_planes.set_plane_task(
+        first_task_id,
+        {
+            **first_task,
+            "state": "running",
+            "summary": "browser task still running",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+
+    second = hub.execute(
+        "plane",
+        {"action": "delegate", "plane": "browser", "goal": "重新开始一个新网页任务", "force_new": True},
+    )
+
+    assert second["ok"] is True
+    assert str(second.get("task_id") or "") != first_task_id
+    assert second.get("reused_existing_task") in {None, False}
+
+
+def test_plane_delegate_starts_new_task_for_distinct_goal(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 github.com 并查看 issue 列表"})
+    assert first["ok"] is True
+    first_task_id = str(first.get("task_id") or "")
+    assert first_task_id
+
+    second = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 docs.python.org 查看 asyncio 教程"})
+
+    assert second["ok"] is True
+    assert str(second.get("task_id") or "") != first_task_id
+    assert second.get("reused_existing_task") in {None, False}
+
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance", "launch_instance"]
+
+
+def test_plane_delegate_does_not_reuse_unrelated_task_just_because_goal_says_continue(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    first = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 github.com 并查看 issue 列表"})
+    assert first["ok"] is True
+    first_task_id = str(first.get("task_id") or "")
+    assert first_task_id
+
+    second = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "继续总结我的 X 关注列表"})
+
+    assert second["ok"] is True
+    assert str(second.get("task_id") or "") != first_task_id
+    assert second.get("reused_existing_task") in {None, False}
+
+    launch_calls = [op for op, _ in fake_client.calls if op == "launch_instance"]
+    assert launch_calls == ["launch_instance", "launch_instance"]
+
+
+def test_should_resume_active_plane_for_query_ignores_unrelated_query():
+    active_task = {
+        "task_id": "browser-task-1",
+        "state": "waiting_user",
+        "goal": "帮我查看淘宝订单",
+        "user_prompt": "请先完成登录",
+        "last_url": "https://www.taobao.com/member",
+    }
+
+    assert aelin_tools.should_resume_active_plane_for_query(active_task, "继续看京东订单") is False
+    assert aelin_tools.should_resume_active_plane_for_query(active_task, "今天的新闻有什么") is False
+
+
+def test_should_resume_active_plane_for_query_allows_checkpoint_reply():
+    active_task = {
+        "task_id": "browser-task-2",
+        "state": "waiting_user",
+        "goal": "登录 X 后继续总结关注列表",
+        "user_prompt": "请先完成登录",
+        "last_url": "https://x.com/i/flow/login",
+    }
+
+    assert aelin_tools.should_resume_active_plane_for_query(active_task, "我已经登录好了") is True
+
+
+def test_plane_browser_delegate_uses_plane_task_id_instead_of_session_id(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    assert task_id
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    assert str(task.get("backing_task_id") or "")
+    assert str(task.get("backing_task_id") or "") != task_id
+
+
+def test_plane_tasks_can_be_recovered_from_db_without_memory_registry(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+    engine, db1 = _create_db_session()
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    db2 = SessionLocal()
+
+    try:
+        hub1 = _hub(fake_web, llm_service=fake_service, db=db1)  # type: ignore[arg-type]
+        hub2 = AelinToolHub(
+            db=db2,  # type: ignore[arg-type]
+            user_id=1,
+            workspace="default",
+            memory_service=_DummyMemory(),  # type: ignore[arg-type]
+            file_memory_bridge=_DummyFileMemory(),  # type: ignore[arg-type]
+            web_search_service=fake_web,  # type: ignore[arg-type]
+            llm_service=fake_service,  # type: ignore[arg-type]
+        )
+        _patch_pinchtab_runtime(monkeypatch, fake_client)
+        _PINCHTAB_SESSIONS.clear()
+        _PINCHTAB_USER_SESSIONS.clear()
+        aelin_planes._PLANE_TASKS.clear()
+        aelin_planes._PLANE_USER_TASKS.clear()
+
+        delegated = hub1.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+        assert delegated["ok"] is True
+        task_id = str(delegated.get("task_id") or "")
+        assert task_id
+
+        aelin_planes._PLANE_TASKS.clear()
+        aelin_planes._PLANE_USER_TASKS.clear()
+
+        status = hub2.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+        assert status["ok"] is True
+        assert status["task_id"] == task_id
+
+        persisted = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser", db=db2)
+        assert persisted is not None
+        assert str(persisted.get("backing_task_id") or "")
+    finally:
+        db2.close()
+        db1.close()
+
+
+def test_plane_status_preserves_waiting_user_when_session_snapshot_lacks_login_flags(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 X 并检查登录状态"})
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    assert task_id
+
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    session_id = str(task.get("backing_task_id") or "")
+    assert session_id
+    aelin_planes.set_plane_task(
+        task_id,
+        {
+            **task,
+            "state": "waiting_user",
+            "requires_user_input": True,
+            "user_prompt": "请先完成登录",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+    aelin_tools._PINCHTAB_SESSIONS[session_id] = {
+        "owner_user_id": 1,
+        "owner_workspace": "default",
+        "instance_id": "inst-1",
+        "tab_id": "tab-1",
+        "last_goal": "打开 X 并检查登录状态",
+        "last_status": "running",
+        "last_url": "https://x.com/i/flow/login",
+        "last_text": "login page",
+        "last_summary": "still waiting",
+    }
+
+    status = hub.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+
+    assert status["ok"] is True
+    assert status["state"] == "waiting_user"
+    assert status["requires_user_input"] is True
+    assert status["user_prompt"] == "请先完成登录"
+
+
+def test_plane_delegate_restarts_when_waiting_task_session_is_stale(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "帮我总结我的 X 关注列表"})
+    assert delegated["ok"] is True
+    first_task_id = str(delegated.get("task_id") or "")
+    assert first_task_id
+
+    task = aelin_planes.get_plane_task(first_task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    session_id = str(task.get("backing_task_id") or "")
+    assert session_id
+    aelin_planes.set_plane_task(
+        first_task_id,
+        {
+            **task,
+            "state": "waiting_user",
+            "requires_user_input": True,
+            "user_prompt": "请先完成登录",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+    _PINCHTAB_SESSIONS.pop(session_id, None)
+
+    restarted = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "继续总结我的 X 关注列表"})
+
+    assert restarted["ok"] is True
+    assert str(restarted.get("task_id") or "") != first_task_id
+    assert restarted["restarted_after_stale_task"] is True
+    assert restarted["previous_task_id"] == first_task_id
+
+    first_task = aelin_planes.get_plane_task(first_task_id, user_id=1, workspace="default", plane="browser")
+    assert first_task is not None
+    assert first_task["state"] == "closed"
+
+
+def test_plane_delegate_waiting_user_resumes_with_continue(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+
+    hub = _hub(fake_web, llm_service=fake_service)  # type: ignore[arg-type]
+    _patch_pinchtab_runtime(monkeypatch, fake_client)
+    _PINCHTAB_SESSIONS.clear()
+    _PINCHTAB_USER_SESSIONS.clear()
+    aelin_planes._PLANE_TASKS.clear()
+    aelin_planes._PLANE_USER_TASKS.clear()
+
+    delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "帮我总结我的 X 关注列表"})
+    assert delegated["ok"] is True
+    task_id = str(delegated.get("task_id") or "")
+    task = aelin_planes.get_plane_task(task_id, user_id=1, workspace="default", plane="browser")
+    assert task is not None
+    aelin_planes.set_plane_task(
+        task_id,
+        {
+            **task,
+            "state": "waiting_user",
+            "requires_user_input": True,
+            "user_prompt": "请先完成登录",
+        },
+        user_id=1,
+        workspace="default",
+        plane="browser",
+    )
+
+    resumed = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "我已经登录好了，继续总结我的 X 关注列表"})
+
+    assert resumed["ok"] is True
+    assert resumed["task_id"] == task_id
+    assert resumed["reused_existing_task"] is True
+    assert resumed["reused_action"] == "continue"
+
+
+def test_plane_runtime_persists_events_and_artifacts(monkeypatch):
+    fake_web = _FakeWebSearch()
+    fake_client = _FakePinchTabClient()
+    fake_completions = _FakeLLMCompletions()
+    fake_service = type(
+        "Svc",
+        (object,),
+        {
+            "config": type("Cfg", (object,), {"model": "fake-model"})(),
+            "client": type("Cli", (object,), {"chat": type("Chat", (object,), {"completions": fake_completions})()})(),
+        },
+    )()
+    engine, db = _create_db_session()
+
+    try:
+        hub = _hub(fake_web, llm_service=fake_service, db=db)  # type: ignore[arg-type]
+        _patch_pinchtab_runtime(monkeypatch, fake_client)
+        _PINCHTAB_SESSIONS.clear()
+        _PINCHTAB_USER_SESSIONS.clear()
+        aelin_planes._PLANE_TASKS.clear()
+        aelin_planes._PLANE_USER_TASKS.clear()
+
+        delegated = hub.execute("plane", {"action": "delegate", "plane": "browser", "goal": "打开 example.com 并读取文本"})
+        assert delegated["ok"] is True
+        task_id = str(delegated.get("task_id") or "")
+        assert task_id
+
+        status = hub.execute("plane", {"action": "status", "plane": "browser", "task_id": task_id})
+        assert status["ok"] is True
+
+        continued = hub.execute(
+            "plane",
+            {"action": "continue", "plane": "browser", "task_id": task_id, "goal": "继续读取文本"},
+        )
+        assert continued["ok"] is True
+
+        closed = hub.execute("plane", {"action": "close", "plane": "browser", "task_id": task_id})
+        assert closed["ok"] is True
+
+        events = aelin_planes.list_plane_events(task_id, user_id=1, workspace="default", plane="browser", db=db)
+        artifacts = aelin_planes.list_plane_artifacts(task_id, user_id=1, workspace="default", plane="browser", db=db)
+
+        event_types = [str(item.get("event_type") or "") for item in events]
+        assert "delegated" in event_types
+        assert "status_sync" in event_types
+        assert "continued" in event_types
+        assert "closed" in event_types
+
+        artifact_kinds = [str(item.get("kind") or "") for item in artifacts]
+        assert "page_text" in artifact_kinds
+        assert "page_location" in artifact_kinds
+    finally:
+        db.close()
+
+
+def test_plane_runtime_list_functions_return_latest_rows_in_chronological_order():
+    engine, db = _create_db_session()
+    try:
+        task_id = "browser-task-history"
+        aelin_planes.set_plane_task(
+            task_id,
+            {
+                "plane": "browser",
+                "state": "running",
+                "goal": "history task",
+                "summary": "running",
+                "backing_task_id": "session-history",
+            },
+            user_id=1,
+            workspace="default",
+            plane="browser",
+            db=db,
+        )
+        for idx in range(5):
+            aelin_planes.append_plane_event(
+                task_id,
+                event_type=f"event_{idx}",
+                summary=f"event {idx}",
+                user_id=1,
+                workspace="default",
+                plane="browser",
+                db=db,
+            )
+            aelin_planes.append_plane_artifact(
+                task_id,
+                kind=f"artifact_{idx}",
+                content={"idx": idx},
+                user_id=1,
+                workspace="default",
+                plane="browser",
+                db=db,
+            )
+
+        events = aelin_planes.list_plane_events(task_id, user_id=1, workspace="default", plane="browser", db=db, limit=3)
+        artifacts = aelin_planes.list_plane_artifacts(task_id, user_id=1, workspace="default", plane="browser", db=db, limit=3)
+
+        assert [row["event_type"] for row in events] == ["event_2", "event_3", "event_4"]
+        assert [row["kind"] for row in artifacts] == ["artifact_2", "artifact_3", "artifact_4"]
+    finally:
+        db.close()

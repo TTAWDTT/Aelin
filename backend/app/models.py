@@ -50,6 +50,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    plane_tasks: Mapped[list["PlaneTask"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     message_topic_tags: Mapped[list["MessageTopicTag"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -254,6 +258,102 @@ class RemoteCommand(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship(back_populates="remote_commands")
+
+
+class PlaneTask(Base):
+    __tablename__ = "plane_tasks"
+    __table_args__ = (
+        Index("ix_plane_tasks_user_workspace_plane_updated", "user_id", "workspace", "plane", "updated_at"),
+        Index("ix_plane_tasks_status_updated", "status", "updated_at"),
+        Index("ix_plane_tasks_backing_task", "backing_task_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    plane: Mapped[str] = mapped_column(String(32), default="browser", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    goal: Mapped[str] = mapped_column(Text, default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    backing_task_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    last_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    last_text_excerpt: Mapped[str] = mapped_column(Text, default="")
+    requires_user_input: Mapped[bool] = mapped_column(Boolean, default=False)
+    user_prompt: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="plane_tasks")
+    checkpoints: Mapped[list["PlaneTaskCheckpoint"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    artifacts: Mapped[list["PlaneTaskArtifact"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    events: Mapped[list["PlaneTaskEvent"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
+
+class PlaneTaskCheckpoint(Base):
+    __tablename__ = "plane_task_checkpoints"
+    __table_args__ = (
+        Index("ix_plane_task_checkpoints_task_status", "task_id", "status"),
+        Index("ix_plane_task_checkpoints_kind_status", "kind", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("plane_tasks.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="manual_review")
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    task: Mapped["PlaneTask"] = relationship(back_populates="checkpoints")
+
+
+class PlaneTaskArtifact(Base):
+    __tablename__ = "plane_task_artifacts"
+    __table_args__ = (
+        Index("ix_plane_task_artifacts_task_created", "task_id", "created_at"),
+        Index("ix_plane_task_artifacts_kind_created", "kind", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("plane_tasks.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="text")
+    content_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    task: Mapped["PlaneTask"] = relationship(back_populates="artifacts")
+
+
+class PlaneTaskEvent(Base):
+    __tablename__ = "plane_task_events"
+    __table_args__ = (
+        Index("ix_plane_task_events_task_created", "task_id", "created_at"),
+        Index("ix_plane_task_events_type_created", "event_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("plane_tasks.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String(32), default="status_sync")
+    from_state: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    to_state: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    task: Mapped["PlaneTask"] = relationship(back_populates="events")
 
 
 class Contact(Base):

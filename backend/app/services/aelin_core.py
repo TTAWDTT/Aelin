@@ -44,12 +44,13 @@ from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services import content_tagging
 from app.services.aelin_tools import (
     AelinToolHub,
-    get_active_pinchtab_session,
     run_aelin_structured_tools,
     should_attempt_aelin_tools,
+    should_resume_active_plane_for_query,
     summarize_tool_results_for_prompt,
 )
-from app.services.skill_loader import get_skill_prompts_for_query_and_tools
+from app.services.aelin_planes import get_active_plane_task, plane_catalog_prompt
+from app.services.skill_loader import render_skill_catalog_prompt
 from app.services.aelin_agent_loop import AelinAgentLoop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
@@ -2439,7 +2440,10 @@ def _try_agent_loop_chat(
             name = str(fn.get("name") or "").strip()
             if name:
                 tool_names.append(name)
-        tool_skill_bodies = get_skill_prompts_for_query_and_tools(payload.query, tool_names)
+        skill_catalog_prompt = render_skill_catalog_prompt(payload.query, tool_names)
+        tool_skill_bodies = [skill_catalog_prompt] if skill_catalog_prompt else []
+        if "plane" in tool_names:
+            tool_skill_bodies = [plane_catalog_prompt(), *tool_skill_bodies]
 
     def _ensure_attachment_prefetch() -> dict[str, Any]:
         nonlocal attachment_prefetch_result
@@ -2493,21 +2497,26 @@ def _try_agent_loop_chat(
             return fallback_resp
         return None
 
-    # 如果已经存在一个 PinchTab 浏览会话，让模型知道可以“续上”它，
-    # 而不是每次都重新 launch_instance。
+    # 如果已经存在一个活跃 plane task，让模型知道可以“续上”它，
+    # 而不是每次都重新开始委派。
     try:
-        pinchtab_snapshot = get_active_pinchtab_session(current_user.id, workspace)
+        plane_snapshot = get_active_plane_task(current_user.id, workspace, plane="browser", db=db)
     except Exception:
-        pinchtab_snapshot = None
-    if isinstance(pinchtab_snapshot, dict) and pinchtab_snapshot.get("session_id"):
+        plane_snapshot = None
+    if (
+        isinstance(plane_snapshot, dict)
+        and plane_snapshot.get("task_id")
+        and should_resume_active_plane_for_query(plane_snapshot, payload.query)
+    ):
         forced_tool_runs.append(
             {
-                "name": "pinchtab_session",
+                "name": "plane",
                 "args": {
                     "action": "status",
-                    "session_id": pinchtab_snapshot.get("session_id"),
+                    "plane": "browser",
+                    "task_id": plane_snapshot.get("task_id"),
                 },
-                "result": {"ok": True, **pinchtab_snapshot},
+                "result": {"ok": True, **plane_snapshot},
             }
         )
 
@@ -2531,6 +2540,10 @@ def _try_agent_loop_chat(
         max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 3) or 3),
         round_timeout_seconds=float(getattr(settings, "aelin_agent_loop_round_timeout_seconds", 10.0) or 10.0),
         total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
+        max_plane_supervision_calls=int(getattr(settings, "aelin_agent_loop_max_plane_supervision_calls", 6) or 6),
+        max_plane_supervision_calls_per_round=int(
+            getattr(settings, "aelin_agent_loop_max_plane_supervision_calls_per_round", 1) or 1
+        ),
     )
     _log.info(
         "agent_loop preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
