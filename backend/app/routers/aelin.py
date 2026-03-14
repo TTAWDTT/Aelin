@@ -38,7 +38,6 @@ _SYNC_SYMBOLS = [
     "_file_memory",
     "_memory",
     "_web_search",
-    "_tracking",
     "_media_ingest",
     "_save_media_ingest_diary",
     "_build_media_ingest_answer",

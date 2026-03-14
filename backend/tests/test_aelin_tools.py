@@ -18,10 +18,6 @@ class _DummyMemory:
     pass
 
 
-class _DummyTracking:
-    pass
-
-
 class _DummyFileMemory:
     pass
 

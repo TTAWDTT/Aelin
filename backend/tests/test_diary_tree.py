@@ -66,7 +66,7 @@ def test_search_excludes_chat_diary_unless_explicitly_enabled(monkeypatch):
             source_key="chat:test",
             display_name="与主人的聊天日记",
         )
-        tracking_target = SimpleNamespace(
+        memory_target = SimpleNamespace(
             user_id=1,
             workspace="default",
             source_type="web",
@@ -89,8 +89,8 @@ def test_search_excludes_chat_diary_unless_explicitly_enabled(monkeypatch):
             entry_kind="chat_diary",
         )
         rag_path = bridge.append_insight(
-            target=tracking_target,
-            title="追踪洞察",
+            target=memory_target,
+            title="记忆洞察",
             markdown=f"## Insight\n\n{rag_token}",
             reason="unit-test",
             confidence=0.9,

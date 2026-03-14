@@ -77,21 +77,3 @@ def _iso_or_empty(value: datetime | None) -> str:
         return ""
 
 
-def _extract_tracking_field(text: str, label: str) -> str:
-    if not text:
-        return ""
-    match = re.search(rf"{re.escape(label)}\s*[:：]\s*(.+)", text, flags=re.I)
-    if not match:
-        return ""
-    return (match.group(1) or "").strip().splitlines()[0].strip()
-
-
-def _parse_tracking_payload(raw: str) -> dict[str, str]:
-    text = (raw or "").strip()
-    return {
-        "target": _extract_tracking_field(text, "跟踪目标"),
-        "source": _clean_text(_extract_tracking_field(text, "来源")).lower() or "auto",
-        "status": _extract_tracking_field(text, "状态") or "active",
-        "query": _extract_tracking_field(text, "触发问题"),
-        "time": _extract_tracking_field(text, "时间"),
-    }
