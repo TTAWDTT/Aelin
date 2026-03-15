@@ -4,34 +4,6 @@ export interface UserCreate { email: string; password: string }
 export interface UserUpdate { email?: string; password?: string; avatar_url?: string }
 export interface UserOut { id: number; email: string; avatar_url?: string; created_at: string }
 
-/* ─── Accounts ─── */
-export interface ConnectedAccountCreate {
-  provider: string; identifier?: string
-  access_token?: string; refresh_token?: string
-  imap_host?: string; imap_port?: number; imap_use_ssl?: boolean
-  imap_username?: string; imap_password?: string; imap_mailbox?: string
-  feed_url?: string; feed_homepage_url?: string; feed_display_name?: string
-  bilibili_uid?: string; x_username?: string
-  forward_display_name?: string; forward_source_email?: string
-}
-export interface ConnectedAccountOut {
-  id: number; provider: string; identifier: string
-  last_synced_at?: string; created_at: string
-}
-export interface OAuthStartResponse { provider: string; auth_url: string }
-export interface OAuthCredentialConfigOut { provider: string; configured: boolean; client_id_hint?: string }
-export interface OAuthCredentialConfigUpdate { client_id: string; client_secret: string }
-export interface ForwardAccountInfo {
-  account_id: number; provider: string; identifier: string
-  source_email: string; forward_address: string; inbound_url: string
-}
-export interface SyncJobStartResponse { job_id: string; status: string; account_id: number }
-export interface SyncJobStatusResponse {
-  job_id: string; status: string; account_id: number
-  inserted?: number; error?: string
-  created_at: string; started_at?: string; finished_at?: string
-}
-
 /* ─── Aelin Chat ─── */
 export interface AelinChatRequest {
   query: string; use_memory?: boolean; max_citations?: number

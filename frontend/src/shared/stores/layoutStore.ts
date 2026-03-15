@@ -1,32 +1,48 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-type ThemeMode = 'light' | 'dark' | 'system'
+type ThemeMode = 'light' | 'dark'
 
 interface LayoutStore {
   theme: ThemeMode
   navRailExpanded: boolean
   setTheme: (v: ThemeMode) => void
   setNavRailExpanded: (v: boolean) => void
+  toggleNavRailExpanded: () => void
   applyTheme: (v: ThemeMode) => void
 }
 
-export function applyTheme(mode: ThemeMode) {
-  const resolved = mode === 'system'
-    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    : mode
-  document.documentElement.setAttribute('data-theme', resolved)
+function normalizeThemeMode(mode: unknown): ThemeMode {
+  return mode === 'dark' ? 'dark' : 'light'
+}
+
+export function applyTheme(mode: ThemeMode | unknown) {
+  document.documentElement.setAttribute('data-theme', normalizeThemeMode(mode))
 }
 
 export const useLayoutStore = create<LayoutStore>()(
   persist(
     (set) => ({
-      theme: 'system',
+      theme: 'light',
       navRailExpanded: false,
       setTheme: (v) => set({ theme: v }),
       setNavRailExpanded: (v) => set({ navRailExpanded: v }),
+      toggleNavRailExpanded: () => set((state) => ({ navRailExpanded: !state.navRailExpanded })),
       applyTheme: (v) => applyTheme(v),
     }),
-    { name: 'aelin-layout' }
+    {
+      name: 'aelin-layout',
+      version: 2,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return {}
+        }
+        const state = persistedState as Record<string, unknown>
+        return {
+          ...state,
+          theme: normalizeThemeMode(state.theme),
+        }
+      },
+    }
   )
 )
