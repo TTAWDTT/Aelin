@@ -3,8 +3,6 @@ import { lazy, Suspense } from 'react'
 import { RootLayout } from './layout/RootLayout'
 
 const ChatPage = lazy(() => import('./routes/ChatPage'))
-const ProcessesPage = lazy(() => import('./routes/ProcessesPage'))
-const FocusPage = lazy(() => import('./routes/FocusPage'))
 const SettingsPage = lazy(() => import('./routes/SettingsPage'))
 
 function Loading() {
@@ -21,8 +19,6 @@ export function App() {
       <Routes>
         <Route element={<RootLayout />}>
           <Route index element={<ChatPage />} />
-          <Route path="processes" element={<ProcessesPage />} />
-          <Route path="focus" element={<FocusPage />} />
           <Route path="settings/*" element={<SettingsPage />} />
           {/* Compat redirects */}
           <Route path="chat" element={<Navigate to="/" replace />} />

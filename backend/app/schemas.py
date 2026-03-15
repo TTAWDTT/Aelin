@@ -534,62 +534,6 @@ class AelinMediaAuthGuideResponse(BaseModel):
     generated_at: datetime
 
 
-class AelinDeviceProcessItem(BaseModel):
-    pid: int
-    name: str
-    cpu_percent: float = 0.0
-    memory_mb: float = 0.0
-    status: str = ""
-    username: str = ""
-    create_time: Optional[str] = None
-    anomaly_score: float = 0.0
-    anomaly_reasons: list[str] = Field(default_factory=list)
-    safe_to_terminate: bool = False
-
-
-class AelinDeviceProcessResponse(BaseModel):
-    sort_by: str = "cpu"
-    total: int = 0
-    items: list[AelinDeviceProcessItem] = Field(default_factory=list)
-    platform: str = "unknown"
-    filter_context: dict[str, str] = Field(default_factory=dict)
-    empty_reason: str = ""
-    generated_at: datetime
-
-
-class AelinDeviceProcessActionRequest(BaseModel):
-    action: str = Field(min_length=1, max_length=32)
-
-
-class AelinDeviceProcessActionResponse(BaseModel):
-    pid: int
-    action: str
-    ok: bool
-    detail: str = ""
-    generated_at: datetime
-
-
-class AelinDeviceModeApplyRequest(BaseModel):
-    mode: str = Field(min_length=1, max_length=32)
-
-
-class AelinDeviceModeApplyResponse(BaseModel):
-    mode: str
-    status: str
-    summary: str
-    steps: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinDeviceOptimizeResponse(BaseModel):
-    optimized_count: int = 0
-    affected_pids: list[int] = Field(default_factory=list)
-    steps: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
-    generated_at: datetime
-
-
 class AelinDeviceCapabilitiesResponse(BaseModel):
     platform: str = "unknown"
     capabilities: dict[str, bool] = Field(default_factory=dict)

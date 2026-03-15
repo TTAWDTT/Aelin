@@ -28,7 +28,7 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
     if tool == "profile":
         return action == "append_note"
     if tool == "device":
-        return action in {"mode_apply", "open_url", "open_aelin"}
+        return action in {"open_url", "open_aelin"}
     if tool == "web_search":
         return False
     if tool == "attachment_search":

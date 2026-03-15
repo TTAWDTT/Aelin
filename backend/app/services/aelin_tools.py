@@ -13,10 +13,8 @@ from app import crud
 from app.models import AgentMemoryNote
 from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services.device_center import (
-    apply_device_mode as device_apply_mode,
     activate_desktop_module,
     capture_device_screen as device_capture_screen,
-    collect_device_process_items as device_collect_process_items,
     DesktopPluginActionError,
     DeviceScreenCaptureError,
     device_status_snapshot,
@@ -194,8 +192,7 @@ class AelinToolHub:
                     "name": "device",
                     "description": (
                         "统一的设备工具。"
-                        "使用 action=status 查询设备状态，action=processes 查看进程，"
-                        "action=mode_apply 切换模式，action=open_url 打开网页，"
+                        "使用 action=status 查询设备状态，action=open_url 打开网页，"
                         "action=open_aelin 唤起 Aelin 桌面页。"
                     ),
                     "parameters": {
@@ -203,11 +200,8 @@ class AelinToolHub:
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["status", "processes", "mode_apply", "open_url", "open_aelin"],
+                                "enum": ["status", "open_url", "open_aelin"],
                             },
-                            "sort_by": {"type": "string", "enum": ["cpu", "memory"]},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-                            "mode": {"type": "string"},
                             "url": {"type": "string"},
                             "route": {"type": "string"},
                         },
@@ -449,36 +443,6 @@ class AelinToolHub:
             ),
         )
 
-    def _tool_device_processes(self, args: dict[str, Any]) -> dict[str, Any]:
-        sort_by = str(args.get("sort_by") or "cpu").strip().lower() or "cpu"
-        limit = _safe_int(args.get("limit"), 8, low=1, high=20)
-        rows = device_collect_process_items(sort_by=sort_by, limit=limit)
-        items = [
-            {
-                "pid": int(it.pid),
-                "name": str(it.name),
-                "cpu_percent": float(it.cpu_percent or 0.0),
-                "memory_mb": float(it.memory_mb or 0.0),
-                "anomaly_score": float(it.anomaly_score or 0.0),
-                "safe_to_terminate": bool(it.safe_to_terminate),
-            }
-            for it in rows
-        ]
-        return _result_items(items, sort_by=sort_by)
-
-    def _tool_device_mode_apply(self, args: dict[str, Any]) -> dict[str, Any]:
-        mode = str(args.get("mode") or "").strip().lower()
-        if not mode:
-            return _result_error("missing mode")
-        result = device_apply_mode(mode=mode)
-        return _result_ok(
-            mode=str(result.get("mode") or mode),
-            status=str(result.get("status") or ""),
-            summary=str(result.get("summary") or ""),
-            steps=[str(x) for x in list(result.get("steps") or [])][:12],
-            warnings=[str(x) for x in list(result.get("warnings") or [])][:12],
-        )
-
     def _tool_desktop_open_url(self, args: dict[str, Any]) -> dict[str, Any]:
         url = str(args.get("url") or "").strip()
         if not url:
@@ -518,10 +482,6 @@ class AelinToolHub:
         action = str(args.get("action") or "").strip().lower()
         if action == "status":
             return self._tool_device_status(args)
-        if action == "processes":
-            return self._tool_device_processes(args)
-        if action == "mode_apply":
-            return self._tool_device_mode_apply(args)
         if action == "open_url":
             return self._tool_desktop_open_url(args)
         if action == "open_aelin":

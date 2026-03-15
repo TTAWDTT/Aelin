@@ -74,10 +74,6 @@ export interface AelinChatResponse {
 
 /* ─── Aelin Context ─── */
 export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }
-export interface AgentFocusItemOut {
-  message_id: number; source: string; source_label: string; sender: string
-  sender_avatar_url?: string; title: string; received_at: string; score: number
-}
 export interface AelinMemoryLayerItem {
   id: string; layer: string; title: string; detail?: string
   source?: string; confidence: number; updated_at?: string
@@ -92,11 +88,6 @@ export interface AelinTodoItem {
   due_at?: string; priority: string
   contact_id?: number; message_id?: number; updated_at: string
 }
-export interface AelinDailyBrief {
-  generated_at: string; summary: string
-  top_updates: AgentFocusItemOut[]
-  actions: { kind: string; title: string; detail?: string; priority?: string }[]
-}
 export interface AelinPinRecommendationItem {
   contact_id: number; display_name: string; score: number
   reasons: string[]; unread_count: number; last_message_at?: string
@@ -107,11 +98,9 @@ export interface AelinNotificationItem {
 }
 export interface AelinContextResponse {
   workspace: string; summary: string
-  focus_items: AgentFocusItemOut[]
   notes: AgentMemoryNoteOut[]; notes_count: number
   todos: AelinTodoItem[]
   pin_recommendations: AelinPinRecommendationItem[]
-  daily_brief?: AelinDailyBrief
   layout_cards: { contact_id: number; display_name: string; pinned: boolean }[]
   memory_layers: AelinMemoryLayers
   notifications: AelinNotificationItem[]
@@ -178,15 +167,6 @@ export interface AelinFileMemoryContentResponse {
 }
 
 /* ─── Device Center ─── */
-export interface AelinDeviceProcessItem {
-  pid: number; name: string; cpu_percent: number; memory_mb: number
-  status: string; anomaly_score: number; anomaly_reasons: string[]
-  safe_to_terminate: boolean
-}
-export interface AelinDeviceProcessResponse {
-  sort_by: string; total: number; items: AelinDeviceProcessItem[]
-  platform: string; generated_at: string
-}
 export interface AelinDeviceCapabilitiesResponse {
   platform: string; capabilities: Record<string, boolean>
   notes: string[]; generated_at: string
@@ -207,14 +187,6 @@ export interface AelinDeviceScreenCaptureRequest {
   image_format?: 'jpeg' | 'png'
   quality?: number
   selection_timeout_ms?: number
-}
-export interface AelinDeviceModeApplyResponse {
-  mode: string; status: string; summary: string
-  steps: string[]; warnings: string[]; generated_at: string
-}
-export interface AelinDeviceOptimizeResponse {
-  optimized_count: number; affected_pids: number[]
-  steps: string[]; warnings: string[]; generated_at: string
 }
 
 /* ─── Agent ─── */

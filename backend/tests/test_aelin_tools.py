@@ -228,7 +228,7 @@ def test_screen_get_tool_success(monkeypatch):
     assert result["width"] == 1280
 
 
-def test_device_tool_supports_all_device_actions(monkeypatch):
+def test_device_tool_supports_supported_device_actions(monkeypatch):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
@@ -241,24 +241,6 @@ def test_device_tool_supports_all_device_actions(monkeypatch):
             "notes": ["note-a"],
             "desktop_plugin_reachable": True,
             "desktop_plugin_configured": True,
-        },
-    )
-    monkeypatch.setattr(
-        aelin_tools,
-        "device_collect_process_items",
-        lambda *, sort_by, limit: [
-            SimpleNamespace(pid=321, name="Code.exe", cpu_percent=12.5, memory_mb=640.0, anomaly_score=0.3, safe_to_terminate=True)
-        ],
-    )
-    monkeypatch.setattr(
-        aelin_tools,
-        "device_apply_mode",
-        lambda mode: {
-            "mode": mode,
-            "status": "applied",
-            "summary": f"{mode} ok",
-            "steps": ["step-a"],
-            "warnings": [],
         },
     )
     monkeypatch.setattr(
@@ -276,23 +258,13 @@ def test_device_tool_supports_all_device_actions(monkeypatch):
     assert status["ok"] is True
     assert status["desktop_plugin_reachable"] is True
 
-    processes = hub.execute("device", {"action": "processes", "sort_by": "memory", "limit": 5})
-    assert processes["ok"] is True
-    assert processes["items"][0]["pid"] == 321
-    assert processes["sort_by"] == "memory"
-
-    mode = hub.execute("device", {"action": "mode_apply", "mode": "focus"})
-    assert mode["ok"] is True
-    assert mode["status"] == "applied"
-    assert mode["steps"] == ["step-a"]
-
     opened = hub.execute("device", {"action": "open_url", "url": "https://example.com"})
     assert opened["ok"] is True
     assert opened["opened"] is True
 
-    aelin_opened = hub.execute("device", {"action": "open_aelin", "route": "/processes"})
+    aelin_opened = hub.execute("device", {"action": "open_aelin", "route": "/"})
     assert aelin_opened["ok"] is True
-    assert aelin_opened["route"] == "/processes"
+    assert aelin_opened["route"] == "/"
 
 
 def test_device_open_url_rejects_non_http_schemes(monkeypatch):
@@ -318,16 +290,12 @@ def test_device_tool_dispatches_to_internal_handlers(monkeypatch):
     hub = _hub(fake_web)
 
     monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_status", lambda self, args: {"ok": True, "summary": "status"})
-    monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_processes", lambda self, args: {"ok": True, "items": [{"pid": 1}]})
-    monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_device_mode_apply", lambda self, args: {"ok": True, "mode": "focus"})
     monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_desktop_open_url", lambda self, args: {"ok": True, "url": args["url"]})
     monkeypatch.setattr(aelin_tools.AelinToolHub, "_tool_desktop_open_aelin", lambda self, args: {"ok": True, "route": args.get("route", "/")})
 
     assert hub.execute("device", {"action": "status"})["summary"] == "status"
-    assert hub.execute("device", {"action": "processes"})["items"][0]["pid"] == 1
-    assert hub.execute("device", {"action": "mode_apply", "mode": "focus"})["mode"] == "focus"
     assert hub.execute("device", {"action": "open_url", "url": "https://example.com"})["url"] == "https://example.com"
-    assert hub.execute("device", {"action": "open_aelin", "route": "/processes"})["route"] == "/processes"
+    assert hub.execute("device", {"action": "open_aelin", "route": "/"})["route"] == "/"
 
 
 def test_device_tool_rejects_unknown_action():

@@ -4,8 +4,8 @@ import type {
   AelinNotificationResponse, AelinProactivePollResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinBrowserLoginCheckpointListResponse,
-  AelinDeviceCapabilitiesResponse, AelinDeviceProcessResponse,
-  AelinDeviceModeApplyResponse, AelinDeviceOptimizeResponse, AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
+  AelinDeviceCapabilitiesResponse,
+  AelinDeviceScreenCaptureRequest, AelinDeviceScreenCaptureResponse,
   AelinAttachmentUploadResponse,
 } from './types'
 
@@ -43,20 +43,6 @@ export const aelinApi = {
   // Device
   deviceCapabilities: () =>
     fetchJson<AelinDeviceCapabilitiesResponse>('/api/v1/aelin/device/capabilities'),
-
-  deviceProcesses: (sortBy = 'cpu') =>
-    fetchJson<AelinDeviceProcessResponse>(`/api/v1/aelin/device/processes?sort_by=${sortBy}`),
-
-  deviceProcessAction: (pid: number, action: string) =>
-    fetchJson(`/api/v1/aelin/device/processes/${pid}/action`, { method: 'POST', body: JSON.stringify({ action }) }),
-
-  deviceOptimize: () =>
-    fetchJson<AelinDeviceOptimizeResponse>('/api/v1/aelin/device/processes/optimize', { method: 'POST' }),
-
-  deviceMode: () => fetchJson<AelinDeviceModeApplyResponse>('/api/v1/aelin/device/mode'),
-
-  deviceModeApply: (mode: string) =>
-    fetchJson<AelinDeviceModeApplyResponse>('/api/v1/aelin/device/mode/apply', { method: 'POST', body: JSON.stringify({ mode }) }),
 
   deviceScreenCapture: (body?: AelinDeviceScreenCaptureRequest) =>
     fetchJson<AelinDeviceScreenCaptureResponse>('/api/v1/aelin/device/screen/capture', {

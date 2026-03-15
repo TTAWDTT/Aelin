@@ -117,8 +117,6 @@ def test_remote_control_status_exposes_unified_device_contract(monkeypatch):
     assert data.get("supported_tools") == ["device", "screen_get"]
     assert data.get("supported_device_actions") == [
         "status",
-        "processes",
-        "mode_apply",
         "open_url",
         "open_aelin",
     ]
