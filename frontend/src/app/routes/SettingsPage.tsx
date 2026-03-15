@@ -1,20 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { cn } from '@/shared/utils/cn'
-import { Bot, Link2, Monitor, Palette, Search, Sparkles, User } from 'lucide-react'
+import { Bot, Monitor, Search, Sparkles, User } from 'lucide-react'
 import { ProfileTab } from '@/features/settings/ProfileTab'
 import { AIConfigTab } from '@/features/settings/AIConfigTab'
-import { AccountsTab } from '@/features/settings/AccountsTab'
-import { AppearanceTab } from '@/features/settings/AppearanceTab'
 import { DeviceTab } from '@/features/settings/DeviceTab'
 import { PageScaffold } from '@/shared/components/PageScaffold'
 
-type Tab = 'profile' | 'ai' | 'accounts' | 'appearance' | 'device'
+type Tab = 'profile' | 'ai' | 'device'
 
 const SETTINGS_TABS: { key: Tab; label: string; description: string; icon: typeof User }[] = [
   { key: 'profile', label: '个人', description: '账号与身份信息', icon: User },
   { key: 'ai', label: 'AI 模型', description: '提供商与模型连接', icon: Bot },
-  { key: 'accounts', label: '数据源', description: '账号接入与同步状态', icon: Link2 },
-  { key: 'appearance', label: '外观', description: '主题和显示风格', icon: Palette },
   { key: 'device', label: '设备', description: '桌面能力与设备状态', icon: Monitor },
 ]
 
@@ -40,8 +36,6 @@ export default function SettingsPage() {
   const renderActiveTab = () => {
     if (tab === 'profile') return <ProfileTab />
     if (tab === 'ai') return <AIConfigTab />
-    if (tab === 'accounts') return <AccountsTab />
-    if (tab === 'appearance') return <AppearanceTab />
     return <DeviceTab />
   }
 
