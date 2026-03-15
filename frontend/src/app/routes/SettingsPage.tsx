@@ -127,7 +127,7 @@ export default function SettingsPage() {
 
               {effectiveTab && (
                 <section className="aelin-card rounded-[28px] border-[color-mix(in_srgb,var(--color-border)_84%,white_16%)] px-6 py-6 shadow-[0_26px_54px_-42px_rgba(27,24,16,0.24)]">
-                  renderActiveTab(effectiveTab)
+                  {renderActiveTab(effectiveTab)}
                 </section>
               )}
             </div>
