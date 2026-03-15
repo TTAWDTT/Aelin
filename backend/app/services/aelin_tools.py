@@ -24,6 +24,7 @@ from app.services.device_center import (
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.aelin_planes import close_plane_task, get_active_plane_task, plane_catalog_entries
 from app.services.aelin_utils import normalize_positive_ints
+from app.services.google_workspace_cli import get_google_workspace_cli_service
 from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
 from app.services.plane_runtime import get_plane_registry_entry
@@ -541,6 +542,73 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
+                    "name": "google_workspace",
+                    "description": "使用本地 gws CLI 访问 Google Workspace（Gmail / Drive / Calendar 等）的信息。读能力为主，并在明确同意后再执行少量写操作。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "description": (
+                                    "要执行的操作。读能力包括 runtime/auth_status/gmail_list/gmail_get/drive_list/calendar_list，"
+                                    "写能力预留 calendar_create_event/gmail_send/gmail_draft。"
+                                ),
+                            },
+                            "query": {"type": "string", "description": "Gmail/Drive 检索关键字。"},
+                            "max_results": {"type": "integer", "minimum": 1, "maximum": 50},
+                            "include_spam_trash": {"type": "boolean"},
+                            "message_id": {"type": "string", "description": "要读取的 Gmail 消息 ID。"},
+                            "format": {
+                                "type": "string",
+                                "enum": ["full", "metadata", "minimal"],
+                                "description": "Gmail 消息返回格式。",
+                            },
+                            "calendar_id": {
+                                "type": "string",
+                                "description": "日历 ID，默认为 primary。",
+                            },
+                            "time_min": {"type": "string", "description": "查询起始时间（ISO8601），可留空。"},
+                            "time_max": {"type": "string", "description": "查询结束时间（ISO8601），可留空。"},
+                            "single_events": {
+                                "type": "boolean",
+                                "description": "是否展开重复事件，默认为 true。",
+                            },
+                            "event_summary": {"type": "string", "description": "创建日历事件时的标题。"},
+                            "event_description": {"type": "string", "description": "创建日历事件时的说明。"},
+                            "event_start": {"type": "string", "description": "事件开始时间（ISO8601）。"},
+                            "event_end": {"type": "string", "description": "事件结束时间（ISO8601）。"},
+                            "event_attendees": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "maxItems": 16,
+                                "description": "事件参与人邮箱列表。",
+                            },
+                            "email_to": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "maxItems": 16,
+                                "description": "邮件收件人列表。",
+                            },
+                            "email_cc": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "maxItems": 16,
+                            },
+                            "email_bcc": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "maxItems": 16,
+                            },
+                            "email_subject": {"type": "string"},
+                            "email_body": {"type": "string"},
+                        },
+                        "required": ["action"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "skill",
                     "description": "查看可用 skill 目录，或按 slug 读取某个 skill 的正文，用于获取更细的工具/plane 使用策略。",
                     "parameters": {
@@ -608,6 +676,8 @@ class AelinToolHub:
             return self._tool_attachment_search(args)
         if tool == "screen_get":
             return self._tool_screen_get(args)
+        if tool == "google_workspace":
+            return self._tool_google_workspace(args)
         if tool == "skill":
             return self._tool_skill(args)
         if tool == "plane":
@@ -854,6 +924,195 @@ class AelinToolHub:
             source_display=str(shot.get("source_display") or "")[:64],
             captured_at=str(shot.get("captured_at") or "")[:64],
         )
+
+    def _tool_google_workspace(self, args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "").strip().lower()
+        service = get_google_workspace_cli_service()
+
+        if action in {"runtime", "status"}:
+            # status 作为别名，方便迁移旧的 google_status 语义。
+            return {**service.runtime_status(), "scope": "runtime"}
+
+        if action == "auth_status":
+            result = service.auth_status()
+            # 补充 login_command，方便 Agent 在“已安装但未登录”场景下给出具体指令。
+            if not bool(result.get("authenticated", True)):
+                result = {**result, "login_command": service.login_command()}
+            return {**result, "scope": "auth"}
+
+        if action == "gmail_list":
+            query = str(args.get("query") or "").strip()
+            max_results = _safe_int(args.get("max_results") or 10, 10, low=1, high=50)
+            include_spam_trash = bool(args.get("include_spam_trash"))
+            result = service.gmail_list_messages(
+                query=query,
+                max_results=max_results,
+                include_spam_trash=include_spam_trash,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "gmail",
+                    **result,
+                }
+            return {
+                "ok": True,
+                "scope": "gmail",
+                "items": list(result.get("items") or []),
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "gmail_get":
+            message_id = str(args.get("message_id") or "").strip()
+            if not message_id:
+                return {"ok": False, "scope": "gmail", "error": "missing_message_id"}
+            fmt = str(args.get("format") or "full").strip().lower()
+            result = service.gmail_get_message(message_id=message_id, fmt=fmt)
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "gmail",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
+            return {
+                "ok": True,
+                "scope": "gmail",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "drive_list":
+            query = str(args.get("query") or "").strip()
+            max_results = _safe_int(args.get("max_results") or 10, 10, low=1, high=50)
+            result = service.drive_list_files(query=query, max_results=max_results)
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "drive",
+                    **result,
+                }
+            return {
+                "ok": True,
+                "scope": "drive",
+                "items": list(result.get("items") or []),
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "calendar_list":
+            calendar_id = str(args.get("calendar_id") or "primary").strip() or "primary"
+            time_min = str(args.get("time_min") or "").strip()
+            time_max = str(args.get("time_max") or "").strip()
+            max_results = _safe_int(args.get("max_results") or 10, 10, low=1, high=50)
+            single_events = bool(args.get("single_events", True))
+            result = service.calendar_list_events(
+                calendar_id=calendar_id,
+                time_min=time_min,
+                time_max=time_max,
+                max_results=max_results,
+                single_events=single_events,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "calendar",
+                    **result,
+                }
+            return {
+                "ok": True,
+                "scope": "calendar",
+                "items": list(result.get("items") or []),
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "calendar_create_event":
+            calendar_id = str(args.get("calendar_id") or "primary").strip() or "primary"
+            summary = str(args.get("event_summary") or "").strip()
+            description = str(args.get("event_description") or "").strip()
+            event_start = str(args.get("event_start") or "").strip()
+            event_end = str(args.get("event_end") or "").strip()
+            attendees = list(args.get("event_attendees") or [])
+            result = service.calendar_create_event(
+                calendar_id=calendar_id,
+                summary=summary,
+                description=description,
+                start=event_start,
+                end=event_end,
+                attendees=attendees,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "calendar",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
+            return {
+                "ok": True,
+                "scope": "calendar",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "gmail_send":
+            to = list(args.get("email_to") or [])
+            cc = list(args.get("email_cc") or [])
+            bcc = list(args.get("email_bcc") or [])
+            subject = str(args.get("email_subject") or "").strip()
+            body = str(args.get("email_body") or "")
+            result = service.gmail_send_message(
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                subject=subject,
+                body=body,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "gmail",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
+            return {
+                "ok": True,
+                "scope": "gmail",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "gmail_draft":
+            to = list(args.get("email_to") or [])
+            cc = list(args.get("email_cc") or [])
+            bcc = list(args.get("email_bcc") or [])
+            subject = str(args.get("email_subject") or "").strip()
+            body = str(args.get("email_body") or "")
+            result = service.gmail_create_draft(
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                subject=subject,
+                body=body,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "gmail",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
+            return {
+                "ok": True,
+                "scope": "gmail",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        return {
+            "ok": False,
+            "scope": "google_workspace",
+            "error": "unsupported_action",
+        }
 
     def _tool_skill(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()

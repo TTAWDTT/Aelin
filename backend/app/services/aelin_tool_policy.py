@@ -35,6 +35,10 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return False
     if tool == "screen_get":
         return False
+    if tool == "google_workspace":
+        # 读操作（runtime/auth_status/gmail_list/gmail_get/drive_list/calendar_list）视为只读；
+        # 写操作在工具层预留，占位 action 统一视为写，以便配额与安全策略可以统一控制。
+        return action in {"calendar_create_event", "gmail_send", "gmail_draft"}
     if tool == "skill":
         return False
     if tool == "plane":
@@ -74,6 +78,7 @@ class AelinToolPolicy:
             "web_search",
             "attachment_search",
             "screen_get",
+            "google_workspace",
             "skill",
             "plane",
             "pinchtab",
