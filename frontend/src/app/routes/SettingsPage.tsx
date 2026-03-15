@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { cn } from '@/shared/utils/cn'
 import type { LucideIcon } from 'lucide-react'
 import { Bot, Monitor, Search, Sparkles, User } from 'lucide-react'
@@ -30,6 +30,12 @@ export default function SettingsPage() {
     ? SETTINGS_TABS.find((item) => item.key === effectiveTab) ?? SETTINGS_TABS[0]
     : null
 
+  useEffect(() => {
+    if (effectiveTab && effectiveTab !== tab) {
+      setTab(effectiveTab)
+    }
+  }, [effectiveTab, tab])
+
   const renderActiveTab = (currentTab: Tab) => {
     if (currentTab === 'profile') return <ProfileTab />
     if (currentTab === 'ai') return <AIConfigTab />
@@ -48,6 +54,7 @@ export default function SettingsPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="搜索设置..."
+            aria-label="搜索设置"
             className="aelin-input h-16 rounded-[22px] border-[color-mix(in_srgb,var(--color-border)_78%,white_22%)] bg-[color-mix(in_srgb,var(--color-panel)_86%,transparent)] pr-5 text-lg shadow-[0_14px_28px_-24px_rgba(27,24,16,0.24)]"
             style={{ paddingLeft: '2.9rem' }}
           />

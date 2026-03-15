@@ -15,10 +15,6 @@ const queryClient = new QueryClient({
 const theme = useLayoutStore.getState().theme
 applyTheme(theme)
 useLayoutStore.subscribe((s) => applyTheme(s.theme))
-// System preference listener
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-  if (useLayoutStore.getState().theme === 'system') applyTheme('system')
-})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

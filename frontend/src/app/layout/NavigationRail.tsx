@@ -37,7 +37,7 @@ export function NavigationRail() {
         )}
       </div>
 
-      <div className={cn('flex flex-1 flex-col gap-1.5', navRailExpanded && 'w-full')}>
+      <div id="aelin-nav-rail-links" className={cn('flex flex-1 flex-col gap-1.5', navRailExpanded && 'w-full')}>
         {MODULE_NAV_ITEMS.map(({ to, icon: Icon, label, match }) => {
           const active = match ? match(location.pathname) : location.pathname.startsWith(to)
           return (
@@ -66,6 +66,8 @@ export function NavigationRail() {
           onClick={handleRailToggle}
           title={navRailExpanded ? '收起左栏' : '展开左栏'}
           aria-label={navRailExpanded ? '收起左栏' : '展开左栏'}
+          aria-expanded={navRailExpanded}
+          aria-controls="aelin-nav-rail-links"
           className="aelin-rail-control"
         >
           {navRailExpanded ? <ChevronLeft size={22} /> : <ChevronRight size={22} />}

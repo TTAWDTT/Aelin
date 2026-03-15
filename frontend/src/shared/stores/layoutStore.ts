@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-type ThemeMode = 'light' | 'dark' | 'system'
+type ThemeMode = 'light' | 'dark'
 
 interface LayoutStore {
   theme: ThemeMode
@@ -15,16 +15,13 @@ interface LayoutStore {
 }
 
 export function applyTheme(mode: ThemeMode) {
-  const resolved = mode === 'system'
-    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    : mode
-  document.documentElement.setAttribute('data-theme', resolved)
+  document.documentElement.setAttribute('data-theme', mode)
 }
 
 export const useLayoutStore = create<LayoutStore>()(
   persist(
     (set) => ({
-      theme: 'system',
+      theme: 'light',
       focusModeEnabled: false,
       navRailExpanded: false,
       setTheme: (v) => set({ theme: v }),
