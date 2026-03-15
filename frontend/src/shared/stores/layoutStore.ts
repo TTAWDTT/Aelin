@@ -39,7 +39,7 @@ export const useLayoutStore = create<LayoutStore>()(
       version: 2,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') {
-          return persistedState
+          return {}
         }
         const state = persistedState as Record<string, unknown>
         return {
