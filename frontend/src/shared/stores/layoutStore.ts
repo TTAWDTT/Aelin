@@ -6,8 +6,10 @@ type ThemeMode = 'light' | 'dark' | 'system'
 interface LayoutStore {
   theme: ThemeMode
   focusModeEnabled: boolean
+  navRailExpanded: boolean
   setTheme: (v: ThemeMode) => void
   setFocusModeEnabled: (v: boolean) => void
+  setNavRailExpanded: (v: boolean) => void
   applyTheme: (v: ThemeMode) => void
 }
 
@@ -23,8 +25,10 @@ export const useLayoutStore = create<LayoutStore>()(
     (set) => ({
       theme: 'system',
       focusModeEnabled: false,
+      navRailExpanded: false,
       setTheme: (v) => set({ theme: v }),
       setFocusModeEnabled: (v) => set({ focusModeEnabled: v }),
+      setNavRailExpanded: (v) => set({ navRailExpanded: v }),
       applyTheme: (v) => applyTheme(v),
     }),
     { name: 'aelin-layout' }

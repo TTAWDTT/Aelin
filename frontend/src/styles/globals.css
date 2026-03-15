@@ -22,6 +22,13 @@
   --color-green: #788c5d;
   --color-danger: #ef4444;
   --color-warning: #d97757;
+  --color-nav-active-bg: #efe4c8;
+  --color-nav-active-border: #e2d3a8;
+  --color-nav-active-text: #705627;
+  --color-nav-active-shadow: rgba(143, 115, 56, 0.22);
+  --color-primary-soft: #dcc18a;
+  --color-primary-soft-hover: #d3b576;
+  --color-primary-soft-text: #4a3710;
   --radius-sm: 10px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -43,6 +50,13 @@
   --color-green: #9aad7e;
   --color-danger: #f87171;
   --color-warning: #fbbf24;
+  --color-nav-active-bg: rgba(214, 189, 128, 0.16);
+  --color-nav-active-border: rgba(224, 201, 146, 0.2);
+  --color-nav-active-text: #f3dfb0;
+  --color-nav-active-shadow: rgba(209, 181, 114, 0.18);
+  --color-primary-soft: #9f8350;
+  --color-primary-soft-hover: #ae9360;
+  --color-primary-soft-text: #fff3d1;
 }
 
 html, body, #root {
@@ -90,14 +104,35 @@ code, pre, .font-mono {
 
 .aelin-app {
   height: 100dvh;
-  background: var(--color-bg);
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--color-accent-soft) 78%, transparent) 0%, transparent 34%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--color-panel-alt) 82%, transparent) 0%, transparent 30%),
+    var(--color-bg-elevated);
   color: var(--color-text);
 }
 
+.aelin-shell {
+  min-height: 0;
+}
+
 .aelin-sidebar {
-  width: 78px;
-  border-right: 1px solid var(--color-border);
-  background: var(--color-bg);
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, white 15%);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--color-panel) 94%, transparent);
+  box-shadow:
+    0 28px 60px -42px rgba(27, 24, 16, 0.28),
+    0 10px 22px -18px rgba(27, 24, 16, 0.18);
+  backdrop-filter: blur(12px);
+}
+
+.aelin-shell-main {
+  border: 1px solid color-mix(in srgb, var(--color-border) 88%, white 12%);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--color-panel) 96%, transparent);
+  box-shadow:
+    0 34px 80px -52px rgba(27, 24, 16, 0.32),
+    0 14px 30px -22px rgba(27, 24, 16, 0.18);
+  backdrop-filter: blur(14px);
 }
 
 .aelin-page {
@@ -105,7 +140,7 @@ code, pre, .font-mono {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  background: var(--color-bg);
+  background: transparent;
 }
 
 .aelin-page-header {
@@ -134,9 +169,35 @@ code, pre, .font-mono {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: 20px;
   scroll-behavior: smooth;
   animation: aelin-page-enter 180ms ease-out both;
+}
+
+.aelin-rail-control {
+  display: inline-flex;
+  height: 42px;
+  width: 42px;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  border: 1px solid color-mix(in srgb, var(--color-border) 88%, white 12%);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--color-panel) 92%, transparent);
+  color: var(--color-text-muted);
+  box-shadow: 0 14px 26px -22px rgba(27, 24, 16, 0.32);
+  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.aelin-rail-control:hover {
+  border-color: var(--color-nav-active-border);
+  background: var(--color-nav-active-bg);
+  color: var(--color-nav-active-text);
+  transform: translateY(-1px);
+}
+
+.aelin-rail-control:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .aelin-card {
@@ -219,14 +280,16 @@ code, pre, .font-mono {
 }
 
 .aelin-btn-primary {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-bg);
+  border-color: color-mix(in srgb, var(--color-primary-soft) 82%, var(--color-border) 18%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary-soft) 92%, white 8%) 0%, var(--color-primary-soft) 100%);
+  color: var(--color-primary-soft-text);
+  box-shadow: 0 14px 26px -20px color-mix(in srgb, var(--color-primary-soft) 52%, transparent);
 }
 
 .aelin-btn-primary:hover {
-  opacity: 0.88;
-  background: var(--color-accent);
+  opacity: 1;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary-soft-hover) 92%, white 8%) 0%, var(--color-primary-soft-hover) 100%);
+  border-color: color-mix(in srgb, var(--color-primary-soft-hover) 82%, var(--color-border) 18%);
 }
 
 .aelin-segment {
@@ -314,6 +377,10 @@ code, pre, .font-mono {
 }
 
 @media (max-width: 640px) {
+  .aelin-shell-main {
+    border-radius: 18px;
+  }
+
   .aelin-page-header {
     flex-wrap: wrap;
     align-items: flex-start;
@@ -330,7 +397,7 @@ code, pre, .font-mono {
   }
 
   .aelin-page-content {
-    padding: 10px 12px;
+    padding: 14px 12px;
   }
 
   .aelin-btn {
