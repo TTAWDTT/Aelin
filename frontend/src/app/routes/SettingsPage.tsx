@@ -25,7 +25,7 @@ export default function SettingsPage() {
             <button key={t.key} onClick={() => setTab(t.key)}
               className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-full whitespace-nowrap transition-colors',
                 tab === t.key
-                  ? 'border border-[var(--color-nav-active-border)] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)]'
+                  ? 'border border-[var(--color-border-strong)] bg-[var(--color-accent-soft)] text-[var(--color-text)]'
                   : 'border border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
               )}>
               <t.icon size={13} /> {t.label}
