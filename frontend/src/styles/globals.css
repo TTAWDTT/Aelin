@@ -122,6 +122,7 @@ code, pre, .font-mono {
   box-shadow:
     0 28px 60px -42px rgba(27, 24, 16, 0.28),
     0 10px 22px -18px rgba(27, 24, 16, 0.18);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
 
@@ -132,6 +133,7 @@ code, pre, .font-mono {
   box-shadow:
     0 34px 80px -52px rgba(27, 24, 16, 0.32),
     0 14px 30px -22px rgba(27, 24, 16, 0.18);
+  -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
 }
 

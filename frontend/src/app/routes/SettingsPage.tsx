@@ -125,15 +125,11 @@ export default function SettingsPage() {
                 </section>
               )}
 
-              <section className="aelin-card rounded-[28px] border-[color-mix(in_srgb,var(--color-border)_84%,white_16%)] px-6 py-6 shadow-[0_26px_54px_-42px_rgba(27,24,16,0.24)]">
-                {effectiveTab ? (
+              {effectiveTab && (
+                <section className="aelin-card rounded-[28px] border-[color-mix(in_srgb,var(--color-border)_84%,white_16%)] px-6 py-6 shadow-[0_26px_54px_-42px_rgba(27,24,16,0.24)]">
                   renderActiveTab(effectiveTab)
-                ) : (
-                  <div className="py-12 text-center text-[var(--color-text-muted)]">
-                    没有匹配当前搜索的设置项。
-                  </div>
-                )}
-              </section>
+                </section>
+              )}
             </div>
           </div>
         </div>
