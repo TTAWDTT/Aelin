@@ -565,27 +565,6 @@ def _rule_based_answer(
     )
 
 
-def _build_actions(
-    query: str,
-    citations: list[AelinCitation],
-    *,
-    has_todos: bool,
-) -> list[AelinAction]:
-    _ = has_todos
-    actions: list[AelinAction] = []
-    if citations:
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_message",
-                title="打开最高相关消息",
-                detail=f"查看：{citations[0].title}",
-                payload={"message_id": str(citations[0].message_id), "query": query.strip()[:180]},
-            ),
-        )
-    return actions[:4]
-
-
 def _normalize_images(raw_images: list[Any]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for item in raw_images[:4]:
@@ -2010,14 +1989,7 @@ def _aelin_chat_impl(
         db.rollback()
 
     final_memory_summary = str(active_bundle.get("summary") or memory_summary or "")
-    actions = [
-        *structured_tool_actions[:3],
-        *_build_actions(
-            payload.query,
-            citations,
-            has_todos=bool(todo_titles),
-        ),
-    ]
+    actions = structured_tool_actions[:3]
 
     response = AelinChatResponse(
         answer=answer,

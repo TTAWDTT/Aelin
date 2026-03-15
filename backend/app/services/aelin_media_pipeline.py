@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from app.services.media_ingest import MediaIngestOutput, MediaIngestService
 
 media_ingest_service = MediaIngestService()

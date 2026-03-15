@@ -8,7 +8,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.schemas import AelinCitation
 from app.services.agent_memory import AgentMemoryService
 from app.services.llm import LLMService
 from app.services.memory_draft import ParallelMemoryDraftResult
@@ -21,6 +20,19 @@ from app.routers.aelin_text_helpers import (
 
 _memory = AgentMemoryService()
 _file_memory = file_memory_bridge
+
+_MEMORY_FINAL_ANSWER_MAX_CHARS = 2800
+_CODE_BLOCK_RE = re.compile(r"```.*?```", flags=re.S)
+
+
+def _sanitize_memory_answer(value: str, *, max_chars: int = _MEMORY_FINAL_ANSWER_MAX_CHARS) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = _CODE_BLOCK_RE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text[:max_chars].strip()
 
 def _save_parallel_draft_entry(
     db: Session,
@@ -98,7 +110,7 @@ def _save_parallel_draft_entry(
             "",
             "## 最终回答归档",
             "",
-            str(answer or "").strip(),
+            _sanitize_memory_answer(answer),
         ]
     ).strip()
     out_path = _file_memory.append_insight(

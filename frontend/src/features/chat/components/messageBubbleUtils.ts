@@ -36,16 +36,6 @@ export function resolveActionHref(action: AelinAction): string {
   const kind = String(action.kind || '').trim().toLowerCase()
   const payload = action.payload || {}
 
-  if (kind === 'open_message') {
-    const params = new URLSearchParams()
-    const messageId = String(payload.message_id || '').trim()
-    const query = String(payload.query || '').trim()
-    if (messageId) params.set('message_id', messageId)
-    if (query) params.set('query', query)
-    const suffix = params.toString()
-    return suffix ? `/?${suffix}` : '/'
-  }
-
   if (kind === 'open_settings') {
     return String(payload.path || '').trim() || '/settings'
   }
