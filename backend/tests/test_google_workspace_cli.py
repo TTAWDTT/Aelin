@@ -40,7 +40,8 @@ def test_auth_status_uses_gws_and_parses_json(monkeypatch):
     assert result["next_action"] == "ready"
     assert result["configured_bin_path"] == "gws"
     assert result["resolved_bin_path"] == "C:/tools/gws.exe"
-    assert result["login_command"] == ["gws", "auth", "login"]
+    # 当能够解析到实际可执行路径时，login_command 应该提示这一真实路径，避免 gws 不在 PATH 时的误导。
+    assert result["login_command"] == ["C:/tools/gws.exe", "auth", "login"]
     assert calls and calls[0]["cmd"] == ["C:/tools/gws.exe", "auth", "status"]
     assert calls[0]["env"]["GWS_CONFIG_DIR"] == "D:/cfg"
 
@@ -109,6 +110,36 @@ def test_auth_status_reports_install_guidance_when_binary_missing(monkeypatch):
     assert result["next_action"] == "install"
     assert result["login_command"] == ["gws", "auth", "login"]
     assert "未安装 gws" in result["install_hint"]
+
+
+def test_auth_status_treats_missing_authenticated_as_unauthenticated(monkeypatch):
+    service = GoogleWorkspaceCliService(bin_path="gws", config_dir="D:/cfg", timeout_seconds=9.0)
+
+    # 模拟已安装但返回的 JSON 中没有 authenticated 字段。
+    monkeypatch.setattr(service, "_resolve_bin_path", lambda: "C:/tools/gws.exe")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    # 没有 authenticated 字段，只返回 email / scopes，这种情况下应视为“未登录”。
+                    "email": "owner@example.com",
+                    "scopes": ["gmail.readonly"],
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.services.google_workspace_cli.subprocess.run", fake_run)
+
+    result = service.auth_status()
+
+    assert result["ok"] is True
+    assert result["available"] is True
+    assert result["authenticated"] is False
+    assert result["next_action"] == "login"
 
 
 def test_run_json_timeout_returns_error(monkeypatch):

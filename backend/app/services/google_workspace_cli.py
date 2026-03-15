@@ -81,7 +81,10 @@ class GoogleWorkspaceCliService:
         return self._config_dir
 
     def login_command(self) -> list[str]:
-        return ["gws", "auth", "login"]
+        # Prefer the resolved binary path when available so the hint works even
+        # when google_workspace_cli_bin is an absolute path and `gws` is not on PATH.
+        bin_hint = self._resolve_bin_path() or self._configured_bin_path or "gws"
+        return [bin_hint, "auth", "login"]
 
     def install_hint(self) -> str:
         configured = self._configured_bin_path
@@ -160,13 +163,15 @@ class GoogleWorkspaceCliService:
         payload = result.get("data")
         if not isinstance(payload, dict):
             payload = {}
+        # Treat missing/falsey `authenticated` as unauthenticated by default.
+        authenticated = bool(payload.get("authenticated"))
         return {
             "ok": True,
             **runtime,
-            "authenticated": bool(payload.get("authenticated", True)),
+            "authenticated": authenticated,
             "email": str(payload.get("email") or payload.get("account") or "")[:160],
             "scopes": [str(item or "")[:160] for item in list(payload.get("scopes") or [])[:32]],
-            "next_action": ("ready" if bool(payload.get("authenticated", True)) else "login"),
+            "next_action": ("ready" if authenticated else "login"),
             "raw": payload,
         }
 
