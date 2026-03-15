@@ -1339,6 +1339,15 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
         def calendar_list_events(self, **kwargs):
             return {"ok": False, "error": "gws_failed:calendar"}
 
+        def calendar_create_event(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:calendar_insert"}
+
+        def gmail_send_message(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:gmail_send"}
+
+        def gmail_create_draft(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:gmail_draft"}
+
     fake_service = _FakeGWS()
     monkeypatch.setattr(aelin_tools, "get_google_workspace_cli_service", lambda: fake_service)
 
@@ -1355,10 +1364,20 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
     assert calendar["ok"] is False
     assert calendar["scope"] == "calendar"
 
-    # 写操作目前只应返回明确的未实现错误。
     create_event = hub.execute("google_workspace", {"action": "calendar_create_event"})
     assert create_event["ok"] is False
-    assert create_event["error"] == "write_actions_not_implemented"
+    assert create_event["scope"] == "calendar"
+    assert "gws_failed:calendar_insert" in str(create_event.get("error") or "")
+
+    send = hub.execute("google_workspace", {"action": "gmail_send"})
+    assert send["ok"] is False
+    assert send["scope"] == "gmail"
+    assert "gws_failed:gmail_send" in str(send.get("error") or "")
+
+    draft = hub.execute("google_workspace", {"action": "gmail_draft"})
+    assert draft["ok"] is False
+    assert draft["scope"] == "gmail"
+    assert "gws_failed:gmail_draft" in str(draft.get("error") or "")
 
     unknown = hub.execute("google_workspace", {"action": "unknown_action"})
     assert unknown["ok"] is False

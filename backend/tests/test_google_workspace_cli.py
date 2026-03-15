@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 
@@ -91,8 +92,119 @@ def test_drive_and_calendar_list_extract_items(monkeypatch):
     assert events["items"][0]["summary"] == "Demo"
 
 
-def test_service_reports_missing_binary():
+def test_gmail_send_message_builds_mime_and_calls_cli(monkeypatch):
     service = GoogleWorkspaceCliService(bin_path="gws")
+
+    captured: dict[str, object] = {}
+
+    def fake_run_json(args: list[str], *, timeout_seconds: float | None = None):
+        captured["args"] = args
+        captured["body"] = json.loads(args[-1])
+        return {"ok": True, "data": {"id": "msg-1"}}
+
+    monkeypatch.setattr(service, "_run_json", fake_run_json)
+
+    result = service.gmail_send_message(
+        to=["alice@example.com"],
+        cc=["bob@example.com"],
+        bcc=[],
+        subject="Hello",
+        body="Hi there",
+    )
+
+    assert result["ok"] is True
+    assert isinstance(captured.get("args"), list)
+    args = captured["args"]  # type: ignore[assignment]
+    assert args[:4] == ["gmail", "users", "messages", "send"]
+    assert args[4] == "--json"
+    body = captured["body"]  # type: ignore[assignment]
+    assert "raw" in body
+    raw = str(body["raw"])
+    decoded = base64.urlsafe_b64decode(raw.encode("ascii"))
+    text = decoded.decode("utf-8", errors="ignore")
+    assert "To: alice@example.com" in text
+    assert "Cc: bob@example.com" in text
+    assert "Subject: Hello" in text
+    assert "Hi there" in text
+
+
+def test_gmail_create_draft_builds_message_wrapper(monkeypatch):
+    service = GoogleWorkspaceCliService(bin_path="gws")
+
+    captured: dict[str, object] = {}
+
+    def fake_run_json(args: list[str], *, timeout_seconds: float | None = None):
+        captured["args"] = args
+        captured["body"] = json.loads(args[-1])
+        return {"ok": True, "data": {"id": "draft-1"}}
+
+    monkeypatch.setattr(service, "_run_json", fake_run_json)
+
+    result = service.gmail_create_draft(
+        to=["alice@example.com"],
+        cc=[],
+        bcc=[],
+        subject="Draft",
+        body="Draft body",
+    )
+
+    assert result["ok"] is True
+    args = captured["args"]  # type: ignore[assignment]
+    assert args[:4] == ["gmail", "users", "drafts", "create"]
+    assert args[4] == "--json"
+    body = captured["body"]  # type: ignore[assignment]
+    assert "message" in body
+    raw = str(body["message"]["raw"])
+    decoded = base64.urlsafe_b64decode(raw.encode("ascii"))
+    text = decoded.decode("utf-8", errors="ignore")
+    assert "To: alice@example.com" in text
+    assert "Subject: Draft" in text
+    assert "Draft body" in text
+
+
+def test_calendar_create_event_builds_insert_call(monkeypatch):
+    service = GoogleWorkspaceCliService(bin_path="gws")
+
+    captured: dict[str, object] = {}
+
+    def fake_run_json(args: list[str], *, timeout_seconds: float | None = None):
+        captured["args"] = args
+        # args layout: ["calendar","events","insert","--params", params_json, "--json", event_json]
+        captured["params"] = json.loads(args[4])
+        captured["event"] = json.loads(args[6])
+        return {"ok": True, "data": {"id": "evt-1", "summary": "Demo"}}
+
+    monkeypatch.setattr(service, "_run_json", fake_run_json)
+
+    result = service.calendar_create_event(
+        calendar_id="primary",
+        summary="Demo event",
+        description="desc",
+        start="2026-03-15T10:00:00+08:00",
+        end="2026-03-15T11:00:00+08:00",
+        attendees=["a@example.com", "b@example.com"],
+    )
+
+    assert result["ok"] is True
+    args = captured["args"]  # type: ignore[assignment]
+    assert args[:3] == ["calendar", "events", "insert"]
+    assert args[3] == "--params"
+    assert args[5] == "--json"
+    params = captured["params"]  # type: ignore[assignment]
+    event = captured["event"]  # type: ignore[assignment]
+    assert params["calendarId"] == "primary"
+    assert event["summary"] == "Demo event"
+    assert event["start"]["dateTime"].startswith("2026-03-15T10:00:00")
+    assert event["end"]["dateTime"].startswith("2026-03-15T11:00:00")
+    attendees = event.get("attendees") or []
+    emails = sorted([row["email"] for row in attendees])
+    assert emails == ["a@example.com", "b@example.com"]
+
+
+def test_service_reports_missing_binary(monkeypatch):
+    service = GoogleWorkspaceCliService(bin_path="gws")
+    # Force _resolve_bin_path to simulate missing CLI binary even if gws is installed.
+    monkeypatch.setattr(service, "_resolve_bin_path", lambda: "")
     result = service._run_json(["auth", "status"])
     assert result["ok"] is False
     assert result["error"] == "gws_not_installed"

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
 import subprocess
+from email.message import EmailMessage
 from typing import Any
 
 from app.settings import settings
@@ -38,13 +40,25 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_string_list(values: Any, *, max_items: int, item_len: int = 254) -> list[str]:
+    out: list[str] = []
+    if not values:
+        return out
+    for raw in list(values)[: max(0, int(max_items))]:
+        text = str(raw or "").strip()
+        if text:
+            out.append(text[: max(1, int(item_len))])
+    return out
+
+
 class GoogleWorkspaceCliService:
     """
     Thin wrapper around the local `gws` CLI.
 
     Aelin should never shell out to arbitrary Google Workspace commands. This
-    service constrains the integration to a small set of stable, read-only
-    helpers and normalizes their JSON output for tool consumption.
+    service constrains the integration to a small set of stable helpers,
+    primarily read-focused, plus a few carefully wrapped write helpers for
+    sending mail and creating calendar events.
     """
 
     def __init__(
@@ -247,6 +261,119 @@ class GoogleWorkspaceCliService:
         payload = result.get("data")
         items = _extract_items(payload)
         return {"ok": True, "items": items, "raw": payload}
+
+    def _build_gmail_raw_message(
+        self,
+        *,
+        to: list[str],
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        subject: str = "",
+        body: str = "",
+    ) -> str:
+        msg = EmailMessage()
+        if to:
+            msg["To"] = ", ".join(to)
+        if cc:
+            msg["Cc"] = ", ".join(cc)
+        if bcc:
+            msg["Bcc"] = ", ".join(bcc)
+        if subject:
+            msg["Subject"] = subject[:300]
+        msg.set_content(str(body or "")[:8000], charset="utf-8")
+        raw_bytes = msg.as_bytes()
+        encoded = base64.urlsafe_b64encode(raw_bytes).decode("ascii")
+        return encoded
+
+    def gmail_send_message(
+        self,
+        *,
+        to: list[str],
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        subject: str = "",
+        body: str = "",
+    ) -> dict[str, Any]:
+        to_clean = _normalize_string_list(to, max_items=16)
+        cc_clean = _normalize_string_list(cc or [], max_items=16)
+        bcc_clean = _normalize_string_list(bcc or [], max_items=16)
+        if not to_clean and not cc_clean and not bcc_clean:
+            return {"ok": False, "error": "missing_recipients"}
+        raw_encoded = self._build_gmail_raw_message(
+            to=to_clean,
+            cc=cc_clean or None,
+            bcc=bcc_clean or None,
+            subject=str(subject or "")[:300],
+            body=str(body or ""),
+        )
+        payload = {"raw": raw_encoded}
+        result = self._run_json(["gmail", "users", "messages", "send", "--json", _compact_json(payload)])
+        if not bool(result.get("ok")):
+            return result
+        data = result.get("data")
+        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+
+    def gmail_create_draft(
+        self,
+        *,
+        to: list[str],
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        subject: str = "",
+        body: str = "",
+    ) -> dict[str, Any]:
+        to_clean = _normalize_string_list(to, max_items=16)
+        cc_clean = _normalize_string_list(cc or [], max_items=16)
+        bcc_clean = _normalize_string_list(bcc or [], max_items=16)
+        if not to_clean and not cc_clean and not bcc_clean:
+            return {"ok": False, "error": "missing_recipients"}
+        raw_encoded = self._build_gmail_raw_message(
+            to=to_clean,
+            cc=cc_clean or None,
+            bcc=bcc_clean or None,
+            subject=str(subject or "")[:300],
+            body=str(body or ""),
+        )
+        payload = {"message": {"raw": raw_encoded}}
+        result = self._run_json(["gmail", "users", "drafts", "create", "--json", _compact_json(payload)])
+        if not bool(result.get("ok")):
+            return result
+        data = result.get("data")
+        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+
+    def calendar_create_event(
+        self,
+        *,
+        calendar_id: str = "primary",
+        summary: str = "",
+        description: str = "",
+        start: str = "",
+        end: str = "",
+        attendees: list[str] | None = None,
+    ) -> dict[str, Any]:
+        cal_id = str(calendar_id or "primary").strip() or "primary"
+        start_clean = str(start or "").strip()
+        end_clean = str(end or "").strip()
+        if not start_clean or not end_clean:
+            return {"ok": False, "error": "missing_event_time"}
+        event: dict[str, Any] = {
+            "summary": str(summary or "")[:300],
+            "start": {"dateTime": start_clean[:64]},
+            "end": {"dateTime": end_clean[:64]},
+        }
+        if description:
+            event["description"] = str(description or "")[:2000]
+        attendee_list = _normalize_string_list(attendees or [], max_items=16)
+        if attendee_list:
+            event["attendees"] = [{"email": addr} for addr in attendee_list]
+        params = {"calendarId": cal_id}
+        result = self._run_json(
+            ["calendar", "events", "insert", "--params", _compact_json(params), "--json", _compact_json(event)]
+        )
+        if not bool(result.get("ok")):
+            return result
+        data = result.get("data")
+        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
 
 
 _google_workspace_cli_service: GoogleWorkspaceCliService | None = None

@@ -1131,12 +1131,87 @@ class AelinToolHub:
                 "raw": result.get("raw") or result.get("data") or {},
             }
 
-        # 写操作将分阶段实现，这里仅预留占位符，返回明确错误，避免 Agent 误用。
-        if action in {"calendar_create_event", "gmail_send", "gmail_draft"}:
+        if action == "calendar_create_event":
+            calendar_id = str(args.get("calendar_id") or "primary").strip() or "primary"
+            summary = str(args.get("event_summary") or "").strip()
+            description = str(args.get("event_description") or "").strip()
+            event_start = str(args.get("event_start") or "").strip()
+            event_end = str(args.get("event_end") or "").strip()
+            attendees = list(args.get("event_attendees") or [])
+            result = service.calendar_create_event(
+                calendar_id=calendar_id,
+                summary=summary,
+                description=description,
+                start=event_start,
+                end=event_end,
+                attendees=attendees,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "calendar",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
             return {
-                "ok": False,
-                "scope": "google_workspace",
-                "error": "write_actions_not_implemented",
+                "ok": True,
+                "scope": "calendar",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "gmail_send":
+            to = list(args.get("email_to") or [])
+            cc = list(args.get("email_cc") or [])
+            bcc = list(args.get("email_bcc") or [])
+            subject = str(args.get("email_subject") or "").strip()
+            body = str(args.get("email_body") or "")
+            result = service.gmail_send_message(
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                subject=subject,
+                body=body,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "gmail",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
+            return {
+                "ok": True,
+                "scope": "gmail",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+
+        if action == "gmail_draft":
+            to = list(args.get("email_to") or [])
+            cc = list(args.get("email_cc") or [])
+            bcc = list(args.get("email_bcc") or [])
+            subject = str(args.get("email_subject") or "").strip()
+            body = str(args.get("email_body") or "")
+            result = service.gmail_create_draft(
+                to=to,
+                cc=cc,
+                bcc=bcc,
+                subject=subject,
+                body=body,
+            )
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "gmail",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
+            return {
+                "ok": True,
+                "scope": "gmail",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
             }
 
         return {
