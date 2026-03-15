@@ -10,22 +10,22 @@ import { PageScaffold } from '@/shared/components/PageScaffold'
 
 type Tab = 'profile' | 'ai' | 'accounts' | 'appearance' | 'device'
 
+const SETTINGS_TABS: { key: Tab; label: string; description: string; icon: typeof User }[] = [
+  { key: 'profile', label: '个人', description: '账号与身份信息', icon: User },
+  { key: 'ai', label: 'AI 模型', description: '提供商与模型连接', icon: Bot },
+  { key: 'accounts', label: '数据源', description: '账号接入与同步状态', icon: Link2 },
+  { key: 'appearance', label: '外观', description: '主题和显示风格', icon: Palette },
+  { key: 'device', label: '设备', description: '桌面能力与设备状态', icon: Monitor },
+]
+
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('profile')
   const [search, setSearch] = useState('')
 
-  const tabs: { key: Tab; label: string; description: string; icon: typeof User }[] = [
-    { key: 'profile', label: '个人', description: '账号与身份信息', icon: User },
-    { key: 'ai', label: 'AI 模型', description: '提供商与模型连接', icon: Bot },
-    { key: 'accounts', label: '数据源', description: '账号接入与同步状态', icon: Link2 },
-    { key: 'appearance', label: '外观', description: '主题和显示风格', icon: Palette },
-    { key: 'device', label: '设备', description: '桌面能力与设备状态', icon: Monitor },
-  ]
-
   const filteredTabs = useMemo(() => {
     const keyword = search.trim().toLowerCase()
-    if (!keyword) return tabs
-    return tabs.filter((item) => `${item.label} ${item.description}`.toLowerCase().includes(keyword))
+    if (!keyword) return SETTINGS_TABS
+    return SETTINGS_TABS.filter((item) => `${item.label} ${item.description}`.toLowerCase().includes(keyword))
   }, [search])
 
   useEffect(() => {
@@ -34,7 +34,7 @@ export default function SettingsPage() {
     }
   }, [filteredTabs, tab])
 
-  const activeTab = filteredTabs.find((item) => item.key === tab) ?? tabs.find((item) => item.key === tab) ?? tabs[0]
+  const activeTab = filteredTabs.find((item) => item.key === tab) ?? SETTINGS_TABS.find((item) => item.key === tab) ?? SETTINGS_TABS[0]
   const ActiveIcon = activeTab.icon
 
   const renderActiveTab = () => {

@@ -7,7 +7,7 @@ import { MODULE_NAV_ITEMS } from './moduleNav'
 
 export function NavigationRail() {
   const location = useLocation()
-  const { theme, navRailExpanded, setTheme, setNavRailExpanded, applyTheme } = useLayoutStore()
+  const { theme, navRailExpanded, setTheme, toggleNavRailExpanded, applyTheme } = useLayoutStore()
 
   const handleThemeToggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -16,7 +16,7 @@ export function NavigationRail() {
   }
 
   const handleRailToggle = () => {
-    setNavRailExpanded(!navRailExpanded)
+    toggleNavRailExpanded()
   }
 
   return (
@@ -45,6 +45,7 @@ export function NavigationRail() {
               key={to}
               to={to}
               title={label}
+              aria-label={label}
               className={cn(
                 'aelin-rail-nav-item relative flex h-12 items-center rounded-[22px] border transition-colors',
                 navRailExpanded ? 'w-full gap-3 px-3.5 justify-start' : 'w-12 justify-center self-center',
