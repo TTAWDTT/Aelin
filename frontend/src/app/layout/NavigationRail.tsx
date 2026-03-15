@@ -44,6 +44,7 @@ export function NavigationRail() {
             <NavLink
               key={to}
               to={to}
+              end={to === '/'}
               title={label}
               aria-label={label}
               className={cn(
