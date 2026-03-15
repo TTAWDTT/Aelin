@@ -92,15 +92,29 @@ export interface AelinPinRecommendationItem {
   contact_id: number; display_name: string; score: number
   reasons: string[]; unread_count: number; last_message_at?: string
 }
+export interface AgentFocusItemOut {
+  message_id: number; source: string; source_label: string; sender: string
+  sender_avatar_url?: string; title: string; received_at: string; score: number
+}
+export interface AelinDailyBriefAction {
+  kind: string; title: string; detail?: string
+  contact_id?: number; message_id?: number; priority?: string
+}
+export interface AelinDailyBrief {
+  generated_at: string; summary: string
+  top_updates: AgentFocusItemOut[]; actions: AelinDailyBriefAction[]
+}
 export interface AelinNotificationItem {
   id: string; level: string; title: string; detail?: string; source?: string
   ts?: string; action_kind?: string; action_payload?: Record<string, string>
 }
 export interface AelinContextResponse {
   workspace: string; summary: string
+  focus_items?: AgentFocusItemOut[]
   notes: AgentMemoryNoteOut[]; notes_count: number
   todos: AelinTodoItem[]
   pin_recommendations: AelinPinRecommendationItem[]
+  daily_brief?: AelinDailyBrief
   layout_cards: { contact_id: number; display_name: string; pinned: boolean }[]
   memory_layers: AelinMemoryLayers
   notifications: AelinNotificationItem[]

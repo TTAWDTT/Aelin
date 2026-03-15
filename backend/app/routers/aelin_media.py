@@ -125,11 +125,16 @@ def ingest_media_content(
                 detail=detail,
             ) from exc
 
+    status = "processed"
     message = f"已完成 {result.platform} 内容摘要。"
+    if (not result.quality_usable) or result.needs_review:
+        status = "needs_review"
+        reason = result.quality_reason or "quality_gate"
+        message = f"已完成 {result.platform} 内容摘要，但未通过质量门禁（reason={reason}）。"
     if guide_payload is not None and bool(guide_payload.get("ok")):
         message = f"{message}（已自动完成抖音登录引导并重试）"
     return AelinMediaIngestResponse(
-        status="processed",
+        status=status,
         message=message,
         url=result.canonical_url,
         platform=result.platform,

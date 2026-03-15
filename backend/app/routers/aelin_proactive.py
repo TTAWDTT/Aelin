@@ -142,8 +142,8 @@ def poll_aelin_proactive_events(
                 "detail": f"{source_label} · {sender}",
                 "source": "proactive",
                 "ts": now.isoformat(),
-                "action_kind": "open_message",
-                "action_payload": {"message_id": str(message_id)},
+                "action_kind": "open_brief",
+                "action_payload": {"path": "/"},
             }
         )
         seen_focus_set.add(message_id)

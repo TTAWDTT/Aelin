@@ -13,6 +13,7 @@ import app.routers.aelin as aelin_router
 from app.db import init_engine
 from app.main import create_app
 from app.models import Base
+from app.services.aelin_media_pipeline import build_media_ingest_answer
 from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
 from app.settings import settings
 
@@ -67,6 +68,66 @@ def test_media_ingest_endpoint_returns_error_contract(monkeypatch):
     assert resp.status_code == 400, resp.text
     detail = resp.json().get("detail") or {}
     assert detail.get("code") == "unsupported_platform"
+
+
+def test_media_ingest_answer_explicitly_says_not_auto_saved_on_success():
+    answer = build_media_ingest_answer(
+        MediaIngestOutput(
+            platform="youtube",
+            url="https://www.youtube.com/watch?v=demo",
+            canonical_url="https://www.youtube.com/watch?v=demo",
+            title="Demo",
+            source_type="subtitle_manual",
+            source_language="zh",
+            summary="这是摘要。",
+            insight_title="Demo 摘要",
+            insight_markdown="## 概要",
+            confidence=0.8,
+            reason="ok",
+            limitations=[],
+            quality_usable=True,
+            needs_review=False,
+        )
+    )
+    assert "不会自动写入长期记忆" in answer
+
+
+def test_media_ingest_endpoint_marks_quality_gate_failures_for_review(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        aelin_router._media_ingest,
+        "ingest",
+        lambda **kwargs: MediaIngestOutput(
+            platform="youtube",
+            url="https://www.youtube.com/watch?v=demo",
+            canonical_url="https://www.youtube.com/watch?v=demo",
+            title="Review Demo",
+            source_type="subtitle_manual",
+            source_language="zh",
+            summary="质量门禁未通过的摘要。",
+            insight_title="Review Demo 摘要",
+            insight_markdown="## 概要",
+            confidence=0.42,
+            reason="quality_gate",
+            limitations=[],
+            quality_score=0.31,
+            quality_reason="quality_gate",
+            quality_usable=False,
+            needs_review=True,
+        ),
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/media/ingest",
+        json={"url": "https://www.youtube.com/watch?v=demo"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("status") == "needs_review"
+    assert "未通过质量门禁" in str(data.get("message") or "")
 
 
 def test_media_ingest_douyin_auto_login_guide_retry_success(monkeypatch, tmp_path: Path):

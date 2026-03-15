@@ -11,12 +11,19 @@ def build_media_ingest_answer(result: MediaIngestOutput) -> str:
         "",
         result.summary.strip(),
     ]
-    if not result.quality_usable:
+    if result.quality_usable and not result.needs_review:
+        body.extend(
+            [
+                "",
+                "本次摘要仅用于当前结果展示，当前不会自动写入长期记忆。",
+            ]
+        )
+    else:
         body.extend(
             [
                 "",
                 (
-                    f"本次内容未进入长期沉淀：质量门禁未通过"
+                    f"本次摘要仅用于当前结果展示，未进入长期记忆：质量门禁未通过"
                     f"（score={result.quality_score:.2f}，reason={result.quality_reason or 'quality_gate'}）。"
                 ),
             ]
