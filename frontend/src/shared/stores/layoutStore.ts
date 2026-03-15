@@ -14,8 +14,12 @@ interface LayoutStore {
   applyTheme: (v: ThemeMode) => void
 }
 
-export function applyTheme(mode: ThemeMode) {
-  document.documentElement.setAttribute('data-theme', mode)
+function normalizeThemeMode(mode: unknown): ThemeMode {
+  return mode === 'dark' ? 'dark' : 'light'
+}
+
+export function applyTheme(mode: ThemeMode | unknown) {
+  document.documentElement.setAttribute('data-theme', normalizeThemeMode(mode))
 }
 
 export const useLayoutStore = create<LayoutStore>()(
@@ -30,6 +34,19 @@ export const useLayoutStore = create<LayoutStore>()(
       toggleNavRailExpanded: () => set((state) => ({ navRailExpanded: !state.navRailExpanded })),
       applyTheme: (v) => applyTheme(v),
     }),
-    { name: 'aelin-layout' }
+    {
+      name: 'aelin-layout',
+      version: 2,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState
+        }
+        const state = persistedState as Record<string, unknown>
+        return {
+          ...state,
+          theme: normalizeThemeMode(state.theme),
+        }
+      },
+    }
   )
 )
