@@ -159,8 +159,6 @@ _MEDIA_SUMMARY_HINTS_ZH = (
     "提炼",
     "看懂",
     "记住",
-    "存入日记",
-    "日记",
 )
 _MEDIA_SUMMARY_HINTS_EN = (
     "summary",

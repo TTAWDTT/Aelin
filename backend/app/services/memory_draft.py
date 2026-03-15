@@ -99,10 +99,10 @@ def build_parallel_memory_draft(
         if not isinstance(row, dict):
             continue
         path = _normalize_text(str(row.get("path") or ""), max_len=500)
-        title = _normalize_text(str(row.get("title") or row.get("target") or "日记命中"), max_len=160)
+        title = _normalize_text(str(row.get("title") or row.get("target") or "记忆命中"), max_len=160)
         preview = _normalize_text(str(row.get("preview") or ""), max_len=180)
         topic_path = _normalize_text(str(row.get("topic_path") or ""), max_len=140)
-        line = f"- [日记] {title}"
+        line = f"- [记忆] {title}"
         if topic_path:
             line += f" | topic={topic_path}"
         if preview:
@@ -176,7 +176,7 @@ def build_parallel_memory_draft(
             "",
             "## 记忆策略",
             "",
-            "该草稿在回复构建期间并行生成，仅在最终校验通过后提交到正式日记。",
+            "该草稿在回复构建期间并行生成，仅在最终校验通过后提交到正式记忆。",
         ]
     ).strip()
 
