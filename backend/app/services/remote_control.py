@@ -27,8 +27,6 @@ _SUPPORTED_TOOLS = [
 
 _SUPPORTED_DEVICE_ACTIONS = [
     "status",
-    "processes",
-    "mode_apply",
     "open_url",
     "open_aelin",
 ]

@@ -74,10 +74,6 @@ export interface AelinChatResponse {
 
 /* ─── Aelin Context ─── */
 export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }
-export interface AgentFocusItemOut {
-  message_id: number; source: string; source_label: string; sender: string
-  sender_avatar_url?: string; title: string; received_at: string; score: number
-}
 export interface AelinMemoryLayerItem {
   id: string; layer: string; title: string; detail?: string
   source?: string; confidence: number; updated_at?: string
@@ -92,14 +88,21 @@ export interface AelinTodoItem {
   due_at?: string; priority: string
   contact_id?: number; message_id?: number; updated_at: string
 }
-export interface AelinDailyBrief {
-  generated_at: string; summary: string
-  top_updates: AgentFocusItemOut[]
-  actions: { kind: string; title: string; detail?: string; priority?: string }[]
-}
 export interface AelinPinRecommendationItem {
   contact_id: number; display_name: string; score: number
   reasons: string[]; unread_count: number; last_message_at?: string
+}
+export interface AgentFocusItemOut {
+  message_id: number; source: string; source_label: string; sender: string
+  sender_avatar_url?: string; title: string; received_at: string; score: number
+}
+export interface AelinDailyBriefAction {
+  kind: string; title: string; detail?: string
+  contact_id?: number; message_id?: number; priority?: string
+}
+export interface AelinDailyBrief {
+  generated_at: string; summary: string
+  top_updates: AgentFocusItemOut[]; actions: AelinDailyBriefAction[]
 }
 export interface AelinNotificationItem {
   id: string; level: string; title: string; detail?: string; source?: string
@@ -107,7 +110,7 @@ export interface AelinNotificationItem {
 }
 export interface AelinContextResponse {
   workspace: string; summary: string
-  focus_items: AgentFocusItemOut[]
+  focus_items?: AgentFocusItemOut[]
   notes: AgentMemoryNoteOut[]; notes_count: number
   todos: AelinTodoItem[]
   pin_recommendations: AelinPinRecommendationItem[]
@@ -176,35 +179,8 @@ export interface AelinFileMemoryContentResponse {
   source: string; kind: string; topic_path: string; entry_kind: string
   updated_at: string; content: string; generated_at: string
 }
-export interface AelinDiaryTreeNode {
-  name: string
-  path: string
-  kind: string
-  title: string
-  preview: string
-  updated_at: string
-  source: string
-  topic_path: string
-  entry_kind: string
-  children: AelinDiaryTreeNode[]
-}
-export interface AelinDiaryTreeResponse {
-  workspace: string
-  total: number
-  items: AelinDiaryTreeNode[]
-  generated_at: string
-}
 
 /* ─── Device Center ─── */
-export interface AelinDeviceProcessItem {
-  pid: number; name: string; cpu_percent: number; memory_mb: number
-  status: string; anomaly_score: number; anomaly_reasons: string[]
-  safe_to_terminate: boolean
-}
-export interface AelinDeviceProcessResponse {
-  sort_by: string; total: number; items: AelinDeviceProcessItem[]
-  platform: string; generated_at: string
-}
 export interface AelinDeviceCapabilitiesResponse {
   platform: string; capabilities: Record<string, boolean>
   notes: string[]; generated_at: string
@@ -225,14 +201,6 @@ export interface AelinDeviceScreenCaptureRequest {
   image_format?: 'jpeg' | 'png'
   quality?: number
   selection_timeout_ms?: number
-}
-export interface AelinDeviceModeApplyResponse {
-  mode: string; status: string; summary: string
-  steps: string[]; warnings: string[]; generated_at: string
-}
-export interface AelinDeviceOptimizeResponse {
-  optimized_count: number; affected_pids: number[]
-  steps: string[]; warnings: string[]; generated_at: string
 }
 
 /* ─── Agent ─── */
@@ -255,40 +223,3 @@ export interface ModelProviderInfo {
 export interface ModelCatalogResponse { source_url: string; fetched_at: string; providers: ModelProviderInfo[] }
 export interface AgentTodoCreate { title: string; detail?: string; due_at?: string; priority?: string; contact_id?: number; message_id?: number }
 export interface AgentTodoUpdate { done?: boolean; title?: string; detail?: string; due_at?: string; priority?: string }
-
-/* Desk Feed */
-export interface DeskFeedItem {
-  message_id: number
-  contact_id: number
-  source: string
-  source_label: string
-  sender: string
-  sender_avatar_url?: string | null
-  title: string
-  preview: string
-  image_url?: string | null
-  external_url?: string | null
-  received_at: string
-  is_read: boolean
-  tags: string[]
-  primary_tag: string
-}
-
-export interface DeskFeedResponse {
-  items: DeskFeedItem[]
-  next_before_received_at?: string | null
-  next_before_id?: number | null
-}
-
-export interface DeskTagItem {
-  tag: string
-  count_7d: number
-  last_seen_at?: string | null
-  score: number
-}
-
-export interface DeskTagResponse {
-  followed: DeskTagItem[]
-  recommended: DeskTagItem[]
-  discover: DeskTagItem[]
-}

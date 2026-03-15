@@ -13,6 +13,7 @@ import app.routers.aelin as aelin_router
 from app.db import init_engine
 from app.main import create_app
 from app.models import Base
+from app.services.aelin_media_pipeline import build_media_ingest_answer
 from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
 from app.settings import settings
 
@@ -51,57 +52,6 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_media_ingest_endpoint_saves_diary(monkeypatch, tmp_path: Path):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    monkeypatch.setattr(
-        aelin_router._media_ingest,
-        "ingest",
-        lambda **kwargs: MediaIngestOutput(
-            platform="youtube",
-            url="https://www.youtube.com/watch?v=demo",
-            canonical_url="https://www.youtube.com/watch?v=demo",
-            title="Demo Video",
-            source_type="subtitle_manual",
-            source_language="zh",
-            summary="总结：这是一个测试摘要。\n\n提炼信息：这里记录可复用信息。",
-            insight_title="Demo Video 摘要",
-            insight_markdown="## 概要\n\n测试内容",
-            confidence=0.84,
-            reason="test",
-            limitations=["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"],
-            summary_overview="这是一个测试摘要。",
-            information_note="这里记录可复用信息。",
-        ),
-    )
-    diary_path = tmp_path / "users" / "1" / "insight.md"
-    monkeypatch.setattr(
-        aelin_router._file_memory,
-        "append_insight",
-        lambda **kwargs: diary_path,
-    )
-
-    resp = client.post(
-        "/api/v1/aelin/media/ingest",
-        json={"url": "https://www.youtube.com/watch?v=demo", "workspace": "default"},
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("status") == "saved"
-    assert data.get("written") is True
-    assert data.get("platform") == "youtube"
-    assert data.get("summary_overview") == "这是一个测试摘要。"
-    assert data.get("information_note") == "这里记录可复用信息。"
-    assert "Aelinの日记" in str(data.get("message") or "")
-
-    mem = client.get("/api/v1/agent/memory", headers=headers)
-    assert mem.status_code == 200, mem.text
-    notes = mem.json().get("notes") or []
-    assert any("Aelinの日记" in str(item.get("content") or "") for item in notes)
-
-
 def test_media_ingest_endpoint_returns_error_contract(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -118,6 +68,66 @@ def test_media_ingest_endpoint_returns_error_contract(monkeypatch):
     assert resp.status_code == 400, resp.text
     detail = resp.json().get("detail") or {}
     assert detail.get("code") == "unsupported_platform"
+
+
+def test_media_ingest_answer_explicitly_says_not_auto_saved_on_success():
+    answer = build_media_ingest_answer(
+        MediaIngestOutput(
+            platform="youtube",
+            url="https://www.youtube.com/watch?v=demo",
+            canonical_url="https://www.youtube.com/watch?v=demo",
+            title="Demo",
+            source_type="subtitle_manual",
+            source_language="zh",
+            summary="这是摘要。",
+            insight_title="Demo 摘要",
+            insight_markdown="## 概要",
+            confidence=0.8,
+            reason="ok",
+            limitations=[],
+            quality_usable=True,
+            needs_review=False,
+        )
+    )
+    assert "不会自动写入长期记忆" in answer
+
+
+def test_media_ingest_endpoint_marks_quality_gate_failures_for_review(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        aelin_router._media_ingest,
+        "ingest",
+        lambda **kwargs: MediaIngestOutput(
+            platform="youtube",
+            url="https://www.youtube.com/watch?v=demo",
+            canonical_url="https://www.youtube.com/watch?v=demo",
+            title="Review Demo",
+            source_type="subtitle_manual",
+            source_language="zh",
+            summary="质量门禁未通过的摘要。",
+            insight_title="Review Demo 摘要",
+            insight_markdown="## 概要",
+            confidence=0.42,
+            reason="quality_gate",
+            limitations=[],
+            quality_score=0.31,
+            quality_reason="quality_gate",
+            quality_usable=False,
+            needs_review=True,
+        ),
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/media/ingest",
+        json={"url": "https://www.youtube.com/watch?v=demo"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("status") == "needs_review"
+    assert "未通过质量门禁" in str(data.get("message") or "")
 
 
 def test_media_ingest_douyin_auto_login_guide_retry_success(monkeypatch, tmp_path: Path):
@@ -245,59 +255,7 @@ def test_media_auth_douyin_guide_endpoint(monkeypatch, tmp_path: Path):
     assert int(data.get("cookie_count") or 0) >= 1
 
 
-def test_media_ingest_endpoint_quality_gate_skips_diary_write(monkeypatch, tmp_path: Path):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    monkeypatch.setattr(
-        aelin_router._media_ingest,
-        "ingest",
-        lambda **kwargs: MediaIngestOutput(
-            platform="instagram",
-            url="https://www.instagram.com/reel/demo/",
-            canonical_url="https://www.instagram.com/reel/demo/",
-            title="Demo Reel",
-            source_type="description",
-            source_language="unknown",
-            summary="摘要已生成，但信息密度不足。",
-            summary_overview="摘要已生成。",
-            information_note="信息密度不足，暂不建议入库。",
-            insight_title="Demo Reel 摘要",
-            insight_markdown="## 概要\n\n低质量示例",
-            confidence=0.21,
-            reason="quality_gate_test",
-            limitations=["当前未提取到字幕，改用描述文本生成，置信度较低。"],
-            quality_score=0.34,
-            quality_reason="描述文本过短，信息密度不足",
-            quality_usable=False,
-            needs_review=True,
-            quality_flags=["description_too_short"],
-        ),
-    )
-
-    state = {"append_called": False}
-
-    def _append_insight_mock(**kwargs):
-        state["append_called"] = True
-        return tmp_path / "should-not-write.md"
-
-    monkeypatch.setattr(aelin_router._file_memory, "append_insight", _append_insight_mock)
-
-    resp = client.post(
-        "/api/v1/aelin/media/ingest",
-        json={"url": "https://www.instagram.com/reel/demo/", "workspace": "default"},
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("written") is False
-    assert data.get("quality_usable") is False
-    assert data.get("needs_review") is True
-    assert "质量门禁未通过" in str(data.get("message") or "")
-    assert state["append_called"] is False
-
-
-def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
+def test_aelin_chat_auto_ingest_media_url(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -329,13 +287,6 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(aelin_router._memory, "update_after_turn", lambda *args, **kwargs: None)
     monkeypatch.setattr(aelin_router, "_pick_expression", lambda *_args, **_kwargs: "exp-03")
-    diary_path = tmp_path / "users" / "1" / "insight-chat.md"
-    monkeypatch.setattr(
-        aelin_router._file_memory,
-        "append_insight",
-        lambda **kwargs: diary_path,
-    )
-
     resp = client.post(
         "/api/v1/aelin/chat",
         json={"query": "https://www.youtube.com/watch?v=demo", "workspace": "default"},
@@ -346,51 +297,8 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch, tmp_path: Path):
     trace = data.get("tool_trace") or []
     has_media_ingest = any((it.get("stage") == "media_ingest" and it.get("status") == "completed") for it in trace)
     assert has_media_ingest, f"Expected media_ingest stage in tool_trace, got: {trace!r}"
-    assert "Aelinの日记" in str(data.get("answer") or "")
-    assert any((it.get("kind") == "open_desk") for it in (data.get("actions") or []))
-
-
-def test_memory_file_memory_tree_endpoint(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    child = SimpleNamespace(
-        name="2026-02-22.md",
-        path="体育/NBA/2026-02-22.md",
-        kind="file",
-        title="Stephen Curry 纪要",
-        preview="本周状态回升",
-        updated_at="2026-02-22T00:00:00+00:00",
-        source="web",
-        topic_path="体育 > NBA",
-        entry_kind="memory_insight",
-        children=[],
-    )
-    root = SimpleNamespace(
-        name="体育",
-        path="体育",
-        kind="folder",
-        title="",
-        preview="",
-        updated_at="2026-02-22T00:00:00+00:00",
-        source="",
-        topic_path="",
-        entry_kind="",
-        children=[child],
-    )
-    monkeypatch.setattr(
-        aelin_router._file_memory,
-        "list_diary_tree",
-        lambda **kwargs: [root],
-    )
-
-    resp = client.get("/api/v1/aelin/memory/file-memory/tree?workspace=default", headers=headers)
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("total") == 1
-    items = data.get("items") or []
-    assert items and items[0].get("name") == "体育"
-    assert (items[0].get("children") or [{}])[0].get("entry_kind") == "memory_insight"
+    assert "我已读取并理解这个 youtube 链接的内容。" in str(data.get("answer") or "")
+    assert isinstance(data.get("actions") or [], list)
 
 
 def test_memory_file_memory_content_endpoint(monkeypatch):
@@ -403,7 +311,7 @@ def test_memory_file_memory_content_endpoint(monkeypatch):
         lambda **kwargs: {
             "title": "Stephen Curry 纪要",
             "source": "web",
-            "kind": "diary",
+            "kind": "memory",
             "topic_path": "体育 > NBA",
             "entry_kind": "memory_insight",
             "updated_at": "2026-02-22T00:00:00+00:00",

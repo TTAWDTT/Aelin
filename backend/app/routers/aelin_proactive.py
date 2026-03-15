@@ -14,7 +14,6 @@ from app.routers.auth import get_current_user
 from app.schemas import AelinNotificationItem, AelinProactivePollResponse
 from app.services.aelin_runtime import normalize_workspace, parse_iso_datetime
 from app.services.agent_memory import AgentMemoryService
-from app.services.device_center import collect_device_process_items as device_collect_process_items
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 
@@ -143,14 +142,13 @@ def poll_aelin_proactive_events(
                 "detail": f"{source_label} · {sender}",
                 "source": "proactive",
                 "ts": now.isoformat(),
-                "action_kind": "open_message",
-                "action_payload": {"message_id": str(message_id)},
+                "action_kind": "open_brief",
+                "action_payload": {"path": "/"},
             }
         )
         seen_focus_set.add(message_id)
         if len(events) >= max_items:
             break
-
 
     unread_count = int(
         db.scalar(select(func.count(Message.id)).where(Message.user_id == current_user.id, Message.is_read.is_(False))) or 0
@@ -173,35 +171,6 @@ def poll_aelin_proactive_events(
             }
         )
         state["last_unread_alert_at"] = now.isoformat()
-
-    process_alert_at = parse_iso_datetime(str(state.get("last_process_alert_at") or ""))
-    process_alert_due = process_alert_at is None or (now - process_alert_at) >= timedelta(minutes=40)
-    process_alert_pid = int(state.get("last_process_alert_pid") or 0)
-    process_rows = device_collect_process_items(sort_by="cpu", limit=6)
-    top_process = process_rows[0] if process_rows else None
-    if (
-        top_process
-        and top_process.anomaly_score >= 2.2
-        and len(events) < max_items
-        and (process_alert_due or int(top_process.pid) != process_alert_pid)
-    ):
-        reason = "；".join(top_process.anomaly_reasons[:2]) or "资源占用偏高"
-        events.append(
-            {
-                "id": f"proactive-proc-{int(top_process.pid)}-{now.strftime('%Y%m%d%H%M')}",
-                "level": "warning",
-                "title": f"设备负载提醒: {top_process.name}",
-                "detail": (
-                    f"CPU {top_process.cpu_percent:.1f}% · 内存 {top_process.memory_mb:.0f}MB；{reason}"
-                ),
-                "source": "device",
-                "ts": now.isoformat(),
-                "action_kind": "open_device",
-                "action_payload": {"pid": str(int(top_process.pid)), "view": "processes"},
-            }
-        )
-        state["last_process_alert_at"] = now.isoformat()
-        state["last_process_alert_pid"] = int(top_process.pid)
 
     if not initialized and not events and top_updates:
         row = top_updates[0] if isinstance(top_updates[0], dict) else {}
@@ -231,8 +200,6 @@ def poll_aelin_proactive_events(
         "seen_focus_message_ids": next_seen[:_PROACTIVE_SEEN_LIMIT],
         "last_unread_count": unread_count,
         "last_unread_alert_at": str(state.get("last_unread_alert_at") or ""),
-        "last_process_alert_at": str(state.get("last_process_alert_at") or ""),
-        "last_process_alert_pid": int(state.get("last_process_alert_pid") or 0),
         "last_poll_at": now.isoformat(),
     }
     _save_proactive_state(

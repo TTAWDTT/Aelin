@@ -6,20 +6,6 @@ import app.services.device_center as device_center
 from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
-def test_device_process_action_unsupported_returns_400():
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    resp = client.post(
-        "/api/v1/aelin/device/processes/123/action",
-        json={"action": "boom"},
-        headers=headers,
-    )
-    assert resp.status_code == 400, resp.text
-    data = resp.json().get("detail") or {}
-    assert data.get("code") == "UNSUPPORTED_ACTION"
-    assert "allowed_actions" in data
-
 def test_device_capabilities_endpoint_contract():
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -30,71 +16,11 @@ def test_device_capabilities_endpoint_contract():
     assert isinstance(data.get("platform"), str)
     caps = data.get("capabilities") or {}
     for key in [
-        "process_list",
-        "process_terminate",
-        "process_priority",
-        "mode_focus",
-        "mode_silent",
-        "mode_normal",
-        "optimize_processes",
+        "desktop_plugin_configured",
+        "desktop_open_url",
+        "desktop_activate_module",
     ]:
         assert key in caps
-
-def test_device_mode_apply_degraded_is_explicit():
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    resp = client.post(
-        "/api/v1/aelin/device/mode/apply",
-        json={"mode": "silent"},
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("status") in {"degraded", "partial"}
-    assert isinstance(data.get("warnings"), list)
-    assert data.get("warnings")
-
-def test_device_processes_windows_fallback_without_psutil(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    monkeypatch.setattr(device_center, "psutil", None)
-    monkeypatch.setattr(device_center, "device_is_windows", lambda: True)
-    monkeypatch.setattr(
-        device_center,
-        "run_powershell",
-        lambda script, timeout_s=8: (
-            True,
-            json.dumps(
-                [
-                    {
-                        "Name": "Code",
-                        "ProcessName": "Code",
-                        "Id": 1234,
-                        "WorkingSet64": 734003200,
-                        "CPU": 380.0,
-                        "StartTime": "2026-02-20T10:00:00+08:00",
-                        "PriorityClass": "Normal",
-                    }
-                ],
-                ensure_ascii=False,
-            ),
-        ),
-    )
-
-    caps = client.get("/api/v1/aelin/device/capabilities", headers=headers)
-    assert caps.status_code == 200, caps.text
-    caps_data = caps.json()
-    assert (caps_data.get("capabilities") or {}).get("process_list") is True
-
-    resp = client.get("/api/v1/aelin/device/processes?sort_by=memory&limit=5", headers=headers)
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data.get("total", 0) >= 1
-    first = (data.get("items") or [])[0]
-    assert str(first.get("name") or "").lower().startswith("code")
-    assert float(first.get("memory_mb") or 0.0) > 0
 
 def test_device_screen_capture_proxy_success(monkeypatch):
     client = _create_test_client()

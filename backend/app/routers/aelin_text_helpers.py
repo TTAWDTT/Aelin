@@ -5,8 +5,6 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.schemas import AelinCitation
-
 _AELIN_EXPRESSION_IDS = {
     "exp-01",
     "exp-02",
@@ -86,15 +84,6 @@ _AELIN_EMOJI_BY_EXPRESSION: dict[str, str] = {
     "exp-11": "😮‍💨",
 }
 _EMOJI_CHAR_RE = re.compile(r"[\u2600-\u27BF\U0001F300-\U0001FAFF]")
-
-_DIARY_TOPIC_RULES: list[tuple[re.Pattern[str], list[str]]] = [
-    (re.compile(r"\b(nba|curry|warriors|lakers|basketball|湖人|勇士|库里|篮球)\b", flags=re.I), ["体育", "NBA"]),
-    (re.compile(r"\b(epl|premier\s*league|英超|阿森纳|利物浦|曼城|曼联)\b", flags=re.I), ["体育", "英超"]),
-    (re.compile(r"\b(mlb|棒球)\b", flags=re.I), ["体育", "棒球"]),
-    (re.compile(r"\b(nfl|橄榄球)\b", flags=re.I), ["体育", "橄榄球"]),
-    (re.compile(r"\b(ai|llm|agent|模型|提示词|智能体)\b", flags=re.I), ["技术", "AI"]),
-    (re.compile(r"\b(bitcoin|btc|eth|crypto|加密|比特币)\b", flags=re.I), ["财经", "加密资产"]),
-]
 
 
 def _json_from_text(raw: str) -> dict[str, Any]:
@@ -270,16 +259,6 @@ def _extract_first_json_object(raw: str) -> dict[str, Any]:
     return _json_from_text(match.group(0))
 
 
-def _infer_diary_topic_path(*texts: str, fallback_source: str = "综合") -> list[str]:
-    merged = " ".join(str(item or "") for item in texts).strip()
-    if not merged:
-        return [str(fallback_source or "综合")[:32]]
-    for pattern, topic in _DIARY_TOPIC_RULES:
-        if pattern.search(merged):
-            return topic
-    fallback = str(fallback_source or "综合").strip()[:32] or "综合"
-    return [fallback]
-
 
 def _build_source_indices_from_citations(citations: list[AelinCitation]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -300,50 +279,3 @@ def _build_source_indices_from_citations(citations: list[AelinCitation]) -> list
     return out[:24]
 
 
-def _sanitize_diary_answer(answer: str) -> str:
-    text = str(answer or "").replace("\r\n", "\n")
-    rows: list[str] = []
-    in_code = False
-    blank_pending = False
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_code = not in_code
-            continue
-        if in_code:
-            continue
-        if not stripped:
-            blank_pending = True
-            continue
-        lowered = stripped.lower()
-        if "path=" in lowered:
-            continue
-        if "memory snapshot" in lowered:
-            continue
-        if lowered.startswith("[expression:") or lowered.startswith("[emoji:"):
-            continue
-        if stripped.startswith("{") or stripped.startswith("["):
-            continue
-        if blank_pending and rows:
-            rows.append("")
-        blank_pending = False
-        rows.append(stripped)
-        if len("\n".join(rows)) >= 2800:
-            break
-    merged = "\n".join(rows).strip()
-    merged = re.sub(r"\n{3,}", "\n\n", merged)
-    if not merged:
-        merged = re.sub(r"\s+", " ", text).strip()
-    return merged[:2600]
-
-
-def _build_chat_diary_entry(query: str, answer: str, citations: list[AelinCitation]) -> tuple[str, str]:
-    del citations
-    q = re.sub(r"\s+", " ", str(query or "").strip())[:220]
-    a = _sanitize_diary_answer(answer)
-    title = (f"日记：{q[:40]}" if q else "日记").strip()
-    if a:
-        return title[:120], a
-    fallback = f"今天记录了一个问题：{q}" if q else "今天有记录。"
-    return title[:120], fallback

@@ -1057,8 +1057,8 @@ class AgentMemoryService:
                     "detail": f"{item.get('source_label') or item.get('source') or '来源'} · {item.get('sender') or 'unknown'}",
                     "source": "focus",
                     "ts": now.isoformat(),
-                    "action_kind": "open_message" if message_id > 0 else "open_brief",
-                    "action_payload": {"message_id": str(message_id)} if message_id > 0 else {"path": "/"},
+                    "action_kind": "open_brief",
+                    "action_payload": {"path": "/"},
                 }
             )
 
@@ -1140,8 +1140,8 @@ class AgentMemoryService:
                     "detail": f"{item.get('source_label') or item.get('source') or '来源'} · {item.get('sender') or 'unknown'}",
                     "source": "focus",
                     "ts": now.isoformat(),
-                    "action_kind": "open_message" if message_id > 0 else "open_brief",
-                    "action_payload": {"message_id": str(message_id)} if message_id > 0 else {"path": "/"},
+                    "action_kind": "open_brief",
+                    "action_payload": {"path": "/"},
                 }
             )
 

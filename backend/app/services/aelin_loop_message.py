@@ -161,10 +161,9 @@ def build_initial_messages(
             "content": (
                 "工具使用规则：当用户问题涉及网页内容、网站状态，或需要在浏览器中执行登录、导航、滚动、继续已有网页任务等复杂流程时，"
                 "优先考虑使用 plane 工具，把任务委派给 browser plane；对于纯搜索型问题可使用 web_search。"
-                "当用户问题涉及电脑状态、截图、进程、模式切换、打开链接或唤起 Aelin 页面时，"
+                "当用户问题涉及电脑状态、截图、打开链接或唤起 Aelin 页面时，"
                 "优先使用 device 与 screen_get。"
-                "其中 device.action=status 用于状态查询，processes 用于进程查看，"
-                "mode_apply 用于切换模式，open_url 用于打开网页，open_aelin 用于唤起 Aelin 页面。"
+                "其中 device.action=status 用于状态查询，open_url 用于打开网页，open_aelin 用于唤起 Aelin 页面。"
                 "对于复杂网站任务，不要自己微操浏览器步骤，优先委派给 browser plane，"
                 "具体使用策略由 plane catalog 与相关 skill 目录指导；如需细节，可调用 skill 工具查看 catalog 或读取 skill 正文。"
             ),

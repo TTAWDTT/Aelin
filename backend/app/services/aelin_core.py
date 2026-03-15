@@ -59,7 +59,6 @@ from app.services.aelin_chat_dispatch import (
 from app.services.aelin_media_pipeline import (
     build_media_ingest_answer as _build_media_ingest_answer,
     media_ingest_service as _media_ingest,
-    save_media_ingest_diary as _save_media_ingest_diary,
 )
 from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
 from app.services.aelin_utils import normalize_positive_ints
@@ -79,7 +78,6 @@ from app.services.aelin_chat_planning import (
     _critic_tool_plan,
     _decompose_web_context_boundaries,
     _extract_search_subject,
-    _is_diary_only_query,
     _is_smalltalk_query,
     _is_sports_result_query,
     _is_time_sensitive_query,
@@ -102,7 +100,6 @@ from app.services.aelin_chat_answering import (
     _rule_based_chat_answer,
 )
 from app.services.aelin_chat_memory import (
-    _save_chat_diary_entry,
     _save_parallel_draft_entry,
 )
 from app.services.memory_draft import ParallelMemoryDraftResult, build_parallel_memory_draft
@@ -162,8 +159,6 @@ _MEDIA_SUMMARY_HINTS_ZH = (
     "提炼",
     "看懂",
     "记住",
-    "存入日记",
-    "日记",
 )
 _MEDIA_SUMMARY_HINTS_EN = (
     "summary",
@@ -172,7 +167,6 @@ _MEDIA_SUMMARY_HINTS_EN = (
     "digest",
     "analyze",
     "ingest",
-    "diary",
 )
 
 _base_context_cache_lock = threading.Lock()
@@ -428,7 +422,6 @@ def _build_cached_memory_snapshot(
     workspace: str,
     query: str,
     include_file_memory: bool,
-    include_diary_memory: bool = False,
 ) -> dict[str, Any]:
     # The old follow-up subsystem is gone; only file-memory retrieval remains.
     return _empty_memory_snapshot()
@@ -571,42 +564,6 @@ def _rule_based_answer(
     )
 
 
-def _build_actions(
-    query: str,
-    citations: list[AelinCitation],
-    *,
-    has_todos: bool,
-) -> list[AelinAction]:
-    actions: list[AelinAction] = [
-        AelinAction(
-            kind="open_desk",
-            title="在 Desk 查看可视化证据",
-            detail="打开 /desk，在卡片与时间线里核验上下文",
-            payload={"path": "/desk", "query": query.strip()[:180]},
-        ),
-    ]
-    if citations:
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_message",
-                title="打开最高相关消息",
-                detail=f"查看：{citations[0].title}",
-                payload={"message_id": str(citations[0].message_id), "query": query.strip()[:180]},
-            ),
-        )
-    if has_todos:
-        actions.append(
-            AelinAction(
-                kind="open_todos",
-                title="查看待办跟进",
-                detail="在 Desk 的 Agent 面板里处理待办",
-                payload={"path": "/desk", "query": query.strip()[:180]},
-            )
-        )
-    return actions[:4]
-
-
 def _normalize_images(raw_images: list[Any]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for item in raw_images[:4]:
@@ -679,7 +636,6 @@ def _build_planner_memory_snapshot(
     workspace: str,
     query: str,
     include_file_memory: bool = True,
-    include_diary_memory: bool = False,
 ) -> dict[str, Any]:
     # Only file-memory retrieval remains here; legacy autonomy is gone.
     workspace_norm = _normalize_workspace(workspace)
@@ -690,7 +646,6 @@ def _build_planner_memory_snapshot(
             workspace=workspace_norm,
             query=query,
             limit=12,
-            include_diary=include_diary_memory,
         )
     file_items = [
         {
@@ -864,7 +819,6 @@ def _aelin_chat_impl(
     search_mode = _normalize_search_mode(getattr(payload, "search_mode", "auto"))
     llm_generation_failed = False
     media_result: MediaIngestOutput | None = None
-    media_save_state: dict[str, Any] = {"written": False, "diary_path": "", "note_added": False}
     media_summary_intent = False
     parallel_draft_future: Any | None = None
     parallel_draft_result: ParallelMemoryDraftResult | None = None
@@ -884,19 +838,10 @@ def _aelin_chat_impl(
                 provider=provider,
                 languages=None,
             )
-            media_save_state = _save_media_ingest_diary(
-                db,
-                user_id=current_user.id,
-                workspace=_normalize_workspace(payload.workspace),
-                result=media_result,
-            )
             add_trace(
                 "media_ingest",
                 status="completed",
-                detail=(
-                    f"{media_result.platform}; source={media_result.source_type}; "
-                    f"written={1 if media_save_state.get('written') else 0}; conf={media_result.confidence:.2f}"
-                ),
+                detail=f"{media_result.platform}; source={media_result.source_type}; conf={media_result.confidence:.2f}",
                 count=1,
             )
         except MediaIngestError as exc:
@@ -905,46 +850,9 @@ def _aelin_chat_impl(
             add_trace("media_ingest", status="failed", detail=str(exc)[:160], count=0)
 
     if media_result is not None and media_summary_intent:
-        answer = _build_media_ingest_answer(
-            media_result,
-            written=bool(media_save_state.get("written")),
-        )
+        answer = _build_media_ingest_answer(media_result)
         expression = _pick_expression(payload.query, answer)
         actions: list[AelinAction] = []
-        if media_save_state.get("written"):
-            actions.append(
-                AelinAction(
-                    kind="open_desk",
-                    title="打开 Aelinの日记",
-                    detail=str(media_save_state.get("diary_path") or "")[:220],
-                    payload={"workspace": _normalize_workspace(payload.workspace)},
-                )
-            )
-        actions.append(
-            AelinAction(
-                kind="open_desk",
-                title="在 Desk 查看日记上下文",
-                detail="打开 /desk 检索刚刚沉淀的摘要",
-                payload={"path": "/desk", "query": media_result.title[:120]},
-            )
-        )
-        chat_diary_media = _save_chat_diary_entry(
-            db,
-            user_id=current_user.id,
-            workspace=_normalize_workspace(payload.workspace),
-            query=payload.query,
-            answer=answer,
-            citations=[],
-        )
-        if bool(chat_diary_media.get("written")):
-            actions.append(
-                AelinAction(
-                    kind="open_desk",
-                    title="打开聊天日记",
-                    detail=str(chat_diary_media.get("path") or "")[:220],
-                    payload={"workspace": _normalize_workspace(payload.workspace)},
-                )
-            )
         try:
             _memory.update_after_turn(
                 db,
@@ -961,7 +869,7 @@ def _aelin_chat_impl(
             citations=[],
             actions=actions[:4],
             tool_trace=tool_trace[:64],
-            memory_summary="已更新 Aelinの日记",
+            memory_summary="",
             generated_at=datetime.now(timezone.utc),
         )
 
@@ -977,15 +885,13 @@ def _aelin_chat_impl(
     profile_injection_lines = _build_fixed_profile_injection(base_bundle, max_items=12)
     images = _normalize_images(payload.images)
     history_turns = _normalize_history(payload.history)
-    diary_only_mode = _is_diary_only_query(payload.query)
-    include_file_memory_for_plan = bool((not _is_smalltalk_query(payload.query)) or diary_only_mode)
+    include_file_memory_for_plan = not _is_smalltalk_query(payload.query)
     memory_snapshot = _build_cached_memory_snapshot(
         db,
         user_id=current_user.id,
         workspace=payload.workspace,
         query=payload.query,
         include_file_memory=include_file_memory_for_plan,
-        include_diary_memory=diary_only_mode,
     )
     intent_contract = _build_intent_contract(
         query=payload.query,
@@ -994,11 +900,6 @@ def _aelin_chat_impl(
         memory_summary=memory_summary,
         memory_snapshot=memory_snapshot,
     )
-    if diary_only_mode:
-        intent_contract = dict(intent_contract)
-        intent_contract["diary_only"] = True
-        intent_contract["requires_citations"] = False
-        intent_contract["requires_factuality"] = False
     intent_source = str(intent_contract.get("intent_source") or "fallback")
     intent_type = str(intent_contract.get("intent_type") or "retrieval")
     time_scope = str(intent_contract.get("time_scope") or "any")
@@ -1009,7 +910,7 @@ def _aelin_chat_impl(
         status="completed",
         detail=(
             f"type={intent_type}; scope={time_scope}; freshness_h={freshness_hours}; conf={intent_conf:.2f}; "
-            f"src={intent_source}; diary_only={1 if diary_only_mode else 0}"
+            f"src={intent_source}"
         ),
     )
 
@@ -1042,19 +943,6 @@ def _aelin_chat_impl(
                 patch=patch,
             )
             add_trace("plan_critic", status="completed", detail=f"{critic_source}:patched")
-    if diary_only_mode:
-        tool_plan = dict(tool_plan)
-        tool_plan["need_local_search"] = False
-        tool_plan["need_web_search"] = False
-        tool_plan["web_queries"] = []
-        tool_plan["context_boundaries"] = []
-        tool_plan["trace_context_boundaries"] = []
-        route_patch = dict(tool_plan.get("route") or {})
-        route_patch.update({"reply_agent": True, "trace_agent": False, "allow_web_retry": False})
-        tool_plan["route"] = route_patch
-        tool_plan["reason"] = f"{str(tool_plan.get('reason') or 'planner')};diary_only_enforced"
-        add_trace("plan_critic", status="completed", detail="system:diary_only_enforced")
-
     planner_source = str(tool_plan.get("planner_source") or "fallback").strip().lower()
     planning_reason = str(tool_plan.get("reason") or "planner:none")
     if planner_source:
@@ -1431,10 +1319,6 @@ def _aelin_chat_impl(
 
     max_citations = max(1, min(20, int(payload.max_citations or 6)))
     citations = _dedupe_citations([*local_citations, *web_citations], limit=max_citations)
-    if diary_only_mode:
-        citations = []
-        web_results_for_answer = []
-        web_evidence_lines = []
 
     file_memory_items_raw = (
         memory_snapshot.get("matched_file_items")
@@ -1460,14 +1344,13 @@ def _aelin_chat_impl(
             }
         )
 
-    if (not file_memory_items) and (not local_jobs) and (need_local_search or diary_only_mode) and payload.query.strip():
+    if (not file_memory_items) and (not local_jobs) and need_local_search and payload.query.strip():
         try:
             fallback_hits = _file_memory.search(
                 user_id=current_user.id,
                 workspace=payload.workspace,
                 query=payload.query,
                 limit=8,
-                include_diary=diary_only_mode,
             )
             file_memory_items = [
                 {
@@ -1578,7 +1461,6 @@ def _aelin_chat_impl(
             user_id=current_user.id,
             workspace=payload.workspace,
             memory_service=_memory,
-            file_memory_bridge=_file_memory,
             web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
             available_attachment_ids=_normalize_attachment_ids(getattr(payload, "attachment_ids", [])),
             llm_service=service,
@@ -1602,30 +1484,6 @@ def _aelin_chat_impl(
                 detail=(tool_err[:180] if tool_err else "no structured tools needed"),
                 count=0,
             )
-        if structured_tool_runs:
-            first_diary = next(
-                (
-                    run
-                    for run in structured_tool_runs
-                    if str(run.get("name") or "").strip().lower() == "diary"
-                    and isinstance(run.get("result"), dict)
-                ),
-                None,
-            )
-            if isinstance(first_diary, dict):
-                diary_result = first_diary.get("result") if isinstance(first_diary.get("result"), dict) else {}
-                first_item = (diary_result.get("items") or [None])[0] if isinstance(diary_result.get("items"), list) else None
-                if isinstance(first_item, dict):
-                    detail_path = str(first_item.get("path") or "").strip()[:220]
-                    if detail_path:
-                        structured_tool_actions.append(
-                            AelinAction(
-                                kind="open_desk",
-                                title="查看工具命中的日记",
-                                detail=detail_path,
-                                payload={"workspace": payload.workspace, "path": detail_path},
-                            )
-                        )
     else:
         add_trace("structured_tools", status="skipped", detail="query not tool-oriented", count=0)
 
@@ -1644,18 +1502,11 @@ def _aelin_chat_impl(
             )
             generation_detail = "rule_based with local evidence"
         elif file_memory_lines:
-            if diary_only_mode:
-                answer = (
-                    "我仅根据 Aelin の日记命中了以下记录：\n"
-                    + "\n".join(file_memory_lines[:4])
-                    + "\n\n若你希望，我可以继续只在日记里追加检索，不触发联网。"
-                )
-            else:
-                answer = (
-                    f"我先从你的长期追踪记忆里查到了与“{payload.query.strip()}”相关的线索：\n"
-                    + "\n".join(file_memory_lines[:4])
-                    + "\n\n如果你需要，我可以继续结合联网结果补全并持续跟踪。"
-                )
+            answer = (
+                f"我先从你的长期追踪记忆里查到了与“{payload.query.strip()}”相关的线索：\n"
+                + "\n".join(file_memory_lines[:4])
+                + "\n\n如果你需要，我可以继续结合联网结果补全并持续跟踪。"
+            )
             generation_detail = "rule_based with file memory"
         elif web_evidence_lines:
             answer = _compose_web_first_answer(payload.query, web_results_for_answer)
@@ -1684,7 +1535,6 @@ def _aelin_chat_impl(
             "Answer the user's question directly first.\n"
             "If retrieval evidence is provided, use it directly and do not ask user to search manually.\n"
             "If evidence is weak, state uncertainty and avoid fabrication.\n"
-            + ("STRICT MODE: user requested diary-only context, never inject web facts.\n" if diary_only_mode else "")
             + "Keep response concise and practical.\n"
             + "You may use 0-2 natural emoji in the answer body when it helps tone.\n"
             + "Aelin has 11 expressions. Choose one according to semantics below:\n"
@@ -1704,7 +1554,6 @@ def _aelin_chat_impl(
         user_msg = (
             f"用户问题: {payload.query.strip()}\n\n"
             f"工具规划: {retrieval_note}\n\n"
-            + ("约束: 仅可使用 Aelin 日记/文件记忆命中，不可联网补充。\n\n" if diary_only_mode else "")
             + (
                 "最近对话:\n"
                 + "\n".join(
@@ -1818,7 +1667,7 @@ def _aelin_chat_impl(
         brief_summary=brief_summary,
         todo_titles=todo_titles,
         image_count=len(images),
-        allow_web_fallback=not diary_only_mode,
+        allow_web_fallback=True,
     )
 
     answer, tagged_expression = _extract_expression_tag(answer)
@@ -1850,7 +1699,6 @@ def _aelin_chat_impl(
         answer=answer,
         citations=citations,
         web_results=web_results_for_answer,
-        diary_only_mode=diary_only_mode,
     )
     add_trace(
         "coverage_verifier",
@@ -1865,13 +1713,12 @@ def _aelin_chat_impl(
         answer=answer,
         need_web_search=need_web_search,
         citations=citations,
-        diary_only_mode=diary_only_mode,
     )
     retried_web = 0
     has_web_evidence = any(str(it.source or "").strip().lower() == "web" for it in citations)
     requires_citations = bool(intent_contract.get("requires_citations")) if isinstance(intent_contract, dict) else False
     quality_failed = (not verified) or (not grounded) or (not coverage_ok)
-    allow_quality_retry = (not diary_only_mode) and (
+    allow_quality_retry = (
         bool(route.get("allow_web_retry")) or (requires_citations and (not has_web_evidence))
     )
     if quality_failed and allow_quality_retry:
@@ -1987,7 +1834,6 @@ def _aelin_chat_impl(
                 answer=answer,
                 need_web_search=bool(need_web_search or retried_web),
                 citations=citations,
-                diary_only_mode=diary_only_mode,
             )
             grounded, grounding_reason = _judge_answer_grounding(
                 query=payload.query,
@@ -2009,7 +1855,6 @@ def _aelin_chat_impl(
                 answer=answer,
                 citations=citations,
                 web_results=web_results_for_answer,
-                diary_only_mode=diary_only_mode,
             )
             add_trace(
                 "coverage_verifier",
@@ -2059,7 +1904,7 @@ def _aelin_chat_impl(
         brief_summary=brief_summary,
         todo_titles=todo_titles,
         image_count=len(images),
-        allow_web_fallback=not diary_only_mode,
+        allow_web_fallback=True,
     )
     answer, maybe_expression = _extract_expression_tag(answer)
     if maybe_expression:
@@ -2068,19 +1913,7 @@ def _aelin_chat_impl(
     add_trace("trace_agent", status="skipped", detail="trace route disabled")
 
     if media_result is not None and not media_summary_intent:
-        save_note = "并写入 Aelinの日记。"
-        if not media_save_state.get("written"):
-            if not media_result.quality_usable:
-                save_note = (
-                    "但未写入 Aelinの日记（质量门禁未通过："
-                    f"{media_result.quality_reason or 'quality_gate'}）。"
-                )
-            else:
-                save_note = "但写入日记失败。"
-        media_hint = (
-            f"已完成链接内容摘要（{media_result.platform}/{media_result.source_type}），"
-            + save_note
-        )
+        media_hint = f"已完成链接内容摘要（{media_result.platform}/{media_result.source_type}）。"
         answer = f"{answer.strip()}\n\n{media_hint}".strip()
 
     if payload.use_memory and answer:
@@ -2097,32 +1930,6 @@ def _aelin_chat_impl(
     insight_write_result: dict[str, Any] = {"written": False, "reason": "memory_write_disabled"}
     add_trace("insight_write", status="skipped", detail="memory_write_disabled", count=0)
 
-    chat_diary_result: dict[str, Any] = {"written": False, "reason": "not_evaluated", "path": ""}
-    try:
-        chat_diary_result = _save_chat_diary_entry(
-            db,
-            user_id=current_user.id,
-            workspace=_normalize_workspace(payload.workspace),
-            query=payload.query,
-            answer=answer,
-            citations=citations,
-        )
-        if bool(chat_diary_result.get("written")):
-            add_trace(
-                "chat_diary_write",
-                status="completed",
-                detail=str(chat_diary_result.get("path") or "")[:220],
-                count=1,
-            )
-        else:
-            add_trace(
-                "chat_diary_write",
-                status="skipped",
-                detail=str(chat_diary_result.get("reason") or "skip")[:160],
-                count=0,
-            )
-    except Exception as exc:
-        add_trace("chat_diary_write", status="failed", detail=f"{str(exc)[:160]}", count=0)
     if parallel_draft_result is None and parallel_draft_future is not None and parallel_draft_future.done():
         try:
             parallel_draft_result = parallel_draft_future.result()
@@ -2173,11 +1980,7 @@ def _aelin_chat_impl(
             should_commit = True
         elif bool(insight_write_result.get("written")):
             should_commit = True
-        elif bool(chat_diary_result.get("written")):
-            should_commit = True
         elif bool(parallel_draft_commit.get("written")):
-            should_commit = True
-        elif bool(media_save_state.get("written")) or bool(media_save_state.get("note_added")):
             should_commit = True
         if should_commit:
             db.commit()
@@ -2185,51 +1988,7 @@ def _aelin_chat_impl(
         db.rollback()
 
     final_memory_summary = str(active_bundle.get("summary") or memory_summary or "")
-    actions = [
-        *structured_tool_actions[:3],
-        *_build_actions(
-        payload.query,
-        citations,
-        has_todos=bool(todo_titles),
-    )]
-    if media_result is not None:
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_desk",
-                title="查看 Aelinの日记摘要",
-                detail=(
-                    str(media_save_state.get("diary_path") or "").strip()[:220]
-                    if media_save_state.get("written")
-                    else f"{media_result.platform} 摘要已生成（未落盘）"
-                ),
-                payload={"workspace": payload.workspace, "query": media_result.title[:120]},
-            ),
-        )
-    if bool(insight_write_result.get("written")):
-        target_id = int(insight_write_result.get("target_id") or 0)
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_desk",
-                title="已沉淀长期洞察",
-                detail=str(insight_write_result.get("path") or "").strip()[:220],
-                payload={
-                    "target_id": str(target_id) if target_id > 0 else "",
-                    "workspace": payload.workspace,
-                },
-            ),
-        )
-    if bool(parallel_draft_commit.get("written")):
-        actions.insert(
-            0,
-            AelinAction(
-                kind="open_desk",
-                title="查看并行记忆草稿",
-                detail=str(parallel_draft_commit.get("path") or "").strip()[:220],
-                payload={"workspace": payload.workspace, "query": payload.query[:120]},
-            ),
-        )
+    actions = structured_tool_actions[:3]
 
     response = AelinChatResponse(
         answer=answer,
@@ -2405,7 +2164,6 @@ def _try_agent_loop_chat(
         user_id=current_user.id,
         workspace=workspace,
         memory_service=_memory,
-        file_memory_bridge=_file_memory,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
         available_attachment_ids=attachment_ids,
         llm_service=service,

@@ -73,10 +73,8 @@ def test_policy_blocks_pinchtab_when_writes_disabled():
 
 def test_classify_device_actions():
     assert classify_tool_call("device", {"action": "status"}) is False
-    assert classify_tool_call("device", {"action": "processes", "sort_by": "cpu"}) is False
-    assert classify_tool_call("device", {"action": "mode_apply", "mode": "focus"}) is True
     assert classify_tool_call("device", {"action": "open_url", "url": "https://example.com"}) is True
-    assert classify_tool_call("device", {"action": "open_aelin", "route": "/processes"}) is True
+    assert classify_tool_call("device", {"action": "open_aelin", "route": "/"}) is True
 
 
 def test_google_workspace_policy_allows_reads_and_marks_writes():

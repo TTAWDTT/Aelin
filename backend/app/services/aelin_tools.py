@@ -14,16 +14,13 @@ from app import crud
 from app.models import AgentMemoryNote
 from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services.device_center import (
-    apply_device_mode as device_apply_mode,
     activate_desktop_module,
     capture_device_screen as device_capture_screen,
-    collect_device_process_items as device_collect_process_items,
     DesktopPluginActionError,
     DeviceScreenCaptureError,
     device_status_snapshot,
     open_desktop_external_url,
 )
-from app.services.openviking_bridge import FileMemoryBridge
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
 from app.services.aelin_planes import close_plane_task, get_active_plane_task, plane_catalog_entries
 from app.services.aelin_utils import normalize_positive_ints
@@ -36,8 +33,6 @@ from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 
 _TOOL_KEYWORDS = (
-    "日记",
-    "diary",
     "profile",
     "画像",
     "device",
@@ -413,7 +408,6 @@ class AelinToolHub:
         user_id: int,
         workspace: str,
         memory_service: AgentMemoryService,
-        file_memory_bridge: FileMemoryBridge,
         web_search_service: WebSearchService | None = None,
         attachment_service: AelinAttachmentService | None = None,
         available_attachment_ids: list[int] | None = None,
@@ -423,7 +417,6 @@ class AelinToolHub:
         self.user_id = int(user_id)
         self.workspace = _normalize_workspace(workspace)
         self._memory = memory_service
-        self._file_memory = file_memory_bridge
         self._web_search = web_search_service or WebSearchService()
         self._attachments = attachment_service or get_aelin_attachment_service()
         self._available_attachment_ids = normalize_positive_ints(available_attachment_ids, cap=20)
@@ -454,23 +447,6 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
-                    "name": "diary",
-                    "description": "检索或读取 Aelin 的日记文件记忆。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {"type": "string", "enum": ["search", "read"]},
-                            "query": {"type": "string"},
-                            "path": {"type": "string"},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-                        },
-                        "required": ["action"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
                     "name": "profile",
                     "description": "读取或追加用户画像/备注。",
                     "parameters": {
@@ -490,8 +466,7 @@ class AelinToolHub:
                     "name": "device",
                     "description": (
                         "统一的设备工具。"
-                        "使用 action=status 查询设备状态，action=processes 查看进程，"
-                        "action=mode_apply 切换模式，action=open_url 打开网页，"
+                        "使用 action=status 查询设备状态，action=open_url 打开网页，"
                         "action=open_aelin 唤起 Aelin 桌面页。"
                     ),
                     "parameters": {
@@ -499,11 +474,8 @@ class AelinToolHub:
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["status", "processes", "mode_apply", "open_url", "open_aelin"],
+                                "enum": ["status", "open_url", "open_aelin"],
                             },
-                            "sort_by": {"type": "string", "enum": ["cpu", "memory"]},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
-                            "mode": {"type": "string"},
                             "url": {"type": "string"},
                             "route": {"type": "string"},
                         },
@@ -694,8 +666,6 @@ class AelinToolHub:
         tool = str(name or "").strip().lower()
         if tool == "context_get":
             return self._tool_context_get(args)
-        if tool == "diary":
-            return self._tool_diary(args)
         if tool == "profile":
             return self._tool_profile(args)
         if tool == "device":
@@ -737,48 +707,6 @@ class AelinToolHub:
             focus_items=focus_items,
             todos=todos,
         )
-
-    def _tool_diary(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "search").strip().lower()
-        if action == "read":
-            path = str(args.get("path") or "").strip()
-            if not path:
-                return _result_error("missing path")
-            row = self._file_memory.read_memory_markdown(
-                user_id=self.user_id,
-                workspace=self.workspace,
-                path=path,
-            )
-            if not row:
-                return _result_error("not found")
-            return _result_ok(
-                title=str(row.get("title") or ""),
-                path=str(row.get("path") or ""),
-                content=str(row.get("content") or "")[:4000],
-                entry_kind=str(row.get("entry_kind") or ""),
-            )
-
-        query = str(args.get("query") or "").strip()[:240]
-        limit = _safe_int(args.get("limit"), 8, low=1, high=20)
-        hits = self._file_memory.search(
-            user_id=self.user_id,
-            workspace=self.workspace,
-            query=query,
-            limit=limit,
-            include_diary=True,
-        )
-        items = [
-            {
-                "title": str(it.title),
-                "path": str(it.path),
-                "preview": str(it.preview)[:220],
-                "score": float(it.score),
-                "entry_kind": str(it.entry_kind),
-                "topic_path": str(it.topic_path),
-            }
-            for it in hits[:limit]
-        ]
-        return _result_items(items)
 
     def _tool_profile(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "get").strip().lower()
@@ -834,36 +762,6 @@ class AelinToolHub:
             ),
         )
 
-    def _tool_device_processes(self, args: dict[str, Any]) -> dict[str, Any]:
-        sort_by = str(args.get("sort_by") or "cpu").strip().lower() or "cpu"
-        limit = _safe_int(args.get("limit"), 8, low=1, high=20)
-        rows = device_collect_process_items(sort_by=sort_by, limit=limit)
-        items = [
-            {
-                "pid": int(it.pid),
-                "name": str(it.name),
-                "cpu_percent": float(it.cpu_percent or 0.0),
-                "memory_mb": float(it.memory_mb or 0.0),
-                "anomaly_score": float(it.anomaly_score or 0.0),
-                "safe_to_terminate": bool(it.safe_to_terminate),
-            }
-            for it in rows
-        ]
-        return _result_items(items, sort_by=sort_by)
-
-    def _tool_device_mode_apply(self, args: dict[str, Any]) -> dict[str, Any]:
-        mode = str(args.get("mode") or "").strip().lower()
-        if not mode:
-            return _result_error("missing mode")
-        result = device_apply_mode(mode=mode)
-        return _result_ok(
-            mode=str(result.get("mode") or mode),
-            status=str(result.get("status") or ""),
-            summary=str(result.get("summary") or ""),
-            steps=[str(x) for x in list(result.get("steps") or [])][:12],
-            warnings=[str(x) for x in list(result.get("warnings") or [])][:12],
-        )
-
     def _tool_desktop_open_url(self, args: dict[str, Any]) -> dict[str, Any]:
         url = str(args.get("url") or "").strip()
         if not url:
@@ -903,10 +801,6 @@ class AelinToolHub:
         action = str(args.get("action") or "").strip().lower()
         if action == "status":
             return self._tool_device_status(args)
-        if action == "processes":
-            return self._tool_device_processes(args)
-        if action == "mode_apply":
-            return self._tool_device_mode_apply(args)
         if action == "open_url":
             return self._tool_desktop_open_url(args)
         if action == "open_aelin":
@@ -1739,7 +1633,7 @@ def run_aelin_structured_tools(
             "role": "system",
             "content": (
                 "You are a tool planner for Aelin. "
-                "Only call tools when the user query clearly needs memory/profile/diary/device/screen/browser/attachment operations. "
+                "Only call tools when the user query clearly needs memory/profile/device/screen/browser/attachment operations. "
                 "At most call 2 tools. If no tool is needed, respond directly without tool calls."
             ),
         },
@@ -1964,7 +1858,7 @@ def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: 
             note = f"total={result.get('total')}, providers={','.join(list(result.get('providers') or [])[:3])}"
         elif name == "attachment_search":
             note = f"total={result.get('total')}, attachments={','.join([str(x) for x in list(result.get('attachment_ids') or [])[:6]])}"
-        elif name in {"diary", "profile", "context_get", "device", "screen_get"}:
+        elif name in {"profile", "context_get", "device", "screen_get"}:
             if "total" in result:
                 note = f"total={result.get('total')}"
             elif "summary" in result:

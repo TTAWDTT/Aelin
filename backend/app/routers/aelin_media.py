@@ -16,7 +16,6 @@ from app.schemas import (
     AelinMediaIngestResponse,
 )
 from app.services.aelin_media_pipeline import media_ingest_service as _media_ingest
-from app.services.aelin_media_pipeline import save_media_ingest_diary as _save_media_ingest_diary
 from app.services.aelin_runtime import normalize_workspace as _normalize_workspace
 from app.services.aelin_runtime import resolve_llm_service as _resolve_llm_service
 from app.services.media_ingest import MediaIngestError
@@ -126,35 +125,16 @@ def ingest_media_content(
                 detail=detail,
             ) from exc
 
-    save_state = _save_media_ingest_diary(
-        db,
-        user_id=current_user.id,
-        workspace=workspace,
-        result=result,
-    )
-    written = bool(save_state.get("written"))
-    diary_path = str(save_state.get("diary_path") or "")
-    try:
-        if written or bool(save_state.get("note_added")):
-            db.commit()
-    except Exception:
-        db.rollback()
-        written = False
-        diary_path = ""
-
-    message = (
-        f"已完成 {result.platform} 内容摘要并写入 Aelinの日记。"
-        if written
-        else (
-            f"已完成 {result.platform} 内容摘要，但未写入日记（质量门禁未通过：{result.quality_reason or 'quality_gate'}）。"
-            if not result.quality_usable
-            else f"已完成 {result.platform} 内容摘要，但写入日记失败。"
-        )
-    )
+    status = "processed"
+    message = f"已完成 {result.platform} 内容摘要。"
+    if (not result.quality_usable) or result.needs_review:
+        status = "needs_review"
+        reason = result.quality_reason or "quality_gate"
+        message = f"已完成 {result.platform} 内容摘要，但未通过质量门禁（reason={reason}）。"
     if guide_payload is not None and bool(guide_payload.get("ok")):
         message = f"{message}（已自动完成抖音登录引导并重试）"
     return AelinMediaIngestResponse(
-        status=("saved" if written else "processed"),
+        status=status,
         message=message,
         url=result.canonical_url,
         platform=result.platform,
@@ -168,8 +148,7 @@ def ingest_media_content(
         quality_reason=result.quality_reason,
         quality_usable=result.quality_usable,
         needs_review=result.needs_review,
-        written=written,
-        diary_path=diary_path,
+        written=False,
         limitations=result.limitations,
         generated_at=datetime.now(timezone.utc),
     )

@@ -24,7 +24,6 @@ from app.routers import (
     aelin_remote_control,
     auth,
     contacts,
-    desk,
     inbound,
     messages,
 )
@@ -138,7 +137,6 @@ def create_app() -> FastAPI:
     app.include_router(aelin_notifications.router, prefix="/api/v1")
     app.include_router(aelin_proactive.router, prefix="/api/v1")
     app.include_router(aelin_remote_control.router, prefix="/api/v1")
-    app.include_router(desk.router, prefix="/api/v1")
     app.include_router(inbound.router, prefix="/api/v1")
 
     return app
