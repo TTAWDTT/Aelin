@@ -8,6 +8,7 @@ from typing import Any
 from app.services.aelin_loop_actions import build_actions as _build_actions_from_runs
 from app.services.aelin_loop_logging import safe_preview
 from app.services.aelin_loop_message import build_initial_messages, extract_message_text
+from app.services.aelin_planes import list_plane_artifacts, list_plane_events
 from app.services.aelin_loop_round import request_round_response
 from app.services.aelin_loop_tools import (
     append_tool_result,
@@ -26,7 +27,9 @@ from app.services.aelin_tools import AelinToolHub
 from app.services.llm import LLMService
 
 _LOG = logging.getLogger(__name__)
-_SERIAL_READ_TOOLS: set[str] = set()
+_SERIAL_READ_TOOLS: set[str] = {"plane"}
+_ACTIVE_PLANE_STATES = {"queued", "running", "waiting_user", "blocked"}
+_TERMINAL_PLANE_STATES = {"completed", "failed", "closed"}
 
 
 def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResult:
@@ -100,6 +103,133 @@ def _extract_confirmation_request(
     return None
 
 
+def _plane_task_snapshot_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    task_id = " ".join(str(payload.get("task_id") or "").strip().split())[:96]
+    if not task_id:
+        return None
+    plane = str(payload.get("plane") or "").strip().lower()[:32] or "browser"
+    state = str(payload.get("state") or "").strip().lower()[:32]
+    return {
+        "task_id": task_id,
+        "plane": plane,
+        "state": state,
+        "summary": str(payload.get("summary") or "")[:260],
+        "user_prompt": str(payload.get("user_prompt") or "")[:260],
+        "requires_user_input": bool(payload.get("requires_user_input")),
+        "last_url": str(payload.get("last_url") or "")[:260],
+    }
+
+
+def _supervised_plane_from_forced_tool_runs(forced_tool_runs: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    for row in reversed(list(forced_tool_runs or [])):
+        if str(row.get("name") or "").strip().lower() != "plane":
+            continue
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
+        snapshot = _plane_task_snapshot_from_payload(result)
+        if snapshot is not None:
+            return snapshot
+    return None
+
+
+def _update_supervised_plane_task(
+    current: dict[str, Any] | None,
+    *,
+    tool_name: str,
+    status: str,
+    result: dict[str, Any],
+) -> dict[str, Any] | None:
+    if str(tool_name or "").strip().lower() != "plane":
+        return current
+    if str(status or "").strip().lower() != "completed":
+        return current
+    snapshot = _plane_task_snapshot_from_payload(result)
+    return snapshot if snapshot is not None else current
+
+
+def _build_plane_runtime_context_message(
+    *,
+    tool_hub: AelinToolHub,
+    result: dict[str, Any],
+) -> str:
+    snapshot = _plane_task_snapshot_from_payload(result)
+    if snapshot is None:
+        return ""
+    if str(snapshot.get("state") or "") not in _TERMINAL_PLANE_STATES:
+        return ""
+
+    task_id = str(snapshot.get("task_id") or "")
+    plane = str(snapshot.get("plane") or "browser")
+    workspace = str(getattr(tool_hub, "workspace", "default") or "default")
+    user_id = int(getattr(tool_hub, "user_id", 0) or 0)
+    db = getattr(tool_hub, "db", None)
+
+    event_lines: list[str] = []
+    artifact_lines: list[str] = []
+    if db is not None and user_id > 0:
+        try:
+            for row in list_plane_events(
+                task_id,
+                user_id=user_id,
+                workspace=workspace,
+                plane=plane,
+                db=db,
+                limit=6,
+            ):
+                event_type = str(row.get("event_type") or "").strip()
+                summary = str(row.get("summary") or "").strip()
+                event_lines.append(f"- {event_type}: {summary[:120] or 'event'}")
+        except Exception:
+            event_lines = []
+        try:
+            for row in list_plane_artifacts(
+                task_id,
+                user_id=user_id,
+                workspace=workspace,
+                plane=plane,
+                db=db,
+                limit=6,
+            ):
+                kind = str(row.get("kind") or "").strip()
+                content = row.get("content") if isinstance(row.get("content"), dict) else {}
+                preview = ""
+                if kind == "page_text":
+                    preview = str(content.get("text") or "").strip()[:200]
+                elif kind == "page_location":
+                    preview = str(content.get("url") or "").strip()[:200]
+                else:
+                    preview = str(content)[:200]
+                artifact_lines.append(f"- {kind}: {preview or 'artifact'}")
+        except Exception:
+            artifact_lines = []
+
+    if not event_lines:
+        event_lines = [f"- terminal_state: {str(snapshot.get('state') or '')}"]
+    if not artifact_lines:
+        fallback_artifacts: list[str] = []
+        last_url = str(result.get("last_url") or "").strip()
+        last_text = str(result.get("last_text") or "").strip()
+        if last_url:
+            fallback_artifacts.append(f"- page_location: {last_url[:200]}")
+        if last_text:
+            fallback_artifacts.append(f"- page_text: {last_text[:200]}")
+        artifact_lines = fallback_artifacts or ["- none"]
+
+    lines = [
+        "[AELIN PLANE RUNTIME]",
+        f"plane={plane}",
+        f"task_id={task_id}",
+        f"state={str(snapshot.get('state') or '')}",
+        f"summary={str(snapshot.get('summary') or '')[:260]}",
+        "events:",
+        *event_lines[:6],
+        "artifacts:",
+        *artifact_lines[:6],
+    ]
+    return "\n".join(lines).strip()
+
+
 class AelinAgentLoop:
     def __init__(
         self,
@@ -111,6 +241,8 @@ class AelinAgentLoop:
         max_rounds: int,
         round_timeout_seconds: float = 10.0,
         total_timeout_seconds: float = 12.0,
+        max_plane_supervision_calls_per_round: int = 1,
+        max_plane_supervision_calls: int = 6,
     ) -> None:
         self._service = service
         self._provider = str(provider or "").strip().lower()
@@ -119,6 +251,8 @@ class AelinAgentLoop:
         self._max_rounds = max(1, int(max_rounds or 1))
         self._round_timeout_seconds = max(2.0, float(round_timeout_seconds or 10.0))
         self._total_timeout_seconds = max(3.0, float(total_timeout_seconds or 12.0))
+        self._max_plane_supervision_calls_per_round = max(1, int(max_plane_supervision_calls_per_round or 1))
+        self._max_plane_supervision_calls = max(1, int(max_plane_supervision_calls or 1))
 
     def run(
         self,
@@ -152,6 +286,12 @@ class AelinAgentLoop:
         stop_reason = "unknown"
         answer = ""
         pending_confirmation: dict[str, Any] | None = None
+        supervised_plane_task = _supervised_plane_from_forced_tool_runs(forced_tool_runs)
+        waiting_plane_resume_probe_pending = bool(
+            isinstance(supervised_plane_task, dict)
+            and str(supervised_plane_task.get("state") or "") == "waiting_user"
+        )
+        plane_supervision_calls_total = 0
 
         if self._provider == "rule_based":
             return _failed_loop_result(stop_reason="provider_rule_based", detail="provider_rule_based")
@@ -213,6 +353,7 @@ class AelinAgentLoop:
 
             rounds = round_index
             usage.round_calls = 0
+            plane_supervision_calls_round = 0
             trace_steps.append(AgentLoopTraceStep(stage="agent_loop_round", status="running", detail=f"round={round_index}", count=0))
             response, retried_without_images, llm_error_reason = request_round_response(
                 client=client,
@@ -237,6 +378,115 @@ class AelinAgentLoop:
             raw_tool_calls = list(getattr(message, "tool_calls", []) or [])
 
             if not raw_tool_calls:
+                active_plane = (
+                    dict(supervised_plane_task)
+                    if isinstance(supervised_plane_task, dict)
+                    and str(supervised_plane_task.get("state") or "") in _ACTIVE_PLANE_STATES
+                    else None
+                )
+                if active_plane is not None:
+                    if str(active_plane.get("state") or "") == "waiting_user":
+                        if not waiting_plane_resume_probe_pending:
+                            answer = str(active_plane.get("user_prompt") or "").strip() or "当前网页任务需要你先完成人工操作后我再继续。"
+                            stop_reason = "plane_waiting_user"
+                            trace_steps.append(
+                                AgentLoopTraceStep(
+                                    stage="agent_loop_plane",
+                                    status="completed",
+                                    detail=f"task={active_plane.get('task_id')}; state=waiting_user",
+                                    count=1,
+                                )
+                            )
+                            break
+                        waiting_plane_resume_probe_pending = False
+                    if plane_supervision_calls_total >= self._max_plane_supervision_calls:
+                        stop_reason = "plane_supervision_limit"
+                        trace_steps.append(
+                            AgentLoopTraceStep(
+                                stage="agent_loop_plane",
+                                status="failed",
+                                detail=f"task={active_plane.get('task_id')}; scope=total",
+                                count=0,
+                            )
+                        )
+                        break
+                    if plane_supervision_calls_round >= self._max_plane_supervision_calls_per_round:
+                        stop_reason = "plane_supervision_limit"
+                        trace_steps.append(
+                            AgentLoopTraceStep(
+                                stage="agent_loop_plane",
+                                status="failed",
+                                detail=f"task={active_plane.get('task_id')}; scope=round",
+                                count=0,
+                            )
+                        )
+                        break
+                    plane_supervision_calls_total += 1
+                    plane_supervision_calls_round += 1
+                    trace_steps.append(
+                        AgentLoopTraceStep(
+                            stage="agent_loop_plane",
+                            status="running",
+                            detail=f"task={active_plane.get('task_id')}; action=status",
+                            count=1,
+                        )
+                    )
+                    status, result, error, latency_ms = execute_tool_call(
+                        tool_hub=self._tool_hub,
+                        tool_name="plane",
+                        args={
+                            "action": "status",
+                            "plane": str(active_plane.get("plane") or "browser"),
+                            "task_id": str(active_plane.get("task_id") or ""),
+                        },
+                    )
+                    # For supervision-driven plane.status calls we only record the
+                    # run and tracing metadata; we deliberately avoid emitting a
+                    # model-visible tool message because本轮并没有对应的
+                    # assistant.tool_calls，防止产生不合法的对话序列。
+                    tool_runs.append(
+                        AgentLoopToolRun(
+                            round_index=round_index,
+                            name="plane",
+                            args={
+                                "action": "status",
+                                "plane": str(active_plane.get("plane") or "browser"),
+                                "task_id": str(active_plane.get("task_id") or ""),
+                            },
+                            status=status,
+                            result=result,
+                            error=error,
+                            is_write=False,
+                            latency_ms=latency_ms,
+                        )
+                    )
+                    trace_steps.append(
+                        AgentLoopTraceStep(
+                            stage="agent_loop_tool",
+                            status=status,
+                            detail=f"plane:{error or 'ok'}",
+                            count=1,
+                        )
+                    )
+                    if status == "completed":
+                        supervised_plane_task = _update_supervised_plane_task(
+                            supervised_plane_task,
+                            tool_name="plane",
+                            status=status,
+                            result=result,
+                        )
+                        runtime_context = _build_plane_runtime_context_message(
+                            tool_hub=self._tool_hub,
+                            result=result,
+                        )
+                        if runtime_context:
+                            messages.append({"role": "system", "content": runtime_context})
+                        if (
+                            isinstance(supervised_plane_task, dict)
+                            and str(supervised_plane_task.get("state") or "") == "waiting_user"
+                        ):
+                            waiting_plane_resume_probe_pending = False
+                    continue
                 answer = text_out
                 stop_reason = "final_answer" if answer else "empty_answer"
                 _LOG.info(
@@ -305,14 +555,31 @@ class AelinAgentLoop:
                             tc_id=tc_id,
                             is_write=False,
                             status=status,
-                            result=result,
-                            error=error,
-                            latency_ms=latency_ms,
-                            messages=messages,
-                            tool_runs=tool_runs,
-                            trace_steps=trace_steps,
-                        ):
+                        result=result,
+                        error=error,
+                        latency_ms=latency_ms,
+                        messages=messages,
+                        tool_runs=tool_runs,
+                        trace_steps=trace_steps,
+                    ):
                             successful_calls += 1
+                            supervised_plane_task = _update_supervised_plane_task(
+                                supervised_plane_task,
+                                tool_name=tool_name,
+                                status=status,
+                                result=result,
+                            )
+                            runtime_context = _build_plane_runtime_context_message(
+                                tool_hub=self._tool_hub,
+                                result=result,
+                            )
+                            if runtime_context:
+                                messages.append({"role": "system", "content": runtime_context})
+                            if (
+                                isinstance(supervised_plane_task, dict)
+                                and str(supervised_plane_task.get("state") or "") == "waiting_user"
+                            ):
+                                waiting_plane_resume_probe_pending = False
                         if pending_confirmation is None:
                             pending_confirmation = _extract_confirmation_request(
                                 tool_name=tool_name,
@@ -370,6 +637,23 @@ class AelinAgentLoop:
                     trace_steps=trace_steps,
                 ):
                     successful_calls += 1
+                    supervised_plane_task = _update_supervised_plane_task(
+                        supervised_plane_task,
+                        tool_name=tool_name,
+                        status=status,
+                        result=result,
+                    )
+                    runtime_context = _build_plane_runtime_context_message(
+                        tool_hub=self._tool_hub,
+                        result=result,
+                    )
+                    if runtime_context:
+                        messages.append({"role": "system", "content": runtime_context})
+                    if (
+                        isinstance(supervised_plane_task, dict)
+                        and str(supervised_plane_task.get("state") or "") == "waiting_user"
+                    ):
+                        waiting_plane_resume_probe_pending = False
                 if pending_confirmation is None:
                     pending_confirmation = _extract_confirmation_request(
                         tool_name=tool_name,
@@ -406,11 +690,17 @@ class AelinAgentLoop:
                 AgentLoopTraceStep(
                     stage="agent_loop_round",
                     status="completed",
-                    detail=f"round={round_index}; calls={usage.round_calls}; successful={successful_calls}",
-                    count=usage.round_calls,
+                    detail=f"round={round_index}; calls={usage.round_calls + plane_supervision_calls_round}; successful={successful_calls}",
+                    count=usage.round_calls + plane_supervision_calls_round,
                 )
             )
-            if reached_total_limit or usage.total_calls >= self._policy.max_tool_calls:
+            active_plane_after_round = (
+                dict(supervised_plane_task)
+                if isinstance(supervised_plane_task, dict)
+                and str(supervised_plane_task.get("state") or "") in _ACTIVE_PLANE_STATES
+                else None
+            )
+            if (reached_total_limit or usage.total_calls >= self._policy.max_tool_calls) and active_plane_after_round is None:
                 stop_reason = "total_call_limit"
                 break
             if idle_rounds >= 2:
@@ -426,7 +716,7 @@ class AelinAgentLoop:
                 stop_reason = "requires_confirmation"
             elif stop_reason == "total_timeout":
                 answer = "我已达到本轮时限，先返回阶段性结论。你可以缩小问题范围后我继续执行。"
-            elif usage.total_calls > 0 and stop_reason in {"total_call_limit", "no_progress", "max_rounds"}:
+            elif (usage.total_calls > 0 or plane_supervision_calls_total > 0) and stop_reason in {"total_call_limit", "plane_supervision_limit", "no_progress", "max_rounds"}:
                 answer = self._partial_answer_from_runs(tool_runs=tool_runs, query=query)
                 stop_reason = "partial_result"
             else:
@@ -447,7 +737,7 @@ class AelinAgentLoop:
             "agent_loop end stop=%s rounds=%s total_calls=%s write_calls=%s answer=%s",
             stop_reason,
             rounds,
-            usage.total_calls,
+            usage.total_calls + plane_supervision_calls_total,
             usage.write_calls,
             safe_preview(answer),
         )
@@ -456,7 +746,7 @@ class AelinAgentLoop:
             answer=answer,
             stop_reason=stop_reason,
             rounds=rounds,
-            total_calls=usage.total_calls,
+            total_calls=usage.total_calls + plane_supervision_calls_total,
             write_calls=usage.write_calls,
             tool_runs=tool_runs,
             trace_steps=trace_steps,

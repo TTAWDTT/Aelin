@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     aelin_agent_loop_max_tool_calls: int = 15
     aelin_agent_loop_max_calls_per_round: int = 2
     aelin_agent_loop_max_write_calls: int = 15
+    aelin_agent_loop_max_plane_supervision_calls: int = 6
+    aelin_agent_loop_max_plane_supervision_calls_per_round: int = 1
     aelin_agent_loop_allow_write_tools: bool = True
     aelin_agent_loop_hard_fail: bool = True
     aelin_agent_loop_user_whitelist_csv: str = ""

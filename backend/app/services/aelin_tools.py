@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 import json
 import re
 import time
@@ -21,9 +22,12 @@ from app.services.device_center import (
     open_desktop_external_url,
 )
 from app.services.aelin_attachment_service import AelinAttachmentService, get_aelin_attachment_service
+from app.services.aelin_planes import close_plane_task, get_active_plane_task, plane_catalog_entries
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
+from app.services.plane_runtime import get_plane_registry_entry
+from app.services.skill_loader import get_skill_prompt_by_slug, list_skill_catalog_for_query_and_tools
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 
@@ -73,6 +77,134 @@ _TOOL_KEYWORDS = (
     "pptx",
     "xlsx",
 )
+_PLANE_CONTINUATION_HINTS = (
+    "continue",
+    "resume",
+    "pick up",
+    "pick-up",
+    "follow up",
+    "same task",
+    "same browser task",
+    "keep going",
+    "继续",
+    "接着",
+    "恢复",
+    "继续处理",
+    "继续这个任务",
+    "接着做",
+    "刚才",
+    "上一个",
+    "之前那个",
+    "同一个任务",
+)
+_GOAL_COMMON_TOKENS = {
+    "open",
+    "read",
+    "check",
+    "view",
+    "look",
+    "browse",
+    "page",
+    "website",
+    "site",
+    "task",
+    "summary",
+    "summarize",
+    "continue",
+    "resume",
+    "login",
+    "log",
+    "in",
+    "and",
+    "the",
+    "a",
+    "an",
+    "to",
+    "for",
+    "with",
+    "on",
+    "my",
+    "your",
+    "help",
+}
+_GOAL_COMMON_CJK_PHRASES = (
+    "帮我看看",
+    "帮我查看",
+    "帮我处理",
+    "继续处理",
+    "关注列表",
+    "继续这个任务",
+    "同一个任务",
+    "我已经",
+    "已完成",
+    "完成了",
+    "帮我",
+    "查看",
+    "看看",
+    "看下",
+    "打开",
+    "读取",
+    "阅读",
+    "继续",
+    "接着",
+    "恢复",
+    "处理",
+    "总结",
+    "概括",
+    "分析",
+    "已经",
+    "好了",
+    "完成",
+    "订单",
+    "列表",
+    "关注",
+    "页面",
+    "网站",
+    "网页",
+    "链接",
+    "网址",
+    "详情",
+    "任务",
+    "内容",
+    "文本",
+    "教程",
+    "文档",
+    "邮件",
+    "附件",
+    "一下",
+    "我的",
+    "这个",
+    "那个",
+    "当前",
+    "继续",
+    "接着",
+    "恢复",
+    "登录后",
+    "然后",
+    "并且",
+    "并",
+    "看",
+)
+_STALE_PLANE_ERRORS = {"unknown_session_id", "plane_missing_session_id", "unknown_task_id"}
+_CHECKPOINT_RESPONSE_HINTS = (
+    "我已经",
+    "已经",
+    "好了",
+    "完成了",
+    "完成",
+    "继续",
+    "恢复",
+    "resume",
+    "done",
+    "ok",
+    "logged in",
+    "login",
+    "验证码",
+    "验证",
+    "2fa",
+    "code",
+)
+_CHECKPOINT_GENERIC_ANCHORS = {"登录", "验证", "验证码", "2fa", "code", "login", "logged", "done", "ok"}
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -106,6 +238,147 @@ def _is_http_url(value: str) -> bool:
         return False
     parsed = urlparse(text)
     return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
+
+
+def _normalize_goal_text(raw: str) -> str:
+    return re.sub(r"\s+", " ", str(raw or "").strip().lower())[:800]
+
+
+def _extract_goal_tokens(raw: str) -> set[str]:
+    text = _normalize_goal_text(raw)
+    if not text:
+        return set()
+    tokens = {
+        token
+        for token in re.findall(r"\b[a-z][a-z0-9_-]{1,31}\b", text)
+        if token not in _GOAL_COMMON_TOKENS
+    }
+    if re.search(r"(^|[^a-z0-9])x([^a-z0-9]|$)", text):
+        tokens.add("x")
+    for chunk in re.findall(r"[\u4e00-\u9fff]{2,20}", text):
+        cleaned = str(chunk)
+        for phrase in _GOAL_COMMON_CJK_PHRASES:
+            cleaned = cleaned.replace(phrase, " ")
+        for part in cleaned.split():
+            normalized = part.strip()
+            if 2 <= len(normalized) <= 8:
+                tokens.add(normalized)
+    return tokens
+
+
+def _extract_host_tokens_from_value(raw: str) -> set[str]:
+    tokens: set[str] = set()
+    text = _normalize_goal_text(raw)
+    if not text:
+        return tokens
+    candidates = re.findall(r"https?://[^\s]+", text)
+    if not candidates:
+        candidates = re.findall(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", text)
+    for candidate in candidates[:8]:
+        parsed = urlparse(candidate if "://" in candidate else f"https://{candidate}")
+        host = str(parsed.netloc or parsed.path or "").strip().lower()
+        if not host:
+            continue
+        if host.startswith("www."):
+            host = host[4:]
+        parts = [part for part in host.split(".") if part]
+        for part in parts:
+            if part in {"com", "cn", "net", "org", "io", "co", "app"}:
+                continue
+            tokens.add(part)
+    return tokens
+
+
+def _goal_has_continuation_hint(goal: str) -> bool:
+    text = _normalize_goal_text(goal)
+    if not text:
+        return False
+    return any(hint in text for hint in _PLANE_CONTINUATION_HINTS)
+
+
+def _goals_look_related(*, active_task: dict[str, Any], new_goal: str) -> bool:
+    old_goal = _normalize_goal_text(str(active_task.get("goal") or ""))
+    new_goal_normalized = _normalize_goal_text(new_goal)
+    if not old_goal or not new_goal_normalized:
+        return False
+    old_goal_tokens = _extract_goal_tokens(old_goal)
+    new_goal_tokens = _extract_goal_tokens(new_goal_normalized)
+    shared_tokens = old_goal_tokens & new_goal_tokens
+    host_tokens = _extract_host_tokens_from_value(str(active_task.get("last_url") or "")) | _extract_host_tokens_from_value(old_goal)
+    new_host_tokens = _extract_host_tokens_from_value(new_goal_normalized)
+    shared_host = host_tokens and any(token in new_goal_normalized for token in host_tokens)
+
+    if _goal_has_continuation_hint(new_goal_normalized):
+        old_anchors = old_goal_tokens | host_tokens
+        new_anchors = new_goal_tokens | new_host_tokens
+        if old_anchors and new_anchors and not (old_anchors & new_anchors):
+            return False
+        if shared_host or len(shared_tokens) >= 1 or not new_anchors:
+            return True
+
+    shorter_len = min(len(old_goal), len(new_goal_normalized))
+    if shorter_len >= 8 and (old_goal in new_goal_normalized or new_goal_normalized in old_goal):
+        return True
+
+    similarity = SequenceMatcher(a=old_goal, b=new_goal_normalized).ratio()
+    if similarity >= 0.82:
+        return True
+
+    if len(shared_tokens) >= 2:
+        return True
+
+    if shared_host and similarity >= 0.6:
+        return True
+    return False
+
+
+def _should_reuse_active_plane_task(active_task: dict[str, Any] | None, *, goal: str) -> bool:
+    if not isinstance(active_task, dict):
+        return False
+    task_id = " ".join(str(active_task.get("task_id") or "").strip().split())[:96]
+    state = str(active_task.get("state") or "").strip().lower()
+    if not task_id:
+        return False
+    if state not in {"queued", "running", "waiting_user", "blocked"}:
+        return False
+    return _goals_look_related(active_task=active_task, new_goal=goal)
+
+
+def _query_looks_like_checkpoint_response(query: str) -> bool:
+    text = _normalize_goal_text(query)
+    if not text:
+        return False
+    return any(hint in text for hint in _CHECKPOINT_RESPONSE_HINTS)
+
+
+def should_resume_active_plane_for_query(active_task: dict[str, Any] | None, query: str) -> bool:
+    if not isinstance(active_task, dict):
+        return False
+    normalized_query = _normalize_goal_text(query)
+    if not normalized_query:
+        return False
+    if _goals_look_related(active_task=active_task, new_goal=normalized_query):
+        return True
+    if str(active_task.get("state") or "").strip().lower() != "waiting_user":
+        return False
+    if not _query_looks_like_checkpoint_response(normalized_query):
+        return False
+    prompt = _normalize_goal_text(str(active_task.get("user_prompt") or ""))
+    goal = _normalize_goal_text(str(active_task.get("goal") or ""))
+    loginish = any(token in f"{prompt}\n{goal}" for token in ("login", "登录", "验证码", "2fa", "验证"))
+    if not loginish:
+        return False
+    old_anchors = _extract_goal_tokens(goal) | _extract_host_tokens_from_value(str(active_task.get("last_url") or ""))
+    query_anchors = _extract_goal_tokens(normalized_query) | _extract_host_tokens_from_value(normalized_query)
+    extra_query_anchors = {token for token in query_anchors if token not in _CHECKPOINT_GENERIC_ANCHORS}
+    if not extra_query_anchors:
+        return True
+    return bool(old_anchors & extra_query_anchors)
+
+
+def _should_restart_plane_task_after_reuse_failure(result: dict[str, Any]) -> bool:
+    error = str((result or {}).get("error") or "").strip().lower()
+    return error in _STALE_PLANE_ERRORS
 
 
 def should_attempt_aelin_tools(query: str) -> bool:
@@ -268,22 +541,14 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
-                    "name": "pinchtab",
-                    "description": (
-                        "通过本地 PinchTab 服务在真实浏览器中打开网页、查看内容并点击元素。"
-                        "用于所有需要“上网”“浏览网页”“操作 X/Twitter 等网站”的任务，这是你唯一的网页浏览方式。"
-                    ),
+                    "name": "skill",
+                    "description": "查看可用 skill 目录，或按 slug 读取某个 skill 的正文，用于获取更细的工具/plane 使用策略。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "action": {
-                                "type": "string",
-                                "enum": ["health", "launch_instance", "open_tab", "snapshot", "text", "click"],
-                            },
-                            "instance_id": {"type": "string"},
-                            "tab_id": {"type": "string"},
-                            "url": {"type": "string"},
-                            "ref": {"type": "string"},
+                            "action": {"type": "string", "enum": ["catalog", "read"]},
+                            "slug": {"type": "string", "description": "当 action=read 时填写 skill slug。"},
+                            "query": {"type": "string", "description": "当 action=catalog 时可选，用于筛选更相关的 skill。"},
                         },
                         "required": ["action"],
                     },
@@ -292,54 +557,34 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
-                    "name": "pinchtab_agent",
+                    "name": "plane",
                     "description": (
-                        "将需要在网页中完成的多步骤任务整体外包给 PinchTab 代理。"
-                        "你只需描述高层目标（例如“在某站点搜索并整理列表”），该工具会在内部使用 pinchtab 浏览器原语完成尽量多的步骤，"
-                        "并返回简要结果与执行过的动作列表。"
-                        "适用于复杂浏览任务；简单的一次性打开/点击仍可直接使用 pinchtab。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "goal": {"type": "string"},
-                            "max_steps": {"type": "integer", "minimum": 1, "maximum": 8},
-                            # Optional: reuse an existing browser instance / tab across calls
-                            # so Aelin can分多轮把任务持续外包给同一个 PinchTab 会话。
-                            "instance_id": {"type": "string"},
-                            "tab_id": {"type": "string"},
-                        },
-                        "required": ["goal"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "pinchtab_session",
-                    "description": (
-                        "为复杂的浏览器任务管理一个 PinchTab 会话。"
-                        "start: 启动会话并用自然语言 goal 交给 PinchTab；"
-                        "step: 在现有会话上继续推进任务；"
-                        "status: 仅查询当前会话状态；"
-                        "close: 结束会话并允许底层浏览器实例被释放。"
-                        "Aelin 应该像真人一样，先 start，再根据 status/steps/last_text 多轮 step，"
-                        "而不是在一个回合里反复重新规划。"
+                        "将复杂任务委派给完整的执行子系统（plane）。"
+                        "当前支持 browser plane，由 PinchTab 负责复杂网页登录、导航、滚动和多步网页流程。"
+                        "对于复杂网站任务，应优先用 plane，而不是自己微操浏览器动作。"
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["start", "step", "status", "close"],
+                                "enum": ["catalog", "delegate", "status", "continue", "close"],
+                            },
+                            "plane": {
+                                "type": "string",
+                                "enum": ["browser"],
+                                "description": "当前支持 browser plane。",
                             },
                             "goal": {
-                                "type": "string",
-                                "description": "当 action=start 或 step 时，用自然语言描述要交给 PinchTab 的目标。",
+                                "type": "string"
                             },
-                            "session_id": {
+                            "task_id": {
                                 "type": "string",
-                                "description": "已有会话的标识，用于 step/status/close。",
+                                "description": "已有 plane 任务的标识，用于 status/continue/close。",
+                            },
+                            "force_new": {
+                                "type": "boolean",
+                                "description": "仅在明确需要放弃当前活跃 plane task 并重新开始时才设为 true。",
                             },
                         },
                         "required": ["action"],
@@ -363,6 +608,10 @@ class AelinToolHub:
             return self._tool_attachment_search(args)
         if tool == "screen_get":
             return self._tool_screen_get(args)
+        if tool == "skill":
+            return self._tool_skill(args)
+        if tool == "plane":
+            return self._tool_plane(args)
         if tool == "pinchtab":
             return self._tool_pinchtab(args)
         if tool == "pinchtab_agent":
@@ -605,6 +854,135 @@ class AelinToolHub:
             source_display=str(shot.get("source_display") or "")[:64],
             captured_at=str(shot.get("captured_at") or "")[:64],
         )
+
+    def _tool_skill(self, args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "").strip().lower()
+        if action == "catalog":
+            tool_names = [
+                str((row.get("function") or {}).get("name") or "").strip()
+                for row in self.tool_definitions()
+                if isinstance(row, dict) and isinstance(row.get("function"), dict)
+            ]
+            items = list_skill_catalog_for_query_and_tools(
+                str(args.get("query") or "").strip(),
+                tool_names,
+            )
+            return _result_ok(items=items, total=len(items))
+        if action == "read":
+            slug = str(args.get("slug") or "").strip().lower()
+            if not slug:
+                return _result_error("missing slug")
+            prompt = get_skill_prompt_by_slug(slug)
+            if not prompt:
+                return _result_error("unknown_skill_slug")
+            return _result_ok(slug=slug, prompt=prompt, summary=prompt.split("\n", 4)[-1][:260])
+        return _result_error("unsupported skill action")
+
+    def _tool_plane(self, args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "").strip().lower()
+        plane = str(args.get("plane") or "browser").strip().lower() or "browser"
+        goal = str(args.get("goal") or "").strip()
+        task_id = " ".join(str(args.get("task_id") or "").strip().split())[:96]
+        force_new = bool(args.get("force_new"))
+
+        if action == "catalog":
+            planes = plane_catalog_entries()
+            return _result_ok(planes=planes, total=len(planes))
+
+        entry = get_plane_registry_entry(plane)
+        if entry is None:
+            return _result_error("unsupported_plane")
+
+        adapter = entry.adapter_factory(
+            db=self.db,
+            user_id=self.user_id,
+            workspace=self.workspace,
+            session_executor=lambda *, action, session_id="", goal="": _execute_pinchtab_session_action(
+                self,
+                action=action,
+                session_id=session_id,
+                goal=goal,
+            ),
+        )
+
+        if action == "delegate":
+            if not goal:
+                return _result_error("missing goal")
+            if not force_new:
+                active_task = get_active_plane_task(
+                    self.user_id,
+                    self.workspace,
+                    plane=entry.metadata.slug,
+                    db=self.db,
+                )
+                active_task_id = " ".join(str((active_task or {}).get("task_id") or "").strip().split())[:96]
+                active_state = str((active_task or {}).get("state") or "").strip().lower()
+                if active_task_id and _should_reuse_active_plane_task(active_task, goal=goal):
+                    if active_state == "waiting_user":
+                        resumed = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
+                        if bool(resumed.get("ok")) and not bool(resumed.get("stale_backing_task")):
+                            resumed["reused_existing_task"] = True
+                            resumed["reused_action"] = "continue"
+                            return resumed
+                        if bool(resumed.get("stale_backing_task")):
+                            restarted = adapter.delegate(goal=goal[:800])
+                            if bool(restarted.get("ok")):
+                                restarted["restarted_after_stale_task"] = True
+                                restarted["previous_task_id"] = active_task_id
+                            return restarted
+                        if _should_restart_plane_task_after_reuse_failure(resumed):
+                            close_plane_task(
+                                active_task_id,
+                                user_id=self.user_id,
+                                workspace=self.workspace,
+                                plane=entry.metadata.slug,
+                                db=self.db,
+                            )
+                            restarted = adapter.delegate(goal=goal[:800])
+                            if bool(restarted.get("ok")):
+                                restarted["restarted_after_stale_task"] = True
+                                restarted["previous_task_id"] = active_task_id
+                            return restarted
+                        return resumed
+                    continued = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
+                    if bool(continued.get("ok")) and not bool(continued.get("stale_backing_task")):
+                        continued["reused_existing_task"] = True
+                        continued["reused_action"] = "continue"
+                        return continued
+                    if bool(continued.get("stale_backing_task")):
+                        restarted = adapter.delegate(goal=goal[:800])
+                        if bool(restarted.get("ok")):
+                            restarted["restarted_after_stale_task"] = True
+                            restarted["previous_task_id"] = active_task_id
+                        return restarted
+                    if _should_restart_plane_task_after_reuse_failure(continued):
+                        close_plane_task(
+                            active_task_id,
+                            user_id=self.user_id,
+                            workspace=self.workspace,
+                            plane=entry.metadata.slug,
+                            db=self.db,
+                        )
+                        restarted = adapter.delegate(goal=goal[:800])
+                        if bool(restarted.get("ok")):
+                            restarted["restarted_after_stale_task"] = True
+                            restarted["previous_task_id"] = active_task_id
+                        return restarted
+                    return continued
+            return adapter.delegate(goal=goal[:800])
+
+        if action not in {"status", "continue", "close"}:
+            return _result_error("unsupported plane action")
+        if not task_id:
+            return _result_error("missing task_id")
+
+        if action == "status":
+            return adapter.status(task_id=task_id)
+
+        if action == "continue":
+            return adapter.continue_task(task_id=task_id, goal=goal[:800])
+
+        return adapter.close(task_id=task_id)
 
     def _tool_pinchtab(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()
@@ -888,7 +1266,6 @@ def _detect_login_gate(*, url: str, text: str) -> bool:
     )
     return any(token in hay for token in hints)
 
-
 def _execute_tool_call(tool_hub: AelinToolHub, *, name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any], str, int]:
     status = "completed"
     result: dict[str, Any] = {}
@@ -1044,23 +1421,18 @@ def run_aelin_structured_tools(
     return out, ""
 
 
-def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Session-style wrapper around PinchTab, so Aelin can 像真人一样：
-    - start: 把一整个浏览任务外包出去；
-    - step: 在已有实例上继续推进；
-    - status: 查看当前进度；
-    - close: 结束会话。
-
-    底层仍然调用现有的 pinchtab_agent，且只在内存中维护一个轻量的会话表；
-    不做任何持久化存储。
-    """
+def _execute_pinchtab_session_action(
+    self: AelinToolHub,
+    *,
+    action: str,
+    session_id: str = "",
+    goal: str = "",
+) -> tuple[str, dict[str, Any], str, int]:
     from uuid import uuid4
 
-    action = str(args.get("action") or "").strip().lower()
-    session_id_raw = str(args.get("session_id") or "").strip()
-    goal = str(args.get("goal") or "").strip()
-    session_id = _normalize_session_id(session_id_raw)
+    action = str(action or "").strip().lower()
+    session_id = _normalize_session_id(session_id)
+    goal = str(goal or "").strip()
 
     def _get_session(sid: str) -> dict[str, Any] | None:
         return _PINCHTAB_SESSIONS.get(sid) if sid else None
@@ -1080,21 +1452,28 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
             "last_summary": str(payload.get("summary") or ""),
         }
 
+    started = time.perf_counter()
+    status = "completed"
+    error = ""
+
     if action not in {"start", "step", "status", "close"}:
-        return _result_error("unsupported pinchtab_session action")
+        result = _result_error("unsupported pinchtab_session action")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     if action == "start":
         if not goal:
-            return _result_error("missing goal")
+            result = _result_error("missing goal")
+            return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
         sid = _normalize_session_id(session_id or f"pinch-{uuid4().hex[:12]}")
         # First step: let pinchtab_agent propose and execute a short plan.
-        status, result, error, latency_ms = _execute_tool_call(
+        _, result, error, _ = _execute_tool_call(
             self,
             name="pinchtab_agent",
             args={"goal": goal[:800], "max_steps": 6},
         )
         if not bool(result.get("ok")):
-            return _result_error(str(result.get("error") or error or "pinchtab_session_start_failed"))
+            failed = _result_error(str(result.get("error") or error or "pinchtab_session_start_failed"))
+            return "failed", failed, str(failed.get("error") or ""), int((time.perf_counter() - started) * 1000)
         # Persist minimal session state.
         payload = dict(result)
         payload["goal"] = goal
@@ -1105,18 +1484,20 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         except Exception:
             # 映射失败不应影响工具主流程
             pass
-        return _result_ok(
+        output = _result_ok(
             session_id=sid,
-            latency_ms=latency_ms,
             **{k: v for k, v in result.items() if k != "ok"},
         )
+        return status, output, error, int((time.perf_counter() - started) * 1000)
 
     # All non-start actions require a valid session.
     sess = _get_session(session_id)
     if sess is None:
-        return _result_error("unknown_session_id")
+        result = _result_error("unknown_session_id")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
     if not _pinchtab_session_belongs_to(session_id, sess, user_id=self.user_id, workspace=self.workspace):
-        return _result_error("unknown_session_id")
+        result = _result_error("unknown_session_id")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     if action == "close":
         _PINCHTAB_SESSIONS.pop(session_id, None)
@@ -1127,11 +1508,11 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
                 _PINCHTAB_USER_SESSIONS.pop(key, None)
         except Exception:
             pass
-        return _result_ok(session_id=session_id, closed=True)
+        return status, _result_ok(session_id=session_id, closed=True), error, int((time.perf_counter() - started) * 1000)
 
     if action == "status":
         # Return the last known snapshot of this session; no new browser work.
-        return _result_ok(**_pinchtab_session_visible_payload(session_id, sess))
+        return status, _result_ok(**_pinchtab_session_visible_payload(session_id, sess)), error, int((time.perf_counter() - started) * 1000)
 
     # action == "step"
     # Step: continue using the same instance/tab with a refined goal.
@@ -1139,7 +1520,8 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         # If no new goal is provided, reuse last_goal to “继续刚才的任务”。
         goal = str(sess.get("last_goal") or "").strip()
     if not goal:
-        return _result_error("missing goal")
+        result = _result_error("missing goal")
+        return "failed", result, str(result.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     agent_args = {
         "goal": goal[:800],
@@ -1150,7 +1532,7 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
     if sess.get("tab_id"):
         agent_args["tab_id"] = str(sess["tab_id"])
 
-    status, result, error, latency_ms = _execute_tool_call(
+    _, result, error, _ = _execute_tool_call(
         self,
         name="pinchtab_agent",
         args=agent_args,
@@ -1167,7 +1549,8 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
             "last_text": str(sess.get("last_text") or ""),
         }
         _set_session(session_id, payload)
-        return _result_error(str(result.get("error") or error or "pinchtab_session_step_failed"))
+        failed = _result_error(str(result.get("error") or error or "pinchtab_session_step_failed"))
+        return "failed", failed, str(failed.get("error") or ""), int((time.perf_counter() - started) * 1000)
 
     payload = dict(result)
     payload["goal"] = goal
@@ -1177,11 +1560,29 @@ def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str
         _PINCHTAB_USER_SESSIONS[_pinchtab_session_owner_key(user_id=self.user_id, workspace=self.workspace)] = session_id
     except Exception:
         pass
-    return _result_ok(
+    output = _result_ok(
         session_id=session_id,
-        latency_ms=latency_ms,
         **{k: v for k, v in result.items() if k != "ok"},
     )
+    return status, output, error, int((time.perf_counter() - started) * 1000)
+
+
+def _tool_pinchtab_session(self: AelinToolHub, args: dict[str, Any]) -> dict[str, Any]:
+    """
+    Legacy session-style wrapper kept for compatibility.
+
+    The browser plane now talks to PinchTab through a dedicated adapter, while
+    this tool remains as an internal/compat surface backed by the same runtime.
+    """
+    _, result, _, latency_ms = _execute_pinchtab_session_action(
+        self,
+        action=str(args.get("action") or "").strip().lower(),
+        session_id=str(args.get("session_id") or "").strip(),
+        goal=str(args.get("goal") or "").strip(),
+    )
+    if isinstance(result, dict) and bool(result.get("ok")):
+        result = {**result, "latency_ms": latency_ms}
+    return result
 
 
 def summarize_tool_results_for_prompt(runs: list[dict[str, Any]], *, max_lines: int = 8) -> list[str]:
