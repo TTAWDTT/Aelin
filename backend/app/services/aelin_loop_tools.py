@@ -199,7 +199,6 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
 
     if tool in {
         "context_get",
-        "diary",
         "profile",
         "device",
         "plane",
@@ -319,12 +318,6 @@ def _compact_tool_result_for_model(tool_name: str, payload: dict[str, Any]) -> d
             base["todos"] = [
                 _preview_item(row)
                 for row in list(payload.get("todos") or [])[:_MODEL_LIST_PREVIEW_ITEMS]
-                if isinstance(row, dict)
-            ]
-        if "system_processes" in payload and isinstance(payload.get("system_processes"), list):
-            base["system_processes"] = [
-                _preview_item(row)
-                for row in list(payload.get("system_processes") or [])[:_MODEL_LIST_PREVIEW_ITEMS]
                 if isinstance(row, dict)
             ]
         return base

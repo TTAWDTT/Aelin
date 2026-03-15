@@ -21,8 +21,6 @@ from app.schemas import (
     AelinAttachmentUploadResponse,
     AelinChatRequest,
     AelinChatResponse,
-    AelinDiaryTreeNode,
-    AelinDiaryTreeResponse,
     AelinFileMemoryContentResponse,
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
@@ -124,43 +122,6 @@ def aelin_chat(
     current_user: User = Depends(get_current_user),
 ):
     return _dispatch_aelin_chat(payload, db, current_user)
-
-
-@router.get("/memory/file-memory/tree", response_model=AelinDiaryTreeResponse)
-def aelin_memory_file_memory_tree(
-    workspace: str = "default",
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-) -> AelinDiaryTreeResponse:
-    _ = db
-    workspace_norm = str(workspace or "default").strip() or "default"
-    tree = file_memory_bridge.list_diary_tree(
-        user_id=int(current_user.id),
-        workspace=workspace_norm,
-        max_files=200,
-    )
-
-    def _to_node(row: Any) -> AelinDiaryTreeNode:
-        return AelinDiaryTreeNode(
-            name=str(getattr(row, "name", "") or ""),
-            path=str(getattr(row, "path", "") or ""),
-            kind=str(getattr(row, "kind", "") or ""),
-            title=str(getattr(row, "title", "") or ""),
-            preview=str(getattr(row, "preview", "") or ""),
-            updated_at=str(getattr(row, "updated_at", "") or ""),
-            source=str(getattr(row, "source", "") or ""),
-            topic_path=str(getattr(row, "topic_path", "") or ""),
-            entry_kind=str(getattr(row, "entry_kind", "") or ""),
-            children=[_to_node(child) for child in getattr(row, "children", []) or []],
-        )
-
-    items = [_to_node(item) for item in list(tree or [])]
-    return AelinDiaryTreeResponse(
-        workspace=workspace_norm,
-        total=len(items),
-        items=items,
-        generated_at=datetime.now(timezone.utc),
-    )
 
 
 @router.get("/memory/file-memory/content", response_model=AelinFileMemoryContentResponse)

@@ -1514,7 +1514,7 @@ class MediaIngestService:
             system_prompt = (
                 "你是 Aelin 的媒体理解助手。根据提供的字幕/文本生成结构化中文结果。"
                 "输出必须是 JSON 对象，字段: title, overview, information_note, key_points, evidence, actions, confidence, reason。"
-                "说明：overview 是“总结”（讲这条内容在说什么）；information_note 是“提炼信息”（自然语言日记笔记，不要强制分点）。"
+                "说明：overview 是“总结”（讲这条内容在说什么）；information_note 是“提炼信息”（自然语言信息笔记，不要强制分点）。"
                 "其中 key_points/evidence/actions 必须是字符串数组，作为内部校验依据。confidence 为 0~1 数字。"
                 "要求：不要复述长链接、标签堆砌和营销文案；优先提取可验证事实。"
                 "若 source_type=subtitle_asr，先去掉口语重复和疑似识别噪声，再输出。"
@@ -1662,7 +1662,7 @@ class MediaIngestService:
             "",
             overview or "(empty)",
             "",
-            "## 提炼信息（日记）",
+            "## 提炼信息",
             "",
             information_note or "(empty)",
             "",

@@ -6,7 +6,7 @@ import logging
 import re
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -20,7 +20,6 @@ from app.services.openviking_utils import (
     _sha1,
     _slug,
     _utcnow,
-    DiaryTreeNode,
     FileMemoryHit,
 )
 
@@ -312,26 +311,6 @@ class FileMemoryBridge:
     def _memory_root(self, *, user_id: int, workspace: str) -> Path:
         return self._workspace_root(user_id=user_id, workspace=workspace) / "memory"
 
-    def _diary_root(self, *, user_id: int, workspace: str) -> Path:
-        return self._workspace_root(user_id=user_id, workspace=workspace) / "diary"
-
-    def _diary_raw_day_dir(self, *, user_id: int, workspace: str, day: date) -> Path:
-        return (
-            self._diary_root(user_id=user_id, workspace=workspace)
-            / "raw"
-            / f"{day.year:04d}"
-            / f"{day.month:02d}"
-            / f"{day.day:02d}"
-        )
-
-    def _diary_daily_month_dir(self, *, user_id: int, workspace: str, day: date) -> Path:
-        return (
-            self._diary_root(user_id=user_id, workspace=workspace)
-            / "daily"
-            / f"{day.year:04d}"
-            / f"{day.month:02d}"
-        )
-
     def _normalize_topic_path(self, topic_path: list[str] | None, *, fallback: str = "综合") -> list[str]:
         out: list[str] = []
         seen: set[str] = set()
@@ -358,7 +337,6 @@ class FileMemoryBridge:
         user_id: int,
         workspace: str,
         source: str | None,
-        include_diary: bool,
     ) -> list[Path]:
         memory_root = self._memory_root(user_id=user_id, workspace=workspace)
         out: list[Path] = []
@@ -367,8 +345,6 @@ class FileMemoryBridge:
             out.append(memory_root / _slug(source_norm, fallback="web"))
         else:
             out.append(memory_root)
-        if include_diary:
-            out.append(self._diary_root(user_id=user_id, workspace=workspace))
         return out
 
     def _extract_openviking_uri(self, payload: dict[str, Any]) -> str:
@@ -498,186 +474,6 @@ class FileMemoryBridge:
     def _read_sidecar_meta(self, md_path: Path) -> dict[str, Any]:
         return self._read_json_file(md_path.with_suffix(".meta.json"))
 
-    def _safe_unlink(self, path: Path) -> None:
-        try:
-            if path.exists():
-                path.unlink()
-        except Exception:
-            return
-
-    def _humanize_diary_markdown(self, markdown: str) -> str:
-        text = str(markdown or "").replace("\r\n", "\n")
-        lines = text.split("\n")
-        cleaned: list[str] = []
-        in_code_block = False
-        generic_headings = {
-            "title",
-            "insight",
-            "summary",
-            "今日对话",
-            "小结",
-            "提炼信息（日记）",
-            "来源索引",
-            "最终回答归档",
-        }
-        meta_line_re = re.compile(
-            r"^-\s*(canonical_id|target|source|kind|entry_kind|topic_path|created_at|fetched_at|updated_at|confidence|query|reason|source_indices_json)\s*:",
-            flags=re.I,
-        )
-        for raw in lines:
-            line = raw.rstrip()
-            stripped = line.strip()
-            if stripped.startswith("```"):
-                in_code_block = not in_code_block
-                continue
-            if in_code_block:
-                continue
-            if not stripped:
-                cleaned.append("")
-                continue
-            if stripped.startswith("#"):
-                heading = stripped.lstrip("#").strip().lower()
-                if heading in generic_headings:
-                    continue
-            if meta_line_re.match(stripped):
-                continue
-            if stripped.startswith("- [") and ("path=" in stripped.lower() or "url=" in stripped.lower()):
-                continue
-            cleaned.append(stripped)
-
-        merged: list[str] = []
-        blank_pending = False
-        for line in cleaned:
-            if not line:
-                blank_pending = True
-                continue
-            if blank_pending and merged:
-                merged.append("")
-            blank_pending = False
-            merged.append(line)
-
-        text_out = "\n".join(merged).strip()
-        text_out = re.sub(r"\n{3,}", "\n\n", text_out)
-        return text_out[:5000]
-
-    def _build_human_diary_content(
-        self,
-        *,
-        title: str,
-        markdown: str,
-        created_at_iso: str,
-        topic_parts: list[str],
-    ) -> str:
-        del title
-        del created_at_iso
-        del topic_parts
-        human_body = self._humanize_diary_markdown(markdown)
-        if human_body:
-            return human_body.strip() + "\n"
-        fallback = str(markdown or "").strip()
-        if fallback:
-            return fallback[:5000] + "\n"
-        return "今天有记录。\n"
-
-    def _iter_raw_day_dirs(self, *, user_id: int, workspace: str) -> list[tuple[date, Path]]:
-        root = self._diary_root(user_id=user_id, workspace=workspace) / "raw"
-        if not root.exists():
-            return []
-        out: list[tuple[date, Path]] = []
-        for path in root.rglob("*"):
-            if not path.is_dir():
-                continue
-            rel = path.relative_to(root).parts
-            if len(rel) != 3:
-                continue
-            try:
-                yy = int(rel[0])
-                mm = int(rel[1])
-                dd = int(rel[2])
-                day = date(yy, mm, dd)
-            except Exception:
-                continue
-            out.append((day, path))
-        out.sort(key=lambda item: item[0])
-        return out
-
-    def _rollup_closed_chat_diary_days(self, *, user_id: int, workspace: str, current_day: date) -> int:
-        rolled = 0
-        for day, dir_path in self._iter_raw_day_dirs(user_id=user_id, workspace=workspace):
-            if day >= current_day:
-                continue
-            md_files = sorted(dir_path.glob("*.md"))
-            if not md_files:
-                continue
-            entries: list[tuple[str, str, str]] = []
-            rolled_paths: list[str] = []
-            for md_path in md_files:
-                try:
-                    raw_text = md_path.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                text = self._humanize_diary_markdown(raw_text)
-                if not text.strip():
-                    continue
-                meta = self._read_sidecar_meta(md_path)
-                created_at = str(meta.get("created_at") or "").strip()
-                local_time = ""
-                dt = None
-                if created_at:
-                    try:
-                        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    except Exception:
-                        dt = None
-                if dt is not None:
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    local_time = dt.astimezone(timezone.utc).strftime("%H:%M")
-                entries.append((created_at, local_time, text.strip()))
-                rolled_paths.append(md_path.name)
-            if not entries:
-                continue
-
-            entries.sort(key=lambda item: item[0])
-            merged_lines: list[str] = []
-            for _created, hhmm, content in entries:
-                block = content
-                if hhmm:
-                    block = f"[{hhmm}] {block}"
-                merged_lines.append(block)
-            summary = "\n\n".join(merged_lines).strip() + "\n"
-
-            month_dir = self._diary_daily_month_dir(user_id=user_id, workspace=workspace, day=day)
-            daily_path = month_dir / f"{day.isoformat()}.md"
-            self._write_markdown(daily_path, summary)
-            self._write_json(
-                daily_path.with_suffix(".meta.json"),
-                {
-                    "entry_kind": "chat_diary_daily",
-                    "date": day.isoformat(),
-                    "entry_count": len(entries),
-                    "rolled_up_from": rolled_paths,
-                    "updated_at": _iso(_utcnow()),
-                },
-            )
-
-            for md_path in md_files:
-                self._safe_unlink(md_path)
-                self._safe_unlink(md_path.with_suffix(".meta.json"))
-
-            try:
-                current = dir_path
-                raw_root = self._diary_root(user_id=user_id, workspace=workspace) / "raw"
-                while current != raw_root:
-                    if any(current.iterdir()):
-                        break
-                    parent = current.parent
-                    current.rmdir()
-                    current = parent
-            except Exception:
-                pass
-            rolled += 1
-        return rolled
-
     def append_insight(
         self,
         *,
@@ -781,26 +577,7 @@ class FileMemoryBridge:
             file_name = f"{ts_id}_{_slug(title_text, fallback='insight', max_len=42)}.md"
             legacy_path = self._target_dir(target) / "insights" / file_name
             self._write_markdown(legacy_path, content)
-
-            entry_kind_norm = str(entry_kind or "memory_insight").strip().lower()
-            user_id = int(meta["user_id"] or 0)
-            workspace_norm = meta["workspace"]
-            if entry_kind_norm == "chat_diary":
-                diary_dir = self._diary_raw_day_dir(user_id=user_id, workspace=workspace_norm, day=now.date())
-                diary_path = diary_dir / f"{ts_id}.md"
-            else:
-                diary_dir = self._diary_root(user_id=user_id, workspace=workspace_norm)
-                for part in topic_parts:
-                    diary_dir = diary_dir / _slug(part, fallback="topic", max_len=48)
-                diary_path = diary_dir / file_name
-            diary_content = self._build_human_diary_content(
-                title=title_text,
-                markdown=safe_markdown,
-                created_at_iso=ts,
-                topic_parts=topic_parts,
-            )
-            self._write_markdown(diary_path, diary_content)
-            diary_meta = {
+            sidecar_meta = {
                 "canonical_id": meta["canonical_id"],
                 "target": meta["display_name"],
                 "source": meta["source_type"],
@@ -812,16 +589,9 @@ class FileMemoryBridge:
                 "reason": reason.strip()[:500],
                 "confidence": score_text,
                 "source_indices": source_items,
-                "legacy_path": str(legacy_path),
             }
-            self._write_json(diary_path.with_suffix(".meta.json"), diary_meta)
-            if entry_kind_norm == "chat_diary":
-                self._rollup_closed_chat_diary_days(
-                    user_id=user_id,
-                    workspace=workspace_norm,
-                    current_day=now.date(),
-                )
-            return diary_path
+            self._write_json(legacy_path.with_suffix(".meta.json"), sidecar_meta)
+            return legacy_path
         except Exception as exc:
             _LOG.warning("file-memory insight append failed: %s", exc)
             return None
@@ -835,7 +605,6 @@ class FileMemoryBridge:
         query: str,
         limit: int | None = None,
         source: str | None = None,
-        include_diary: bool = False,
     ) -> list[FileMemoryHit]:
         if not self.enabled:
             return []
@@ -849,7 +618,6 @@ class FileMemoryBridge:
                     query=query_text,
                     limit=safe_limit,
                     source=source,
-                    include_diary=bool(include_diary),
                 )
                 if hits:
                     return hits[:safe_limit]
@@ -861,7 +629,6 @@ class FileMemoryBridge:
             query=query_text,
             limit=safe_limit,
             source=source,
-            include_diary=bool(include_diary),
         )
 
     def _local_cache_key(self, path: Path) -> str:
@@ -923,7 +690,6 @@ class FileMemoryBridge:
         query: str,
         limit: int,
         source: str | None,
-        include_diary: bool,
     ) -> list[FileMemoryHit]:
         adapter = self._openviking
         if adapter is None:
@@ -934,7 +700,6 @@ class FileMemoryBridge:
             user_id=user_id,
             workspace=workspace,
             source=source,
-            include_diary=include_diary,
         ):
             if not base_dir.exists():
                 continue
@@ -970,9 +735,6 @@ class FileMemoryBridge:
                     if isinstance(cached, tuple) and len(cached) >= 3 and isinstance(cached[2], dict)
                     else self._parse_markdown_meta(abs_path)
                 )
-                entry_kind = str(parsed.get("entry_kind") or "").strip().lower()
-                if (not include_diary) and self._is_diary_entry_kind(entry_kind):
-                    continue
                 out.append(
                     FileMemoryHit(
                         path=str(abs_path),
@@ -1000,7 +762,6 @@ class FileMemoryBridge:
         query: str,
         limit: int,
         source: str | None,
-        include_diary: bool,
     ) -> list[FileMemoryHit]:
         tokens = [it.lower() for it in _TOKEN_RE.findall(query.lower()) if len(it) >= 1][:16]
         rows: list[tuple[float, float, Path, dict[str, str], str]] = []
@@ -1009,7 +770,6 @@ class FileMemoryBridge:
             user_id=user_id,
             workspace=workspace,
             source=source,
-            include_diary=include_diary,
         ):
             if not base_dir.exists():
                 continue
@@ -1022,10 +782,7 @@ class FileMemoryBridge:
                 if loaded is None:
                     continue
                 ts, text, meta = loaded
-                entry_kind = str(meta.get("entry_kind") or "").strip().lower()
-                if (not include_diary) and self._is_diary_entry_kind(entry_kind):
-                    continue
-                score = self._score_text(text, query=query, tokens=tokens, include_diary=include_diary)
+                score = self._score_text(text, query=query, tokens=tokens)
                 if query and score <= 0.0:
                     continue
                 preview = meta.get("preview") or self._extract_preview(text)
@@ -1055,7 +812,7 @@ class FileMemoryBridge:
                 break
         return out
 
-    def _score_text(self, text: str, *, query: str, tokens: list[str], include_diary: bool) -> float:
+    def _score_text(self, text: str, *, query: str, tokens: list[str]) -> float:
         lowered = text.lower()
         score = 0.0
         lexical_hit = False
@@ -1075,27 +832,15 @@ class FileMemoryBridge:
             score -= 0.8
         if "- kind: change" in lowered:
             score -= 0.2
-        if "- entry_kind: chat_diary" in lowered:
-            score += 1.8 if include_diary else -4.0
-        if "- entry_kind: chat_parallel_draft" in lowered:
-            score += 1.6 if include_diary else -3.5
         if "- entry_kind: media_insight" in lowered:
             score += 1.4
         if "- entry_kind: memory_insight" in lowered:
             score += 1.0
-        if "## 提炼信息（日记）" in lowered:
-            score += 1.2 if include_diary else -0.5
-        if "## 今日对话" in lowered:
-            score += 1.2 if include_diary else -0.8
         return score
-
-    def _is_diary_entry_kind(self, entry_kind: str) -> bool:
-        kind = str(entry_kind or "").strip().lower()
-        return kind in {"chat_diary", "chat_parallel_draft"}
 
     def _extract_preview(self, text: str) -> str:
         content = str(text or "")
-        for marker in ("## 提炼信息（日记）", "## 今日对话", "## 总结", "## 概要", "## Summary", "## Insight"):
+        for marker in ("## 总结", "## 概要", "## Summary", "## Insight"):
             idx = content.find(marker)
             if idx >= 0:
                 content = content[idx:]
@@ -1200,85 +945,6 @@ class FileMemoryBridge:
             "updated_at": updated_at,
         }
 
-    def list_diary_tree(
-        self,
-        *,
-        user_id: int,
-        workspace: str,
-        max_files: int = 500,
-    ) -> list[DiaryTreeNode]:
-        if not self.enabled:
-            return []
-        try:
-            self._rollup_closed_chat_diary_days(
-                user_id=user_id,
-                workspace=workspace,
-                current_day=_utcnow().date(),
-            )
-        except Exception:
-            pass
-        root = self._diary_root(user_id=user_id, workspace=workspace)
-        if not root.exists():
-            return []
-
-        limit = max(20, min(2000, int(max_files or 500)))
-        visited_files = 0
-
-        def _stat_iso(path: Path) -> str:
-            try:
-                return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
-            except Exception:
-                return _iso(_utcnow())
-
-        def _walk(dir_path: Path) -> list[DiaryTreeNode]:
-            nonlocal visited_files
-            out_nodes: list[DiaryTreeNode] = []
-            children = []
-            try:
-                children = sorted(
-                    list(dir_path.iterdir()),
-                    key=lambda p: (0 if p.is_dir() else 1, p.name.lower()),
-                )
-            except Exception:
-                return []
-
-            for child in children:
-                rel_path = child.relative_to(root).as_posix()
-                if child.is_dir():
-                    nested = _walk(child)
-                    out_nodes.append(
-                        DiaryTreeNode(
-                            name=child.name,
-                            path=rel_path,
-                            kind="folder",
-                            updated_at=_stat_iso(child),
-                            children=nested,
-                        )
-                    )
-                    continue
-                if child.suffix.lower() != ".md":
-                    continue
-                if visited_files >= limit:
-                    continue
-                visited_files += 1
-                meta = self._parse_markdown_meta(child)
-                out_nodes.append(
-                    DiaryTreeNode(
-                        name=child.name,
-                        path=rel_path,
-                        kind="file",
-                        title=meta.get("title") or child.name,
-                        preview=meta.get("preview") or "",
-                        updated_at=meta.get("updated_at") or _stat_iso(child),
-                        source=meta.get("source") or "",
-                        topic_path=meta.get("topic_path") or "",
-                        entry_kind=meta.get("entry_kind") or "",
-                    )
-                )
-            return out_nodes
-
-        return _walk(root)
-
     def read_memory_markdown(
         self,
         *,
@@ -1307,7 +973,6 @@ class FileMemoryBridge:
         else:
             candidate_paths = [
                 workspace_root / candidate,
-                self._diary_root(user_id=user_id, workspace=workspace).resolve() / candidate,
                 self._memory_root(user_id=user_id, workspace=workspace).resolve() / candidate,
             ]
             for path_item in candidate_paths:

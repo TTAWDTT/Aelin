@@ -1703,30 +1703,6 @@ def _apply_plan_patch(
     out["reason"] = str(out.get("reason") or "planner") + ";critic_patch"
     return out
 
-def _is_diary_only_query(query: str) -> bool:
-    text = re.sub(r"\s+", " ", (query or "").strip()).lower()
-    if not text:
-        return False
-    diary_tokens = [
-        "aelinの日记",
-        "日记",
-        "长期追踪记忆",
-        "追踪记忆",
-        "file memory",
-        "memory",
-        "diary",
-    ]
-    strict_prefix = ["仅根据", "只根据", "仅基于", "只基于", "仅按", "只按", "only based on", "only use"]
-    no_web_tokens = ["不要联网", "无需联网", "不联网", "不要网络搜索", "只看日记", "仅看日记", "仅用日记", "只用日记"]
-    has_diary = any(token in text for token in diary_tokens)
-    if has_diary and any(token in text for token in strict_prefix):
-        return True
-    if has_diary and any(token in text for token in no_web_tokens):
-        return True
-    if re.search(r"\bonly\b.*\b(diary|memory)\b", text):
-        return True
-    return False
-
 def _is_sports_result_query(query: str) -> bool:
     text = (query or "").strip().lower()
     if not text:
@@ -1860,15 +1836,10 @@ def _verify_reply_answer(
     answer: str,
     need_web_search: bool,
     citations: list[AelinCitation],
-    diary_only_mode: bool = False,
 ) -> tuple[bool, str]:
     text = (answer or "").strip()
     if not text:
         return False, "empty_answer"
-    if diary_only_mode:
-        if _looks_like_link_dump_answer(text):
-            return False, "diary_only_link_dump"
-        return True, "diary_only_pass"
     needs_evidence = bool(need_web_search or (_is_time_sensitive_query(query) and not _is_smalltalk_query(query)))
     if needs_evidence and not citations:
         return False, "evidence_missing"
@@ -1885,10 +1856,7 @@ def _check_evidence_coverage(
     answer: str,
     citations: list[AelinCitation],
     web_results: list[WebSearchResult],
-    diary_only_mode: bool = False,
 ) -> tuple[bool, str]:
-    if diary_only_mode:
-        return True, "diary_only_mode"
     contract = intent_contract if isinstance(intent_contract, dict) else {}
     requires_citations = bool(contract.get("requires_citations"))
     if not requires_citations:
@@ -1935,10 +1903,6 @@ def _judge_answer_grounding(
     if not text:
         return False, "empty_answer"
     contract = intent_contract if isinstance(intent_contract, dict) else {}
-    if bool(contract.get("diary_only")):
-        if _looks_like_link_dump_answer(text):
-            return False, "diary_only_link_dump"
-        return True, "diary_only_mode"
     requires_factuality = bool(contract.get("requires_factuality"))
     requires_citations = bool(contract.get("requires_citations"))
     if not requires_factuality:

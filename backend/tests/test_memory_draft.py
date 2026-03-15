@@ -21,8 +21,8 @@ def test_parallel_memory_draft_builds_structured_markdown():
         ],
         file_memory_items=[
             {
-                "path": "/tmp/diary/nba.md",
-                "title": "NBA 日记",
+                "path": "/tmp/memory/nba.md",
+                "title": "NBA 记忆",
                 "preview": "勇士近期进攻效率回升，库里手感明显恢复。",
                 "topic_path": "体育 > NBA",
             }

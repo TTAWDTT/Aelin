@@ -25,19 +25,20 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
 
     if tool == "context_get":
         return False
-    if tool == "diary":
-        # Current diary tool only supports read/search actions.
-        return False
     if tool == "profile":
         return action == "append_note"
     if tool == "device":
-        return action in {"mode_apply", "open_url", "open_aelin"}
+        return action in {"open_url", "open_aelin"}
     if tool == "web_search":
         return False
     if tool == "attachment_search":
         return False
     if tool == "screen_get":
         return False
+    if tool == "google_workspace":
+        # 读操作（runtime/auth_status/gmail_list/gmail_get/drive_list/calendar_list）视为只读；
+        # 写操作在工具层预留，占位 action 统一视为写，以便配额与安全策略可以统一控制。
+        return action in {"calendar_create_event", "gmail_send", "gmail_draft"}
     if tool == "skill":
         return False
     if tool == "plane":
@@ -72,12 +73,12 @@ class AelinToolPolicy:
         tool = str(name or "").strip().lower()
         if tool not in {
             "context_get",
-            "diary",
             "profile",
             "device",
             "web_search",
             "attachment_search",
             "screen_get",
+            "google_workspace",
             "skill",
             "plane",
             "pinchtab",

@@ -57,7 +57,6 @@ class _FakeToolHub:
     def tool_definitions(self) -> list[dict[str, Any]]:
         return [
             {"type": "function", "function": {"name": "context_get", "parameters": {"type": "object"}}},
-            {"type": "function", "function": {"name": "diary", "parameters": {"type": "object"}}},
             {"type": "function", "function": {"name": "profile", "parameters": {"type": "object"}}},
             {"type": "function", "function": {"name": "screen_get", "parameters": {"type": "object"}}},
         ]
@@ -211,7 +210,7 @@ def test_agent_loop_parallel_reads_and_serial_write():
         {
             "tool_calls": [
                 {"id": "c1", "name": "context_get", "arguments": '{"query":"x"}'},
-                {"id": "c2", "name": "diary", "arguments": '{"action":"search","query":"x"}'},
+                {"id": "c2", "name": "screen_get", "arguments": '{"query":"x"}'},
                 {"id": "c3", "name": "profile", "arguments": '{"action":"append_note","note":"n"}'},
             ]
         },
@@ -242,8 +241,8 @@ def test_agent_loop_parallel_reads_and_serial_write():
 
     starts = {name: ts for kind, name, ts in tool_hub.events if kind == "start"}
     ends = {name: ts for kind, name, ts in tool_hub.events if kind == "end"}
-    assert "context_get" in starts and "diary" in starts and "profile" in starts
-    assert starts["profile"] >= max(ends["context_get"], ends["diary"])
+    assert "context_get" in starts and "screen_get" in starts and "profile" in starts
+    assert starts["profile"] >= max(ends["context_get"], ends["screen_get"])
 
 
 def test_agent_loop_rejected_calls_do_not_consume_budget():

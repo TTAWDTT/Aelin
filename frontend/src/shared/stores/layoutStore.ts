@@ -5,10 +5,8 @@ type ThemeMode = 'light' | 'dark'
 
 interface LayoutStore {
   theme: ThemeMode
-  focusModeEnabled: boolean
   navRailExpanded: boolean
   setTheme: (v: ThemeMode) => void
-  setFocusModeEnabled: (v: boolean) => void
   setNavRailExpanded: (v: boolean) => void
   toggleNavRailExpanded: () => void
   applyTheme: (v: ThemeMode) => void
@@ -26,10 +24,8 @@ export const useLayoutStore = create<LayoutStore>()(
   persist(
     (set) => ({
       theme: 'light',
-      focusModeEnabled: false,
       navRailExpanded: false,
       setTheme: (v) => set({ theme: v }),
-      setFocusModeEnabled: (v) => set({ focusModeEnabled: v }),
       setNavRailExpanded: (v) => set({ navRailExpanded: v }),
       toggleNavRailExpanded: () => set((state) => ({ navRailExpanded: !state.navRailExpanded })),
       applyTheme: (v) => applyTheme(v),
