@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     pinchtab_data_dir: str = "../data/pinchtab"
     pinchtab_startup_timeout_seconds: float = 20.0
     pinchtab_shutdown_timeout_seconds: float = 8.0
+    # Google Workspace CLI (gws) integration.
+    # `google_workspace_cli_bin` 可以是 "gws"（放在 PATH 中），也可以是一个绝对路径。
+    google_workspace_cli_bin: str = "gws"
+    google_workspace_cli_timeout_seconds: float = 20.0
+    google_workspace_cli_config_dir: str = "../data/google_workspace"
     aelin_attachment_storage_dir: str = "./data/aelin_attachments"
     aelin_attachment_max_size_bytes: int = 30 * 1024 * 1024
     aelin_attachment_chunk_size: int = 700

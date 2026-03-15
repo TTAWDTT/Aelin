@@ -1227,3 +1227,158 @@ def test_plane_runtime_list_functions_return_latest_rows_in_chronological_order(
         assert [row["kind"] for row in artifacts] == ["artifact_2", "artifact_3", "artifact_4"]
     finally:
         db.close()
+
+
+def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    class _FakeGWS:
+        def runtime_status(self):
+            return {
+                "ok": True,
+                "available": True,
+                "configured_bin_path": "gws",
+                "resolved_bin_path": "C:/tools/gws.exe",
+            }
+
+        def auth_status(self):
+            return {
+                "ok": False,
+                "authenticated": False,
+                "available": True,
+            }
+
+        def login_command(self):
+            return ["gws", "auth", "login"]
+
+    fake_service = _FakeGWS()
+    monkeypatch.setattr(aelin_tools, "get_google_workspace_cli_service", lambda: fake_service)
+
+    runtime = hub.execute("google_workspace", {"action": "runtime"})
+    assert runtime["ok"] is True
+    assert runtime["scope"] == "runtime"
+    assert runtime["available"] is True
+    assert runtime["configured_bin_path"] == "gws"
+
+    auth = hub.execute("google_workspace", {"action": "auth_status"})
+    assert auth["scope"] == "auth"
+    assert auth["ok"] is False
+    assert auth["authenticated"] is False
+    # 当未登录时应补充 login_command，方便在 Skill 中给出具体提示。
+    assert auth["login_command"] == ["gws", "auth", "login"]
+
+
+def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    class _FakeGWS:
+        def runtime_status(self):
+            return {"ok": True, "available": True}
+
+        def gmail_list_messages(self, **kwargs):
+            return {"ok": True, "items": [{"id": "m1"}, {"id": "m2"}], "raw": {"messages": []}}
+
+        def gmail_get_message(self, **kwargs):
+            return {"ok": True, "item": {"id": "m1", "snippet": "hello"}, "raw": {"id": "m1"}}
+
+        def drive_list_files(self, **kwargs):
+            return {"ok": True, "items": [{"id": "f1", "name": "Spec"}], "raw": {"files": []}}
+
+        def calendar_list_events(self, **kwargs):
+            return {"ok": True, "items": [{"id": "e1", "summary": "Demo"}], "raw": {"items": []}}
+
+    fake_service = _FakeGWS()
+    monkeypatch.setattr(aelin_tools, "get_google_workspace_cli_service", lambda: fake_service)
+
+    gmail_list = hub.execute(
+        "google_workspace",
+        {"action": "gmail_list", "query": "is:unread", "max_results": 5, "include_spam_trash": True},
+    )
+    assert gmail_list["ok"] is True
+    assert gmail_list["scope"] == "gmail"
+    assert [item["id"] for item in gmail_list["items"]] == ["m1", "m2"]
+
+    gmail_get = hub.execute(
+        "google_workspace",
+        {"action": "gmail_get", "message_id": "m1", "format": "minimal"},
+    )
+    assert gmail_get["ok"] is True
+    assert gmail_get["scope"] == "gmail"
+    assert gmail_get["item"]["id"] == "m1"
+
+    drive = hub.execute(
+        "google_workspace",
+        {"action": "drive_list", "query": "name contains 'Spec'", "max_results": 3},
+    )
+    assert drive["ok"] is True
+    assert drive["scope"] == "drive"
+    assert drive["items"][0]["name"] == "Spec"
+
+    calendar = hub.execute(
+        "google_workspace",
+        {"action": "calendar_list", "calendar_id": "primary", "max_results": 4},
+    )
+    assert calendar["ok"] is True
+    assert calendar["scope"] == "calendar"
+    assert calendar["items"][0]["summary"] == "Demo"
+
+
+def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    class _FakeGWS:
+        def gmail_list_messages(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:list"}
+
+        def drive_list_files(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:drive"}
+
+        def calendar_list_events(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:calendar"}
+
+        def calendar_create_event(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:calendar_insert"}
+
+        def gmail_send_message(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:gmail_send"}
+
+        def gmail_create_draft(self, **kwargs):
+            return {"ok": False, "error": "gws_failed:gmail_draft"}
+
+    fake_service = _FakeGWS()
+    monkeypatch.setattr(aelin_tools, "get_google_workspace_cli_service", lambda: fake_service)
+
+    gmail_list = hub.execute("google_workspace", {"action": "gmail_list"})
+    assert gmail_list["ok"] is False
+    assert gmail_list["scope"] == "gmail"
+    assert "gws_failed:list" in str(gmail_list.get("error") or "")
+
+    drive = hub.execute("google_workspace", {"action": "drive_list"})
+    assert drive["ok"] is False
+    assert drive["scope"] == "drive"
+
+    calendar = hub.execute("google_workspace", {"action": "calendar_list"})
+    assert calendar["ok"] is False
+    assert calendar["scope"] == "calendar"
+
+    create_event = hub.execute("google_workspace", {"action": "calendar_create_event"})
+    assert create_event["ok"] is False
+    assert create_event["scope"] == "calendar"
+    assert "gws_failed:calendar_insert" in str(create_event.get("error") or "")
+
+    send = hub.execute("google_workspace", {"action": "gmail_send"})
+    assert send["ok"] is False
+    assert send["scope"] == "gmail"
+    assert "gws_failed:gmail_send" in str(send.get("error") or "")
+
+    draft = hub.execute("google_workspace", {"action": "gmail_draft"})
+    assert draft["ok"] is False
+    assert draft["scope"] == "gmail"
+    assert "gws_failed:gmail_draft" in str(draft.get("error") or "")
+
+    unknown = hub.execute("google_workspace", {"action": "unknown_action"})
+    assert unknown["ok"] is False
+    assert unknown["error"] == "unsupported_action"

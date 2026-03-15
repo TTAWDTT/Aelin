@@ -77,3 +77,31 @@ def test_classify_device_actions():
     assert classify_tool_call("device", {"action": "mode_apply", "mode": "focus"}) is True
     assert classify_tool_call("device", {"action": "open_url", "url": "https://example.com"}) is True
     assert classify_tool_call("device", {"action": "open_aelin", "route": "/processes"}) is True
+
+
+def test_google_workspace_policy_allows_reads_and_marks_writes():
+    usage = ToolPolicyUsage(round_calls=0, total_calls=0, write_calls=0)
+    policy = AelinToolPolicy(
+        max_calls_per_round=4,
+        max_tool_calls=10,
+        max_write_calls=3,
+        allow_write_tools=True,
+    )
+
+    # 读操作：不计入写配额，默认允许。
+    read_decision = policy.evaluate(
+        name="google_workspace",
+        args={"action": "gmail_list", "query": "is:unread"},
+        usage=usage,
+    )
+    assert read_decision.allowed is True
+    assert read_decision.is_write is False
+
+    # 写操作：标记为写，且在允许写工具时仍然放行，由上层根据配额限制。
+    write_decision = policy.evaluate(
+        name="google_workspace",
+        args={"action": "calendar_create_event"},
+        usage=usage,
+    )
+    assert write_decision.allowed is True
+    assert write_decision.is_write is True
