@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { authApi } from '@/shared/api/auth'
 import toast from 'react-hot-toast'
 import { Camera } from 'lucide-react'
+import { authApi } from '@/shared/api/auth'
+import { useLocaleStore } from '@/shared/stores/localeStore'
 
 export function ProfileTab() {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
+  const { locale } = useLocaleStore()
+  const isZh = locale === 'zh'
 
   const { data: user, isLoading } = useQuery({ queryKey: ['me'], queryFn: authApi.me })
 
@@ -24,14 +27,21 @@ export function ProfileTab() {
       if (password.trim()) body.password = password
       return authApi.updateMe(body)
     },
-    onSuccess: () => { toast.success('已更新'); setPassword(''); qc.invalidateQueries({ queryKey: ['me'] }) },
-    onError: () => toast.error('更新失败'),
+    onSuccess: () => {
+      toast.success(isZh ? '已更新' : 'Updated')
+      setPassword('')
+      qc.invalidateQueries({ queryKey: ['me'] })
+    },
+    onError: () => toast.error(isZh ? '更新失败' : 'Update failed'),
   })
 
   const upload = useMutation({
     mutationFn: (file: File) => authApi.uploadAvatar(file),
-    onSuccess: () => { toast.success('头像已更新'); qc.invalidateQueries({ queryKey: ['me'] }) },
-    onError: () => toast.error('上传失败'),
+    onSuccess: () => {
+      toast.success(isZh ? '头像已更新' : 'Avatar updated')
+      qc.invalidateQueries({ queryKey: ['me'] })
+    },
+    onError: () => toast.error(isZh ? '上传失败' : 'Upload failed'),
   })
 
   const applyChanges = () => {
@@ -44,7 +54,7 @@ export function ProfileTab() {
   }
 
   if (isLoading) {
-    return <div className="text-sm text-[var(--color-text-muted)]">加载中…</div>
+    return <div className="text-sm text-[var(--color-text-muted)]">{isZh ? '加载中…' : 'Loading…'}</div>
   }
 
   return (
@@ -53,7 +63,7 @@ export function ProfileTab() {
         <button
           type="button"
           className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-[var(--color-accent-soft)] cursor-pointer group"
-          aria-label="上传头像"
+          aria-label={isZh ? '上传头像' : 'Upload avatar'}
           onClick={() => fileRef.current?.click()}
         >
           {user?.avatar_url ? (
@@ -85,7 +95,7 @@ export function ProfileTab() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block space-y-1 text-xs">
-          <span className="text-[var(--color-text-muted)]">邮箱</span>
+          <span className="text-[var(--color-text-muted)]">{isZh ? '邮箱' : 'Email'}</span>
           <input
             type="email"
             value={email}
@@ -97,13 +107,13 @@ export function ProfileTab() {
         </label>
 
         <label className="block space-y-1 text-xs">
-          <span className="text-[var(--color-text-muted)]">修改密码</span>
+          <span className="text-[var(--color-text-muted)]">{isZh ? '修改密码' : 'Change password'}</span>
           <input
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
             onBlur={applyChanges}
-            placeholder="输入新密码（至少 8 位）"
+            placeholder={isZh ? '输入新密码（至少 8 位）' : 'Enter new password (at least 8 characters)'}
             className="aelin-input"
           />
         </label>

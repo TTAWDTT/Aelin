@@ -1,31 +1,53 @@
 import { useMemo, useState } from 'react'
-import { Search, Settings } from 'lucide-react'
+import { Globe2, Search, Settings } from 'lucide-react'
 import { ProfileTab } from '@/features/settings/ProfileTab'
 import { AIConfigTab } from '@/features/settings/AIConfigTab'
 import { PageScaffold } from '@/shared/components/PageScaffold'
+import { useLocaleStore } from '@/shared/stores/localeStore'
 
 type Section = 'profile' | 'ai'
 
-const SETTINGS_SECTIONS: { key: Section; label: string; description: string }[] = [
-  { key: 'profile', label: '个人', description: '账号与身份信息' },
-  { key: 'ai', label: 'AI 模型', description: '提供商与模型连接' },
-]
-const SETTINGS_TITLE = '设置'
-const SETTINGS_SUBTITLE = '配置您的偏好'
-
 export default function SettingsPage() {
   const [search, setSearch] = useState('')
+  const { locale, setLocale } = useLocaleStore()
+  const isZh = locale === 'zh'
+
+  const sections = useMemo(
+    () =>
+      [
+        {
+          key: 'profile' as const,
+          label: isZh ? '个人' : 'Profile',
+          description: isZh ? '账号与身份信息' : 'Account & identity',
+        },
+        {
+          key: 'ai' as const,
+          label: isZh ? 'AI 模型' : 'AI Model',
+          description: isZh ? '提供商与模型连接' : 'Providers & models',
+        },
+      ] satisfies { key: Section; label: string; description: string }[],
+    [isZh]
+  )
 
   const visibleSections = useMemo(() => {
     const keyword = search.trim().toLowerCase()
-    if (!keyword) return SETTINGS_SECTIONS
-    return SETTINGS_SECTIONS.filter((item) => `${item.label} ${item.description}`.toLowerCase().includes(keyword))
-  }, [search])
+    if (!keyword) return sections
+    return sections.filter((item) => `${item.label} ${item.description}`.toLowerCase().includes(keyword))
+  }, [search, sections])
+
+  const title = isZh ? '设置' : 'Settings'
+  const subtitle = isZh ? '配置您的偏好' : 'Configure your preferences'
+  const searchPlaceholder = isZh ? '搜索设置...' : 'Search settings...'
+  const searchAriaLabel = isZh ? '搜索设置' : 'Search settings'
+  const noMatchTitle = isZh ? '无匹配结果' : 'No results'
+  const noMatchHint = isZh
+    ? '尝试调整搜索关键词以查看可用设置项。'
+    : 'Try updating your search keywords to see available settings.'
 
   return (
     <PageScaffold
-      title={SETTINGS_TITLE}
-      subtitle={SETTINGS_SUBTITLE}
+      title={title}
+      subtitle={subtitle}
       className="overflow-hidden"
       headerTitle={
         <div className="flex min-w-0 items-center gap-4">
@@ -33,23 +55,44 @@ export default function SettingsPage() {
             <Settings size={18} />
           </div>
           <div className="min-w-0 self-center pt-0.5">
-            <h1 className="font-heading text-[1.18rem] font-semibold leading-none text-[var(--color-text)]">{SETTINGS_TITLE}</h1>
-            <p className="mt-1 truncate text-[0.82rem] leading-none text-[var(--color-text-muted)]">{SETTINGS_SUBTITLE}</p>
+            <h1 className="font-heading text-[1.18rem] font-semibold leading-none text-[var(--color-text)]">{title}</h1>
+            <p className="mt-1 truncate text-[0.82rem] leading-none text-[var(--color-text-muted)]">{subtitle}</p>
           </div>
         </div>
       }
       headerActions={
-        <label className="relative block w-full max-w-[420px] shrink-0">
-          <Search size={18} className="pointer-events-none absolute left-6 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索设置..."
-            aria-label="搜索设置"
-            className="aelin-input h-12 rounded-[18px] bg-[color-mix(in_srgb,var(--color-panel-alt)_40%,var(--color-panel)_60%)] pr-4 text-sm"
-            style={{ paddingLeft: '2.9rem' }}
-          />
-        </label>
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+          <label className="relative block w-full max-w-[420px] shrink-0">
+            <Search size={18} className="pointer-events-none absolute left-6 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={searchPlaceholder}
+              aria-label={searchAriaLabel}
+              className="aelin-input h-12 rounded-[18px] bg-[color-mix(in_srgb,var(--color-panel-alt)_40%,var(--color-panel)_60%)] pr-4 text-sm"
+              style={{ paddingLeft: '2.9rem' }}
+            />
+          </label>
+          <div className="flex shrink-0 items-center gap-2 text-[0.8rem] text-[var(--color-text-muted)]">
+            <Globe2 size={14} className="text-[var(--color-text-muted)]" />
+            <div className="aelin-segment">
+              <button
+                type="button"
+                data-active={locale === 'zh'}
+                onClick={() => setLocale('zh')}
+              >
+                中文
+              </button>
+              <button
+                type="button"
+                data-active={locale === 'en'}
+                onClick={() => setLocale('en')}
+              >
+                English
+              </button>
+            </div>
+          </div>
+        </div>
       }
     >
       <div className="mx-auto flex min-h-full w-full max-w-[1140px] flex-col gap-6">
@@ -60,8 +103,8 @@ export default function SettingsPage() {
                 <Settings size={24} />
               </div>
               <div>
-                <h3 className="font-heading text-[1.35rem] font-semibold leading-none">无匹配结果</h3>
-                <p className="mt-2 text-sm text-[var(--color-text-muted)]">尝试调整搜索关键词以查看可用设置项。</p>
+                <h3 className="font-heading text-[1.35rem] font-semibold leading-none">{noMatchTitle}</h3>
+                <p className="mt-2 text-sm text-[var(--color-text-muted)]">{noMatchHint}</p>
               </div>
             </div>
           </section>

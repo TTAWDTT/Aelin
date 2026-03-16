@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 @theme {
-  --font-heading: 'Poppins', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-body: 'Lora', 'Noto Serif SC', 'Songti SC', 'STSong', serif;
+  --font-heading: 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-body: 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Consolas', monospace;
 }
 
