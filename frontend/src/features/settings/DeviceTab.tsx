@@ -8,7 +8,7 @@ export function DeviceTab() {
 
   return (
     <div className="space-y-1 text-right">
-      <div className="text-[11px] tracking-[0.12em] text-[var(--color-text-muted)]">设备型号</div>
+      <div className="text-[11px] tracking-[0.12em] text-[var(--color-text-muted)]">系统平台</div>
       {capsLoading ? (
         <div className="text-xs text-[var(--color-text-muted)]">加载中…</div>
       ) : (
