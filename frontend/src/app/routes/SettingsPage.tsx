@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Bot, Search, Settings, User } from 'lucide-react'
 import { ProfileTab } from '@/features/settings/ProfileTab'
 import { AIConfigTab } from '@/features/settings/AIConfigTab'
@@ -12,6 +12,8 @@ const SETTINGS_SECTIONS: { key: Section; label: string; description: string }[] 
   { key: 'ai', label: 'AI 模型', description: '提供商与模型连接' },
   { key: 'device', label: '设备', description: '桌面能力与设备状态' },
 ]
+const SETTINGS_TITLE = '设置'
+const SETTINGS_SUBTITLE = '配置您的偏好'
 
 export default function SettingsPage() {
   const [search, setSearch] = useState('')
@@ -26,11 +28,49 @@ export default function SettingsPage() {
   const showProfile = sectionKeys.has('profile')
   const showAI = sectionKeys.has('ai')
   const showDevice = sectionKeys.has('device')
+  const [mountedSections, setMountedSections] = useState<Record<Section, boolean>>({
+    profile: true,
+    ai: false,
+    device: false,
+  })
+
+  useEffect(() => {
+    if (search.trim()) {
+      setMountedSections({
+        profile: showProfile,
+        ai: showAI,
+        device: showDevice,
+      })
+      return
+    }
+
+    setMountedSections((prev) => ({
+      profile: prev.profile || showProfile,
+      ai: false,
+      device: false,
+    }))
+
+    const aiTimer = showAI
+      ? window.setTimeout(() => {
+          setMountedSections((prev) => ({ ...prev, ai: true }))
+        }, 0)
+      : null
+    const deviceTimer = showDevice
+      ? window.setTimeout(() => {
+          setMountedSections((prev) => ({ ...prev, device: true }))
+        }, 120)
+      : null
+
+    return () => {
+      if (aiTimer !== null) window.clearTimeout(aiTimer)
+      if (deviceTimer !== null) window.clearTimeout(deviceTimer)
+    }
+  }, [search, showProfile, showAI, showDevice])
 
   return (
     <PageScaffold
-      title="设置"
-      subtitle="配置您的偏好"
+      title={SETTINGS_TITLE}
+      subtitle={SETTINGS_SUBTITLE}
       className="overflow-hidden"
       headerTitle={
         <div className="flex min-w-0 items-center gap-4">
@@ -38,8 +78,8 @@ export default function SettingsPage() {
             <Settings size={18} />
           </div>
           <div className="min-w-0 self-center pt-0.5">
-            <h1 className="font-heading text-[1.18rem] font-semibold leading-none text-[var(--color-text)]">设置</h1>
-            <p className="mt-1 truncate text-[0.82rem] leading-none text-[var(--color-text-muted)]">配置您的偏好</p>
+            <h1 className="font-heading text-[1.18rem] font-semibold leading-none text-[var(--color-text)]">{SETTINGS_TITLE}</h1>
+            <p className="mt-1 truncate text-[0.82rem] leading-none text-[var(--color-text-muted)]">{SETTINGS_SUBTITLE}</p>
           </div>
         </div>
       }
@@ -84,7 +124,7 @@ export default function SettingsPage() {
                       <p className="mt-1 text-xs text-[var(--color-text-muted)]">账号与身份信息</p>
                     </div>
                   </div>
-                  <ProfileTab />
+                  {mountedSections.profile && <ProfileTab />}
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[linear-gradient(90deg,transparent_0%,color-mix(in_srgb,var(--color-border)_28%,transparent)_12%,color-mix(in_srgb,var(--color-border)_72%,transparent)_50%,color-mix(in_srgb,var(--color-border)_28%,transparent)_88%,transparent_100%)]" />
                 </section>
               )}
@@ -100,7 +140,11 @@ export default function SettingsPage() {
                       <p className="mt-1 text-xs text-[var(--color-text-muted)]">提供商与模型连接</p>
                     </div>
                   </div>
-                  <AIConfigTab />
+                  {mountedSections.ai ? (
+                    <AIConfigTab />
+                  ) : (
+                    <div className="text-sm text-[var(--color-text-muted)]">正在加载 AI 模型设置…</div>
+                  )}
                 </section>
               )}
             </div>
@@ -108,7 +152,11 @@ export default function SettingsPage() {
             <div className="flex flex-col xl:justify-end xl:pb-4">
               {showDevice && (
                 <section className="xl:ml-auto xl:w-full xl:max-w-[220px]">
-                  <DeviceTab />
+                  {mountedSections.device ? (
+                    <DeviceTab />
+                  ) : (
+                    <div className="text-xs text-[var(--color-text-muted)]">正在加载设备型号…</div>
+                  )}
                 </section>
               )}
             </div>
