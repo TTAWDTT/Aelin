@@ -4,6 +4,7 @@ import { cn } from '@/shared/utils/cn'
 interface PageScaffoldProps {
   title: string
   subtitle?: string
+  headerTitle?: ReactNode
   headerActions?: ReactNode
   headerActionsFullWidth?: boolean
   children: ReactNode
@@ -14,19 +15,27 @@ interface PageScaffoldProps {
 export function PageScaffold({
   title,
   subtitle,
+  headerTitle,
   headerActions,
   headerActionsFullWidth = false,
   children,
   className,
   contentClassName,
 }: PageScaffoldProps) {
+  const resolvedHeaderTitle =
+    headerTitle === undefined ? (
+      <div className="min-w-0">
+        <h1 className="aelin-page-title truncate">{title}</h1>
+        {subtitle && <p className="aelin-page-subtitle truncate">{subtitle}</p>}
+      </div>
+    ) : (
+      headerTitle
+    )
+
   return (
     <section className={cn('aelin-page', className)}>
       <header className={cn('aelin-page-header min-w-0', headerActionsFullWidth && 'flex-wrap items-start')}>
-        <div className="min-w-0">
-          <h1 className="aelin-page-title truncate">{title}</h1>
-          {subtitle && <p className="aelin-page-subtitle truncate">{subtitle}</p>}
-        </div>
+        {resolvedHeaderTitle}
         {headerActions && (
           <div
             className={cn(

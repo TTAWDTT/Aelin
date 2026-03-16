@@ -37,39 +37,53 @@ export function ProfileTab() {
   if (isLoading) return <div className="text-sm text-[var(--color-text-muted)]">加载中…</div>
 
   return (
-    <div className="max-w-md space-y-6">
+    <div className="space-y-5">
       {/* Avatar */}
-      <div className="flex items-center gap-4">
-        <div className="relative w-16 h-16 rounded-full bg-[var(--color-accent-soft)] overflow-hidden flex items-center justify-center cursor-pointer group"
-          onClick={() => fileRef.current?.click()}>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-[var(--color-accent-soft)] cursor-pointer group"
+          aria-label="上传头像"
+          onClick={() => fileRef.current?.click()}
+        >
           {user?.avatar_url ? (
             <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
           ) : (
-            <span className="text-2xl">{user?.email?.[0]?.toUpperCase()}</span>
+            <span className="text-xl">{user?.email?.[0]?.toUpperCase()}</span>
           )}
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
             <Camera size={18} className="text-white" />
           </div>
-          <input ref={fileRef} type="file" accept="image/*" className="hidden"
-            onChange={e => e.target.files?.[0] && upload.mutate(e.target.files[0])} />
-        </div>
-        <div>
-          <div className="text-sm font-medium">{user?.email}</div>
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (!file) return
+            upload.mutate(file)
+            event.currentTarget.value = ''
+          }}
+        />
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">{user?.email}</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">ID: {user?.id}</div>
         </div>
       </div>
 
-      {/* Email */}
-      <label className="block space-y-1 text-xs">
-        <span className="text-[var(--color-text-muted)]">邮箱</span>
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={user?.email} className="aelin-input" />
-      </label>
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="block space-y-1 text-xs">
+          <span className="text-[var(--color-text-muted)]">邮箱</span>
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={user?.email} className="aelin-input" />
+        </label>
 
-      {/* Password */}
-      <label className="block space-y-1 text-xs">
-        <span className="text-[var(--color-text-muted)]">修改密码</span>
-        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入新密码（至少 8 位）" className="aelin-input" />
-      </label>
+        <label className="block space-y-1 text-xs">
+          <span className="text-[var(--color-text-muted)]">修改密码</span>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入新密码（至少 8 位）" className="aelin-input" />
+        </label>
+      </div>
 
       <div className="flex gap-3">
         <button

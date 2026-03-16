@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { agentApi } from '@/shared/api/agent'
+import type { AgentConfigUpdate } from '@/shared/api/types'
 
 type AgentFormState = {
   providerChoice: string
@@ -24,6 +25,20 @@ function normalizeProvider(value: string | undefined | null): string {
     return RULE_BASED_PROVIDER
   }
   return key
+}
+
+function parseTemperature(rawValue: string): number {
+  if (!rawValue.trim()) {
+    throw new Error('请填写随机度，范围为 0 到 2')
+  }
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed)) {
+    throw new Error('随机度必须是 0 到 2 之间的数字')
+  }
+  if (parsed < 0 || parsed > 2) {
+    throw new Error('随机度必须在 0 到 2 之间')
+  }
+  return parsed
 }
 
 export function AIConfigTab() {
@@ -115,16 +130,20 @@ export function AIConfigTab() {
       if (isCustomProvider && !form.customProviderId.trim()) {
         throw new Error('请填写自定义 Provider ID')
       }
+      const baseUrl = form.base_url.trim()
+      const modelValue = form.model.trim()
 
-      const body: Record<string, unknown> = {
+      const body: AgentConfigUpdate = {
         provider: resolvedProvider,
-        base_url: form.base_url || undefined,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
-        model: form.model || undefined,
-        temperature: Number(form.temperature),
+      }
+      if (!isRuleBased) {
+        body.base_url = baseUrl || undefined
+        body.model = modelValue || undefined
+        body.temperature = parseTemperature(form.temperature)
       }
       if (form.api_key.trim()) body.api_key = form.api_key.trim()
-      return agentApi.updateConfig(body as any)
+      return agentApi.updateConfig(body)
     },
     onSuccess: () => {
       toast.success('已保存')
@@ -150,8 +169,9 @@ export function AIConfigTab() {
   }
 
   return (
-    <div className="max-w-md space-y-5">
-      <label className="block text-xs space-y-1">
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">服务商</span>
         <select
           value={form.providerChoice}
@@ -173,7 +193,22 @@ export function AIConfigTab() {
             </option>
           ))}
         </select>
-      </label>
+        </label>
+
+        <label className="block text-xs space-y-1">
+          <span className="text-[var(--color-text-muted)]">随机度（Temperature）</span>
+          <input
+            type="number"
+            min="0"
+            max="2"
+            step="0.1"
+            value={form.temperature}
+            onChange={(event) => setForm((prev) => ({ ...prev, temperature: event.target.value }))}
+            className="aelin-input"
+            disabled={isRuleBased}
+          />
+        </label>
+      </div>
 
       {isCustomProvider && (
         <label className="block text-xs space-y-1">
@@ -187,8 +222,9 @@ export function AIConfigTab() {
         </label>
       )}
 
-      {isCustomProvider ? (
-        <label className="block text-xs space-y-1">
+      <div className="grid gap-4 lg:grid-cols-2">
+        {isCustomProvider ? (
+          <label className="block text-xs space-y-1">
           <span className="text-[var(--color-text-muted)]">模型</span>
           <input
             value={form.model}
@@ -197,9 +233,9 @@ export function AIConfigTab() {
             className="aelin-input"
             disabled={isRuleBased}
           />
-        </label>
-      ) : (
-        <label className="block text-xs space-y-1">
+          </label>
+        ) : (
+          <label className="block text-xs space-y-1">
           <span className="text-[var(--color-text-muted)]">模型</span>
           <select
             value={form.model}
@@ -212,12 +248,12 @@ export function AIConfigTab() {
               <option key={model.id} value={model.id}>
                 {model.name}
               </option>
-            ))}
+              ))}
           </select>
-        </label>
-      )}
+          </label>
+        )}
 
-      <label className="block text-xs space-y-1">
+        <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">接口地址（Base URL）</span>
         <input
           value={form.base_url}
@@ -226,7 +262,8 @@ export function AIConfigTab() {
           className="aelin-input"
           disabled={isRuleBased}
         />
-      </label>
+        </label>
+      </div>
 
       <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">联网搜索代理（可选）</span>
@@ -235,20 +272,6 @@ export function AIConfigTab() {
           onChange={(event) => setForm((prev) => ({ ...prev, web_search_proxy_url: event.target.value }))}
           placeholder="例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
           className="aelin-input"
-        />
-      </label>
-
-      <label className="block text-xs space-y-1">
-        <span className="text-[var(--color-text-muted)]">随机度（Temperature）</span>
-        <input
-          type="number"
-          min="0"
-          max="2"
-          step="0.1"
-          value={form.temperature}
-          onChange={(event) => setForm((prev) => ({ ...prev, temperature: event.target.value }))}
-          className="aelin-input"
-          disabled={isRuleBased}
         />
       </label>
 
@@ -271,14 +294,14 @@ export function AIConfigTab() {
         <button
           onClick={() => save.mutate()}
           disabled={save.isPending}
-          className="aelin-btn aelin-btn-primary"
+          className="aelin-btn aelin-btn-primary min-w-[96px]"
         >
           {save.isPending ? '保存中...' : '保存配置'}
         </button>
         <button
           onClick={() => test.mutate()}
           disabled={test.isPending}
-          className="aelin-btn flex items-center gap-1.5"
+          className="aelin-btn flex min-w-[96px] items-center gap-1.5"
         >
           <FlaskConical size={14} />
           {test.isPending ? '测试中...' : '测试连接'}
