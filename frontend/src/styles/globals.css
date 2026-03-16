@@ -97,6 +97,12 @@ code, pre, .font-mono {
   font-family: var(--font-body);
 }
 
+/* But keep code blocks and inline code in monospace for readability */
+.prose code,
+.prose pre {
+  font-family: var(--font-mono);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -45,6 +45,7 @@ export function ProfileTab() {
   })
 
   const applyChanges = () => {
+    if (update.isPending) return
     const trimmedEmail = email.trim()
     const currentEmail = (user?.email ?? '').trim()
     const hasEmailChange = trimmedEmail !== '' && trimmedEmail !== currentEmail

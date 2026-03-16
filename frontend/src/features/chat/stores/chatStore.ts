@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AelinCitation, AelinAction, AelinToolStep } from '@/shared/api/types'
+import { useLocaleStore } from '@/shared/stores/localeStore'
 
 export interface ChatMessage {
   id: string
@@ -51,7 +52,8 @@ export const useChatStore = create<ChatStore>()(
 
       createSession: (workspace = 'default') => {
         const id = crypto.randomUUID()
-        const title = 'New chat'
+        const locale = useLocaleStore.getState().locale
+        const title = locale === 'en' ? 'New chat' : '新对话'
         set((s) => ({
           sessions: [{ id, title, messages: [], createdAt: Date.now(), workspace }, ...s.sessions],
           activeSessionId: id,

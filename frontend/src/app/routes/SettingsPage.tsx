@@ -79,6 +79,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 data-active={locale === 'zh'}
+                aria-pressed={locale === 'zh'}
                 onClick={() => setLocale('zh')}
               >
                 中文
@@ -86,6 +87,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 data-active={locale === 'en'}
+                aria-pressed={locale === 'en'}
                 onClick={() => setLocale('en')}
               >
                 English
