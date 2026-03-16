@@ -373,10 +373,6 @@ code, pre, .font-mono {
   transition: none;
 }
 
-.chat-elevate:hover {
-  border-color: inherit;
-}
-
 @media (max-width: 640px) {
   .aelin-shell-main {
     border-radius: 18px;
