@@ -164,3 +164,40 @@ def test_device_screen_capture_proxy_region_mode_payload_and_timeout(monkeypatch
     assert resp.status_code == 200, resp.text
     assert float(captured_timeout.get("timeout") or 0.0) >= 98.0
 
+
+def test_desktop_plugin_health_bypasses_proxy_env(monkeypatch):
+    monkeypatch.setattr(settings, "desktop_plugin_base_url", "http://127.0.0.1:21914")
+    monkeypatch.setattr(settings, "desktop_plugin_timeout_seconds", 8.0)
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args
+            captured["trust_env"] = kwargs.get("trust_env")
+            captured["follow_redirects"] = kwargs.get("follow_redirects")
+            captured["timeout"] = kwargs.get("timeout")
+
+        def __enter__(self) -> "_FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type, exc, tb
+            return None
+
+        def get(self, url: str, headers: dict[str, str]):
+            captured["url"] = url
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr(device_center.httpx, "Client", _FakeClient)
+
+    assert device_center.desktop_plugin_health() is True
+    assert captured["trust_env"] is False
+    assert captured["follow_redirects"] is False
+    assert captured["url"] == "http://127.0.0.1:21914/healthz"
+

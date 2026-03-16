@@ -12,6 +12,8 @@
 - `docs/aelin-docs-foundation/features/web-search-and-local-memory.md`
 - `docs/aelin-docs-foundation/features/proactive-interaction.md`
 - `docs/aelin-docs-foundation/features/device-interaction.md`
+- `docs/feishu_qq_setup_guide_zh.md`
+- `docs/feishu_remote_control_v1.md`
 
 ## Draft
 - `docs/aelin_full_audit_and_strategy.md`

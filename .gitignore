@@ -5,6 +5,7 @@ backend/*.db
 backend/*.db-shm
 backend/*.db-wal
 backend/*.db-journal
+backend/*.log
 backend/__pycache__/
 backend/.pytest_cache/
 backend/**/__pycache__/

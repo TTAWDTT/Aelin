@@ -30,6 +30,7 @@ from app.routers import (
 from app.settings import settings
 from app.services.feishu_bot import feishu_bot_service
 from app.services.pinchtab_launcher import shutdown_pinchtab_launcher
+from app.services.qq_bot import qq_bot_service
 
 _log = logging.getLogger(__name__)
 
@@ -84,10 +85,16 @@ async def lifespan(_app: FastAPI):
         _log.info("feishu bot enabled")
     else:
         _log.info("feishu bot disabled")
+    if settings.qq_bot_enabled:
+        qq_bot_service.start()
+        _log.info("qq bot enabled")
+    else:
+        _log.info("qq bot disabled")
     try:
         yield
     finally:
         feishu_bot_service.stop()
+        qq_bot_service.stop()
         try:
             shutdown_pinchtab_launcher()
         except Exception as exc:

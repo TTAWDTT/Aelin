@@ -27,6 +27,7 @@ def test_app_lifespan_shuts_down_pinchtab_launcher(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(app_main, "shutdown_pinchtab_launcher", lambda: calls.append("shutdown") or {"ok": True})
     monkeypatch.setattr(app_main.feishu_bot_service, "stop", lambda: None)
+    monkeypatch.setattr(app_main.qq_bot_service, "stop", lambda: None)
 
     app = app_main.create_app()
 

@@ -60,8 +60,9 @@ def supported_device_actions() -> list[str]:
     return list(_SUPPORTED_DEVICE_ACTIONS)
 
 
-def resolve_remote_control_user(db: Session) -> User:
-    configured_email = str(getattr(settings, "feishu_bot_bind_user_email", "") or "").strip().lower()
+def resolve_remote_control_user(db: Session, *, bind_user_email: str | None = None) -> User:
+    raw_email = getattr(settings, "feishu_bot_bind_user_email", "") if bind_user_email is None else bind_user_email
+    configured_email = str(raw_email or "").strip().lower()
     if configured_email:
         bound = db.scalar(select(User).where(User.email == configured_email))
         if bound is not None:

@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import app.services.feishu_bot as feishu_bot_module
+import app.services.qq_bot as qq_bot_module
 import app.services.remote_control as remote_control
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from app.schemas import AelinChatResponse
 from app.settings import settings
+from app.models import Base
+from app import crud
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 
@@ -201,3 +209,198 @@ def test_feishu_bot_group_prefix_gate(monkeypatch):
     service.handle_message_payload(payload_with_prefix)
     assert executed == ["/aelin 状态"]
     assert sent_messages == [("oc_1", "电脑状态正常")]
+
+
+def test_qq_bot_private_message_routes_into_remote_control(monkeypatch):
+    service = qq_bot_module.QQBotService()
+    executed: list[str] = []
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return None
+
+    monkeypatch.setattr(qq_bot_module, "create_session", lambda: _FakeSession())
+    monkeypatch.setattr(
+        qq_bot_module,
+        "resolve_remote_control_user",
+        lambda db, **kwargs: SimpleNamespace(id=1, email="local@aelin.local"),
+    )
+
+    def _fake_execute(*args, **kwargs):
+        payload = kwargs.get("payload")
+        executed.append(str(getattr(payload, "text", "") or ""))
+        return AelinChatResponse(
+            answer="qq ok",
+            expression="exp-04",
+            citations=[],
+            actions=[],
+            tool_trace=[],
+            memory_summary="",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(qq_bot_module, "execute_remote_control_request", _fake_execute)
+    monkeypatch.setattr(settings, "qq_bot_allowed_user_ids_csv", "")
+    monkeypatch.setattr(settings, "qq_bot_allowed_group_ids_csv", "")
+    monkeypatch.setattr(settings, "qq_bot_group_require_prefix", True)
+
+    reply = service.handle_message_payload(
+        {
+            "post_type": "message",
+            "message_type": "private",
+            "message_id": 1001,
+            "self_id": 3905815465,
+            "user_id": 123456,
+            "raw_message": "status",
+            "sender": {"nickname": "Tester"},
+        }
+    )
+    assert executed == ["status"]
+    assert reply is not None
+    assert reply.message_type == "private"
+    assert reply.user_id == 123456
+    assert reply.text == "qq ok"
+
+
+def test_resolve_remote_control_user_explicit_empty_bind_does_not_reuse_feishu_binding(monkeypatch):
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(bind=engine)
+    session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+    with session_local() as db:
+        primary_user = crud.create_user(db, email="primary@example.com", password="password123")
+        feishu_user = crud.create_user(db, email="feishu@example.com", password="password123")
+
+        monkeypatch.setattr(settings, "feishu_bot_bind_user_email", "feishu@example.com")
+
+        selected_default = remote_control.resolve_remote_control_user(db)
+        assert selected_default.id == feishu_user.id
+
+        selected_explicit_empty = remote_control.resolve_remote_control_user(db, bind_user_email="")
+        assert selected_explicit_empty.id == primary_user.id
+
+
+def test_qq_bot_event_stream_processes_messages_sequentially(monkeypatch):
+    service = qq_bot_module.QQBotService()
+    events = [json.dumps({"seq": 1}), json.dumps({"seq": 2})]
+    execution_order: list[tuple[str, int]] = []
+    active = 0
+    max_active = 0
+
+    class _FakeEventStream:
+        def __init__(self, rows: list[str]) -> None:
+            self._rows = list(rows)
+            self._index = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> str:
+            if self._index >= len(self._rows):
+                raise StopAsyncIteration
+            row = self._rows[self._index]
+            self._index += 1
+            return row
+
+    async def _fake_process(payload: dict[str, int]) -> None:
+        nonlocal active, max_active
+        seq = int(payload["seq"])
+        active += 1
+        max_active = max(max_active, active)
+        execution_order.append(("start", seq))
+        await asyncio.sleep(0)
+        execution_order.append(("end", seq))
+        active -= 1
+
+    monkeypatch.setattr(service, "_process_event_payload", _fake_process)
+
+    asyncio.run(service._consume_event_stream(_FakeEventStream(events)))
+
+    assert max_active == 1
+    assert execution_order == [
+        ("start", 1),
+        ("end", 1),
+        ("start", 2),
+        ("end", 2),
+    ]
+
+
+def test_qq_bot_group_prefix_gate(monkeypatch):
+    service = qq_bot_module.QQBotService()
+    executed: list[str] = []
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return None
+
+    monkeypatch.setattr(qq_bot_module, "create_session", lambda: _FakeSession())
+    monkeypatch.setattr(
+        qq_bot_module,
+        "resolve_remote_control_user",
+        lambda db, **kwargs: SimpleNamespace(id=1, email="local@aelin.local"),
+    )
+
+    def _fake_execute(*args, **kwargs):
+        payload = kwargs.get("payload")
+        executed.append(str(getattr(payload, "text", "") or ""))
+        return AelinChatResponse(
+            answer="group ok",
+            expression="exp-04",
+            citations=[],
+            actions=[],
+            tool_trace=[],
+            memory_summary="",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(qq_bot_module, "execute_remote_control_request", _fake_execute)
+    monkeypatch.setattr(settings, "qq_bot_command_prefix", "/aelin")
+    monkeypatch.setattr(settings, "qq_bot_group_require_prefix", True)
+    monkeypatch.setattr(settings, "qq_bot_allowed_user_ids_csv", "")
+    monkeypatch.setattr(settings, "qq_bot_allowed_group_ids_csv", "")
+
+    reply_without_prefix = service.handle_message_payload(
+        {
+            "post_type": "message",
+            "message_type": "group",
+            "message_id": 1002,
+            "self_id": 3905815465,
+            "user_id": 123456,
+            "group_id": 654321,
+            "raw_message": "status",
+            "sender": {"nickname": "Tester"},
+        }
+    )
+    assert reply_without_prefix is None
+    assert executed == []
+
+    reply_with_prefix = service.handle_message_payload(
+        {
+            "post_type": "message",
+            "message_type": "group",
+            "message_id": 1003,
+            "self_id": 3905815465,
+            "user_id": 123456,
+            "group_id": 654321,
+            "raw_message": "/aelin status",
+            "sender": {"nickname": "Tester"},
+        }
+    )
+    assert reply_with_prefix is not None
+    assert reply_with_prefix.message_type == "group"
+    assert reply_with_prefix.group_id == 654321
+    assert reply_with_prefix.text == "group ok"
+    assert executed == ["/aelin status"]
