@@ -91,6 +91,12 @@ code, pre, .font-mono {
   font-family: var(--font-mono);
 }
 
+/* Ensure markdown/prose content (chat messages, docs) all use body font by default */
+.prose,
+.prose * {
+  font-family: var(--font-body);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
