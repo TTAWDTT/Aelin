@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { agentApi } from '@/shared/api/agent'
+import type { AgentConfigUpdate } from '@/shared/api/types'
 
 type AgentFormState = {
   providerChoice: string
@@ -132,7 +133,7 @@ export function AIConfigTab() {
       const temperature = parseTemperature(form.temperature)
       const baseUrl = form.base_url.trim()
 
-      const body: Record<string, unknown> = {
+      const body: AgentConfigUpdate = {
         provider: resolvedProvider,
         base_url: baseUrl || undefined,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
@@ -140,7 +141,7 @@ export function AIConfigTab() {
         temperature,
       }
       if (form.api_key.trim()) body.api_key = form.api_key.trim()
-      return agentApi.updateConfig(body as any)
+      return agentApi.updateConfig(body)
     },
     onSuccess: () => {
       toast.success('已保存')

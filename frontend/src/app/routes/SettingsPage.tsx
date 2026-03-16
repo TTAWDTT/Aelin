@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bot, Search, Settings, User } from 'lucide-react'
 import { ProfileTab } from '@/features/settings/ProfileTab'
 import { AIConfigTab } from '@/features/settings/AIConfigTab'
@@ -17,6 +17,7 @@ const SETTINGS_SUBTITLE = '配置您的偏好'
 
 export default function SettingsPage() {
   const [search, setSearch] = useState('')
+  const hasInitializedMounts = useRef(false)
 
   const visibleSections = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -35,20 +36,17 @@ export default function SettingsPage() {
   })
 
   useEffect(() => {
-    if (search.trim()) {
-      setMountedSections({
-        profile: showProfile,
-        ai: showAI,
-        device: showDevice,
-      })
+    setMountedSections((prev) => ({
+      profile: prev.profile || showProfile,
+      ai: prev.ai || showAI,
+      device: prev.device || showDevice,
+    }))
+
+    if (search.trim() || hasInitializedMounts.current) {
       return
     }
 
-    setMountedSections((prev) => ({
-      profile: prev.profile || showProfile,
-      ai: false,
-      device: false,
-    }))
+    hasInitializedMounts.current = true
 
     const aiTimer = showAI
       ? window.setTimeout(() => {
@@ -113,8 +111,8 @@ export default function SettingsPage() {
         ) : (
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_220px]">
             <div className="space-y-7">
-              {showProfile && (
-                <section className="relative px-1 pb-7">
+              {mountedSections.profile && (
+                <section className={`relative px-1 pb-7 ${showProfile ? '' : 'hidden'}`}>
                   <div className="mb-4 flex items-start gap-3">
                     <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)]">
                       <User size={18} />
@@ -124,13 +122,13 @@ export default function SettingsPage() {
                       <p className="mt-1 text-xs text-[var(--color-text-muted)]">账号与身份信息</p>
                     </div>
                   </div>
-                  {mountedSections.profile && <ProfileTab />}
+                  <ProfileTab />
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[linear-gradient(90deg,transparent_0%,color-mix(in_srgb,var(--color-border)_28%,transparent)_12%,color-mix(in_srgb,var(--color-border)_72%,transparent)_50%,color-mix(in_srgb,var(--color-border)_28%,transparent)_88%,transparent_100%)]" />
                 </section>
               )}
 
-              {showAI && (
-                <section className="px-1">
+              {mountedSections.ai && (
+                <section className={`px-1 ${showAI ? '' : 'hidden'}`}>
                   <div className="mb-4 flex items-start gap-3">
                     <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)]">
                       <Bot size={18} />
@@ -150,8 +148,8 @@ export default function SettingsPage() {
             </div>
 
             <div className="flex flex-col xl:justify-end xl:pb-4">
-              {showDevice && (
-                <section className="xl:ml-auto xl:w-full xl:max-w-[220px]">
+              {mountedSections.device && (
+                <section className={`xl:ml-auto xl:w-full xl:max-w-[220px] ${showDevice ? '' : 'hidden'}`}>
                   {mountedSections.device ? (
                     <DeviceTab />
                   ) : (
