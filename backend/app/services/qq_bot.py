@@ -197,14 +197,7 @@ class QQBotService:
                     self._set_running(True)
                     self._set_error("")
                     _log.info("qq bot connected event_url=%s", event_url)
-                    async for raw in ws:
-                        if self._stop_event.is_set():
-                            break
-                        payload = self._parse_ws_payload(raw)
-                        if payload is None:
-                            continue
-                        task = asyncio.create_task(self._process_event_payload(payload))
-                        task.add_done_callback(self._log_task_exception)
+                    await self._consume_event_stream(ws)
             except Exception as exc:
                 self._set_running(False)
                 self._set_error(f"qq_bot_event_stream_error: {str(exc)[:300]}")
@@ -230,11 +223,18 @@ class QQBotService:
             return None
         return payload if isinstance(payload, dict) else None
 
-    def _log_task_exception(self, task: asyncio.Task[Any]) -> None:
-        try:
-            task.result()
-        except Exception as exc:
-            self._set_error(f"qq_message_handle_error: {str(exc)[:300]}")
+    async def _consume_event_stream(self, ws: Any) -> None:
+        async for raw in ws:
+            if self._stop_event.is_set():
+                break
+            payload = self._parse_ws_payload(raw)
+            if payload is None:
+                continue
+            try:
+                await self._process_event_payload(payload)
+            except Exception as exc:
+                self._set_error(f"qq_message_handle_error: {str(exc)[:300]}")
+                _log.warning("qq bot message handling failed: %s", str(exc)[:200])
 
     def _is_duplicate_message(self, message_id: str) -> bool:
         message_id_clean = str(message_id or "").strip()

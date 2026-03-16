@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import app.services.feishu_bot as feishu_bot_module
 import app.services.qq_bot as qq_bot_module
 import app.services.remote_control as remote_control
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from app.schemas import AelinChatResponse
 from app.settings import settings
+from app.models import Base
+from app import crud
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 
@@ -257,6 +264,74 @@ def test_qq_bot_private_message_routes_into_remote_control(monkeypatch):
     assert reply.message_type == "private"
     assert reply.user_id == 123456
     assert reply.text == "qq ok"
+
+
+def test_resolve_remote_control_user_explicit_empty_bind_does_not_reuse_feishu_binding(monkeypatch):
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(bind=engine)
+    session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+    with session_local() as db:
+        primary_user = crud.create_user(db, email="primary@example.com", password="password123")
+        feishu_user = crud.create_user(db, email="feishu@example.com", password="password123")
+
+        monkeypatch.setattr(settings, "feishu_bot_bind_user_email", "feishu@example.com")
+
+        selected_default = remote_control.resolve_remote_control_user(db)
+        assert selected_default.id == feishu_user.id
+
+        selected_explicit_empty = remote_control.resolve_remote_control_user(db, bind_user_email="")
+        assert selected_explicit_empty.id == primary_user.id
+
+
+def test_qq_bot_event_stream_processes_messages_sequentially(monkeypatch):
+    service = qq_bot_module.QQBotService()
+    events = [json.dumps({"seq": 1}), json.dumps({"seq": 2})]
+    execution_order: list[tuple[str, int]] = []
+    active = 0
+    max_active = 0
+
+    class _FakeEventStream:
+        def __init__(self, rows: list[str]) -> None:
+            self._rows = list(rows)
+            self._index = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> str:
+            if self._index >= len(self._rows):
+                raise StopAsyncIteration
+            row = self._rows[self._index]
+            self._index += 1
+            return row
+
+    async def _fake_process(payload: dict[str, int]) -> None:
+        nonlocal active, max_active
+        seq = int(payload["seq"])
+        active += 1
+        max_active = max(max_active, active)
+        execution_order.append(("start", seq))
+        await asyncio.sleep(0)
+        execution_order.append(("end", seq))
+        active -= 1
+
+    monkeypatch.setattr(service, "_process_event_payload", _fake_process)
+
+    asyncio.run(service._consume_event_stream(_FakeEventStream(events)))
+
+    assert max_active == 1
+    assert execution_order == [
+        ("start", 1),
+        ("end", 1),
+        ("start", 2),
+        ("end", 2),
+    ]
 
 
 def test_qq_bot_group_prefix_gate(monkeypatch):
