@@ -130,7 +130,6 @@ export function AIConfigTab() {
       if (isCustomProvider && !form.customProviderId.trim()) {
         throw new Error('请填写自定义 Provider ID')
       }
-      const temperature = parseTemperature(form.temperature)
       const baseUrl = form.base_url.trim()
 
       const body: AgentConfigUpdate = {
@@ -138,7 +137,9 @@ export function AIConfigTab() {
         base_url: baseUrl || undefined,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
         model: form.model || undefined,
-        temperature,
+      }
+      if (!isRuleBased) {
+        body.temperature = parseTemperature(form.temperature)
       }
       if (form.api_key.trim()) body.api_key = form.api_key.trim()
       return agentApi.updateConfig(body)
