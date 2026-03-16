@@ -95,7 +95,7 @@ export default function SettingsPage() {
         </div>
       }
     >
-      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-6 pb-8">
+      <div className="mx-auto flex w-full max-w-[1080px] flex-1 flex-col justify-between gap-8 pb-10">
         {!visibleSections.length ? (
           <section className="rounded-[24px] bg-[var(--color-panel)] px-5 py-6">
             <div className="flex items-center gap-4">
