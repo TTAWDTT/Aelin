@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AelinCitation, AelinAction, AelinToolStep } from '@/shared/api/types'
-import { useChatI18n } from '../chatI18n'
 
 export interface ChatMessage {
   id: string
@@ -52,8 +51,7 @@ export const useChatStore = create<ChatStore>()(
 
       createSession: (workspace = 'default') => {
         const id = crypto.randomUUID()
-        const { t } = useChatI18n()
-        const title = t('session.new')
+        const title = 'New chat'
         set((s) => ({
           sessions: [{ id, title, messages: [], createdAt: Date.now(), workspace }, ...s.sessions],
           activeSessionId: id,
