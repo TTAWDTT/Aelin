@@ -27,6 +27,9 @@ function normalizeProvider(value: string | undefined | null): string {
 }
 
 function parseTemperature(rawValue: string): number {
+  if (!rawValue.trim()) {
+    throw new Error('请填写随机度，范围为 0 到 2')
+  }
   const parsed = Number(rawValue)
   if (!Number.isFinite(parsed)) {
     throw new Error('随机度必须是 0 到 2 之间的数字')
