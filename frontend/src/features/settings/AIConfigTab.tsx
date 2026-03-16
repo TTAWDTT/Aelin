@@ -131,12 +131,13 @@ export function AIConfigTab() {
         throw new Error('请填写自定义 Provider ID')
       }
       const baseUrl = form.base_url.trim()
+      const modelValue = form.model.trim()
 
       const body: AgentConfigUpdate = {
         provider: resolvedProvider,
         base_url: baseUrl || undefined,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
-        model: form.model || undefined,
+        model: modelValue || undefined,
       }
       if (!isRuleBased) {
         body.temperature = parseTemperature(form.temperature)

@@ -28,6 +28,7 @@ export default function SettingsPage() {
   const showProfile = sectionKeys.has('profile')
   const showAI = sectionKeys.has('ai')
   const showDevice = sectionKeys.has('device')
+  const deviceOnlyLayout = showDevice && !showProfile && !showAI
 
   return (
     <PageScaffold
@@ -73,8 +74,8 @@ export default function SettingsPage() {
             </div>
           </section>
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_220px]">
-            <div className="space-y-7">
+          <div className={`grid min-h-0 flex-1 grid-cols-1 gap-6 ${deviceOnlyLayout ? '' : 'xl:grid-cols-[minmax(0,1fr)_220px]'}`}>
+            <div className={`space-y-7 ${deviceOnlyLayout ? 'hidden' : ''}`}>
               {showProfile && (
                 <section className="relative px-1 pb-7">
                   <div className="mb-4 flex items-start gap-3">
@@ -107,9 +108,9 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className="flex flex-col xl:justify-end xl:pb-4">
+            <div className={`flex flex-col ${deviceOnlyLayout ? '' : 'xl:justify-end xl:pb-4'}`}>
               {showDevice && (
-                <section className="xl:ml-auto xl:w-full xl:max-w-[220px]">
+                <section className={deviceOnlyLayout ? 'px-1' : 'xl:ml-auto xl:w-full xl:max-w-[220px]'}>
                   <DeviceTab />
                 </section>
               )}

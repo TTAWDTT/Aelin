@@ -51,7 +51,7 @@ export function ProfileTab() {
           ) : (
             <span className="text-xl">{user?.email?.[0]?.toUpperCase()}</span>
           )}
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
             <Camera size={18} className="text-white" />
           </div>
         </button>
