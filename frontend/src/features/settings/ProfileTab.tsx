@@ -60,7 +60,12 @@ export function ProfileTab() {
           type="file"
           accept="image/*"
           className="hidden"
-          onChange={(event) => event.target.files?.[0] && upload.mutate(event.target.files[0])}
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (!file) return
+            upload.mutate(file)
+            event.currentTarget.value = ''
+          }}
         />
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{user?.email}</div>

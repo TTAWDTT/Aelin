@@ -130,10 +130,11 @@ export function AIConfigTab() {
         throw new Error('请填写自定义 Provider ID')
       }
       const temperature = parseTemperature(form.temperature)
+      const baseUrl = form.base_url.trim()
 
       const body: Record<string, unknown> = {
         provider: resolvedProvider,
-        base_url: form.base_url || undefined,
+        base_url: baseUrl || undefined,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
         model: form.model || undefined,
         temperature,
