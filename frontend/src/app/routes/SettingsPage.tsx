@@ -95,7 +95,7 @@ export default function SettingsPage() {
         </div>
       }
     >
-      <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 pb-6">
+      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-6 pb-8">
         {!visibleSections.length ? (
           <section className="rounded-[24px] bg-[var(--color-panel)] px-5 py-6">
             <div className="flex items-center gap-4">
@@ -110,7 +110,7 @@ export default function SettingsPage() {
           </section>
         ) : (
           <>
-            <div className="space-y-8">
+            <div className="space-y-10">
               {visibleSections.map((section) => {
                 if (section.key === 'profile') {
                   return (
@@ -138,7 +138,7 @@ export default function SettingsPage() {
               })}
             </div>
 
-            <section className="mt-2 rounded-[18px] bg-[color-mix(in_srgb,var(--color-panel-alt)_40%,var(--color-panel)_60%)] px-4 py-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+            <section className="mt-4 rounded-[20px] bg-[color-mix(in_srgb,var(--color-panel-alt)_32%,var(--color-panel)_68%)] px-5 py-4 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
               <p>
                 {isZh
                   ? '这些设置会影响 Aelin 在所有入口的行为，包括主界面对话、远程控制（飞书 / QQ）等。'
