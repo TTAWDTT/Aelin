@@ -48,7 +48,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
               'flex items-center whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] sm:px-3 sm:text-xs transition-colors',
               sessions.length > 1 && 'pr-9',
               session.id === activeSessionId
-                ? 'bg-[var(--color-panel-alt)] text-[var(--color-text)]'
+                ? 'bg-black text-white'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
             )}
             aria-label={`切换会话：${session.title}`}
