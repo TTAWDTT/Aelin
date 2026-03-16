@@ -1,4 +1,4 @@
-import { useLocaleStore } from '@/shared/stores/localeStore'
+import { useChatI18n } from '../chatI18n'
 
 interface ChatStatusBarProps {
   isStreaming: boolean
@@ -7,12 +7,11 @@ interface ChatStatusBarProps {
 }
 
 export function ChatStatusBar({ isStreaming, statusText, compact = false }: ChatStatusBarProps) {
-  const { locale } = useLocaleStore()
-  const isZh = locale === 'zh'
+  const { t } = useChatI18n()
 
   if (!isStreaming && !statusText) return null
 
-  const fallback = isZh ? '正在生成…' : 'Generating…'
+  const fallback = t('timeline.generating')
 
   return (
     <div

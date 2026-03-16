@@ -1,5 +1,6 @@
 import type { AelinAction } from '@/shared/api/types'
 import { isBrowserConfirmAction, resolveActionHref } from './messageBubbleUtils'
+import { useChatI18n } from '../chatI18n'
 
 interface MessageActionsPanelProps {
   actions: AelinAction[]
@@ -30,12 +31,13 @@ export function MessageActionsPanel({
   isBrowserPending,
   onBrowserConfirm,
 }: MessageActionsPanelProps) {
+  const { t } = useChatI18n()
   if (actions.length === 0) return null
 
   return (
     <details className="group mt-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-2">
       <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-        建议动作 ({actions.length})
+        {t('actions.heading', { count: actions.length })}
       </summary>
       <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-out group-open:grid-rows-[1fr]">
         <div className="overflow-hidden">
@@ -52,7 +54,7 @@ export function MessageActionsPanel({
                       onClick={() => onBrowserConfirm(action)}
                       disabled={isBrowserPending}
                     >
-                      {isBrowserPending ? '处理中…' : '确认并继续'}
+                      {isBrowserPending ? t('actions.confirm.pending') : t('actions.confirm.cta')}
                     </button>
                   </ActionCard>
                 )
@@ -63,7 +65,7 @@ export function MessageActionsPanel({
                 <ActionCard key={key} title={action.title} detail={detail}>
                   {href ? (
                     <a className="aelin-btn mt-2 inline-flex h-7 items-center px-2 text-[11px]" href={href}>
-                      打开
+                      {t('actions.open')}
                     </a>
                   ) : null}
                 </ActionCard>

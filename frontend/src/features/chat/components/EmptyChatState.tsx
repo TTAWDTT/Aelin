@@ -1,19 +1,17 @@
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { CHAT_EMPTY_QUICK_PROMPTS_ZH, CHAT_EMPTY_QUICK_PROMPTS_EN } from '../constants'
-import { useLocaleStore } from '@/shared/stores/localeStore'
+import { useChatI18n } from '../chatI18n'
 
 interface EmptyChatStateProps {
   onQuickPrompt: (text: string) => void
 }
 
 export function EmptyChatState({ onQuickPrompt }: EmptyChatStateProps) {
-  const { locale } = useLocaleStore()
+  const { t, locale } = useChatI18n()
   const isZh = locale === 'zh'
-  const greeting = isZh ? '你好，欢迎回来' : 'Hi, welcome back'
-  const title = isZh ? '需要我为你做些什么？' : 'What can I help you with today?'
-  const description = isZh
-    ? '输入消息后，Aelin 会继续在底部输入框中保持会话。'
-    : 'Once you send a message, Aelin will keep the conversation going in the bottom input bar.'
+  const greeting = t('empty.greeting')
+  const title = t('empty.title')
+  const description = t('empty.description')
   const quickPrompts = isZh ? CHAT_EMPTY_QUICK_PROMPTS_ZH : CHAT_EMPTY_QUICK_PROMPTS_EN
 
   return (

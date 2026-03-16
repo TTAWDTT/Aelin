@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
+import { useChatI18n } from '../chatI18n'
 
 interface SessionTabsProps {
   className?: string
@@ -17,6 +18,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const scrollBehavior: ScrollBehavior = prefersReducedMotion ? 'auto' : 'smooth'
+  const { t } = useChatI18n()
 
   useEffect(() => {
     activeTabRef.current?.scrollIntoView({
@@ -51,7 +53,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
                 ? 'bg-black text-white'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
             )}
-            aria-label={`切换会话：${session.title}`}
+            aria-label={t('session.switch', { title: session.title })}
             title={session.title}
           >
             <span className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}>{session.title}</span>
@@ -63,8 +65,8 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
                 deleteSession(session.id)
               }}
               className="absolute right-1 top-1/2 z-10 -translate-y-1/2 rounded-full p-0.5 opacity-0 transition-opacity pointer-events-none group-hover:pointer-events-auto group-hover:opacity-60 group-focus-within:pointer-events-auto group-focus-within:opacity-60 hover:opacity-100"
-              aria-label={`删除会话：${session.title}`}
-              title="删除会话"
+              aria-label={t('session.delete', { title: session.title })}
+              title={t('session.delete', { title: session.title })}
             >
               <X size={12} />
             </button>
@@ -86,8 +88,8 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
           type="button"
           onClick={() => createSession()}
           className="shrink-0 rounded-full border border-[var(--color-border)] p-1.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
-          title="新建会话"
-          aria-label="新建会话"
+          title={t('session.new')}
+          aria-label={t('session.new')}
         >
           <Plus size={16} />
         </button>
@@ -106,8 +108,8 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
         type="button"
         onClick={() => scrollByDirection(-1)}
         className="h-7 w-7 shrink-0 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
-        title="向左查看会话"
-        aria-label="向左查看会话"
+        title={t('session.nav.prev')}
+        aria-label={t('session.nav.prev')}
       >
         <ChevronLeft size={14} className="mx-auto" />
       </button>
@@ -122,8 +124,8 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
         type="button"
         onClick={() => scrollByDirection(1)}
         className="h-7 w-7 shrink-0 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
-        title="向右查看会话"
-        aria-label="向右查看会话"
+        title={t('session.nav.next')}
+        aria-label={t('session.nav.next')}
       >
         <ChevronRight size={14} className="mx-auto" />
       </button>
@@ -132,8 +134,8 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
         type="button"
         onClick={() => createSession()}
         className="h-8 w-8 shrink-0 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)]"
-        title="新建会话"
-        aria-label="新建会话"
+        title={t('session.new')}
+        aria-label={t('session.new')}
       >
         <Plus size={16} className="mx-auto" />
       </button>
