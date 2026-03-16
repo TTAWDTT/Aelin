@@ -287,9 +287,11 @@ MERCURYDESK_FEISHU_BOT_BIND_USER_EMAIL=
 
 ### 第二步：安装并运行 NapCatQQ
 
+前往[Releases · NapNeko/NapCatQQ](https://github.com/NapNeko/NapCatQQ/releases/)下载NapCat.Shell.Windows.OneKey.zip，然后解压后运行NapCatInstaller.exe，他会移动你原来的QQ的位置，但是应该对使用没有影响，然后安装完成后，进入NapCat.一串数字.Shell的文件夹，点击napcat.bat运行即可，他会出现一个二维码，然后扫码登陆就行。NapCat的使用文档网站是[NapCat | NapCatQQ](https://napneko.github.io/guide/start-install)
+
 保证 NapCat WebUI 可以正常打开，例如：
 
-- `http://127.0.0.1:6099/webui?...`
+- `http://127.0.0.1:6099/webui?...（这个网址在运行napcat.bat后出现的日志里）`
 
 这说明 NapCat 本体已经启动。
 
