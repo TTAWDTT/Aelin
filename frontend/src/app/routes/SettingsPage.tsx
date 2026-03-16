@@ -109,34 +109,50 @@ export default function SettingsPage() {
             </div>
           </section>
         ) : (
-          <div className="space-y-8">
-            {visibleSections.map((section) => {
-              if (section.key === 'profile') {
-                return (
-                  <section
-                    key={section.key}
-                    className="space-y-6"
-                  >
-                    <ProfileTab />
-                  </section>
-                )
-              }
+          <>
+            <div className="space-y-8">
+              {visibleSections.map((section) => {
+                if (section.key === 'profile') {
+                  return (
+                    <section
+                      key={section.key}
+                      className="space-y-6"
+                    >
+                      <ProfileTab />
+                    </section>
+                  )
+                }
 
-              if (section.key === 'ai') {
-                return (
-                  <section
-                    key={section.key}
-                    className="space-y-6"
-                  >
-                    <AIConfigTab />
-                  </section>
-                )
-              }
+                if (section.key === 'ai') {
+                  return (
+                    <section
+                      key={section.key}
+                      className="space-y-6"
+                    >
+                      <AIConfigTab />
+                    </section>
+                  )
+                }
 
-              return null
-            })}
+                return null
+              })}
+            </div>
 
-          </div>
+            <section className="mt-2 rounded-[18px] bg-[color-mix(in_srgb,var(--color-panel-alt)_40%,var(--color-panel)_60%)] px-4 py-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              <p>
+                {isZh
+                  ? '这些设置会影响 Aelin 在所有入口的行为，包括主界面对话、远程控制（飞书 / QQ）等。'
+                  : 'These settings affect how Aelin behaves across all entry points, including the main chat and remote control (Feishu / QQ).'
+                }
+              </p>
+              <p className="mt-1">
+                {isZh
+                  ? '后续接入的 plane 与工具，也会在这里逐步出现统一的配置入口。'
+                  : 'Upcoming planes and tools will also expose their unified configuration surfaces here.'
+                }
+              </p>
+            </section>
+          </>
         )}
       </div>
     </PageScaffold>
