@@ -253,7 +253,7 @@ export function ComposerBar({
         : t('composer.capture.open')
 
   return (
-    <div className={`border-t border-[var(--color-border)] bg-[var(--color-panel)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
+    <div className={`bg-[var(--color-panel)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
       <div className="mx-auto min-w-0 w-full max-w-[880px]">
         <div className={`aelin-card min-w-0 rounded-[16px] bg-[var(--color-panel)] transition-shadow duration-200 focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_12%,transparent)] ${compact ? 'p-2 max-[500px]:p-1.5' : 'p-2.5'}`}>
           <input
