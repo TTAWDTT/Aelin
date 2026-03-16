@@ -57,7 +57,7 @@ export default function SettingsPage() {
         </label>
       }
     >
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1140px] flex-col gap-6">
+      <div className="mx-auto flex min-h-full w-full max-w-[1140px] flex-col gap-6">
         {!visibleSections.length ? (
           <section className="aelin-card rounded-[24px] border-[color-mix(in_srgb,var(--color-border)_84%,white_16%)] px-5 py-6 shadow-[0_22px_42px_-38px_rgba(27,24,16,0.28)]">
             <div className="flex items-center gap-4">
