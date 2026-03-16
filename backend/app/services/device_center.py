@@ -54,6 +54,11 @@ def _desktop_plugin_timeout_seconds() -> float:
     return max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0))
 
 
+def _desktop_plugin_client(*, timeout: float) -> httpx.Client:
+    # Local plugin calls must bypass system proxies/VPN env vars.
+    return httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False)
+
+
 def _desktop_plugin_post(path: str, payload: dict[str, Any], *, timeout_s: float | None = None) -> dict[str, Any]:
     base_url = _desktop_plugin_base_url()
     if not base_url:
@@ -61,7 +66,7 @@ def _desktop_plugin_post(path: str, payload: dict[str, Any], *, timeout_s: float
     url = f"{base_url}{path}"
     timeout_value = max(2.0, float(timeout_s if timeout_s is not None else _desktop_plugin_timeout_seconds()))
     try:
-        with httpx.Client(timeout=timeout_value, follow_redirects=False) as client:
+        with _desktop_plugin_client(timeout=timeout_value) as client:
             resp = client.post(url, json=payload, headers=_desktop_plugin_headers())
     except Exception as exc:
         raise DesktopPluginActionError(
@@ -88,7 +93,7 @@ def desktop_plugin_health() -> bool:
     if not base_url:
         return False
     try:
-        with httpx.Client(timeout=min(5.0, _desktop_plugin_timeout_seconds()), follow_redirects=False) as client:
+        with _desktop_plugin_client(timeout=min(5.0, _desktop_plugin_timeout_seconds())) as client:
             resp = client.get(f"{base_url}/healthz", headers=_desktop_plugin_headers())
     except Exception:
         return False

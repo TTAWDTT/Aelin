@@ -51,6 +51,14 @@ Optional env vars:
 - `MERCURYDESK_FEISHU_BOT_ALLOWED_CHAT_IDS_CSV` (optional Feishu chat allowlist)
 - `MERCURYDESK_FEISHU_BOT_COMMAND_PREFIX` (default `/aelin`; used in group chats)
 - `MERCURYDESK_FEISHU_BOT_GROUP_REQUIRE_PREFIX` (default `true`)
+- `MERCURYDESK_QQ_BOT_ENABLED` (`true` to enable QQ/NapCat OneBot bridge)
+- `MERCURYDESK_QQ_BOT_WS_URL` / `MERCURYDESK_QQ_BOT_TOKEN`
+- `MERCURYDESK_QQ_BOT_BIND_USER_EMAIL` (optional; bind the QQ bot to a specific local user)
+- `MERCURYDESK_QQ_BOT_WORKSPACE` (default `default`)
+- `MERCURYDESK_QQ_BOT_ALLOWED_USER_IDS_CSV` (optional QQ sender allowlist)
+- `MERCURYDESK_QQ_BOT_ALLOWED_GROUP_IDS_CSV` (optional QQ group allowlist)
+- `MERCURYDESK_QQ_BOT_COMMAND_PREFIX` (default `/aelin`; used in group chats)
+- `MERCURYDESK_QQ_BOT_GROUP_REQUIRE_PREFIX` (default `true`)
 - `MERCURYDESK_DESKTOP_PLUGIN_BASE_URL` / `MERCURYDESK_DESKTOP_PLUGIN_TOKEN`
 
 ## Feishu Remote Control V1
@@ -58,3 +66,13 @@ Optional env vars:
 See the full setup and usage guide:
 
 - `../docs/feishu_remote_control_v1.md`
+
+## QQ / NapCat V1
+
+QQ V1 expects a NapCat OneBot websocket server, for example:
+
+- `MERCURYDESK_QQ_BOT_ENABLED=true`
+- `MERCURYDESK_QQ_BOT_WS_URL=ws://127.0.0.1:6700`
+- `MERCURYDESK_QQ_BOT_TOKEN=...`
+
+The backend opens a websocket client to NapCat and forwards QQ messages into the same Aelin remote-control/chat execution path used by other mobile channels.

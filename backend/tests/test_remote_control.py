@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import app.services.feishu_bot as feishu_bot_module
+import app.services.qq_bot as qq_bot_module
 import app.services.remote_control as remote_control
 from app.schemas import AelinChatResponse
 from app.settings import settings
@@ -201,3 +202,130 @@ def test_feishu_bot_group_prefix_gate(monkeypatch):
     service.handle_message_payload(payload_with_prefix)
     assert executed == ["/aelin 状态"]
     assert sent_messages == [("oc_1", "电脑状态正常")]
+
+
+def test_qq_bot_private_message_routes_into_remote_control(monkeypatch):
+    service = qq_bot_module.QQBotService()
+    executed: list[str] = []
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return None
+
+    monkeypatch.setattr(qq_bot_module, "create_session", lambda: _FakeSession())
+    monkeypatch.setattr(
+        qq_bot_module,
+        "resolve_remote_control_user",
+        lambda db, **kwargs: SimpleNamespace(id=1, email="local@aelin.local"),
+    )
+
+    def _fake_execute(*args, **kwargs):
+        payload = kwargs.get("payload")
+        executed.append(str(getattr(payload, "text", "") or ""))
+        return AelinChatResponse(
+            answer="qq ok",
+            expression="exp-04",
+            citations=[],
+            actions=[],
+            tool_trace=[],
+            memory_summary="",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(qq_bot_module, "execute_remote_control_request", _fake_execute)
+    monkeypatch.setattr(settings, "qq_bot_allowed_user_ids_csv", "")
+    monkeypatch.setattr(settings, "qq_bot_allowed_group_ids_csv", "")
+    monkeypatch.setattr(settings, "qq_bot_group_require_prefix", True)
+
+    reply = service.handle_message_payload(
+        {
+            "post_type": "message",
+            "message_type": "private",
+            "message_id": 1001,
+            "self_id": 3905815465,
+            "user_id": 123456,
+            "raw_message": "status",
+            "sender": {"nickname": "Tester"},
+        }
+    )
+    assert executed == ["status"]
+    assert reply is not None
+    assert reply.message_type == "private"
+    assert reply.user_id == 123456
+    assert reply.text == "qq ok"
+
+
+def test_qq_bot_group_prefix_gate(monkeypatch):
+    service = qq_bot_module.QQBotService()
+    executed: list[str] = []
+
+    class _FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return None
+
+    monkeypatch.setattr(qq_bot_module, "create_session", lambda: _FakeSession())
+    monkeypatch.setattr(
+        qq_bot_module,
+        "resolve_remote_control_user",
+        lambda db, **kwargs: SimpleNamespace(id=1, email="local@aelin.local"),
+    )
+
+    def _fake_execute(*args, **kwargs):
+        payload = kwargs.get("payload")
+        executed.append(str(getattr(payload, "text", "") or ""))
+        return AelinChatResponse(
+            answer="group ok",
+            expression="exp-04",
+            citations=[],
+            actions=[],
+            tool_trace=[],
+            memory_summary="",
+            generated_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(qq_bot_module, "execute_remote_control_request", _fake_execute)
+    monkeypatch.setattr(settings, "qq_bot_command_prefix", "/aelin")
+    monkeypatch.setattr(settings, "qq_bot_group_require_prefix", True)
+    monkeypatch.setattr(settings, "qq_bot_allowed_user_ids_csv", "")
+    monkeypatch.setattr(settings, "qq_bot_allowed_group_ids_csv", "")
+
+    reply_without_prefix = service.handle_message_payload(
+        {
+            "post_type": "message",
+            "message_type": "group",
+            "message_id": 1002,
+            "self_id": 3905815465,
+            "user_id": 123456,
+            "group_id": 654321,
+            "raw_message": "status",
+            "sender": {"nickname": "Tester"},
+        }
+    )
+    assert reply_without_prefix is None
+    assert executed == []
+
+    reply_with_prefix = service.handle_message_payload(
+        {
+            "post_type": "message",
+            "message_type": "group",
+            "message_id": 1003,
+            "self_id": 3905815465,
+            "user_id": 123456,
+            "group_id": 654321,
+            "raw_message": "/aelin status",
+            "sender": {"nickname": "Tester"},
+        }
+    )
+    assert reply_with_prefix is not None
+    assert reply_with_prefix.message_type == "group"
+    assert reply_with_prefix.group_id == 654321
+    assert reply_with_prefix.text == "group ok"
+    assert executed == ["/aelin status"]
