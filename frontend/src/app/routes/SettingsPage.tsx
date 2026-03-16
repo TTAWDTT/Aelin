@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Bot, Search, Settings, User } from 'lucide-react'
 import { ProfileTab } from '@/features/settings/ProfileTab'
 import { AIConfigTab } from '@/features/settings/AIConfigTab'
@@ -17,7 +17,6 @@ const SETTINGS_SUBTITLE = '配置您的偏好'
 
 export default function SettingsPage() {
   const [search, setSearch] = useState('')
-  const hasInitializedMounts = useRef(false)
 
   const visibleSections = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -29,41 +28,6 @@ export default function SettingsPage() {
   const showProfile = sectionKeys.has('profile')
   const showAI = sectionKeys.has('ai')
   const showDevice = sectionKeys.has('device')
-  const [mountedSections, setMountedSections] = useState<Record<Section, boolean>>({
-    profile: true,
-    ai: false,
-    device: false,
-  })
-
-  useEffect(() => {
-    setMountedSections((prev) => ({
-      profile: prev.profile || showProfile,
-      ai: prev.ai || showAI,
-      device: prev.device || showDevice,
-    }))
-
-    if (search.trim() || hasInitializedMounts.current) {
-      return
-    }
-
-    hasInitializedMounts.current = true
-
-    const aiTimer = showAI
-      ? window.setTimeout(() => {
-          setMountedSections((prev) => ({ ...prev, ai: true }))
-        }, 0)
-      : null
-    const deviceTimer = showDevice
-      ? window.setTimeout(() => {
-          setMountedSections((prev) => ({ ...prev, device: true }))
-        }, 120)
-      : null
-
-    return () => {
-      if (aiTimer !== null) window.clearTimeout(aiTimer)
-      if (deviceTimer !== null) window.clearTimeout(deviceTimer)
-    }
-  }, [search, showProfile, showAI, showDevice])
 
   return (
     <PageScaffold
@@ -111,8 +75,8 @@ export default function SettingsPage() {
         ) : (
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_220px]">
             <div className="space-y-7">
-              {mountedSections.profile && (
-                <section className={`relative px-1 pb-7 ${showProfile ? '' : 'hidden'}`}>
+              {showProfile && (
+                <section className="relative px-1 pb-7">
                   <div className="mb-4 flex items-start gap-3">
                     <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)]">
                       <User size={18} />
@@ -127,8 +91,8 @@ export default function SettingsPage() {
                 </section>
               )}
 
-              {mountedSections.ai && (
-                <section className={`px-1 ${showAI ? '' : 'hidden'}`}>
+              {showAI && (
+                <section className="px-1">
                   <div className="mb-4 flex items-start gap-3">
                     <div className="flex h-11 w-11 items-center justify-center rounded-[16px] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)]">
                       <Bot size={18} />
@@ -138,23 +102,15 @@ export default function SettingsPage() {
                       <p className="mt-1 text-xs text-[var(--color-text-muted)]">提供商与模型连接</p>
                     </div>
                   </div>
-                  {mountedSections.ai ? (
-                    <AIConfigTab />
-                  ) : (
-                    <div className="text-sm text-[var(--color-text-muted)]">正在加载 AI 模型设置…</div>
-                  )}
+                  <AIConfigTab />
                 </section>
               )}
             </div>
 
             <div className="flex flex-col xl:justify-end xl:pb-4">
-              {mountedSections.device && (
-                <section className={`xl:ml-auto xl:w-full xl:max-w-[220px] ${showDevice ? '' : 'hidden'}`}>
-                  {mountedSections.device ? (
-                    <DeviceTab />
-                  ) : (
-                    <div className="text-xs text-[var(--color-text-muted)]">正在加载设备型号…</div>
-                  )}
+              {showDevice && (
+                <section className="xl:ml-auto xl:w-full xl:max-w-[220px]">
+                  <DeviceTab />
                 </section>
               )}
             </div>
