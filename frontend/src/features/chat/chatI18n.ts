@@ -163,4 +163,3 @@ export function useChatI18n() {
 
   return { t, locale: lang }
 }
-
