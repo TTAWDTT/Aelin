@@ -95,7 +95,7 @@ export default function SettingsPage() {
         </div>
       }
     >
-      <div className="mx-auto flex min-h-full w-full max-w-[1140px] flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 pb-6">
         {!visibleSections.length ? (
           <section className="rounded-[24px] bg-[var(--color-panel)] px-5 py-6">
             <div className="flex items-center gap-4">
@@ -109,7 +109,7 @@ export default function SettingsPage() {
             </div>
           </section>
         ) : (
-          <div className="min-h-0 flex-1 space-y-10">
+          <div className="space-y-8">
             {visibleSections.map((section) => {
               if (section.key === 'profile') {
                 return (
