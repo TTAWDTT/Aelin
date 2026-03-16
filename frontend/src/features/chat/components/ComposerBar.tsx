@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import { useLocaleStore } from '@/shared/stores/localeStore'
 
 interface Props {
   onSend: (text: string) => void
@@ -46,6 +47,8 @@ export function ComposerBar({
   const hasProcessingAttachments = uploadingAttachments.length > 0
   const usedAttachmentSlots = pendingAttachments.length + uploadingAttachments.length
   const captureDisabled = isStreaming || isCapturing || isAttaching || hasProcessingAttachments || pendingAttachments.length > 0
+  const { locale } = useLocaleStore()
+  const isZh = locale === 'zh'
 
   useEffect(() => {
     if (!captureMenuOpen) return
@@ -184,11 +187,17 @@ export function ComposerBar({
     if (files.length === 0 || isStreaming || isAttaching || isCapturing) return
     const availableSlots = MAX_PENDING_ATTACHMENTS - usedAttachmentSlots
     if (availableSlots <= 0) {
-      toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`)
+      toast(isZh ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件` : `You can add up to ${MAX_PENDING_ATTACHMENTS} attachments.`)
       return
     }
     const picked = files.slice(0, availableSlots)
-    if (files.length > availableSlots) toast(`最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件，已忽略 ${files.length - availableSlots} 个`)
+    if (files.length > availableSlots) {
+      toast(
+        isZh
+          ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件，已忽略 ${files.length - availableSlots} 个`
+          : `You can add up to ${MAX_PENDING_ATTACHMENTS} attachments, ignored ${files.length - availableSlots}.`
+      )
+    }
     const uploadingItems: UploadingAttachmentItem[] = picked.map((file, index) => ({
       id: `${file.name}-${file.size}-${file.lastModified}-${Date.now()}-${index}`,
       name: file.name || `attachment-${index + 1}`,
@@ -205,7 +214,11 @@ export function ComposerBar({
             .map((file) => file.name || '')
             .filter((name) => name && !uploadedNames.has(name))
           if (failedNames.length > 0) {
-            toast(`部分附件上传失败：${failedNames.join('、')}`)
+            toast(
+              isZh
+                ? `部分附件上传失败：${failedNames.join('、')}`
+                : `Some attachments failed to upload: ${failedNames.join(', ')}`
+            )
           }
         }
       })
@@ -234,12 +247,20 @@ export function ComposerBar({
   const canSend = !!text.trim() || pendingAttachments.length > 0
   const canSendNow = canSend && !isCapturing && !isAttaching && !hasProcessingAttachments
   const captureButtonLabel = pendingAttachments.length > 0
-    ? '请先发送待处理附件'
+    ? isZh
+      ? '请先发送待处理附件'
+      : 'Please send pending attachments first'
     : isCapturing
-      ? '正在截图'
+      ? isZh
+        ? '正在截图'
+        : 'Capturing screenshot'
       : captureMenuOpen
-        ? '关闭截图菜单'
-        : '打开截图菜单'
+        ? isZh
+          ? '关闭截图菜单'
+          : 'Close capture menu'
+        : isZh
+          ? '打开截图菜单'
+          : 'Open capture menu'
 
   return (
     <div className={`border-t border-[var(--color-border)] bg-[var(--color-bg)] ${compact ? 'px-2 py-2 max-[500px]:px-1 max-[500px]:py-1.5' : 'px-2.5 py-2.5 sm:px-3 sm:py-3'}`}>
@@ -296,19 +317,31 @@ export function ComposerBar({
               onClick={openAttachmentPicker}
               title={
                 usedAttachmentSlots >= MAX_PENDING_ATTACHMENTS
-                  ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                  ? isZh
+                    ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                    : `You can add up to ${MAX_PENDING_ATTACHMENTS} attachments.`
                   : isAttaching
-                    ? '正在处理附件'
-                    : '上传附件'
+                    ? isZh
+                      ? '正在处理附件'
+                      : 'Processing attachments'
+                    : isZh
+                      ? '上传附件'
+                      : 'Upload attachments'
               }
               disabled={isStreaming || isAttaching || isCapturing || usedAttachmentSlots >= MAX_PENDING_ATTACHMENTS}
               className={`flex shrink-0 items-center justify-center rounded-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-accent-soft)] active:scale-[0.96] ${compact ? 'h-8 w-8' : 'h-9 w-9'}`}
               aria-label={
                 usedAttachmentSlots >= MAX_PENDING_ATTACHMENTS
-                  ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                  ? isZh
+                    ? `最多可添加 ${MAX_PENDING_ATTACHMENTS} 个附件`
+                    : `You can add up to ${MAX_PENDING_ATTACHMENTS} attachments.`
                   : isAttaching
-                    ? '正在处理附件'
-                    : '上传附件'
+                    ? isZh
+                      ? '正在处理附件'
+                      : 'Processing attachments'
+                    : isZh
+                      ? '上传附件'
+                      : 'Upload attachments'
               }
             >
               {isAttaching ? <Loader2 className="animate-spin" size={compact ? 16 : 17} /> : <Paperclip size={compact ? 16 : 17} />}
@@ -335,7 +368,7 @@ export function ComposerBar({
                 <div
                   id={captureMenuId}
                   role="menu"
-                  aria-label="截图菜单"
+                  aria-label={isZh ? '截图菜单' : 'Screenshot menu'}
                   onKeyDown={handleCaptureMenuKeyDown}
                   className="absolute bottom-[calc(100%+8px)] left-0 z-30 flex min-w-[172px] flex-col gap-1 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-panel)] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.18)]"
                 >
@@ -347,10 +380,10 @@ export function ComposerBar({
                     onClick={() => void handleCapture('fullscreen')}
                     className="flex items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent-soft)]"
                     role="menuitem"
-                    aria-label="全屏截图"
+                    aria-label={isZh ? '全屏截图' : 'Full screen screenshot'}
                   >
                     <Monitor size={14} className="shrink-0 text-[var(--color-text-muted)]" />
-                    <span>全屏截图</span>
+                    <span>{isZh ? '全屏截图' : 'Full screen screenshot'}</span>
                   </button>
                   <button
                     ref={(node) => {
@@ -360,10 +393,10 @@ export function ComposerBar({
                     onClick={() => void handleCapture('region')}
                     className="flex items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[12px] text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent-soft)]"
                     role="menuitem"
-                    aria-label="自定义截图"
+                    aria-label={isZh ? '自定义截图' : 'Custom region screenshot'}
                   >
                     <Crop size={14} className="shrink-0 text-[var(--color-text-muted)]" />
-                    <span>自定义截图</span>
+                    <span>{isZh ? '自定义截图' : 'Custom region screenshot'}</span>
                   </button>
                 </div>
               )}
@@ -393,6 +426,7 @@ export function ComposerBar({
                     : 'bg-[var(--color-accent-soft)] text-[var(--color-text-muted)]'
               )}
               aria-label={isStreaming ? '停止生成' : '发送消息'}
+            title={isStreaming ? (isZh ? '停止生成' : 'Stop generation') : isZh ? '发送消息' : 'Send message'}
             >
               {isStreaming ? <Square size={compact ? 14 : 15} /> : <Send size={compact ? 14 : 15} />}
             </button>

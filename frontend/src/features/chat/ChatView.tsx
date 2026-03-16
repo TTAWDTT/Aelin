@@ -1,4 +1,4 @@
-﻿import { useRef, useEffect } from 'react'
+import { useRef, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
@@ -11,6 +11,7 @@ import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import { useLocaleStore } from '@/shared/stores/localeStore'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
@@ -20,6 +21,8 @@ export function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
+  const { locale } = useLocaleStore()
+  const isZh = locale === 'zh'
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -36,7 +39,8 @@ export function ChatView() {
     try {
       await captureAndSend(mode, textHint)
     } catch (error: any) {
-      const message = String(error?.message || '截图失败，请稍后重试')
+      const fallback = isZh ? '截图失败，请稍后重试' : 'Screenshot failed, please try again later.'
+      const message = String(error?.message || fallback)
       toast.error(message)
       throw error
     }
@@ -46,7 +50,8 @@ export function ChatView() {
     try {
       return await uploadAttachments(files)
     } catch (error: any) {
-      const message = String(error?.message || '附件处理失败，请稍后重试')
+      const fallback = isZh ? '附件处理失败，请稍后重试' : 'Attachment processing failed, please try again later.'
+      const message = String(error?.message || fallback)
       toast.error(message)
       throw error
     }
@@ -56,7 +61,8 @@ export function ChatView() {
     try {
       await sendWithAttachments(attachments, textHint)
     } catch (error: any) {
-      const message = String(error?.message || '附件发送失败，请稍后重试')
+      const fallback = isZh ? '附件发送失败，请稍后重试' : 'Attachment sending failed, please try again later.'
+      const message = String(error?.message || fallback)
       toast.error(message)
       throw error
     }
@@ -69,7 +75,7 @@ export function ChatView() {
   return (
     <PageScaffold
       title="Chat"
-      subtitle="Aelin 在线中"
+      subtitle={isZh ? 'Aelin 在线中' : 'Aelin is online'}
       contentClassName="flex flex-1 min-h-0 flex-col p-0"
       headerActionsFullWidth
       headerActions={<SessionTabs wrap={compact} className="w-full min-w-0 max-w-full" />}
@@ -92,7 +98,9 @@ export function ChatView() {
         onStop={stop}
         isStreaming={isStreaming}
         compact={compact}
+        placeholder={isZh ? '输入消息…' : 'Type a message…'}
       />
     </PageScaffold>
   )
 }
+
