@@ -26,6 +26,17 @@ function normalizeProvider(value: string | undefined | null): string {
   return key
 }
 
+function parseTemperature(rawValue: string): number {
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed)) {
+    throw new Error('随机度必须是 0 到 2 之间的数字')
+  }
+  if (parsed < 0 || parsed > 2) {
+    throw new Error('随机度必须在 0 到 2 之间')
+  }
+  return parsed
+}
+
 export function AIConfigTab() {
   const qc = useQueryClient()
 
@@ -115,13 +126,14 @@ export function AIConfigTab() {
       if (isCustomProvider && !form.customProviderId.trim()) {
         throw new Error('请填写自定义 Provider ID')
       }
+      const temperature = parseTemperature(form.temperature)
 
       const body: Record<string, unknown> = {
         provider: resolvedProvider,
         base_url: form.base_url || undefined,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
         model: form.model || undefined,
-        temperature: Number(form.temperature),
+        temperature,
       }
       if (form.api_key.trim()) body.api_key = form.api_key.trim()
       return agentApi.updateConfig(body as any)

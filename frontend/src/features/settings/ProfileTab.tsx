@@ -40,7 +40,10 @@ export function ProfileTab() {
     <div className="space-y-5">
       {/* Avatar */}
       <div className="flex items-center gap-3">
-        <div className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-[var(--color-accent-soft)] cursor-pointer group"
+        <button
+          type="button"
+          className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-[var(--color-accent-soft)] cursor-pointer group"
+          aria-label="上传头像"
           onClick={() => fileRef.current?.click()}>
           {user?.avatar_url ? (
             <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
@@ -52,7 +55,7 @@ export function ProfileTab() {
           </div>
           <input ref={fileRef} type="file" accept="image/*" className="hidden"
             onChange={e => e.target.files?.[0] && upload.mutate(e.target.files[0])} />
-        </div>
+        </button>
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{user?.email}</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">ID: {user?.id}</div>

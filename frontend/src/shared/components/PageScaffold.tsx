@@ -22,15 +22,20 @@ export function PageScaffold({
   className,
   contentClassName,
 }: PageScaffoldProps) {
+  const resolvedHeaderTitle =
+    headerTitle === undefined ? (
+      <div className="min-w-0">
+        <h1 className="aelin-page-title truncate">{title}</h1>
+        {subtitle && <p className="aelin-page-subtitle truncate">{subtitle}</p>}
+      </div>
+    ) : (
+      headerTitle
+    )
+
   return (
     <section className={cn('aelin-page', className)}>
       <header className={cn('aelin-page-header min-w-0', headerActionsFullWidth && 'flex-wrap items-start')}>
-        {headerTitle ?? (
-          <div className="min-w-0">
-            <h1 className="aelin-page-title truncate">{title}</h1>
-            {subtitle && <p className="aelin-page-subtitle truncate">{subtitle}</p>}
-          </div>
-        )}
+        {resolvedHeaderTitle}
         {headerActions && (
           <div
             className={cn(
