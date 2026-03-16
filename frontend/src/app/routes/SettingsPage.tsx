@@ -29,6 +29,7 @@ export default function SettingsPage() {
   const showAI = sectionKeys.has('ai')
   const showDevice = sectionKeys.has('device')
   const deviceOnlyLayout = showDevice && !showProfile && !showAI
+  const useSplitLayout = showDevice && !deviceOnlyLayout
 
   return (
     <PageScaffold
@@ -74,7 +75,7 @@ export default function SettingsPage() {
             </div>
           </section>
         ) : (
-          <div className={`grid min-h-0 flex-1 grid-cols-1 gap-6 ${deviceOnlyLayout ? '' : 'xl:grid-cols-[minmax(0,1fr)_220px]'}`}>
+          <div className={`grid min-h-0 flex-1 grid-cols-1 gap-6 ${useSplitLayout ? 'xl:grid-cols-[minmax(0,1fr)_220px]' : ''}`}>
             <div className={`space-y-7 ${deviceOnlyLayout ? 'hidden' : ''}`}>
               {showProfile && (
                 <section className="relative px-1 pb-7">
@@ -108,13 +109,13 @@ export default function SettingsPage() {
               )}
             </div>
 
-            <div className={`flex flex-col ${deviceOnlyLayout ? '' : 'xl:justify-end xl:pb-4'}`}>
-              {showDevice && (
+            {showDevice && (
+              <div className={`flex flex-col ${useSplitLayout ? 'xl:justify-end xl:pb-4' : ''}`}>
                 <section className={deviceOnlyLayout ? 'px-1' : 'xl:ml-auto xl:w-full xl:max-w-[220px]'}>
                   <DeviceTab />
                 </section>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -135,11 +135,11 @@ export function AIConfigTab() {
 
       const body: AgentConfigUpdate = {
         provider: resolvedProvider,
-        base_url: baseUrl || undefined,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
-        model: modelValue || undefined,
       }
       if (!isRuleBased) {
+        body.base_url = baseUrl || undefined
+        body.model = modelValue || undefined
         body.temperature = parseTemperature(form.temperature)
       }
       if (form.api_key.trim()) body.api_key = form.api_key.trim()
