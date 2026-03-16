@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { authApi } from '@/shared/api/auth'
 import toast from 'react-hot-toast'
@@ -34,11 +34,21 @@ export function ProfileTab() {
     onError: () => toast.error('上传失败'),
   })
 
-  if (isLoading) return <div className="text-sm text-[var(--color-text-muted)]">加载中…</div>
+  const applyChanges = () => {
+    const trimmedEmail = email.trim()
+    const currentEmail = (user?.email ?? '').trim()
+    const hasEmailChange = trimmedEmail !== '' && trimmedEmail !== currentEmail
+    const hasPassword = password.trim().length > 0
+    if (!hasEmailChange && !hasPassword) return
+    update.mutate()
+  }
+
+  if (isLoading) {
+    return <div className="text-sm text-[var(--color-text-muted)]">加载中…</div>
+  }
 
   return (
     <div className="space-y-5">
-      {/* Avatar */}
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -76,22 +86,27 @@ export function ProfileTab() {
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block space-y-1 text-xs">
           <span className="text-[var(--color-text-muted)]">邮箱</span>
-          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={user?.email} className="aelin-input" />
+          <input
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            onBlur={applyChanges}
+            placeholder={user?.email}
+            className="aelin-input"
+          />
         </label>
 
         <label className="block space-y-1 text-xs">
           <span className="text-[var(--color-text-muted)]">修改密码</span>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入新密码（至少 8 位）" className="aelin-input" />
+          <input
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onBlur={applyChanges}
+            placeholder="输入新密码（至少 8 位）"
+            className="aelin-input"
+          />
         </label>
-      </div>
-
-      <div className="flex gap-3">
-        <button
-          onClick={() => update.mutate()}
-          disabled={update.isPending || (email.trim() === (user?.email ?? '').trim() && !password.trim())}
-          className="aelin-btn aelin-btn-primary">
-          {update.isPending ? '保存中…' : '保存'}
-        </button>
       </div>
     </div>
   )

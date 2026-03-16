@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FlaskConical } from 'lucide-react'
+import * as Select from '@radix-ui/react-select'
+import * as Slider from '@radix-ui/react-slider'
+import { Check, ChevronDown, FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { agentApi } from '@/shared/api/agent'
 import type { AgentConfigUpdate } from '@/shared/api/types'
@@ -124,7 +126,7 @@ export function AIConfigTab() {
     (provider) => normalizeProvider(provider.id) === resolvedProvider
   )
 
-  const save = useMutation({
+  const saveMutation = useMutation({
     mutationFn: () => {
       if (!resolvedProvider) throw new Error('请先选择提供商')
       if (isCustomProvider && !form.customProviderId.trim()) {
@@ -172,41 +174,78 @@ export function AIConfigTab() {
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-2">
         <label className="block text-xs space-y-1">
-        <span className="text-[var(--color-text-muted)]">服务商</span>
-        <select
-          value={form.providerChoice}
-          onChange={(event) =>
-            setForm((prev) => ({
-              ...prev,
-              providerChoice: event.target.value,
-              customProviderId:
-                event.target.value === CUSTOM_PROVIDER_OPTION ? prev.customProviderId : '',
-              model: '',
-            }))
-          }
-          className="aelin-select"
-        >
-          <option value="">选择提供商...</option>
-          {providerOptions.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.label}
-            </option>
-          ))}
-        </select>
+          <span className="text-[var(--color-text-muted)]">服务商</span>
+          <Select.Root
+            value={form.providerChoice || undefined}
+            onValueChange={(value) =>
+              setForm((prev) => ({
+                ...prev,
+                providerChoice: value,
+                customProviderId: value === CUSTOM_PROVIDER_OPTION ? prev.customProviderId : '',
+                model: '',
+              }))
+            }
+          >
+            <Select.Trigger className="aelin-select flex items-center justify-between px-3 py-[0.4rem] text-xs">
+              <Select.Value placeholder="选择提供商..." />
+              <Select.Icon>
+                <ChevronDown className="h-3 w-3 text-[var(--color-text-muted)]" />
+              </Select.Icon>
+            </Select.Trigger>
+            <Select.Portal>
+              <Select.Content
+                className="z-50 overflow-hidden rounded-[10px] bg-[var(--color-panel)] shadow-[0_10px_30px_rgba(0,0,0,0.35)] max-h-[260px]"
+                position="popper"
+                sideOffset={4}
+              >
+                <Select.Viewport className="py-1 overflow-y-auto">
+                  {providerOptions.map((provider) => (
+                    <Select.Item
+                      key={provider.id}
+                      value={provider.id}
+                      className="relative flex cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-xs text-[var(--color-text)] data-[highlighted]:bg-[var(--color-panel-alt)] data-[state=checked]:font-medium"
+                    >
+                      <Select.ItemIndicator className="absolute left-1 flex items-center justify-center">
+                        <Check className="h-3 w-3" />
+                      </Select.ItemIndicator>
+                      <Select.ItemText>{provider.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Viewport>
+              </Select.Content>
+            </Select.Portal>
+          </Select.Root>
         </label>
 
         <label className="block text-xs space-y-1">
           <span className="text-[var(--color-text-muted)]">随机度（Temperature）</span>
-          <input
-            type="number"
-            min="0"
-            max="2"
-            step="0.1"
-            value={form.temperature}
-            onChange={(event) => setForm((prev) => ({ ...prev, temperature: event.target.value }))}
-            className="aelin-input"
-            disabled={isRuleBased}
-          />
+          <div className="flex items-center gap-3">
+            <Slider.Root
+              className="relative flex h-5 w-full touch-none select-none items-center"
+              min={0}
+              max={2}
+              step={0.1}
+              value={[
+                (() => {
+                  const n = Number(form.temperature)
+                  return Number.isFinite(n) ? n : 0.5
+                })(),
+              ]}
+              onValueChange={(values) => {
+                const v = values[0] ?? 0.5
+                setForm((prev) => ({ ...prev, temperature: v.toFixed(1) }))
+              }}
+              disabled={isRuleBased}
+            >
+              <Slider.Track className="relative h-[3px] flex-1 rounded-full bg-[color-mix(in_srgb,var(--color-panel-alt)_75%,transparent_25%)]">
+                <Slider.Range className="absolute h-full rounded-full bg-[var(--color-accent)]" />
+              </Slider.Track>
+              <Slider.Thumb className="block h-3.5 w-3.5 rounded-full bg-[var(--color-text)] shadow-[0_0_0_1px_rgba(255,255,255,0.4)] focus:outline-none" />
+            </Slider.Root>
+            <span className="w-10 text-right text-xs text-[var(--color-text-muted)]">
+              {form.temperature || '0.5'}
+            </span>
+          </div>
         </label>
       </div>
 
@@ -225,31 +264,52 @@ export function AIConfigTab() {
       <div className="grid gap-4 lg:grid-cols-2">
         {isCustomProvider ? (
           <label className="block text-xs space-y-1">
-          <span className="text-[var(--color-text-muted)]">模型</span>
-          <input
-            value={form.model}
-            onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
-            placeholder={isRuleBased ? '内置规则模式可留空' : '请输入模型 ID'}
-            className="aelin-input"
-            disabled={isRuleBased}
-          />
+            <span className="text-[var(--color-text-muted)]">模型</span>
+            <input
+              value={form.model}
+              onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
+              placeholder={isRuleBased ? '内置规则模式可留空' : '请输入模型 ID'}
+              className="aelin-input"
+              disabled={isRuleBased}
+            />
           </label>
         ) : (
           <label className="block text-xs space-y-1">
-          <span className="text-[var(--color-text-muted)]">模型</span>
-          <select
-            value={form.model}
-            onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
-            className="aelin-select"
-            disabled={isRuleBased || !currentProvider}
-          >
-            <option value="">{isRuleBased ? '内置规则模式无需模型' : '选择模型...'}</option>
-            {(currentProvider?.models ?? []).map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-              ))}
-          </select>
+            <span className="text-[var(--color-text-muted)]">模型</span>
+            <Select.Root
+              value={form.model || undefined}
+              onValueChange={(value) => setForm((prev) => ({ ...prev, model: value }))}
+              disabled={isRuleBased || !currentProvider}
+            >
+              <Select.Trigger className="aelin-select flex items-center justify-between px-3 py-[0.4rem] text-xs disabled:opacity-50">
+                <Select.Value placeholder={isRuleBased ? '内置规则模式无需模型' : '选择模型...'} />
+                <Select.Icon>
+                  <ChevronDown className="h-3 w-3 text-[var(--color-text-muted)]" />
+                </Select.Icon>
+              </Select.Trigger>
+              <Select.Portal>
+                <Select.Content
+                  className="z-50 overflow-hidden rounded-[10px] bg-[var(--color-panel)] shadow-[0_10px_30px_rgba(0,0,0,0.35)] max-h-[260px]"
+                  position="popper"
+                  sideOffset={4}
+                >
+                  <Select.Viewport className="py-1 overflow-y-auto">
+                    {(currentProvider?.models ?? []).map((model) => (
+                      <Select.Item
+                        key={model.id}
+                        value={model.id}
+                        className="relative flex cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-xs text-[var(--color-text)] data-[highlighted]:bg-[var(--color-panel-alt)] data-[state=checked]:font-medium"
+                      >
+                        <Select.ItemIndicator className="absolute left-1 flex items-center justify-center">
+                          <Check className="h-3 w-3" />
+                        </Select.ItemIndicator>
+                        <Select.ItemText>{model.name}</Select.ItemText>
+                      </Select.Item>
+                    ))}
+                  </Select.Viewport>
+                </Select.Content>
+              </Select.Portal>
+            </Select.Root>
           </label>
         )}
 
@@ -292,11 +352,11 @@ export function AIConfigTab() {
 
       <div className="flex gap-3">
         <button
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending}
           className="aelin-btn aelin-btn-primary min-w-[96px]"
         >
-          {save.isPending ? '保存中...' : '保存配置'}
+          {saveMutation.isPending ? '保存中...' : '保存配置'}
         </button>
         <button
           onClick={() => test.mutate()}
