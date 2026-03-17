@@ -5,7 +5,7 @@ import { useLayoutStore } from '@/shared/stores/layoutStore'
 import { useChatStore } from '@/features/chat/stores/chatStore'
 import { useChatI18n } from '@/features/chat/chatI18n'
 import SettingsPage from '@/app/routes/SettingsPage'
-import { ChevronLeft, ChevronRight, Plus, Settings as SettingsIcon, SunMoon, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Settings as SettingsIcon, Sun, Moon, SunMoon, X } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { MODULE_NAV_ITEMS } from './moduleNav'
@@ -278,11 +278,15 @@ export function NavigationRail() {
           }}
           title="切换深浅色"
           aria-label="切换深浅色"
-          className="aelin-theme-switch"
+          className="aelin-rail-control aelin-theme-switch"
         >
-          <Switch.Thumb className="aelin-theme-switch-thumb">
-            <SunMoon size={14} />
-          </Switch.Thumb>
+          <span className="aelin-theme-switch-icon aelin-theme-switch-icon--sun">
+            <Sun size={11} />
+          </span>
+          <span className="aelin-theme-switch-icon aelin-theme-switch-icon--moon">
+            <Moon size={11} />
+          </span>
+          <Switch.Thumb className="aelin-theme-switch-thumb" />
         </Switch.Root>
         <button
           onClick={handleRailToggle}
