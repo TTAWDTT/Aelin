@@ -119,8 +119,8 @@ export function NavigationRail() {
                             : 'hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]'
                         )}
                       >
-                        <Icon size={18} />
-                        <span className="text-sm font-medium truncate">
+                        <Icon size={20} />
+                        <span className="text-[16px] font-semibold truncate">
                           {label}
                         </span>
                       </button>
@@ -155,7 +155,7 @@ export function NavigationRail() {
                                   type="button"
                                   onClick={() => switchSession(session.id)}
                                   className={cn(
-                                    'flex w-full items-center justify-between rounded-[999px] px-3.5 py-2.5 text-[15px] font-medium transition-all duration-150',
+                                    'flex w-full items-center justify-between rounded-[999px] px-3.5 py-2.5 text-[14px] font-medium transition-all duration-150',
                                     session.id === activeSessionId
                                       ? 'bg-[color-mix(in_srgb,var(--color-panel-alt)_56%,var(--color-panel)_44%)] text-[var(--color-text)] shadow-[0_12px_32px_-22px_rgba(0,0,0,0.85)]'
                                       : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)] hover:-translate-y-[1px] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
