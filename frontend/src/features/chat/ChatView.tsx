@@ -3,7 +3,6 @@ import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
 import { ComposerBar } from './components/ComposerBar'
-import { SessionTabs } from './components/SessionTabs'
 import { ChatStatusBar } from './components/ChatStatusBar'
 import { PageScaffold } from '@/shared/components/PageScaffold'
 import { ChatTimeline } from './components/ChatTimeline'
@@ -73,8 +72,6 @@ export function ChatView() {
       title={t('nav.title')}
       subtitle={t('nav.subtitle')}
       contentClassName="flex flex-1 min-h-0 flex-col p-0"
-      headerActionsFullWidth
-      headerActions={<SessionTabs wrap={compact} className="w-full min-w-0 max-w-full" />}
     >
       <ChatStatusBar isStreaming={isStreaming} statusText={statusText} compact={compact} />
       <ChatTimeline

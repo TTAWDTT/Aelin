@@ -6,9 +6,11 @@ type ThemeMode = 'light' | 'dark'
 interface LayoutStore {
   theme: ThemeMode
   navRailExpanded: boolean
+  sessionsVisible: boolean
   setTheme: (v: ThemeMode) => void
   setNavRailExpanded: (v: boolean) => void
   toggleNavRailExpanded: () => void
+  setSessionsVisible: (v: boolean) => void
   applyTheme: (v: ThemeMode) => void
 }
 
@@ -25,9 +27,11 @@ export const useLayoutStore = create<LayoutStore>()(
     (set) => ({
       theme: 'light',
       navRailExpanded: false,
+      sessionsVisible: true,
       setTheme: (v) => set({ theme: v }),
       setNavRailExpanded: (v) => set({ navRailExpanded: v }),
       toggleNavRailExpanded: () => set((state) => ({ navRailExpanded: !state.navRailExpanded })),
+      setSessionsVisible: (v) => set({ sessionsVisible: v }),
       applyTheme: (v) => applyTheme(v),
     }),
     {
