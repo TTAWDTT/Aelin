@@ -96,13 +96,19 @@ export function NavigationRail() {
 
             if (isChat) {
               const expanded = showSessions && active && navRailExpanded && hasSessions
-              return (
-                <div
-                  key={to}
-                  className={sharedClasses}
-                >
-                  {navRailExpanded ? (
-                    <>
+              if (navRailExpanded) {
+                return (
+                  <div
+                    key={to}
+                    className={cn(
+                      'aelin-rail-nav-item relative flex flex-col rounded-[22px] border transition-all duration-200',
+                      'w-full px-2.5 py-2',
+                      active
+                        ? 'border-[var(--color-nav-active-border)] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)] shadow-[0_16px_35px_-26px_var(--color-nav-active-shadow)]'
+                        : 'border-transparent text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:bg-[var(--color-accent-soft)] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={handleChatNavClick}
@@ -125,20 +131,74 @@ export function NavigationRail() {
                       >
                         <Plus size={12} />
                       </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleChatNavClick}
-                      title={label}
-                      aria-label={label}
-                      aria-expanded={expanded}
-                      className="flex h-full w-full items-center justify-center"
-                    >
-                      <Icon size={18} />
-                    </button>
-                  )}
-                </div>
+                    </div>
+
+                    {hasSessions && (
+                      <div
+                        className={cn(
+                          'mt-1.5 min-h-0 flex-1 overflow-hidden transition-all duration-200 ease-out',
+                          showSessions
+                            ? 'opacity-100 translate-y-0 max-h-[260px]'
+                            : 'opacity-0 -translate-y-1 max-h-0 pointer-events-none'
+                        )}
+                      >
+                        <div className="h-full overflow-y-auto pr-0.5 pt-0.5">
+                          <div className="flex flex-col gap-0.5">
+                            {sessions.map((session) => (
+                              <div
+                                key={session.id}
+                                className="group relative"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => switchSession(session.id)}
+                                  className={cn(
+                                    'flex w-full items-center justify-between rounded-[999px] px-2.5 py-1.5 text-[13px] font-medium transition-all duration-150',
+                                    session.id === activeSessionId
+                                      ? 'bg-[color-mix(in_srgb,var(--color-panel-alt)_56%,var(--color-panel)_44%)] text-[var(--color-text)] shadow-[0_12px_32px_-22px_rgba(0,0,0,0.85)]'
+                                      : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)] hover:-translate-y-[1px] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
+                                  )}
+                                  aria-label={t('session.switch', { title: session.title })}
+                                  title={session.title}
+                                >
+                                  <span className="mr-1 min-w-0 flex-1 truncate text-left">{session.title}</span>
+                                  {sessions.length > 1 && (
+                                    <span className="ml-1 inline-flex items-center opacity-0 transition-opacity group-hover:opacity-70 group-focus-within:opacity-70">
+                                      <X
+                                        size={10}
+                                        className="cursor-pointer"
+                                        onClick={(event) => {
+                                          event.stopPropagation()
+                                          deleteSession(session.id)
+                                        }}
+                                        aria-label={t('session.delete', { title: session.title })}
+                                      />
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+
+              // Collapsed rail: keep a single round icon button.
+              return (
+                <button
+                  key={to}
+                  type="button"
+                  onClick={handleChatNavClick}
+                  title={label}
+                  aria-label={label}
+                  aria-expanded={expanded}
+                  className={sharedClasses}
+                >
+                  <Icon size={18} />
+                </button>
               )
             }
 
@@ -158,65 +218,7 @@ export function NavigationRail() {
           })}
         </div>
 
-        {navRailExpanded && (
-          <div className="mt-2 flex min-h-0 flex-1 flex-col rounded-[18px] bg-[color-mix(in_srgb,var(--color-panel-alt)_32%,var(--color-panel)_68%)] p-2">
-            {hasSessions ? (
-              <div
-                className={cn(
-                  'min-h-0 flex-1 overflow-hidden transition-all duration-200 ease-out',
-                  showSessions
-                    ? 'opacity-100 translate-y-0'
-                    : 'opacity-0 -translate-y-1 pointer-events-none'
-                )}
-              >
-                <div className="h-full overflow-y-auto pr-0.5">
-                  <div className="flex flex-col gap-0.5">
-                    {sessions.map((session) => (
-                      <div
-                        key={session.id}
-                        className="group relative"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => switchSession(session.id)}
-                        className={cn(
-                          'flex w-full items-center justify-between rounded-[999px] px-2.5 py-1.5 text-[13px] font-medium transition-all duration-150',
-                          session.id === activeSessionId
-                            ? 'bg-[color-mix(in_srgb,var(--color-panel-alt)_56%,var(--color-panel)_44%)] text-[var(--color-text)] shadow-[0_12px_32px_-22px_rgba(0,0,0,0.85)]'
-                            : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)] hover:-translate-y-[1px] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
-                        )}
-                          aria-label={t('session.switch', { title: session.title })}
-                          title={session.title}
-                        >
-                          <span className="mr-1 min-w-0 flex-1 truncate text-left">{session.title}</span>
-                          {sessions.length > 1 && (
-                            <span className="ml-1 inline-flex items-center opacity-0 transition-opacity group-hover:opacity-70 group-focus-within:opacity-70">
-                              <X
-                                size={10}
-                                className="cursor-pointer"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  deleteSession(session.id)
-                                }}
-                                aria-label={t('session.delete', { title: session.title })}
-                              />
-                            </span>
-                          )}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-1 flex flex-1 items-center justify-center rounded-[14px] border border-dashed border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-[11px] text-[var(--color-text-muted)]">
-                <span className="px-2 py-1 text-center">
-                  {t('empty.title')}
-                </span>
-              </div>
-            )}
-          </div>
-        )}
+        {/* sessions 列表现在完全挂在 Chat 导航项内部，这里不再额外渲染独立卡片 */}
       </div>
 
       <div className={cn('mt-auto flex flex-col gap-3', navRailExpanded ? 'w-full px-1' : 'items-center')}>
