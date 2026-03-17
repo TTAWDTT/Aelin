@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FlaskConical } from 'lucide-react'
+import * as Select from '@radix-ui/react-select'
+import * as Slider from '@radix-ui/react-slider'
+import { Check, ChevronDown, FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { agentApi } from '@/shared/api/agent'
 import type { AgentConfigUpdate } from '@/shared/api/types'
+import { useLocaleStore } from '@/shared/stores/localeStore'
 
 type AgentFormState = {
   providerChoice: string
@@ -27,22 +30,29 @@ function normalizeProvider(value: string | undefined | null): string {
   return key
 }
 
-function parseTemperature(rawValue: string): number {
-  if (!rawValue.trim()) {
-    throw new Error('请填写随机度，范围为 0 到 2')
+function parseTemperature(rawValue: string, isZh: boolean): number {
+  const trimmed = rawValue.trim()
+  if (!trimmed) {
+    throw new Error(
+      isZh ? '请填写随机度，范围为 0 到 2' : 'Please enter a temperature value between 0 and 2.'
+    )
   }
-  const parsed = Number(rawValue)
+  const parsed = Number(trimmed)
   if (!Number.isFinite(parsed)) {
-    throw new Error('随机度必须是 0 到 2 之间的数字')
+    throw new Error(
+      isZh ? '随机度必须是 0 到 2 之间的数字' : 'Temperature must be a numeric value between 0 and 2.'
+    )
   }
   if (parsed < 0 || parsed > 2) {
-    throw new Error('随机度必须在 0 到 2 之间')
+    throw new Error(isZh ? '随机度必须在 0 到 2 之间' : 'Temperature must be between 0 and 2.')
   }
   return parsed
 }
 
 export function AIConfigTab() {
   const qc = useQueryClient()
+  const { locale } = useLocaleStore()
+  const isZh = locale === 'zh'
 
   const { data: config, isLoading } = useQuery({
     queryKey: ['agent-config'],
@@ -57,7 +67,9 @@ export function AIConfigTab() {
   const providers = catalog?.providers ?? []
 
   const providerOptions = useMemo(() => {
-    const options: Array<{ id: string; label: string }> = [{ id: RULE_BASED_PROVIDER, label: '内置规则' }]
+    const options: Array<{ id: string; label: string }> = [
+      { id: RULE_BASED_PROVIDER, label: isZh ? '内置规则' : 'Built-in rules' },
+    ]
     const seen = new Set<string>([RULE_BASED_PROVIDER])
 
     for (const provider of providers) {
@@ -72,11 +84,11 @@ export function AIConfigTab() {
 
     options.push({
       id: CUSTOM_PROVIDER_OPTION,
-      label: '自定义提供商（手动填写）',
+      label: isZh ? '自定义提供商（手动填写）' : 'Custom provider (manual)',
     })
 
     return options
-  }, [providers])
+  }, [providers, isZh])
 
   const [form, setForm] = useState<AgentFormState>({
     providerChoice: '',
@@ -124,11 +136,11 @@ export function AIConfigTab() {
     (provider) => normalizeProvider(provider.id) === resolvedProvider
   )
 
-  const save = useMutation({
+  const saveMutation = useMutation({
     mutationFn: () => {
-      if (!resolvedProvider) throw new Error('请先选择提供商')
+      if (!resolvedProvider) throw new Error(isZh ? '请先选择提供商' : 'Please choose a provider first.')
       if (isCustomProvider && !form.customProviderId.trim()) {
-        throw new Error('请填写自定义 Provider ID')
+        throw new Error(isZh ? '请填写自定义 Provider ID' : 'Please fill in a custom Provider ID.')
       }
       const baseUrl = form.base_url.trim()
       const modelValue = form.model.trim()
@@ -140,83 +152,139 @@ export function AIConfigTab() {
       if (!isRuleBased) {
         body.base_url = baseUrl || undefined
         body.model = modelValue || undefined
-        body.temperature = parseTemperature(form.temperature)
+        body.temperature = parseTemperature(form.temperature, isZh)
       }
       if (form.api_key.trim()) body.api_key = form.api_key.trim()
       return agentApi.updateConfig(body)
     },
     onSuccess: () => {
-      toast.success('已保存')
+      toast.success(isZh ? '已保存' : 'Saved')
       setForm((prev) => ({ ...prev, api_key: '' }))
       qc.invalidateQueries({ queryKey: ['agent-config'] })
     },
     onError: (error: unknown) => {
-      toast.error(error instanceof Error ? error.message : '保存失败')
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : isZh
+            ? '保存失败'
+            : 'Save failed'
+      )
     },
   })
 
   const test = useMutation({
     mutationFn: agentApi.test,
     onSuccess: (res) => {
-      if (res.ok) toast.success(`✓ ${res.message}`)
-      else toast.error(`✗ ${res.message}`)
+      if (res.ok) {
+        toast.success(`✓ ${res.message}`)
+      } else {
+        toast.error(`✗ ${res.message}`)
+      }
     },
-    onError: () => toast.error('测试失败'),
+    onError: () => toast.error(isZh ? '测试失败' : 'Test failed'),
   })
 
   if (isLoading) {
-    return <div className="text-sm text-[var(--color-text-muted)]">加载中...</div>
+    return (
+      <div className="text-sm text-[var(--color-text-muted)]">
+        {isZh ? '加载中...' : 'Loading...'}
+      </div>
+    )
   }
 
   return (
     <div className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-2">
         <label className="block text-xs space-y-1">
-        <span className="text-[var(--color-text-muted)]">服务商</span>
-        <select
-          value={form.providerChoice}
-          onChange={(event) =>
-            setForm((prev) => ({
-              ...prev,
-              providerChoice: event.target.value,
-              customProviderId:
-                event.target.value === CUSTOM_PROVIDER_OPTION ? prev.customProviderId : '',
-              model: '',
-            }))
-          }
-          className="aelin-select"
-        >
-          <option value="">选择提供商...</option>
-          {providerOptions.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.label}
-            </option>
-          ))}
-        </select>
+          <span className="text-[var(--color-text-muted)]">
+            {isZh ? '服务商' : 'Provider'}
+          </span>
+          <Select.Root
+            value={form.providerChoice || undefined}
+            onValueChange={(value) =>
+              setForm((prev) => ({
+                ...prev,
+                providerChoice: value,
+                customProviderId: value === CUSTOM_PROVIDER_OPTION ? prev.customProviderId : '',
+                model: '',
+              }))
+            }
+          >
+            <Select.Trigger className="aelin-select flex items-center justify-between px-3 py-[0.4rem] text-xs">
+              <Select.Value placeholder={isZh ? '选择提供商...' : 'Choose a provider...'} />
+              <Select.Icon>
+                <ChevronDown className="h-3 w-3 text-[var(--color-text-muted)]" />
+              </Select.Icon>
+            </Select.Trigger>
+            <Select.Portal>
+              <Select.Content
+                className="z-50 overflow-hidden rounded-[10px] bg-[var(--color-panel)] shadow-[0_10px_30px_rgba(0,0,0,0.35)] max-h-[260px]"
+                position="popper"
+                sideOffset={4}
+              >
+                <Select.Viewport className="py-1 overflow-y-auto">
+                  {providerOptions.map((provider) => (
+                    <Select.Item
+                      key={provider.id}
+                      value={provider.id}
+                      className="relative flex cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-xs text-[var(--color-text)] data-[highlighted]:bg-[var(--color-panel-alt)] data-[state=checked]:font-medium"
+                    >
+                      <Select.ItemIndicator className="absolute left-1 flex items-center justify-center">
+                        <Check className="h-3 w-3" />
+                      </Select.ItemIndicator>
+                      <Select.ItemText>{provider.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Viewport>
+              </Select.Content>
+            </Select.Portal>
+          </Select.Root>
         </label>
 
         <label className="block text-xs space-y-1">
-          <span className="text-[var(--color-text-muted)]">随机度（Temperature）</span>
-          <input
-            type="number"
-            min="0"
-            max="2"
-            step="0.1"
-            value={form.temperature}
-            onChange={(event) => setForm((prev) => ({ ...prev, temperature: event.target.value }))}
-            className="aelin-input"
-            disabled={isRuleBased}
-          />
+          <span className="text-[var(--color-text-muted)]">
+            {isZh ? '随机度（Temperature）' : 'Randomness (Temperature)'}
+          </span>
+          <div className="flex items-center gap-3">
+            <Slider.Root
+              className="relative flex h-5 w-full touch-none select-none items-center"
+              min={0}
+              max={2}
+              step={0.1}
+              value={[
+                (() => {
+                  const n = Number(form.temperature)
+                  return Number.isFinite(n) ? n : 0.5
+                })(),
+              ]}
+              onValueChange={(values) => {
+                const v = values[0] ?? 0.5
+                setForm((prev) => ({ ...prev, temperature: v.toFixed(1) }))
+              }}
+              disabled={isRuleBased}
+            >
+              <Slider.Track className="relative h-[3px] flex-1 rounded-full bg-[color-mix(in_srgb,var(--color-panel-alt)_75%,transparent_25%)]">
+                <Slider.Range className="absolute h-full rounded-full bg-[var(--color-accent)]" />
+              </Slider.Track>
+              <Slider.Thumb className="block h-3.5 w-3.5 rounded-full bg-[var(--color-text)] shadow-[0_0_0_1px_rgba(255,255,255,0.4)] focus:outline-none" />
+            </Slider.Root>
+            <span className="w-10 text-right text-xs text-[var(--color-text-muted)]">
+              {form.temperature || '0.5'}
+            </span>
+          </div>
         </label>
       </div>
 
       {isCustomProvider && (
         <label className="block text-xs space-y-1">
-          <span className="text-[var(--color-text-muted)]">自定义 Provider ID</span>
+          <span className="text-[var(--color-text-muted)]">
+            {isZh ? '自定义 Provider ID' : 'Custom Provider ID'}
+          </span>
           <input
             value={form.customProviderId}
             onChange={(event) => setForm((prev) => ({ ...prev, customProviderId: event.target.value }))}
-            placeholder="例如: doubao"
+            placeholder={isZh ? '例如: doubao' : 'e.g. doubao'}
             className="aelin-input"
           />
         </label>
@@ -225,52 +293,103 @@ export function AIConfigTab() {
       <div className="grid gap-4 lg:grid-cols-2">
         {isCustomProvider ? (
           <label className="block text-xs space-y-1">
-          <span className="text-[var(--color-text-muted)]">模型</span>
-          <input
-            value={form.model}
-            onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
-            placeholder={isRuleBased ? '内置规则模式可留空' : '请输入模型 ID'}
-            className="aelin-input"
-            disabled={isRuleBased}
-          />
+            <span className="text-[var(--color-text-muted)]">
+              {isZh ? '模型' : 'Model'}
+            </span>
+            <input
+              value={form.model}
+              onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
+              placeholder={
+                isRuleBased
+                  ? isZh
+                    ? '内置规则模式可留空'
+                    : 'Built-in mode can leave blank'
+                  : isZh
+                    ? '请输入模型 ID'
+                    : 'Enter model ID'
+              }
+              className="aelin-input"
+              disabled={isRuleBased}
+            />
           </label>
         ) : (
           <label className="block text-xs space-y-1">
-          <span className="text-[var(--color-text-muted)]">模型</span>
-          <select
-            value={form.model}
-            onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
-            className="aelin-select"
-            disabled={isRuleBased || !currentProvider}
-          >
-            <option value="">{isRuleBased ? '内置规则模式无需模型' : '选择模型...'}</option>
-            {(currentProvider?.models ?? []).map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-              ))}
-          </select>
+            <span className="text-[var(--color-text-muted)]">
+              {isZh ? '模型' : 'Model'}
+            </span>
+            <Select.Root
+              value={form.model || undefined}
+              onValueChange={(value) => setForm((prev) => ({ ...prev, model: value }))}
+              disabled={isRuleBased || !currentProvider}
+            >
+              <Select.Trigger className="aelin-select flex items-center justify-between px-3 py-[0.4rem] text-xs disabled:opacity-50">
+                <Select.Value
+                  placeholder={
+                    isRuleBased
+                      ? isZh
+                        ? '内置规则模式无需模型'
+                        : 'Built-in mode does not require a model'
+                      : isZh
+                        ? '选择模型...'
+                        : 'Choose a model...'
+                  }
+                />
+                <Select.Icon>
+                  <ChevronDown className="h-3 w-3 text-[var(--color-text-muted)]" />
+                </Select.Icon>
+              </Select.Trigger>
+              <Select.Portal>
+                <Select.Content
+                  className="z-50 overflow-hidden rounded-[10px] bg-[var(--color-panel)] shadow-[0_10px_30px_rgba(0,0,0,0.35)] max-h-[260px]"
+                  position="popper"
+                  sideOffset={4}
+                >
+                  <Select.Viewport className="py-1 overflow-y-auto">
+                    {(currentProvider?.models ?? []).map((model) => (
+                      <Select.Item
+                        key={model.id}
+                        value={model.id}
+                        className="relative flex cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-xs text-[var(--color-text)] data-[highlighted]:bg-[var(--color-panel-alt)] data-[state=checked]:font-medium"
+                      >
+                        <Select.ItemIndicator className="absolute left-1 flex items-center justify-center">
+                          <Check className="h-3 w-3" />
+                        </Select.ItemIndicator>
+                        <Select.ItemText>{model.name}</Select.ItemText>
+                      </Select.Item>
+                    ))}
+                  </Select.Viewport>
+                </Select.Content>
+              </Select.Portal>
+            </Select.Root>
           </label>
         )}
 
         <label className="block text-xs space-y-1">
-        <span className="text-[var(--color-text-muted)]">接口地址（Base URL）</span>
-        <input
-          value={form.base_url}
-          onChange={(event) => setForm((prev) => ({ ...prev, base_url: event.target.value }))}
-          placeholder="留空则使用默认地址"
-          className="aelin-input"
-          disabled={isRuleBased}
-        />
+          <span className="text-[var(--color-text-muted)]">
+            {isZh ? '接口地址（Base URL）' : 'Base URL'}
+          </span>
+          <input
+            value={form.base_url}
+            onChange={(event) => setForm((prev) => ({ ...prev, base_url: event.target.value }))}
+            placeholder={isZh ? '留空则使用默认地址' : 'Leave empty to use the default URL'}
+            className="aelin-input"
+            disabled={isRuleBased}
+          />
         </label>
       </div>
 
       <label className="block text-xs space-y-1">
-        <span className="text-[var(--color-text-muted)]">联网搜索代理（可选）</span>
+        <span className="text-[var(--color-text-muted)]">
+          {isZh ? '联网搜索代理（可选）' : 'Web search proxy (optional)'}
+        </span>
         <input
           value={form.web_search_proxy_url}
           onChange={(event) => setForm((prev) => ({ ...prev, web_search_proxy_url: event.target.value }))}
-          placeholder="例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+          placeholder={
+            isZh
+              ? '例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080'
+              : 'e.g. http://127.0.0.1:7890 or socks5://127.0.0.1:1080'
+          }
           className="aelin-input"
         />
       </label>
@@ -278,13 +397,25 @@ export function AIConfigTab() {
       <label className="block text-xs space-y-1">
         <span className="text-[var(--color-text-muted)]">
           API Key
-          {config?.has_api_key && <span className="text-[var(--color-green)]">（留空则沿用已保存 Key）</span>}
+          {config?.has_api_key && (
+            <span className="text-[var(--color-green)]">
+              {isZh ? '（留空则沿用已保存 Key）' : ' (leave empty to reuse saved key)'}
+            </span>
+          )}
         </span>
         <input
           type="password"
           value={form.api_key}
           onChange={(event) => setForm((prev) => ({ ...prev, api_key: event.target.value }))}
-          placeholder={config?.has_api_key ? '输入新 Key 覆盖' : '输入 API Key'}
+          placeholder={
+            config?.has_api_key
+              ? isZh
+                ? '输入新 Key 覆盖'
+                : 'Enter a new key to overwrite'
+              : isZh
+                ? '输入 API Key'
+                : 'Enter API Key'
+          }
           className="aelin-input"
           disabled={isRuleBased}
         />
@@ -292,11 +423,11 @@ export function AIConfigTab() {
 
       <div className="flex gap-3">
         <button
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending}
           className="aelin-btn aelin-btn-primary min-w-[96px]"
         >
-          {save.isPending ? '保存中...' : '保存配置'}
+          {saveMutation.isPending ? (isZh ? '保存中...' : 'Saving...') : isZh ? '保存配置' : 'Save config'}
         </button>
         <button
           onClick={() => test.mutate()}
@@ -304,7 +435,7 @@ export function AIConfigTab() {
           className="aelin-btn flex min-w-[96px] items-center gap-1.5"
         >
           <FlaskConical size={14} />
-          {test.isPending ? '测试中...' : '测试连接'}
+          {test.isPending ? (isZh ? '测试中...' : 'Testing...') : isZh ? '测试连接' : 'Test connection'}
         </button>
       </div>
 
@@ -315,7 +446,9 @@ export function AIConfigTab() {
           rel="noreferrer"
           className="block text-[11px] text-[var(--color-accent)] hover:underline"
         >
-          查看 {currentProvider.name} 文档 →
+          {isZh ? '查看 ' : 'View '}
+          {currentProvider.name}
+          {isZh ? ' 文档 →' : ' docs →'}
         </a>
       )}
     </div>

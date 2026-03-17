@@ -1,62 +1,68 @@
 @import "tailwindcss";
 
 @theme {
-  --font-heading: 'Poppins', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-body: 'Lora', 'Noto Serif SC', 'Songti SC', 'STSong', serif;
+  --font-heading: 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-body: 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Consolas', monospace;
 }
 
 :root {
-  --color-bg: #faf9f5;
-  --color-bg-elevated: #f5f4f0;
+  /* Light theme: 以黑白灰为主的极简配色 */
+  --color-bg: #f5f5f5;
+  --color-bg-elevated: #f0f0f0;
   --color-panel: #ffffff;
-  --color-panel-alt: #f5f4f0;
-  --color-text: #141413;
-  --color-text-muted: #8f8b82;
-  --color-border: #e8e6dc;
-  --color-border-strong: #b0aea5;
-  --color-accent: #141413;
-  --color-accent-soft: #efede5;
-  --color-orange: #d97757;
-  --color-blue: #6a9bcc;
-  --color-green: #788c5d;
+  --color-panel-alt: #f2f2f2;
+  --color-text: #111111;
+  --color-text-muted: #777777;
+  --color-border: #e0e0e0;
+  --color-border-strong: #b0b0b0;
+  --color-accent: #111111;
+  --color-accent-soft: #e5e5e5;
+  /* 语义色保留，但整体降低饱和度 */
+  --color-orange: #e27c4a;
+  --color-blue: #4b82c3;
+  --color-green: #4f8c5c;
   --color-danger: #ef4444;
-  --color-warning: #d97757;
-  --color-nav-active-bg: #efe4c8;
-  --color-nav-active-border: #e2d3a8;
-  --color-nav-active-text: #705627;
-  --color-nav-active-shadow: rgba(143, 115, 56, 0.22);
-  --color-primary-soft: #dcc18a;
-  --color-primary-soft-hover: #d3b576;
-  --color-primary-soft-text: #4a3710;
+  --color-warning: #f59e0b;
+  /* 导航激活与主按钮使用中性灰而非黄色 */
+  --color-nav-active-bg: #e5e5e5;
+  --color-nav-active-border: #cfcfcf;
+  --color-nav-active-text: #111111;
+  --color-nav-active-shadow: rgba(0, 0, 0, 0.08);
+  --color-primary-soft: #222222;
+  --color-primary-soft-hover: #000000;
+  --color-primary-soft-text: #ffffff;
   --radius-sm: 10px;
   --radius-md: 12px;
   --radius-lg: 16px;
 }
 
 [data-theme='dark'] {
-  --color-bg: #141413;
-  --color-bg-elevated: #1b1b1a;
-  --color-panel: #1e1e1d;
-  --color-panel-alt: #252523;
-  --color-text: #faf9f5;
-  --color-text-muted: #a6a39b;
-  --color-border: #2a2a28;
-  --color-border-strong: #4a4a47;
-  --color-accent: #faf9f5;
-  --color-accent-soft: #2a2a28;
-  --color-orange: #e8956a;
-  --color-blue: #8bb4d9;
-  --color-green: #9aad7e;
+  /* Dark theme: 纯黑白灰基调，带少量语义色 */
+  --color-bg: #111111;
+  --color-bg-elevated: #151515;
+  --color-panel: #181818;
+  --color-panel-alt: #222222;
+  --color-text: #f5f5f5;
+  --color-text-muted: #a0a0a0;
+  --color-border: #262626;
+  --color-border-strong: #444444;
+  --color-accent: #f5f5f5;
+  --color-accent-soft: #2b2b2b;
+  --color-orange: #f2995f;
+  --color-blue: #5f9bd8;
+  --color-green: #6bab78;
   --color-danger: #f87171;
   --color-warning: #fbbf24;
-  --color-nav-active-bg: rgba(214, 189, 128, 0.16);
-  --color-nav-active-border: rgba(224, 201, 146, 0.2);
-  --color-nav-active-text: #f3dfb0;
-  --color-nav-active-shadow: rgba(209, 181, 114, 0.18);
-  --color-primary-soft: #9f8350;
-  --color-primary-soft-hover: #ae9360;
-  --color-primary-soft-text: #fff3d1;
+  --color-nav-active-bg: rgba(255, 255, 255, 0.06);
+  --color-nav-active-border: rgba(255, 255, 255, 0.12);
+  --color-nav-active-text: #ffffff;
+  --color-nav-active-shadow: rgba(0, 0, 0, 0.4);
+  --color-primary-soft: #f5f5f5;
+  --color-primary-soft-hover: #ffffff;
+  --color-primary-soft-text: #111111;
 }
 
 html, body, #root {
@@ -82,6 +88,18 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 code, pre, .font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Ensure markdown/prose content (chat messages, docs) all use body font by default */
+.prose,
+.prose * {
+  font-family: var(--font-body);
+}
+
+/* But keep code blocks and inline code in monospace for readability */
+.prose code,
+.prose pre {
   font-family: var(--font-mono);
 }
 
@@ -116,23 +134,17 @@ code, pre, .font-mono {
 }
 
 .aelin-sidebar {
-  border: 1px solid color-mix(in srgb, var(--color-border) 85%, white 15%);
   border-radius: 24px;
-  background: color-mix(in srgb, var(--color-panel) 94%, transparent);
-  box-shadow:
-    0 28px 60px -42px rgba(27, 24, 16, 0.28),
-    0 10px 22px -18px rgba(27, 24, 16, 0.18);
+  background: color-mix(in srgb, var(--color-panel) 96%, transparent);
+  box-shadow: none;
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
 
 .aelin-shell-main {
-  border: 1px solid color-mix(in srgb, var(--color-border) 88%, white 12%);
   border-radius: 24px;
   background: color-mix(in srgb, var(--color-panel) 96%, transparent);
-  box-shadow:
-    0 34px 80px -52px rgba(27, 24, 16, 0.32),
-    0 14px 30px -22px rgba(27, 24, 16, 0.18);
+  box-shadow: none;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
 }
@@ -150,7 +162,6 @@ code, pre, .font-mono {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid var(--color-border);
   padding: 14px 16px;
 }
 
@@ -183,11 +194,10 @@ code, pre, .font-mono {
   align-items: center;
   justify-content: center;
   align-self: center;
-  border: 1px solid color-mix(in srgb, var(--color-border) 88%, white 12%);
   border-radius: 18px;
   background: color-mix(in srgb, var(--color-panel) 92%, transparent);
   color: var(--color-text-muted);
-  box-shadow: 0 14px 26px -22px rgba(27, 24, 16, 0.32);
+  box-shadow: none;
   transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease, color 140ms ease;
 }
 
@@ -203,23 +213,21 @@ code, pre, .font-mono {
 }
 
 .aelin-card {
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-panel);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: box-shadow 140ms ease, background-color 140ms ease;
 }
 
 .aelin-card:hover {
-  border-color: var(--color-border-strong);
+  background: color-mix(in srgb, var(--color-panel-alt) 24%, var(--color-panel) 76%);
 }
 
 .aelin-input,
 .aelin-select,
 .aelin-textarea {
   width: 100%;
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-panel);
+  background: color-mix(in srgb, var(--color-panel-alt) 30%, var(--color-panel) 70%);
   color: var(--color-text);
   font-size: 0.875rem;
   line-height: 1.45;
@@ -247,8 +255,7 @@ code, pre, .font-mono {
 .aelin-input:focus,
 .aelin-select:focus,
 .aelin-textarea:focus {
-  border-color: var(--color-border-strong);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 .aelin-btn {
@@ -259,8 +266,8 @@ code, pre, .font-mono {
   height: 36px;
   padding: 0 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-panel);
+  border: none;
+  background: color-mix(in srgb, var(--color-panel-alt) 40%, var(--color-panel) 60%);
   color: var(--color-text);
   font-size: 0.78rem;
   font-weight: 500;
@@ -268,7 +275,7 @@ code, pre, .font-mono {
 }
 
 .aelin-btn:hover {
-  background: var(--color-accent-soft);
+  background: color-mix(in srgb, var(--color-accent-soft) 40%, var(--color-panel) 60%);
   transform: translateY(-1px);
 }
 
@@ -282,22 +289,20 @@ code, pre, .font-mono {
 }
 
 .aelin-btn-primary {
-  border-color: color-mix(in srgb, var(--color-primary-soft) 82%, var(--color-border) 18%);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary-soft) 92%, white 8%) 0%, var(--color-primary-soft) 100%);
+  border: none;
+  background: var(--color-primary-soft);
   color: var(--color-primary-soft-text);
-  box-shadow: 0 14px 26px -20px color-mix(in srgb, var(--color-primary-soft) 52%, transparent);
+  box-shadow: none;
 }
 
 .aelin-btn-primary:hover {
   opacity: 1;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-primary-soft-hover) 92%, white 8%) 0%, var(--color-primary-soft-hover) 100%);
-  border-color: color-mix(in srgb, var(--color-primary-soft-hover) 82%, var(--color-border) 18%);
+  background: var(--color-primary-soft-hover);
 }
 
 .aelin-segment {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--color-border);
   border-radius: 999px;
   padding: 2px;
   background: var(--color-panel);
@@ -318,7 +323,14 @@ code, pre, .font-mono {
 }
 
 .aelin-list-divider > * + * {
-  border-top: 1px solid var(--color-border);
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    color-mix(in srgb, var(--color-border) 60%, transparent) 12%,
+    color-mix(in srgb, var(--color-border) 90%, transparent) 50%,
+    color-mix(in srgb, var(--color-border) 60%, transparent) 88%,
+    transparent 100%
+  );
 }
 
 .aelin-avatar {
@@ -328,7 +340,6 @@ code, pre, .font-mono {
   justify-content: center;
   border-radius: 50%;
   padding: 0;
-  border: 1px solid var(--color-border);
   background: var(--color-panel);
 }
 
@@ -372,10 +383,6 @@ code, pre, .font-mono {
 
 .chat-elevate {
   transition: none;
-}
-
-.chat-elevate:hover {
-  border-color: inherit;
 }
 
 @media (max-width: 640px) {

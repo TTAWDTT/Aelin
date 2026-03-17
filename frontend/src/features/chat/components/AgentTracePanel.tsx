@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import type { AelinToolStep } from '@/shared/api/types'
 import { cn } from '@/shared/utils/cn'
+import { useChatI18n } from '../chatI18n'
 
 const STEP_ICON: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   intent_lens: Brain,
@@ -25,13 +26,6 @@ const STEP_ICON: Record<string, React.ComponentType<{ size?: number; className?:
   message_hub: CircleDashed,
   generation: Sparkles,
   reply_verifier: CheckCircle2,
-}
-
-const STATUS_TEXT: Record<string, string> = {
-  running: '进行中',
-  completed: '完成',
-  skipped: '跳过',
-  failed: '失败',
 }
 
 function compactTrace(trace: AelinToolStep[]): AelinToolStep[] {
@@ -71,6 +65,7 @@ export function AgentTracePanel({
   const preview = items.slice(-4)
   const runningCount = items.filter((it) => String(it.status || '').toLowerCase() === 'running').length
   const isRunning = live || runningCount > 0
+  const { t } = useChatI18n()
 
   useEffect(() => {
     if (live) setOpen(true)
@@ -98,9 +93,11 @@ export function AgentTracePanel({
       >
         <div className="flex items-center gap-2">
           <span className={cn('inline-flex h-2 w-2 rounded-full', live || runningCount ? 'animate-pulse bg-[var(--color-accent)]' : 'bg-[var(--color-text-muted)]')} />
-          <span className="truncate text-[11px] font-semibold tracking-wide text-[var(--color-text)]">Agent 链路</span>
+          <span className="truncate text-[11px] font-semibold tracking-wide text-[var(--color-text)]">
+            {t('trace.title')}
+          </span>
           <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
-            {items.length} 步
+            {t('trace.steps', { count: items.length })}
           </span>
         </div>
         {open ? <ChevronUp size={14} className="text-[var(--color-text-muted)]" /> : <ChevronDown size={14} className="text-[var(--color-text-muted)]" />}
@@ -143,7 +140,19 @@ export function AgentTracePanel({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
-                        <span className="text-[10px] text-[var(--color-text-muted)]">{(STATUS_TEXT[status] ?? status) || '未知'}</span>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          {t(
+                            status === 'running'
+                              ? 'trace.status.running'
+                              : status === 'completed'
+                                ? 'trace.status.completed'
+                                : status === 'skipped'
+                                  ? 'trace.status.skipped'
+                                  : status === 'failed'
+                                    ? 'trace.status.failed'
+                                    : 'trace.status.unknown'
+                          )}
+                        </span>
                       </div>
                       {step.detail && (
                         <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">

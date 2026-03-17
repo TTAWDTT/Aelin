@@ -13,6 +13,7 @@ import {
   resolveExpressionSticker,
 } from './messageBubbleUtils'
 import { useMessageBubbleActions } from '../hooks/useMessageBubbleActions'
+import { useLocaleStore } from '@/shared/stores/localeStore'
 
 interface MessageBubbleProps {
   message: ChatMessage
@@ -27,7 +28,13 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
-  const stickerLabel = message.expression ? (EXPRESSION_LABELS[message.expression] ?? 'Aelin 表情') : 'Aelin 表情'
+  const { locale } = useLocaleStore()
+  const isZh = locale === 'zh'
+  const stickerLabel = message.expression
+    ? EXPRESSION_LABELS[message.expression] ?? (isZh ? 'Aelin 表情' : 'Aelin expression')
+    : isZh
+      ? 'Aelin 表情'
+      : 'Aelin expression'
   const { confirmBrowser } = useMessageBubbleActions({ message, onQuickPrompt })
 
   return (
@@ -65,7 +72,7 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
               draggable={false}
             />
             <div className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-              <span>{thinkingText || 'Aelin 正在思考'}</span>
+              <span>{thinkingText || (isZh ? 'Aelin 正在思考' : 'Aelin is thinking')}</span>
               <span className="chat-thinking-dots" aria-hidden="true">
                 <i />
                 <i />

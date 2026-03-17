@@ -4,6 +4,7 @@ import { streamChat } from '@/shared/api/sse'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
+import { useChatI18n } from '../chatI18n'
 import {
   buildAssistantMessage,
   buildChatRequest,
@@ -21,6 +22,7 @@ import {
 export function useChatStream() {
   const store = useChatStore()
   const abortRef = useRef<(() => void) | null>(null)
+  const { t } = useChatI18n()
 
   const send = useCallback(
     (
@@ -38,7 +40,7 @@ export function useChatStream() {
       store.addMessage(sessionId, buildUserMessage(text, images))
       store.addMessage(sessionId, buildAssistantMessage())
       store.setStreaming(true)
-      store.setStatusText('正在思考…')
+      store.setStatusText(t('status.thinking'))
 
       maybeRenameFreshSession(store, sessionId, session, text, images, normalizedAttachmentIds)
 
@@ -63,57 +65,67 @@ export function useChatStream() {
 
       abortRef.current = cancel
     },
-    [store]
+    [store, t]
   )
 
-  const captureAndSend = useCallback(async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
-    if (store.isStreaming) return
-    store.setStatusText(mode === 'region' ? '等待框选截图…' : '正在全屏截图…')
-    try {
-      const capture = await aelinApi.deviceScreenCapture({ mode })
-      const prompt = String(textHint || '').trim()
-      send(prompt, [{ dataUrl: capture.data_url, name: capture.name || `screen-${Date.now()}.jpg` }])
-    } catch (error) {
-      store.setStatusText('')
-      throw error
-    }
-  }, [send, store])
-
-  const uploadAttachments = useCallback(async (files: File[]): Promise<AelinAttachmentUploadResponse[]> => {
-    if (store.isStreaming) return []
-    const picked = Array.from(files || []).slice(0, MAX_PENDING_ATTACHMENTS)
-    if (picked.length === 0) return []
-
-    let sessionId = store.activeSessionId
-    if (!sessionId) sessionId = store.createSession() || store.activeSessionId
-    const resolvedSessionId = String(sessionId || '')
-    const session = store.sessions.find(s => s.id === sessionId)
-    const workspace = session?.workspace || 'default'
-
-    store.setStatusText('附件处理中…')
-    try {
-      const settled = await Promise.allSettled(
-        picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId }))
+  const captureAndSend = useCallback(
+    async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
+      if (store.isStreaming) return
+      store.setStatusText(
+        mode === 'region' ? t('status.capture.region') : t('status.capture.fullscreen')
       )
-      const uploaded: AelinAttachmentUploadResponse[] = []
-      const failedNames: string[] = []
-      settled.forEach((item, index) => {
-        if (item.status === 'fulfilled') {
-          uploaded.push(item.value)
-          return
-        }
-        failedNames.push(picked[index]?.name || `attachment-${index + 1}`)
-      })
-      store.setStatusText('')
-      if (uploaded.length === 0 && failedNames.length > 0) {
-        throw new Error(`附件上传失败：${failedNames.join('、')}`)
+      try {
+        const capture = await aelinApi.deviceScreenCapture({ mode })
+        const prompt = String(textHint || '').trim()
+        send(prompt, [{ dataUrl: capture.data_url, name: capture.name || `screen-${Date.now()}.jpg` }])
+      } catch (error) {
+        store.setStatusText('')
+        throw error
       }
-      return uploaded
-    } catch (error) {
-      store.setStatusText('')
-      throw error
-    }
-  }, [store])
+    },
+    [send, store, t]
+  )
+
+  const uploadAttachments = useCallback(
+    async (files: File[]): Promise<AelinAttachmentUploadResponse[]> => {
+      if (store.isStreaming) return []
+      const picked = Array.from(files || []).slice(0, MAX_PENDING_ATTACHMENTS)
+      if (picked.length === 0) return []
+
+      let sessionId = store.activeSessionId
+      if (!sessionId) sessionId = store.createSession() || store.activeSessionId
+      const resolvedSessionId = String(sessionId || '')
+      const session = store.sessions.find(s => s.id === sessionId)
+      const workspace = session?.workspace || 'default'
+
+      store.setStatusText(t('status.attach.processing'))
+      try {
+        const settled = await Promise.allSettled(
+          picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId }))
+        )
+        const uploaded: AelinAttachmentUploadResponse[] = []
+        const failedNames: string[] = []
+        settled.forEach((item, index) => {
+          if (item.status === 'fulfilled') {
+            uploaded.push(item.value)
+            return
+          }
+          failedNames.push(picked[index]?.name || `attachment-${index + 1}`)
+        })
+        store.setStatusText('')
+        if (uploaded.length === 0 && failedNames.length > 0) {
+          throw new Error(
+            t('composer.attach.partialFail', { names: failedNames.join(', ') })
+          )
+        }
+        return uploaded
+      } catch (error) {
+        store.setStatusText('')
+        throw error
+      }
+    },
+    [store, t]
+  )
 
   const sendWithAttachments = useCallback(async (attachments: AelinAttachmentUploadResponse[], textHint = '') => {
     if (store.isStreaming) return
