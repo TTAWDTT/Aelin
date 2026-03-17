@@ -51,6 +51,17 @@ export function NavigationRail() {
   const showSessions = navRailExpanded && sessionsVisible
   const hasSessions = sessions.length > 0
 
+  const handleChatNewSession = () => {
+    if (!navRailExpanded) {
+      setNavRailExpanded(true)
+    }
+    setSessionsVisible(true)
+    createSession()
+    if (location.pathname !== '/') {
+      navigate('/')
+    }
+  }
+
   return (
     <nav
       className={cn(
@@ -76,32 +87,58 @@ export function NavigationRail() {
             const active = match ? match(location.pathname) : location.pathname.startsWith(to)
             const isChat = to === '/'
             const sharedClasses = cn(
-              'aelin-rail-nav-item relative flex h-12 items-center rounded-[22px] border transition-colors',
+              'aelin-rail-nav-item relative flex h-12 items-center rounded-[22px] border transition-all duration-150',
               navRailExpanded ? 'w-full gap-3 px-3.5 justify-start' : 'w-12 justify-center self-center',
               active
                 ? 'border-[var(--color-nav-active-border)] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)] shadow-[0_16px_35px_-26px_var(--color-nav-active-shadow)]'
-                : 'border-transparent text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:bg-[var(--color-accent-soft)]'
+                : 'border-transparent text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:bg-[var(--color-accent-soft)] hover:-translate-y-[1px] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
             )
 
             if (isChat) {
               const expanded = showSessions && active && navRailExpanded && hasSessions
               return (
-                <button
+                <div
                   key={to}
-                  type="button"
-                  onClick={handleChatNavClick}
-                  title={label}
-                  aria-label={label}
-                  aria-expanded={expanded}
                   className={sharedClasses}
                 >
-                  <Icon size={18} />
-                  {navRailExpanded && (
-                    <span className="text-sm font-medium truncate">
-                      {label}
-                    </span>
+                  {navRailExpanded ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleChatNavClick}
+                        title={label}
+                        aria-label={label}
+                        aria-expanded={expanded}
+                        className="flex flex-1 items-center gap-2 overflow-hidden text-left"
+                      >
+                        <Icon size={18} />
+                        <span className="text-sm font-medium truncate">
+                          {label}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleChatNewSession}
+                        title={t('session.new')}
+                        aria-label={t('session.new')}
+                        className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleChatNavClick}
+                      title={label}
+                      aria-label={label}
+                      aria-expanded={expanded}
+                      className="flex h-full w-full items-center justify-center"
+                    >
+                      <Icon size={18} />
+                    </button>
                   )}
-                </button>
+                </div>
               )
             }
 
@@ -123,20 +160,6 @@ export function NavigationRail() {
 
         {navRailExpanded && (
           <div className="mt-2 flex min-h-0 flex-1 flex-col rounded-[18px] bg-[color-mix(in_srgb,var(--color-panel-alt)_32%,var(--color-panel)_68%)] p-2">
-            <div className="mb-2 flex items-center gap-2 px-1 text-[12px] font-semibold text-[var(--color-text)]">
-              <span className="truncate">
-                {t('nav.title')}
-              </span>
-              <button
-                type="button"
-                onClick={() => createSession()}
-                className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]"
-                title={t('session.new')}
-                aria-label={t('session.new')}
-              >
-                <Plus size={12} />
-              </button>
-            </div>
             {hasSessions ? (
               <div
                 className={cn(
@@ -156,7 +179,7 @@ export function NavigationRail() {
                         <button
                           type="button"
                           onClick={() => switchSession(session.id)}
-                        className={cn(
+                          className={cn(
                           'flex w-full items-center justify-between rounded-[999px] px-2.5 py-1.5 text-[12px] font-medium transition-all duration-150',
                           session.id === activeSessionId
                             ? 'bg-[color-mix(in_srgb,var(--color-panel-alt)_56%,var(--color-panel)_44%)] text-[var(--color-text)] shadow-[0_12px_32px_-22px_rgba(0,0,0,0.85)]'
