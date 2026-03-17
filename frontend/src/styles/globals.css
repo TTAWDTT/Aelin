@@ -1,9 +1,25 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'LXGW WenKai Screen Local';
+  src: url('/fonts/LXGWWenKaiScreen-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'LXGW WenKai Local';
+  src: url('/fonts/LXGWWenKai-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
-  --font-heading: 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
+  --font-heading: 'LXGW WenKai Screen Local', 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-body: 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
+  --font-body: 'LXGW WenKai Local', 'LXGW WenKai Screen', '霞鹜文楷', 'LXGW WenKai', system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Consolas', monospace;
 }
