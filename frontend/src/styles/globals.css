@@ -140,7 +140,6 @@ code, pre, .font-mono {
   box-shadow: none;
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  transition: background-color 180ms ease, color 180ms ease;
 }
 
 .aelin-shell-main {
