@@ -75,6 +75,7 @@ html, body, #root {
   font-size: 15px;
   line-height: 1.62;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 body {
@@ -139,6 +140,7 @@ code, pre, .font-mono {
   box-shadow: none;
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 .aelin-shell-main {
@@ -147,6 +149,7 @@ code, pre, .font-mono {
   box-shadow: none;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 .aelin-page {
@@ -385,6 +388,60 @@ code, pre, .font-mono {
   transition: none;
 }
 
+/* Theme switch in rail */
+.aelin-theme-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  padding: 2px;
+  background: color-mix(in srgb, var(--color-panel-alt) 60%, var(--color-panel) 40%);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.aelin-theme-switch-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  transform: translateX(0);
+  transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1), background-color 160ms ease, color 160ms ease;
+}
+
+.aelin-theme-switch[data-state='checked'] {
+  background: color-mix(in srgb, var(--color-text) 16%, var(--color-panel-alt) 84%);
+}
+
+.aelin-theme-switch[data-state='checked'] .aelin-theme-switch-thumb {
+  transform: translateX(18px);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Settings dialog animations */
+.aelin-settings-overlay[data-state='open'] {
+  animation: aelin-fade-in 160ms ease-out;
+}
+
+.aelin-settings-overlay[data-state='closed'] {
+  animation: aelin-fade-out 130ms ease-in forwards;
+}
+
+.aelin-settings-content[data-state='open'] {
+  animation: aelin-slide-in-right 180ms ease-out;
+}
+
+.aelin-settings-content[data-state='closed'] {
+  animation: aelin-slide-out-right 140ms ease-in forwards;
+}
+
 @media (max-width: 640px) {
   .aelin-shell-main {
     border-radius: 18px;
@@ -486,6 +543,38 @@ code, pre, .font-mono {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes aelin-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes aelin-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes aelin-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes aelin-slide-out-right {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(16px);
   }
 }
 

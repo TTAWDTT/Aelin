@@ -1,5 +1,6 @@
 import { useLocation, useNavigate, NavLink } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
+import * as Switch from '@radix-ui/react-switch'
 import { useLayoutStore } from '@/shared/stores/layoutStore'
 import { useChatStore } from '@/features/chat/stores/chatStore'
 import { useChatI18n } from '@/features/chat/chatI18n'
@@ -25,8 +26,8 @@ export function NavigationRail() {
   const { sessions, activeSessionId, switchSession, createSession, deleteSession } = useChatStore()
   const { t } = useChatI18n()
 
-  const handleThemeToggle = () => {
-    const next = theme === 'dark' ? 'light' : 'dark'
+  const handleThemeToggle = (override?: 'light' | 'dark') => {
+    const next = override ?? (theme === 'dark' ? 'light' : 'dark')
     setTheme(next)
     applyTheme(next)
   }
@@ -236,10 +237,10 @@ export function NavigationRail() {
             </button>
           </Dialog.Trigger>
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 data-[state=closed]:opacity-0 data-[state=open]:opacity-100 transition-opacity" />
+            <Dialog.Overlay className="aelin-settings-overlay fixed inset-0 z-40 bg-black/40" />
             <Dialog.Content
               className={cn(
-                'fixed inset-y-6 right-6 z-50 flex w-[min(520px,100%-2.5rem)] max-w-full flex-col rounded-[24px] bg-[var(--color-panel)] shadow-[0_20px_60px_rgba(0,0,0,0.45)]',
+                'aelin-settings-content fixed inset-y-6 right-6 z-50 flex w-[min(520px,100%-2.5rem)] max-w-full flex-col rounded-[24px] bg-[var(--color-panel)] shadow-[0_20px_60px_rgba(0,0,0,0.45)]',
                 'outline-none'
               )}
             >
@@ -269,14 +270,20 @@ export function NavigationRail() {
           </Dialog.Portal>
         </Dialog.Root>
 
-        <button
-          onClick={handleThemeToggle}
+        <Switch.Root
+          checked={theme === 'dark'}
+          onCheckedChange={(checked) => {
+            const next = checked ? 'dark' : 'light'
+            handleThemeToggle(next)
+          }}
           title="切换深浅色"
           aria-label="切换深浅色"
-          className="aelin-rail-control"
+          className="aelin-theme-switch"
         >
-          <SunMoon size={18} />
-        </button>
+          <Switch.Thumb className="aelin-theme-switch-thumb">
+            <SunMoon size={14} />
+          </Switch.Thumb>
+        </Switch.Root>
         <button
           onClick={handleRailToggle}
           title={navRailExpanded ? '收起左栏' : '展开左栏'}
