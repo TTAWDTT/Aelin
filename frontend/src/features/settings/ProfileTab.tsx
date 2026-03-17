@@ -10,6 +10,7 @@ export function ProfileTab() {
   const fileRef = useRef<HTMLInputElement>(null)
   const { locale } = useLocaleStore()
   const isZh = locale === 'zh'
+  const lastSubmittedRef = useRef<{ email: string; password: string } | null>(null)
 
   const { data: user, isLoading } = useQuery({ queryKey: ['me'], queryFn: authApi.me })
 
@@ -23,8 +24,10 @@ export function ProfileTab() {
   const update = useMutation({
     mutationFn: () => {
       const body: Record<string, string> = {}
-      if (email.trim()) body.email = email
-      if (password.trim()) body.password = password
+      const trimmedEmail = email.trim()
+      const trimmedPassword = password.trim()
+      if (trimmedEmail) body.email = trimmedEmail
+      if (trimmedPassword) body.password = trimmedPassword
       return authApi.updateMe(body)
     },
     onSuccess: () => {
@@ -45,12 +48,19 @@ export function ProfileTab() {
   })
 
   const applyChanges = () => {
-    if (update.isPending) return
     const trimmedEmail = email.trim()
     const currentEmail = (user?.email ?? '').trim()
+    const trimmedPassword = password.trim()
+
+    // Avoid duplicate submissions for the same values (even if blur happens多次)
+    const last = lastSubmittedRef.current
+    if (last && last.email === trimmedEmail && last.password === trimmedPassword) return
+
     const hasEmailChange = trimmedEmail !== '' && trimmedEmail !== currentEmail
-    const hasPassword = password.trim().length > 0
+    const hasPassword = trimmedPassword.length > 0
     if (!hasEmailChange && !hasPassword) return
+
+    lastSubmittedRef.current = { email: trimmedEmail, password: trimmedPassword }
     update.mutate()
   }
 
