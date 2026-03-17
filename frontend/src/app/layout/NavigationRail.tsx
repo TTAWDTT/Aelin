@@ -135,49 +135,58 @@ export function NavigationRail() {
                 <Plus size={12} />
               </button>
             </div>
-            {showSessions && hasSessions ? (
-              <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
-                <div className="flex flex-col gap-0.5">
-                  {sessions.map((session) => (
-                    <div
-                      key={session.id}
-                      className="group relative"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => switchSession(session.id)}
-                        className={cn(
-                          'flex w-full items-center justify-between rounded-[999px] px-2 py-1.5 text-[11px] transition-colors',
-                          session.id === activeSessionId
-                            ? 'bg-black text-white'
-                            : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
-                        )}
-                        aria-label={t('session.switch', { title: session.title })}
-                        title={session.title}
+            {hasSessions ? (
+              <div
+                className={cn(
+                  'min-h-0 flex-1 overflow-hidden transition-all duration-200 ease-out',
+                  showSessions
+                    ? 'opacity-100 translate-y-0'
+                    : 'opacity-0 -translate-y-1 pointer-events-none'
+                )}
+              >
+                <div className="h-full overflow-y-auto pr-0.5">
+                  <div className="flex flex-col gap-0.5">
+                    {sessions.map((session) => (
+                      <div
+                        key={session.id}
+                        className="group relative"
                       >
-                        <span className="mr-1 min-w-0 flex-1 truncate text-left">{session.title}</span>
-                        {sessions.length > 1 && (
-                          <span className="ml-1 inline-flex items-center opacity-0 transition-opacity group-hover:opacity-70 group-focus-within:opacity-70">
-                            <X
-                              size={10}
-                              className="cursor-pointer"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                deleteSession(session.id)
-                              }}
-                              aria-label={t('session.delete', { title: session.title })}
-                            />
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  ))}
+                        <button
+                          type="button"
+                          onClick={() => switchSession(session.id)}
+                          className={cn(
+                            'flex w-full items-center justify-between rounded-[999px] px-2.5 py-1.5 text-[12px] font-medium transition-all duration-150',
+                            session.id === activeSessionId
+                              ? 'bg-[color-mix(in_srgb,var(--color-panel-alt)_56%,var(--color-panel)_44%)] text-[var(--color-text)] shadow-[0_12px_32px_-22px_rgba(0,0,0,0.85)]'
+                              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)] hover:-translate-y-[1px]'
+                          )}
+                          aria-label={t('session.switch', { title: session.title })}
+                          title={session.title}
+                        >
+                          <span className="mr-1 min-w-0 flex-1 truncate text-left">{session.title}</span>
+                          {sessions.length > 1 && (
+                            <span className="ml-1 inline-flex items-center opacity-0 transition-opacity group-hover:opacity-70 group-focus-within:opacity-70">
+                              <X
+                                size={10}
+                                className="cursor-pointer"
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  deleteSession(session.id)
+                                }}
+                                aria-label={t('session.delete', { title: session.title })}
+                              />
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : (
               <div className="mt-1 flex flex-1 items-center justify-center rounded-[14px] border border-dashed border-[color-mix(in_srgb,var(--color-border)_72%,transparent)] text-[11px] text-[var(--color-text-muted)]">
                 <span className="px-2 py-1 text-center">
-                  {hasSessions ? t('empty.description') : t('empty.title')}
+                  {t('empty.title')}
                 </span>
               </div>
             )}
