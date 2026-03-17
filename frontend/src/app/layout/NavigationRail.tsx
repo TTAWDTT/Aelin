@@ -101,11 +101,8 @@ export function NavigationRail() {
                   <div
                     key={to}
                     className={cn(
-                      'aelin-rail-nav-item relative flex flex-col rounded-[22px] border transition-all duration-200',
-                      'w-full px-2.5 py-2',
-                      active
-                        ? 'border-[var(--color-nav-active-border)] bg-[var(--color-nav-active-bg)] text-[var(--color-nav-active-text)] shadow-[0_16px_35px_-26px_var(--color-nav-active-shadow)]'
-                        : 'border-transparent text-[var(--color-text-muted)] hover:border-[var(--color-border)] hover:bg-[var(--color-accent-soft)] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
+                      'relative flex flex-1 min-h-0 flex-col px-1.5 py-1.5 transition-all duration-200',
+                      active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]'
                     )}
                   >
                     <div className="flex items-center gap-2">
@@ -115,7 +112,12 @@ export function NavigationRail() {
                         title={label}
                         aria-label={label}
                         aria-expanded={expanded}
-                        className="flex flex-1 items-center gap-2 overflow-hidden text-left"
+                        className={cn(
+                          'flex flex-1 items-center gap-2 overflow-hidden text-left rounded-[999px] px-2 py-1 transition-colors duration-150',
+                          expanded
+                            ? 'bg-[var(--color-accent-soft)] text-[var(--color-text)]'
+                            : 'hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)]'
+                        )}
                       >
                         <Icon size={18} />
                         <span className="text-sm font-medium truncate">
@@ -138,8 +140,8 @@ export function NavigationRail() {
                         className={cn(
                           'mt-1.5 min-h-0 flex-1 overflow-hidden transition-all duration-200 ease-out',
                           showSessions
-                            ? 'opacity-100 translate-y-0 max-h-[260px]'
-                            : 'opacity-0 -translate-y-1 max-h-0 pointer-events-none'
+                            ? 'opacity-100 translate-y-0'
+                            : 'opacity-0 -translate-y-1 pointer-events-none'
                         )}
                       >
                         <div className="h-full overflow-y-auto pr-0.5 pt-0.5">
