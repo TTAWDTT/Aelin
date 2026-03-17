@@ -123,8 +123,10 @@ export function NavigationRail() {
 
         {navRailExpanded && (
           <div className="mt-2 flex min-h-0 flex-1 flex-col rounded-[18px] bg-[color-mix(in_srgb,var(--color-panel-alt)_32%,var(--color-panel)_68%)] p-2">
-            <div className="mb-1 flex items-center gap-2 px-1 text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-              <span className="truncate">{t('empty.greeting')}</span>
+            <div className="mb-2 flex items-center gap-2 px-1 text-[12px] font-semibold text-[var(--color-text)]">
+              <span className="truncate">
+                {t('nav.title')}
+              </span>
               <button
                 type="button"
                 onClick={() => createSession()}
@@ -154,12 +156,12 @@ export function NavigationRail() {
                         <button
                           type="button"
                           onClick={() => switchSession(session.id)}
-                          className={cn(
-                            'flex w-full items-center justify-between rounded-[999px] px-2.5 py-1.5 text-[12px] font-medium transition-all duration-150',
-                            session.id === activeSessionId
-                              ? 'bg-[color-mix(in_srgb,var(--color-panel-alt)_56%,var(--color-panel)_44%)] text-[var(--color-text)] shadow-[0_12px_32px_-22px_rgba(0,0,0,0.85)]'
-                              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)] hover:-translate-y-[1px]'
-                          )}
+                        className={cn(
+                          'flex w-full items-center justify-between rounded-[999px] px-2.5 py-1.5 text-[12px] font-medium transition-all duration-150',
+                          session.id === activeSessionId
+                            ? 'bg-[color-mix(in_srgb,var(--color-panel-alt)_56%,var(--color-panel)_44%)] text-[var(--color-text)] shadow-[0_12px_32px_-22px_rgba(0,0,0,0.85)]'
+                            : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)] hover:-translate-y-[1px] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
+                        )}
                           aria-label={t('session.switch', { title: session.title })}
                           title={session.title}
                         >
