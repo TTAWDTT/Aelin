@@ -359,6 +359,22 @@ def _serialize_tool_message_content(payload: dict[str, Any], *, max_len: int = _
 def build_tool_calls_payload(raw_tool_calls: list[Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for tc in raw_tool_calls:
+        # Provider原生 tool_calls 通常是具有 .id / .function.name / .function.arguments
+        # 属性的对象；而适配层可能会构造一个等价的 dict 结构。
+        if isinstance(tc, dict):
+            fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+            out.append(
+                {
+                    "id": str(tc.get("id") or ""),
+                    "type": str(tc.get("type") or "function") or "function",
+                    "function": {
+                        "name": str(fn.get("name") or "").strip(),
+                        "arguments": str(fn.get("arguments") or "{}") or "{}",
+                    },
+                }
+            )
+            continue
+
         fn = getattr(tc, "function", None)
         out.append(
             {

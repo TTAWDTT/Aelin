@@ -375,6 +375,45 @@ class GoogleWorkspaceCliService:
         data = result.get("data")
         return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
 
+    def docs_create_document(self, *, title: str) -> dict[str, Any]:
+        """
+        Create a new Google Docs document via gws.
+
+        Thin wrapper around:
+
+            gws docs documents create --json '{\"title\": \"...\"}'
+        """
+        title_clean = str(title or "").strip()[:300] or "Untitled"
+        payload = {"title": title_clean}
+        result = self._run_json(["docs", "documents", "create", "--json", _compact_json(payload)])
+        if not bool(result.get("ok")):
+            return result
+        data = result.get("data")
+        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+
+    def docs_append_text(self, *, document_id: str, text: str) -> dict[str, Any]:
+        """
+        Append plain text to an existing Google Docs document via gws.
+
+        Thin wrapper around:
+
+            gws docs +write --document DOC_ID --text '...'
+        """
+        doc_id = str(document_id or "").strip()
+        if not doc_id:
+            return {"ok": False, "error": "missing_document_id"}
+        text_clean = str(text or "").strip()
+        if not text_clean:
+            return {"ok": False, "error": "missing_text"}
+        # Avoid sending unbounded payloads over the CLI; this limit is
+        # comparable to Gmail body truncation above.
+        text_clean = text_clean[:8000]
+        result = self._run_json(["docs", "+write", "--document", doc_id, "--text", text_clean])
+        if not bool(result.get("ok")):
+            return result
+        data = result.get("data")
+        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+
 
 _google_workspace_cli_service: GoogleWorkspaceCliService | None = None
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from difflib import SequenceMatcher
 import json
 import re
 import time
+from difflib import SequenceMatcher
+import inspect
 from typing import Any
 from urllib.parse import urlparse
 
@@ -206,6 +207,39 @@ _CHECKPOINT_RESPONSE_HINTS = (
     "code",
 )
 _CHECKPOINT_GENERIC_ANCHORS = {"登录", "验证", "验证码", "2fa", "code", "login", "logged", "done", "ok"}
+
+
+def _build_plane_adapter_for_entry(entry, *, tool_hub: "AelinToolHub"):
+    """
+    Construct a PlaneAdapter instance from a registry entry.
+
+    The adapter factory for each plane receives a shared context subset
+    (db/user_id/workspace). Plane-specific runtime hooks (such as the
+    PinchTab session executor) are injected only when the factory declares
+    the corresponding parameter, so that non-browser planes are not coupled
+    to browser-specific arguments.
+    """
+    kwargs: dict[str, Any] = {
+        "db": getattr(tool_hub, "db", None),
+        "user_id": int(getattr(tool_hub, "user_id", 0) or 0),
+        "workspace": str(getattr(tool_hub, "workspace", "default") or "default"),
+    }
+
+    try:
+        sig = inspect.signature(entry.adapter_factory)
+        params = sig.parameters
+    except Exception:
+        params = {}
+
+    if "session_executor" in params:
+        kwargs["session_executor"] = lambda *, action, session_id="", goal="": _execute_pinchtab_session_action(
+            tool_hub,
+            action=action,
+            session_id=session_id,
+            goal=goal,
+        )
+
+    return entry.adapter_factory(**kwargs)
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -543,7 +577,7 @@ class AelinToolHub:
                 "type": "function",
                 "function": {
                     "name": "google_workspace",
-                    "description": "使用本地 gws CLI 访问 Google Workspace（Gmail / Drive / Calendar 等）的信息。读能力为主，并在明确同意后再执行少量写操作。",
+                    "description": "使用本地 gws CLI 访问 Google Workspace（Gmail / Drive / Calendar / Docs 等）的信息，并在用户明确同意时执行少量写操作（发邮件、创建日历事件、创建文档等）。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -551,7 +585,7 @@ class AelinToolHub:
                                 "type": "string",
                                 "description": (
                                     "要执行的操作。读能力包括 runtime/auth_status/gmail_list/gmail_get/drive_list/calendar_list，"
-                                    "写能力预留 calendar_create_event/gmail_send/gmail_draft。"
+                                    "写能力包括 calendar_create_event/gmail_send/gmail_draft/docs_create。"
                                 ),
                             },
                             "query": {"type": "string", "description": "Gmail/Drive 检索关键字。"},
@@ -601,6 +635,14 @@ class AelinToolHub:
                             },
                             "email_subject": {"type": "string"},
                             "email_body": {"type": "string"},
+                            "docs_title": {
+                                "type": "string",
+                                "description": "创建 Google 文档时使用的标题。未提供时会自动生成一个简短标题。",
+                            },
+                            "docs_content": {
+                                "type": "string",
+                                "description": "可选。创建文档后要写入的正文内容（纯文本）。",
+                            },
                         },
                         "required": ["action"],
                     },
@@ -1108,6 +1150,45 @@ class AelinToolHub:
                 "raw": result.get("raw") or result.get("data") or {},
             }
 
+        if action == "docs_create":
+            title = str(args.get("docs_title") or "").strip()
+            content = str(args.get("docs_content") or "").strip()
+            result = service.docs_create_document(title=title or "Aelin 文档")
+            if not bool(result.get("ok")):
+                return {
+                    "ok": False,
+                    "scope": "docs",
+                    **result,
+                }
+            item = result.get("item") if isinstance(result.get("item"), dict) else {}
+            document_id = str(item.get("documentId") or item.get("document_id") or "").strip()
+            web_url = ""
+            if document_id:
+                web_url = f"https://docs.google.com/document/d/{document_id}/edit"
+                item.setdefault("webViewLink", web_url)
+            append_ok = None
+            append_error = ""
+            if content and document_id:
+                append_result = service.docs_append_text(document_id=document_id, text=content)
+                append_ok = bool(append_result.get("ok"))
+                if not append_ok:
+                    append_error = str(append_result.get("error") or "")[:180]
+            response: dict[str, Any] = {
+                "ok": True,
+                "scope": "docs",
+                "item": item,
+                "raw": result.get("raw") or result.get("data") or {},
+            }
+            if document_id:
+                response["document_id"] = document_id
+            if web_url:
+                response["web_url"] = web_url
+            if append_ok is not None:
+                response["append_ok"] = append_ok
+                if append_error:
+                    response["append_error"] = append_error
+            return response
+
         return {
             "ok": False,
             "scope": "google_workspace",
@@ -1152,17 +1233,7 @@ class AelinToolHub:
         if entry is None:
             return _result_error("unsupported_plane")
 
-        adapter = entry.adapter_factory(
-            db=self.db,
-            user_id=self.user_id,
-            workspace=self.workspace,
-            session_executor=lambda *, action, session_id="", goal="": _execute_pinchtab_session_action(
-                self,
-                action=action,
-                session_id=session_id,
-                goal=goal,
-            ),
-        )
+        adapter = _build_plane_adapter_for_entry(entry, tool_hub=self)
 
         if action == "delegate":
             if not goal:

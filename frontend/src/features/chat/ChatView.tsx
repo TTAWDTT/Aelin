@@ -11,6 +11,8 @@ import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
+import { ExecutionPane } from './components/ExecutionPane'
+import { useExecutionPaneStore } from './stores/executionPaneStore'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
@@ -21,6 +23,7 @@ export function ChatView() {
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
   const { t } = useChatI18n()
+  const { openForMessage, focusedMessageId, setFocusedMessageId, open, setOpen } = useExecutionPaneStore()
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -67,32 +70,76 @@ export function ChatView() {
     if (sessions.length === 0) createSession()
   }, [sessions.length, createSession])
 
+  useEffect(() => {
+    // 切换 session 时，让 Execution Pane 自动跟随该会话的最新执行信息。
+    setFocusedMessageId(null)
+  }, [activeSessionId, setFocusedMessageId])
+
+  const latestAssistantWithTrace = [...messages]
+    .reverse()
+    .find((m) => m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
+
+  const focusedTrace =
+    focusedMessageId && messages.length
+      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
+          ?.toolTrace ?? null
+      : null
+
+  const executionTrace = focusedTrace ?? latestAssistantWithTrace?.toolTrace ?? []
+
+  // 桌面模式下，当本轮已经产生工具/plane trace 且正在流式时，自动展开右侧 ExecutionPane。
+  useEffect(() => {
+    if (!compact && isStreaming && executionTrace.length > 0 && !open) {
+      setOpen(true)
+    }
+  }, [compact, isStreaming, executionTrace.length, open, setOpen])
+
+  const handleOpenExecutionForLatest = () => {
+    openForMessage(latestAssistantWithTrace?.id ?? null)
+  }
+
+  const handleOpenExecutionForMessage = (messageId: string | null) => {
+    openForMessage(messageId)
+  }
+
   return (
     <PageScaffold
       title={t('nav.title')}
       subtitle={t('nav.subtitle')}
       contentClassName="flex flex-1 min-h-0 flex-col p-0"
     >
-      <ChatStatusBar isStreaming={isStreaming} statusText={statusText} compact={compact} />
-      <ChatTimeline
-        scrollRef={scrollRef}
-        messages={messages}
-        isStreaming={isStreaming}
-        statusText={statusText}
-        compact={compact}
-        viewportWidth={viewportWidth}
-        onQuickPrompt={handleSend}
-      />
-      <ComposerBar
-        onSend={handleSend}
-        onCaptureAndSend={handleCaptureAndSend}
-        onUploadAttachments={handleUploadAttachments}
-        onSendWithAttachments={handleSendWithAttachments}
-        onStop={stop}
-        isStreaming={isStreaming}
-        compact={compact}
-        placeholder={t('composer.placeholder')}
-      />
+      <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
+        <section className="flex min-h-0 flex-1 flex-col">
+          <ChatStatusBar
+            isStreaming={isStreaming}
+            statusText={statusText}
+            compact={compact}
+            trace={executionTrace}
+            onOpenExecution={handleOpenExecutionForLatest}
+          />
+          <ChatTimeline
+            scrollRef={scrollRef}
+            messages={messages}
+            isStreaming={isStreaming}
+            statusText={statusText}
+            compact={compact}
+            viewportWidth={viewportWidth}
+            onQuickPrompt={handleSend}
+            onOpenExecutionForMessage={handleOpenExecutionForMessage}
+          />
+          <ComposerBar
+            onSend={handleSend}
+            onCaptureAndSend={handleCaptureAndSend}
+            onUploadAttachments={handleUploadAttachments}
+            onSendWithAttachments={handleSendWithAttachments}
+            onStop={stop}
+            isStreaming={isStreaming}
+            compact={compact}
+            placeholder={t('composer.placeholder')}
+          />
+        </section>
+        <ExecutionPane trace={executionTrace} isStreaming={isStreaming} compact={compact} />
+      </div>
     </PageScaffold>
   )
 }

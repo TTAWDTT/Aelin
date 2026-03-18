@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
-import { useChatStore } from '../stores/chatStore'
+import { useChatStore, type ChatSession } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
+import { extractPlaneTaskMeta } from '../traceUtils'
 
 interface SessionTabsProps {
   className?: string
@@ -35,6 +36,22 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
     viewport.scrollBy({ left: delta, behavior: scrollBehavior })
   }
 
+  const getSessionPlaneInfo = (session: ChatSession) => {
+    const messages = session.messages || []
+    const assistant = [...messages]
+      .reverse()
+      .find((m) => m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
+    if (!assistant || !assistant.toolTrace || assistant.toolTrace.length === 0) {
+      return { planeLabel: '', hasActiveTask: false }
+    }
+    const meta = extractPlaneTaskMeta(assistant.toolTrace)
+    if (!meta) return { planeLabel: '', hasActiveTask: false }
+    const activeStates = new Set(['queued', 'running', 'waiting_user', 'blocked'])
+    const hasActiveTask = activeStates.has(meta.state)
+    const planeLabel = meta.plane || 'plane'
+    return { planeLabel, hasActiveTask }
+  }
+
   const renderSessionItems = (truncateTitle: boolean) => (
     <>
       {sessions.map((session) => (
@@ -42,6 +59,12 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
           key={session.id}
           className="group relative shrink-0"
         >
+          {(() => {
+            const info = getSessionPlaneInfo(session)
+            return info.hasActiveTask ? (
+              <span className="pointer-events-none absolute -right-0.5 -top-0.5 z-20 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
+            ) : null
+          })()}
           <button
             type="button"
             ref={session.id === activeSessionId ? activeTabRef : null}
@@ -56,7 +79,25 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
             aria-label={t('session.switch', { title: session.title })}
             title={session.title}
           >
-            <span className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}>{session.title}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              {(() => {
+                const info = getSessionPlaneInfo(session)
+                if (!info.planeLabel) return null
+                return (
+                  <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[9px] uppercase tracking-wide">
+                    {info.planeLabel.slice(0, 2)}
+                  </span>
+                )
+              })()}
+              <span
+                className={cn(
+                  'min-w-0 text-left',
+                  truncateTitle && 'max-w-[120px] truncate'
+                )}
+              >
+                {session.title}
+              </span>
+            </span>
           </button>
           {sessions.length > 1 && (
             <button

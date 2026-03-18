@@ -125,53 +125,62 @@ export function AgentTracePanel({
         </div>
       )}
 
-      {open && (
-        <div ref={bodyRef} className="mt-2 h-32 overflow-y-auto pr-1">
-          <ol className="space-y-1.5">
-            {items.map((step, idx) => {
-              const status = String(step.status || '').toLowerCase()
-              const Icon = STEP_ICON[step.stage] ?? CircleDashed
-              return (
-                <li key={`${step.stage}-${idx}`} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-                  <div className="flex items-start gap-2">
-                    <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                      <Icon size={12} className="text-[var(--color-text)]" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
-                        <span className="text-[10px] text-[var(--color-text-muted)]">
-                          {t(
-                            status === 'running'
-                              ? 'trace.status.running'
-                              : status === 'completed'
-                                ? 'trace.status.completed'
-                                : status === 'skipped'
-                                  ? 'trace.status.skipped'
-                                  : status === 'failed'
-                                    ? 'trace.status.failed'
-                                    : 'trace.status.unknown'
-                          )}
-                        </span>
+      <div
+        ref={bodyRef}
+        className={cn(
+          'mt-2 pr-1 overflow-hidden transition-[max-height,opacity] duration-250 ease-out',
+          open ? 'max-h-[999px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none',
+        )}
+      >
+        <ol className="space-y-1.5">
+          {items.map((step, idx) => {
+            const status = String(step.status || '').toLowerCase()
+            const Icon = STEP_ICON[step.stage] ?? CircleDashed
+            return (
+              <li
+                key={`${step.stage}-${idx}`}
+                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    <Icon size={12} className="text-[var(--color-text)]" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">
+                        {stageLabel(step.stage)}
                       </div>
-                      {step.detail && (
-                        <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                          {step.detail}
-                        </div>
-                      )}
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        {t(
+                          status === 'running'
+                            ? 'trace.status.running'
+                            : status === 'completed'
+                              ? 'trace.status.completed'
+                              : status === 'skipped'
+                                ? 'trace.status.skipped'
+                                : status === 'failed'
+                                  ? 'trace.status.failed'
+                                  : 'trace.status.unknown',
+                        )}
+                      </span>
                     </div>
-                    <span className="pt-0.5">
-                      {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
-                      {status === 'running' && <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />}
-                      {status === 'failed' && <XCircle size={13} className="text-[var(--color-text)]" />}
-                    </span>
+                    {step.detail && (
+                      <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                        {step.detail}
+                      </div>
+                    )}
                   </div>
-                </li>
-              )
-            })}
-          </ol>
-        </div>
-      )}
+                  <span className="pt-0.5">
+                    {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
+                    {status === 'running' && <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />}
+                    {status === 'failed' && <XCircle size={13} className="text-[var(--color-text)]" />}
+                  </span>
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      </div>
     </section>
   )
 }

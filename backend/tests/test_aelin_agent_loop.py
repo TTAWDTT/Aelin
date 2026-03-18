@@ -196,6 +196,31 @@ class _FakeStalePlaneToolHub(_FakeToolHub):
         return {"ok": False, "error": f"unsupported:{action}"}
 
 
+class _FakeGoogleWorkspaceToolHub(_FakeToolHub):
+    def __init__(self) -> None:
+        super().__init__(sleep_seconds=0.0)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def tool_definitions(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "google_workspace",
+                    "parameters": {"type": "object"},
+                },
+            },
+        ]
+
+    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((str(name), dict(args)))
+        if str(name) != "google_workspace":
+            return {"ok": False, "error": "unsupported"}
+        payload = dict(args or {})
+        payload["tool_name"] = "google_workspace"
+        return {"ok": True, "scope": payload.get("action") or "", "payload": payload}
+
+
 def _fake_service(rounds: list[dict[str, Any]]):
     completions = _FakeCompletions(rounds)
     return SimpleNamespace(
@@ -805,6 +830,51 @@ def test_agent_loop_plane_supervision_budget_is_separate_from_regular_tool_budge
     assert result.answer == "预算分离后的最终结果"
     assert result.total_calls == 2
     assert [call[1].get("action") for call in tool_hub.calls] == ["delegate", "status"]
+
+
+def test_agent_loop_adapts_deepseek_style_google_workspace_text_tool_call():
+    # Simulate a provider that encodes google_workspace tool calls only inside the
+    # text content (DeepSeek-style markers), with an empty structured tool_calls list.
+    rounds = [
+        {
+            "content": (
+                "我来帮你创建一个关于Agent Swarm的Google云文档。"
+                "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>google_workspace"
+                "<｜tool▁sep｜>{\"action\": \"docs_create\", \"docs_title\": \"Agent Swarm 技术详解\", \"docs_content\": \"# Agent Swarm 概述\"}"
+            )
+        }
+    ]
+    service = _fake_service(rounds)
+    tool_hub = _FakeGoogleWorkspaceToolHub()
+    loop = AelinAgentLoop(
+        service=service,
+        provider="openai",
+        tool_hub=tool_hub,
+        policy=AelinToolPolicy(
+            max_calls_per_round=2,
+            max_tool_calls=4,
+            max_write_calls=2,
+            allow_write_tools=True,
+        ),
+        max_rounds=1,
+    )
+
+    result = loop.run(
+        query="帮我创建一个google云文档讲讲Agent Swarm",
+        memory_summary="m",
+        history_turns=[],
+    )
+
+    # The adapter should have converted the text markers into a structured tool call,
+    # causing exactly one google_workspace execution, classified as a write.
+    assert result.total_calls == 1
+    assert result.write_calls == 1
+    assert any(run.name == "google_workspace" for run in result.tool_runs)
+    assert tool_hub.calls
+    name, args = tool_hub.calls[0]
+    assert name == "google_workspace"
+    assert str(args.get("action") or "") == "docs_create"
+    assert "docs_title" in args and "docs_content" in args
 
 
 def test_agent_loop_injects_terminal_plane_runtime_context_into_followup_round(monkeypatch):

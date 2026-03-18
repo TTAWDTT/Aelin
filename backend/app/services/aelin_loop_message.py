@@ -170,6 +170,15 @@ def build_initial_messages(
         },
         {
             "role": "system",
+            "content": (
+                "工具调用输出格式规范：当你需要调用工具时，请通过 tools 接口返回结构化 tool_calls，"
+                "而不要在回答文本中输出诸如 <|tool_calls_begin|>、<minimax:tool_call> 等标签，"
+                "也不要只用自然语言描述“我要调用某个工具”。"
+                "要么直接给出最终回答，要么通过 tool_calls 调用工具，然后再根据工具结果组织回答。"
+            ),
+        },
+        {
+            "role": "system",
             "content": f"memory_summary={str(memory_summary or '')[:600]}",
         },
     ]

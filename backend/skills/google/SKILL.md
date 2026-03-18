@@ -15,7 +15,8 @@ Google Workspace 能力在 Aelin 中应通过本地 `gws` CLI 使用，而不是
 - 读取 Gmail 邮件列表和单封邮件
 - 检索 Google Drive 文件
 - 查询 Google Calendar 日程
-- 以后扩展到 Docs / Sheets / Chat
+- 创建简单的 Google Docs 文档并写入正文
+- 以后扩展到 Sheets / Chat
 
 `gws` 的价值在于它直接走 Google Workspace API，输出稳定的结构化 JSON，比网页自动化更适合 agent。
 
@@ -66,6 +67,10 @@ Google Workspace 能力在 Aelin 中应通过本地 `gws` CLI 使用，而不是
    - 查询日历事件。
    - 适合“看我今天/这周的日程”。
 
+7. `action=docs_create`
+   - 创建一份新的 Google 文档，可选地写入一段正文。
+   - 适合“帮我创建一个 Google 文档，内容讲讲 XXX”。
+
 ---
 
 # Usage Order
@@ -78,7 +83,7 @@ Google Workspace 能力在 Aelin 中应通过本地 `gws` CLI 使用，而不是
    - 若返回未登录，提示用户在终端执行 `login_command` 完成 `gws auth login`。
 3. 确认 `next_action=ready` 后，再调用对应的读取 action（`gmail_list` / `drive_list` / `calendar_list` 等）。
 4. 先读后总结：
-   - 尽量不要直接凭空总结 Gmail / Drive / Calendar，而应基于工具返回内容组织答案。
+   - 尽量不要直接凭空总结 Gmail / Drive / Calendar / Docs，而应基于工具返回内容组织答案。
 
 ---
 
@@ -109,15 +114,28 @@ Google Workspace 能力在 Aelin 中应通过本地 `gws` CLI 使用，而不是
 
 # Safety Rules
 
-- 当前阶段优先只读，不主动做写操作
-- 不要假设用户已经完成 Google OAuth
-- 如果 `google_status` 显示不可用或未认证，应明确告知阻塞点
-- 不要为了读 Gmail/Drive/Calendar 而退回浏览器自动化，除非用户明确要求
+- 默认优先读，当用户明确提出“创建/发送/写入”类需求时再执行写操作
+- 在执行写操作前，用自然语言用中文向用户简要说明即将进行的动作（例如“我会为你创建一个标题为《X》的文档，并写入以下内容摘要”），再调用工具
+- 不要假设用户已经完成 Google OAuth；如果 `runtime`/`auth_status` 显示不可用或未认证，应明确告知阻塞点
+- 不要为了读 Gmail/Drive/Calendar/Docs 而退回浏览器自动化，除非用户明确要求
+
+写能力目前包括：
+
+- `calendar_create_event`：根据用户给出的时间、标题、说明创建日历事件；
+- `gmail_draft` / `gmail_send`：为用户创建草稿或直接发送邮件；
+- `docs_create`：为用户创建一份 Google 文档，并写入一段正文内容。
+
+执行这些写操作时：
+
+- 优先选择“草稿”或“可撤销”的方式（例如先创建日历事件/文档，再在回答中附带说明“你可以在 Google 日历/Docs 中查看并修改/删除”）；
+- 不要批量修改或删除用户已有数据；
+- 不要在用户没有提出写入意图时，主动创建文档或事件；
 
 `google_workspace` 属于 **第二层原子工具**，不是 plane：
 
+
 - 它不负责长生命周期任务或复杂流程委派
-- 它只负责把 Gmail / Drive / Calendar 的结构化结果拿回来
+- 它负责把 Gmail / Drive / Calendar / Docs 的结构化结果拿回来，并在用户同意的前提下执行轻量写操作
 - 如果需要长流程“帮我持续整理这周日程”“长期跟踪某类邮件”，由 planner 决定是否把总结结果写入 diary / memory，而不是把 gws 本身当成 plane
 
 ---

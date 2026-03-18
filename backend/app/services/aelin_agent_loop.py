@@ -32,6 +32,172 @@ _ACTIVE_PLANE_STATES = {"queued", "running", "waiting_user", "blocked"}
 _TERMINAL_PLANE_STATES = {"completed", "failed", "closed"}
 
 
+def _adapt_text_tool_call(content: str) -> dict[str, Any] | None:
+    """
+    Best-effort adapter for providers that encode tool calls inside the text
+    content instead of the structured `tool_calls` field.
+
+    目前已知几类模式（可能随模型升级略有变化）：
+      1) DeepSeek 风格：
+         <|tool_calls_begin|><|tool_call_begin|>google_workspace<|tool_sep|>{...}
+      2) Minimax 风格：
+         <minimax:tool_call> <invoke name="google_workspace"> {...} </invoke>
+      3) 更宽松的 fallback：只要文本里明显包含
+         `google_workspace` + 一个 JSON 对象（带有 "action" 字段），
+         就尝试把它当成一次工具调用来解析。
+
+    返回值形如 OpenAI Chat Completions 的单个 tool_call 描述:
+      {"id": "adapted", "type": "function", "function": {"name": "...", "arguments": "{...}"}}
+    """
+    text = str(content or "")
+    if not text:
+        return None
+
+    # 归一化日志中的全角/分词符号，便于匹配。
+    # 例如 deepseek 日志里常见：<｜tool▁calls▁begin｜>
+    normalized = text.replace("｜", "|").replace("▁", "_")
+    normalized = normalized.strip()
+
+    # ---------- DeepSeek-like: <|tool_calls_begin|><|tool_call_begin|>tool_name<|tool_sep|>{json}
+    if "<|tool_calls_begin|>" in normalized and "<|tool_call_begin|>" in normalized:
+        try:
+            start = normalized.index("<|tool_call_begin|>") + len("<|tool_call_begin|>")
+            after = normalized[start:]
+            sep_idx = after.index("<|tool_sep|>")
+            tool_name = after[:sep_idx].strip()
+            rest = after[sep_idx + len("<|tool_sep|>") :].strip()
+            json_start = rest.find("{")
+            json_end = rest.rfind("}")
+            if json_start == -1 or json_end == -1 or json_end <= json_start:
+                raise ValueError("deepseek_tool_call_no_json")
+            args_text = rest[json_start : json_end + 1]
+            json.loads(args_text)
+            _LOG.info("agent_loop adapted_text_tool_call provider_style=deepseek tool=%s", tool_name)
+            return {
+                "id": "adapted-text-tool-call",
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": args_text,
+                },
+            }
+        except Exception as exc:
+            _LOG.warning("agent_loop adapt_text_tool_call_deepseek_failed error=%s", str(exc)[:160])
+
+    # ---------- Minimax-like: <minimax:tool_call> <invoke name=\"tool\"> {...} </invoke>
+    if "<minimax:tool_call>" in normalized and "<invoke" in normalized:
+        try:
+            invoke_idx = normalized.index("<invoke")
+            after = normalized[invoke_idx:]
+            name_token = 'name="'
+            name_start = after.index(name_token) + len(name_token)
+            name_rest = after[name_start:]
+            name_end = name_rest.index('"')
+            tool_name = name_rest[:name_end].strip()
+            invoke_close = after.rfind("</invoke>")
+            body = after[name_end + name_start : invoke_close].strip()
+            json_start = body.find("{")
+            json_end = body.rfind("}")
+            if json_start == -1 or json_end == -1 or json_end <= json_start:
+                raise ValueError("minimax_tool_call_no_json")
+            args_text = body[json_start : json_end + 1]
+            json.loads(args_text)
+            _LOG.info("agent_loop adapted_text_tool_call provider_style=minimax tool=%s", tool_name)
+            return {
+                "id": "adapted-text-tool-call",
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": args_text,
+                },
+            }
+        except Exception as exc:
+            _LOG.warning("agent_loop adapt_text_tool_call_minimax_failed error=%s", str(exc)[:160])
+
+    # ---------- Generic fallback for google_workspace
+    #
+    # 实际现象：在部分模型 /提示组合下，创建 Docs 时经常出现
+    #   我来帮你创建……<|tool_calls_begin|>...google_workspace...{"action":"docs_create",...}
+    # 但 message.tool_calls 为空。为保证体验，这里做一个更宽松的兜底：
+    # 只要同一条回答里同时出现 `google_workspace` 和包含 `"action"` 的 JSON，
+    # 就尝试把它适配成一次 google_workspace 工具调用。
+    lowered = normalized.lower()
+    if "google_workspace" in lowered and '"action"' in lowered:
+        try:
+            first_brace = normalized.find("{")
+            last_brace = normalized.rfind("}")
+            if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
+                raise ValueError("generic_no_json_braces")
+            args_text = normalized[first_brace : last_brace + 1]
+            # 若 JSON 不是对象或无法解析，直接放弃。
+            parsed = json.loads(args_text)
+            if not isinstance(parsed, dict):
+                raise ValueError("generic_json_not_object")
+            tool_name = "google_workspace"
+            _LOG.info("agent_loop adapted_text_tool_call provider_style=generic tool=%s", tool_name)
+            return {
+                "id": "adapted-text-tool-call",
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": args_text,
+                },
+            }
+        except Exception as exc:
+            _LOG.warning("agent_loop adapt_text_tool_call_generic_failed error=%s", str(exc)[:160])
+
+    return None
+
+
+def _adapt_text_tool_call_v2(content: str, fallback_query: str = "") -> dict[str, Any] | None:
+    """
+    More robust adapter that first reuses the legacy parser, then, if the
+    model only describes an intent like “use google_workspace docs_create”
+    without structured arguments, infers a minimal docs_create call from the
+    user query so that write tools are actually exercised.
+    """
+    adapted = _adapt_text_tool_call(content)
+    if adapted is not None:
+        return adapted
+
+    text = str(content or "")
+    if not text:
+        return None
+    lowered = text.lower()
+
+    # If the model clearly says it wants to call google_workspace.docs_create
+    # but did not emit any JSON or tool_calls, synthesize a minimal call so
+    # that the integration really runs.
+    if "google_workspace" in lowered and "docs_create" in lowered:
+        try:
+            safe_query = " ".join(str(fallback_query or "").strip().split())
+            title = (safe_query or "Agent Swarm 文档")[:80] or "Agent Swarm 文档"
+            args = {
+                "action": "docs_create",
+                "docs_title": title,
+                "docs_content": safe_query or "",
+            }
+            args_text = json.dumps(args, ensure_ascii=False, separators=(",", ":"))
+            _LOG.info(
+                "agent_loop adapted_text_tool_call provider_style=inferred tool=%s",
+                "google_workspace",
+            )
+            return {
+                "id": "adapted-text-tool-call",
+                "type": "function",
+                "function": {
+                    "name": "google_workspace",
+                    "arguments": args_text,
+                },
+            }
+        except Exception as exc:
+            _LOG.warning(
+                "agent_loop adapt_text_tool_call_inferred_failed error=%s",
+                str(exc)[:160],
+            )
+    return None
+
+
 def _failed_loop_result(*, stop_reason: str, detail: str) -> AelinAgentLoopResult:
     return AelinAgentLoopResult(
         ok=False,
@@ -376,6 +542,14 @@ class AelinAgentLoop:
             message = getattr(choice, "message", None) if choice else None
             text_out = extract_message_text(getattr(message, "content", ""))
             raw_tool_calls = list(getattr(message, "tool_calls", []) or [])
+
+            # 适配部分模型通过文本内标记表达工具调用的场景。
+            # 如果结构化 tool_calls 为空，但 content 中存在特定标记，
+            # 尝试解析出一个等价的工具调用描述。
+            if not raw_tool_calls and text_out:
+                adapted = _adapt_text_tool_call_v2(text_out, self._last_query)
+                if adapted is not None:
+                    raw_tool_calls = [adapted]
 
             if not raw_tool_calls:
                 active_plane = (

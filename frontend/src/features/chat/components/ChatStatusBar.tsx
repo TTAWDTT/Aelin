@@ -1,17 +1,49 @@
+import type { AelinToolStep } from '@/shared/api/types'
 import { useChatI18n } from '../chatI18n'
+import { buildToolSummary } from '../traceUtils'
+import { PanelRightOpen } from 'lucide-react'
+import { useExecutionPaneStore } from '../stores/executionPaneStore'
 
 interface ChatStatusBarProps {
   isStreaming: boolean
   statusText: string
   compact?: boolean
+  trace?: AelinToolStep[]
+  onOpenExecution?: () => void
 }
 
-export function ChatStatusBar({ isStreaming, statusText, compact = false }: ChatStatusBarProps) {
+export function ChatStatusBar({
+  isStreaming,
+  statusText,
+  compact = false,
+  trace,
+  onOpenExecution,
+}: ChatStatusBarProps) {
   const { t } = useChatI18n()
+  const { open, setOpen, setFocusedMessageId } = useExecutionPaneStore()
 
-  if (!isStreaming && !statusText) return null
+  const hasTrace = !!trace && trace.length > 0
+  if (!isStreaming && !statusText && !hasTrace) return null
 
   const fallback = t('timeline.generating')
+  const summary = hasTrace ? buildToolSummary(trace) : { tools: [], plane: null }
+  const toolNames = Array.from(
+    new Set(summary.tools.map((call) => call.name || '').filter(Boolean))
+  )
+  const joinedTools = toolNames.slice(0, 4).join(' · ') || (summary.plane ? 'plane' : '')
+
+  let text = statusText || ''
+
+  if (!text && isStreaming && joinedTools) {
+    text = t('status.tools.invoking', { tools: joinedTools })
+  } else if (!text && !isStreaming && hasTrace && joinedTools) {
+    text = t('status.tools.summary', {
+      count: summary.tools.length || 1,
+      tools: joinedTools,
+    })
+  }
+
+  const displayText = text || fallback
 
   return (
     <div
@@ -20,9 +52,26 @@ export function ChatStatusBar({ isStreaming, statusText, compact = false }: Chat
       }`}
     >
       <div className="h-1.5 w-1.5 rounded-full bg-[var(--color-text)] animate-pulse" />
-      <span className="min-w-0 flex-1 truncate" title={statusText || fallback}>
-        {statusText || fallback}
+      <span className="min-w-0 flex-1 truncate" title={displayText}>
+        {displayText}
       </span>
+      {hasTrace && onOpenExecution && (
+        <button
+          type="button"
+          onClick={() => {
+            if (open) {
+              setOpen(false)
+              setFocusedMessageId(null)
+            } else {
+              onOpenExecution()
+            }
+          }}
+          aria-label={t('trace.executionPane.headerOpen')}
+          className="ml-1 aelin-rail-control h-8 w-8"
+        >
+          <PanelRightOpen size={12} />
+        </button>
+      )}
     </div>
   )
 }

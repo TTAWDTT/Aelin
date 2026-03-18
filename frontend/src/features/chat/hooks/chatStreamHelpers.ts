@@ -11,16 +11,7 @@ function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep):
   const existing = [...(prev ?? [])]
   const stage = String(step.stage || '').trim()
   if (!stage) return existing
-
-  const index = existing.findIndex((item) => String(item.stage || '').trim() === stage)
-  if (index === -1) return [...existing, step]
-
-  existing[index] = {
-    ...existing[index],
-    ...step,
-    stage,
-  }
-  return existing
+  return [...existing, { ...step, stage }]
 }
 
 export function formatBytes(size: number): string {
