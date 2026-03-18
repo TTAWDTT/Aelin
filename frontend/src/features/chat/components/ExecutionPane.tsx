@@ -5,6 +5,7 @@ import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import { extractPlaneTaskMeta, extractToolCalls, type ToolCallMeta } from '../traceUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
+import { ProviderIcon } from './ProviderIcon'
 
 interface ExecutionPaneProps {
   trace: AelinToolStep[]
@@ -214,12 +215,15 @@ function PlaneTraceView({
       {planeMeta && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-[12px] font-semibold text-[var(--color-text)]">
-                {t('trace.plane.title', { plane: planeMeta.plane })}
-              </div>
-              <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-                {t(stateLabelKey)}
+            <div className="flex min-w-0 items-center gap-2">
+              <ProviderIcon provider="plane" size="md" />
+              <div className="min-w-0">
+                <div className="text-[12px] font-semibold text-[var(--color-text)]">
+                  {t('trace.plane.title', { plane: planeMeta.plane })}
+                </div>
+                <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+                  {t(stateLabelKey)}
+                </div>
               </div>
             </div>
             <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-[var(--color-accent)]" />
@@ -415,9 +419,7 @@ function ToolCallCard({ call }: { call: ToolCallMeta }) {
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-start gap-2 text-left"
       >
-        <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[9px] uppercase tracking-wide">
-          {providerLabel.slice(0, 2)}
-        </span>
+        <ProviderIcon provider={providerLabel} size="md" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">

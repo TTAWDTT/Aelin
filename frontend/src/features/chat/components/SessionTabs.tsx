@@ -4,6 +4,7 @@ import { useChatStore, type ChatSession } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import { extractPlaneTaskMeta } from '../traceUtils'
+import { ProviderIcon } from './ProviderIcon'
 
 interface SessionTabsProps {
   className?: string
@@ -84,9 +85,7 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
                 const info = getSessionPlaneInfo(session)
                 if (!info.planeLabel) return null
                 return (
-                  <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[9px] uppercase tracking-wide">
-                    {info.planeLabel.slice(0, 2)}
-                  </span>
+                  <ProviderIcon provider="plane" size="sm" />
                 )
               })()}
               <span
