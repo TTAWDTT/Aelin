@@ -6,6 +6,8 @@ interface ExecutionPaneState {
   setOpen: (open: boolean) => void
   openForMessage: (messageId: string | null) => void
   setFocusedMessageId: (messageId: string | null) => void
+  suppressAutoOpen: boolean
+  setSuppressAutoOpen: (suppress: boolean) => void
 }
 
 export const useExecutionPaneStore = create<ExecutionPaneState>()((set) => ({
@@ -18,4 +20,6 @@ export const useExecutionPaneStore = create<ExecutionPaneState>()((set) => ({
       focusedMessageId: messageId ?? null,
     }),
   setFocusedMessageId: (messageId) => set({ focusedMessageId: messageId ?? null }),
+  suppressAutoOpen: false,
+  setSuppressAutoOpen: (suppress) => set({ suppressAutoOpen: suppress }),
 }))

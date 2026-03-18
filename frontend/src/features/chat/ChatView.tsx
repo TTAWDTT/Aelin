@@ -23,7 +23,14 @@ export function ChatView() {
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
   const { t } = useChatI18n()
-  const { openForMessage, focusedMessageId, setFocusedMessageId, open, setOpen } = useExecutionPaneStore()
+  const {
+    openForMessage,
+    focusedMessageId,
+    setFocusedMessageId,
+    open,
+    setOpen,
+    suppressAutoOpen,
+  } = useExecutionPaneStore()
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -89,10 +96,10 @@ export function ChatView() {
 
   // 桌面模式下，当本轮已经产生工具/plane trace 且正在流式时，自动展开右侧 ExecutionPane。
   useEffect(() => {
-    if (!compact && isStreaming && executionTrace.length > 0 && !open) {
+    if (!compact && isStreaming && executionTrace.length > 0 && !open && !suppressAutoOpen) {
       setOpen(true)
     }
-  }, [compact, isStreaming, executionTrace.length, open, setOpen])
+  }, [compact, isStreaming, executionTrace.length, open, suppressAutoOpen, setOpen])
 
   const handleOpenExecutionForLatest = () => {
     openForMessage(latestAssistantWithTrace?.id ?? null)

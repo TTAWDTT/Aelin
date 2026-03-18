@@ -113,7 +113,15 @@ export function buildChatRequest(params: {
 function updateLatestAssistantToolTrace(sessionId: string, step: AelinToolStep): void {
   const state = useChatStore.getState()
   const targetSession = state.sessions.find((session) => session.id === sessionId)
-  const currentTrace = targetSession?.messages.findLast((message: ChatMessage) => message.role === 'assistant')?.toolTrace
+  if (!targetSession) return
+  let currentTrace: AelinToolStep[] | undefined
+  for (let i = targetSession.messages.length - 1; i >= 0; i -= 1) {
+    const msg = targetSession.messages[i]
+    if (msg.role === 'assistant') {
+      currentTrace = msg.toolTrace
+      break
+    }
+  }
   state.updateLastAssistant(sessionId, {
     toolTrace: mergeToolTrace(currentTrace, step),
   })

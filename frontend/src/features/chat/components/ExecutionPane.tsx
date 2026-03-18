@@ -237,35 +237,38 @@ function PlaneTraceView({
       )}
 
       {planeSteps.length > 0 && (
-        <ol className="space-y-1.5 text-[11px]">
-          {planeSteps.map((step, idx) => (
-            <li
-              key={`${step.stage}-${idx}`}
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
-            >
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] text-[9px]">
-                  {idx + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-[11px] font-semibold text-[var(--color-text)]">
-                      {String(step.detail || '').split(';', 1)[0] || 'plane'}
-                    </span>
-                    <span className="text-[11px] text-[var(--color-text-muted)]">
-                      {String(step.status || '') || '-'}
-                    </span>
-                  </div>
-                  {step.detail && (
-                    <div className="mt-0.5 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                      {step.detail}
+        <div className="relative pl-3">
+          <div className="pointer-events-none absolute left-[7px] top-1 bottom-1 w-px bg-[var(--color-border)]" />
+          <ol className="space-y-1.5 text-[11px]">
+            {planeSteps.map((step, idx) => (
+              <li
+                key={`${step.stage}-${idx}`}
+                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] text-[9px]">
+                    {idx + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-[11px] font-semibold text-[var(--color-text)]">
+                        {String(step.detail || '').split(';', 1)[0] || 'plane'}
+                      </span>
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                        {String(step.status || '') || '-'}
+                      </span>
                     </div>
-                  )}
+                    {step.detail && (
+                      <div className="mt-0.5 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                        {step.detail}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
-        </ol>
+              </li>
+            ))}
+          </ol>
+        </div>
       )}
 
       {relatedToolCalls.length > 0 && (

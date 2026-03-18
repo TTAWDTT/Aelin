@@ -3,6 +3,7 @@ import { useChatI18n } from '../chatI18n'
 import { buildToolSummary } from '../traceUtils'
 import { PanelRightOpen } from 'lucide-react'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
+import { ProviderIcon } from './ProviderIcon'
 
 interface ChatStatusBarProps {
   isStreaming: boolean
@@ -20,7 +21,7 @@ export function ChatStatusBar({
   onOpenExecution,
 }: ChatStatusBarProps) {
   const { t } = useChatI18n()
-  const { open, setOpen, setFocusedMessageId } = useExecutionPaneStore()
+  const { open, setOpen, setFocusedMessageId, setSuppressAutoOpen } = useExecutionPaneStore()
 
   const hasTrace = !!trace && trace.length > 0
   if (!isStreaming && !statusText && !hasTrace) return null
@@ -31,6 +32,9 @@ export function ChatStatusBar({
     new Set(summary.tools.map((call) => call.name || '').filter(Boolean))
   )
   const joinedTools = toolNames.slice(0, 4).join(' · ') || (summary.plane ? 'plane' : '')
+  const providers = Array.from(
+    new Set(summary.tools.map((call) => call.provider || '').filter(Boolean))
+  ).slice(0, 3)
 
   let text = statusText || ''
 
@@ -61,8 +65,10 @@ export function ChatStatusBar({
           onClick={() => {
             if (open) {
               setOpen(false)
+              setSuppressAutoOpen(true)
               setFocusedMessageId(null)
             } else {
+              setSuppressAutoOpen(false)
               onOpenExecution()
             }
           }}
@@ -71,6 +77,13 @@ export function ChatStatusBar({
         >
           <PanelRightOpen size={12} />
         </button>
+      )}
+      {hasTrace && providers.length > 0 && (
+        <div className="flex items-center gap-1 pl-1">
+          {providers.map((p) => (
+            <ProviderIcon key={p} provider={p} size="sm" />
+          ))}
+        </div>
       )}
     </div>
   )
