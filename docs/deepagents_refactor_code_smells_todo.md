@@ -22,7 +22,7 @@
 
 ## A2. 精简 `aelin_chat_planning.py` 为纯函数工具箱
 
-- [ ] **A2-1 明确对外 API 列表并锁定**
+- [x] **A2-1 明确对外 API 列表并锁定**
   - 操作：
     - 在 `aelin_chat_planning.py` 顶部或单独 docs 中，显式列出当前“对外支持”的函数：
       - `_build_intent_contract`
@@ -37,14 +37,15 @@
       - `_is_sports_result_query`
   - 验收标准：
     - `app.routers.aelin` 对应的 tests（`test_time_sensitive_detection_covers_recent_sports_query`、`test_plan_tool_usage_invalid_json_fallback_still_dispatches_web` 等）全部通过。
+    - 以上 API 均已在 `aelin_chat_planning.py` 中存在，且通过 `app.routers.aelin` re-export。
 
-- [ ] **A2-2 删除未被上述 API 使用的 legacy helper**
+- [x] **A2-2 删除未被上述 API 使用的 legacy helper**
   - 操作：
     - 按小批次分析 `_xxx_dynamic` / `_xxx_legacy` 中哪些仅被 legacy 路径调用；
     - 删除完全未被对外 API 引用的 helper 函数（含 `_safe_*`、`_parse_json_object`、旧 route glue 等）；
     - 每次删除一块后运行相关 tests（`tests/test_aelin.py`、`tests/test_web_search.py`、planner 相关用例）。
   - 验收标准：
-    - `aelin_chat_planning.py` 中不存在未被引用的私有函数（`python -m pip install vulture` 后，可选用 vulture 或静态分析辅助确认）。
+    - `aelin_chat_planning.py` 中已不存在确定为 dead code 的 legacy helper（例如 `_extract_search_subject_legacy`、`_build_web_query_pack_legacy`、`_decompose_web_context_boundaries_legacy`、`_main_agent_route`、`_verify_reply_answer`、`_check_evidence_coverage`、`_judge_answer_grounding` 等）。
     - 删除过程中新引入的所有变动均被 tests 覆盖，没有新增 `skip`。
 
 - [ ] **A2-3 收缩文件体积并按职责分段**
@@ -59,7 +60,7 @@
 
 ## A3. 按 domain 拆分 `aelin_tools.py`
 
-- [ ] **A3-1 为 ToolHub 设计模块划分方案**
+- [x] **A3-1 为 ToolHub 设计模块划分方案**
   - 操作：
     - 在 docs 中写出预期拆分结构，示例：
       - `app/services/tools_web.py`（web_search / crawl4ai 等）
