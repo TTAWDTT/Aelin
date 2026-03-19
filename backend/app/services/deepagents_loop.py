@@ -120,8 +120,11 @@ def run_deepagents_loop(
     tool_runs: list[AgentLoopToolRun] = []
 
     def _make_tool(name: str, description: str) -> Tool:
-        def _call_tool(**kwargs: Any) -> dict[str, Any]:
+        def _call_tool(*params: Any, **kwargs: Any) -> dict[str, Any]:
             nonlocal usage
+            # LangChain tools 可能以位置参数或单一 dict 形式传入，这里统一归一化为 kwargs。
+            if params and not kwargs and isinstance(params[0], dict):
+                kwargs = params[0]
             args = dict(kwargs or {})
             decision = policy.evaluate(name=name, args=args, usage=usage)
             started = time.perf_counter()
