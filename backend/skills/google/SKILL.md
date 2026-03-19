@@ -2,7 +2,7 @@
 name: Google Workspace via gws
 slug: google
 version: 1.1.0
-applies_to_tools: google_workspace
+applies_to_tools: google_workspace,google_status,google_gmail_list,google_drive_search
 trigger_keywords: google,gmail,drive,calendar,docs,sheets,google workspace,谷歌邮箱,谷歌云盘,日历,邮件,网盘
 ---
 

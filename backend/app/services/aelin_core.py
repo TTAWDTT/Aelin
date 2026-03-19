@@ -67,28 +67,16 @@ from app.services.aelin_runtime import (
     resolve_llm_service as _resolve_llm_service,
 )
 from app.services.aelin_chat_planning import (
-    _apply_plan_patch,
-    _build_intent_contract,
-    _build_retry_web_queries,
-    _build_trace_context_boundaries,
-    _build_web_query_pack,
-    _check_evidence_coverage,
-    _critic_tool_plan,
-    _decompose_web_context_boundaries,
-    _extract_search_subject,
-    _is_smalltalk_query,
-    _is_sports_result_query,
-    _is_time_sensitive_query,
-    _judge_answer_grounding,
-    _main_agent_route,
-    _normalize_context_boundaries,
-    _normalize_match_text,
     _normalize_search_mode,
-    _parse_json_object,
+    _build_intent_contract,
     _plan_tool_usage,
-    _safe_float,
-    _safe_int,
-    _verify_reply_answer,
+    _critic_tool_plan,
+    _build_web_query_pack,
+    _build_retry_web_queries,
+    _extract_search_subject,
+    _decompose_web_context_boundaries,
+    _is_time_sensitive_query,
+    _is_sports_result_query,
 )
 from app.services.aelin_chat_answering import (
     _compose_web_first_answer,
@@ -446,120 +434,6 @@ def _to_citations(raw_focus_items: list[dict], max_items: int) -> list[AelinCita
         except Exception:
             continue
     return items
-
-
-def _fetch_local_focus_citations(
-    *,
-    user_id: int,
-    query: str,
-    max_citations: int,
-) -> tuple[list[AelinCitation], str]:
-    local_db = create_session()
-    try:
-        n = max(4, min(20, int(max_citations or 6) * 2))
-        focus_items = _memory.build_focus_items(local_db, user_id, query=query, limit=n)
-        rows = [serialize_focus_item(item) for item in focus_items]
-        return _to_citations(rows, max_citations), ""
-    except Exception as exc:
-        return [], str(exc)[:140]
-    finally:
-        try:
-            local_db.close()
-        except Exception:
-            pass
-
-
-def _hydrate_citation_avatars(
-    db: Session,
-    user_id: int,
-    citations: list[AelinCitation],
-) -> list[AelinCitation]:
-    missing_ids = [int(it.message_id) for it in citations if not it.sender_avatar_url and int(it.message_id or 0) > 0]
-    if not missing_ids:
-        return citations
-
-    rows = db.execute(
-        select(Message.id, Contact.avatar_url)
-        .join(Contact, Contact.id == Message.contact_id)
-        .where(
-            Message.user_id == user_id,
-            Contact.user_id == user_id,
-            Message.id.in_(missing_ids),
-        )
-    ).all()
-    avatar_by_message_id: dict[int, str] = {}
-    for message_id, avatar_url in rows:
-        if avatar_url:
-            avatar_by_message_id[int(message_id)] = str(avatar_url)
-
-    if not avatar_by_message_id:
-        return citations
-
-    out: list[AelinCitation] = []
-    for it in citations:
-        if it.sender_avatar_url:
-            out.append(it)
-            continue
-        avatar = avatar_by_message_id.get(int(it.message_id or 0))
-        if avatar:
-            out.append(it.model_copy(update={"sender_avatar_url": avatar}))
-        else:
-            out.append(it)
-    return out
-
-
-def _rule_based_answer(
-    query: str,
-    summary: str,
-    citations: list[AelinCitation],
-    *,
-    brief_summary: str = "",
-    todo_titles: list[str] | None = None,
-    image_count: int = 0,
-) -> str:
-    image_tip = (
-        f"\n\n你上传了 {image_count} 张图片。当前规则模式不具备图片理解能力，若需图像分析请配置支持视觉的模型。"
-        if image_count > 0
-        else ""
-    )
-    if not citations:
-        todo_line = ""
-        if todo_titles:
-            todo_line = "\n\n你当前待跟进事项：\n" + "\n".join(f"- {title}" for title in todo_titles[:4])
-        if summary:
-            return (
-                "我已在你的长期记忆中检索相关内容，但当前缺少足够的新证据。"
-                f"\n\n当前记忆摘要：{_summarizer.summarize(summary)}"
-                + (f"\n\n今日简报：{brief_summary}" if brief_summary else "")
-                + todo_line
-                + "\n\n建议：扩大追踪边界或先触发一次同步。"
-                + image_tip
-            )
-        return (
-            "当前还没有足够的信号证据。先连接数据源并同步后，我就能给出可追溯结论。"
-            + (f"\n\n今日简报：{brief_summary}" if brief_summary else "")
-            + todo_line
-            + image_tip
-        )
-
-    top = citations[0]
-    bullets = [
-        f"- [{it.source_label}] {it.title}（{it.sender}，{it.received_at}）"
-        for it in citations[:4]
-    ]
-    return (
-        f"基于你最近的信号证据，和“{query.strip()}”最相关的线索是：\n"
-        + "\n".join(bullets)
-        + f"\n\n当前优先关注：{top.title}"
-        + ("\n\n我也参考了你的长期记忆摘要。" if summary else "")
-        + (f"\n\n今日简报：{brief_summary}" if brief_summary else "")
-        + (
-            "\n\n建议先处理待跟进事项：\n" + "\n".join(f"- {title}" for title in (todo_titles or [])[:3])
-            if todo_titles
-            else ""
-        )
-        + image_tip
-    )
 
 
 def _normalize_images(raw_images: list[Any]) -> list[dict[str, str]]:
