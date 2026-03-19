@@ -122,7 +122,7 @@ def run_deepagents_loop(
     def _make_tool(name: str, description: str) -> Tool:
         def _call_tool(*params: Any, **kwargs: Any) -> dict[str, Any]:
             nonlocal usage
-            # LangChain tools 可能以位置参数或单一 dict 形式传入，这里统一归一化为 kwargs。
+            # LangGraph ToolNode 可能以位置参数传入一个 dict，这里统一归一化为 kwargs。
             if params and not kwargs and isinstance(params[0], dict):
                 kwargs = params[0]
             args = dict(kwargs or {})
@@ -217,6 +217,21 @@ def run_deepagents_loop(
                 rel_path = f"/{subdir.name}/{file_path.name}"
                 skill_files[rel_path] = text
 
+    # 为 DeepAgents 提供 memory 文件（AGENTS.md），通过 StateBackend 的虚拟文件系统挂载。
+    memory_files: dict[str, str] = {}
+    memory_paths: list[str] = []
+    if memory_summary.strip():
+        mem_body_lines = [
+            "# Aelin Session Memory",
+            "",
+            "## User summary",
+            memory_summary.strip(),
+        ]
+        mem_body = "\n".join(mem_body_lines)
+        mem_path = "/memory/AGENTS.md"
+        memory_files[mem_path] = mem_body
+        memory_paths.append(mem_path)
+
     try:
         agent = create_deep_agent(
             model=chat_model,
@@ -224,6 +239,7 @@ def run_deepagents_loop(
             backend=backend,
             tools=tools,
             skills=skill_sources or None,
+            memory=memory_paths or None,
         )
 
         # 构造 DeepAgents 期望的消息格式：带有历史对话和当前用户 query。
@@ -236,19 +252,6 @@ def run_deepagents_loop(
             if role not in {"user", "assistant"}:
                 continue
             messages.append({"role": role, "content": content})
-        if messages and messages[-1]["role"] == "user":
-            # 历史最后一条是用户，避免重复，把最新 query 视为延续。
-            messages[-1]["content"] = f"{messages[-1]['content']}\n\n[新问题]\n{memory_summary}"
-        else:
-            # 无历史时，把 memory summary 也塞进上下文。
-            prefixed = memory_summary.strip()
-            if prefixed:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": f"Memory summary for this user/session:\n{prefixed}",
-                    }
-                )
 
         # 如果有可复用的 plane task，并且当前 query 明显是在“续上”该任务，
         # 通过一条 system 提示让 DeepAgents 知道可以使用对应 task_id。
