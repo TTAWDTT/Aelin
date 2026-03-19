@@ -2311,6 +2311,16 @@ def _try_agent_loop_chat(
     )
 
     trace_steps: list[AelinToolStep] = [*prefixed_traces]
+
+    def _emit_trace(step: AelinToolStep) -> None:
+        trace_steps.append(step)
+        if event_cb is not None:
+            try:
+                event_cb("trace", {"step": step.model_dump()})
+            except Exception:
+                pass
+
+    # 先映射 DeepAgents 提供的高层 trace 步骤。
     for step in result.trace_steps:
         trace = AelinToolStep(
             stage=str(step.stage or "agent_loop")[:80],
@@ -2319,12 +2329,22 @@ def _try_agent_loop_chat(
             count=max(0, int(step.count or 0)),
             ts=max(0, int(step.ts or _now_ms())),
         )
-        trace_steps.append(trace)
-        if event_cb is not None:
-            try:
-                event_cb("trace", {"step": trace.model_dump()})
-            except Exception:
-                pass
+        _emit_trace(trace)
+
+    # 再把每一次工具调用显式映射为 agent_loop_tool 阶段，便于前端展示完整工具链。
+    for run in result.tool_runs:
+        detail = run.error or ""
+        if not detail:
+            # 对成功调用给一个简洁摘要，避免塞入整个 result。
+            detail = f"{run.name}({len(run.args)} args) -> {run.result.get('scope') or ''}".strip()
+        tool_trace = AelinToolStep(
+            stage="agent_loop_tool",
+            status=str(run.status or "completed")[:24],
+            detail=detail[:240],
+            count=1,
+            ts=_now_ms(),
+        )
+        _emit_trace(tool_trace)
 
     if not bool(result.ok) or not str(result.answer or "").strip():
         _ensure_attachment_prefetch()
