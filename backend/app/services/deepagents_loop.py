@@ -9,6 +9,7 @@ from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import Tool
+from langchain_openai import ChatOpenAI
 
 from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopTraceStep, AgentLoopToolRun
 from app.services.aelin_tools import AelinToolHub
@@ -20,14 +21,35 @@ _log = logging.getLogger(__name__)
 
 def _build_chat_model(service: LLMService, provider: str) -> ChatAnthropic | None:
     """
-    暂时统一使用 Anthropic 作为 DeepAgents 的底层模型。
+    根据 Aelin 的 AgentConfig 构造 DeepAgents 使用的底层 ChatModel。
 
-    后续可以根据 provider/config 再扩展到其他模型。
+    优先走 OpenAI 兼容协议（ChatOpenAI），以复用 Aelin 原本对“任意
+    OpenAI-Compatible Provider”的兼容能力；如后续需要，也可以针对
+    特定 provider（例如 Anthropic 官方 API）走 ChatAnthropic 支路。
     """
     try:
-        model_name = service.config.model or "claude-3-5-sonnet-latest"
+        model_name = getattr(service.config, "model", "") or "gpt-4o-mini"
         temperature = float(getattr(service.config, "temperature", 0.0) or 0.0)
-        return ChatAnthropic(model=model_name, temperature=temperature)
+
+        # service.api_key 与 base_url 由 LLMService 统一管理，沿用原有
+        # OpenAI 兼容策略，这样支持 Nvidia / DeepSeek / 自建 proxy 等。
+        api_key = getattr(service, "api_key", None)
+        base_url_raw = getattr(service.config, "base_url", "") or ""
+        base_url = LLMService._normalize_base_url(base_url_raw) if base_url_raw else None
+
+        if not api_key:
+            _log.warning("build_chat_model_missing_api_key provider=%s", provider)
+            return None
+
+        # 默认使用 ChatOpenAI 与任意 OpenAI-Compatible endpoint 通信。
+        return ChatOpenAI(
+            model=model_name,
+            temperature=temperature,
+            api_key=api_key,
+            base_url=base_url,
+            timeout=getattr(service, "timeout_seconds", 90.0),
+            max_retries=1,
+        )
     except Exception as exc:  # noqa: BLE001
         _log.warning("build_chat_model_failed provider=%s error=%s", provider, str(exc)[:200])
         return None
