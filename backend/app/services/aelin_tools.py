@@ -29,11 +29,11 @@ from app.services.google_workspace_cli import get_google_workspace_cli_service
 from app.services.pinchtab_launcher import ensure_pinchtab_started
 from app.services.pinchtab_client import get_pinchtab_client
 from app.services.plane_runtime import get_plane_registry_entry
-from app.services.skill_loader import get_skill_prompt_by_slug, list_skill_catalog_for_query_and_tools
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
 from app.services.tools_web import tool_web_search
 from app.services.tools_gws import tool_google_workspace
+from app.services.tools_skill import tool_skill
 
 _TOOL_KEYWORDS = (
     "profile",
@@ -723,7 +723,7 @@ class AelinToolHub:
         if tool == "google_workspace":
             return tool_google_workspace(self, args)
         if tool == "skill":
-            return self._tool_skill(args)
+            return tool_skill(self, args)
         if tool == "plane":
             return self._tool_plane(args)
         if tool == "pinchtab":
@@ -910,29 +910,6 @@ class AelinToolHub:
             source_display=str(shot.get("source_display") or "")[:64],
             captured_at=str(shot.get("captured_at") or "")[:64],
         )
-
-    def _tool_skill(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "").strip().lower()
-        if action == "catalog":
-            tool_names = [
-                str((row.get("function") or {}).get("name") or "").strip()
-                for row in self.tool_definitions()
-                if isinstance(row, dict) and isinstance(row.get("function"), dict)
-            ]
-            items = list_skill_catalog_for_query_and_tools(
-                str(args.get("query") or "").strip(),
-                tool_names,
-            )
-            return _result_ok(items=items, total=len(items))
-        if action == "read":
-            slug = str(args.get("slug") or "").strip().lower()
-            if not slug:
-                return _result_error("missing slug")
-            prompt = get_skill_prompt_by_slug(slug)
-            if not prompt:
-                return _result_error("unknown_skill_slug")
-            return _result_ok(slug=slug, prompt=prompt, summary=prompt.split("\n", 4)[-1][:260])
-        return _result_error("unsupported skill action")
 
     def _tool_plane(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()
