@@ -51,7 +51,7 @@ from app.services.aelin_tools import (
 )
 from app.services.aelin_planes import get_active_plane_task, plane_catalog_prompt
 from app.services.skill_loader import render_skill_catalog_prompt
-from app.services.aelin_agent_loop import AelinAgentLoop
+from app.services.deepagents_loop import run_deepagents_loop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
     dispatch_aelin_chat as _dispatch_aelin_chat_service,
@@ -2283,19 +2283,6 @@ def _try_agent_loop_chat(
             else allow_write_tools
         ),
     )
-    runner = AelinAgentLoop(
-        service=service,
-        provider=provider,
-        tool_hub=tool_hub,
-        policy=policy,
-        max_rounds=int(getattr(settings, "aelin_agent_loop_max_rounds", 3) or 3),
-        round_timeout_seconds=float(getattr(settings, "aelin_agent_loop_round_timeout_seconds", 10.0) or 10.0),
-        total_timeout_seconds=float(getattr(settings, "aelin_agent_loop_total_timeout_seconds", 12.0) or 12.0),
-        max_plane_supervision_calls=int(getattr(settings, "aelin_agent_loop_max_plane_supervision_calls", 6) or 6),
-        max_plane_supervision_calls_per_round=int(
-            getattr(settings, "aelin_agent_loop_max_plane_supervision_calls_per_round", 1) or 1
-        ),
-    )
     _log.info(
         "agent_loop preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
         int(current_user.id),
@@ -2309,14 +2296,15 @@ def _try_agent_loop_chat(
         detail=f"total_preflight_ms={int((time.perf_counter() - pre_loop_started) * 1000)}",
         count=1,
     )
-    result = runner.run(
-        query=payload.query,
+    # TODO: 将 policy / forced_intent / forced_tool_runs 接入 DeepAgents graph。
+    result = run_deepagents_loop(
+        service=service,
+        provider=provider,
+        tool_hub=tool_hub,
         memory_summary=memory_summary,
         history_turns=history_turns,
         images=images,
         attachment_ids=attachment_ids,
-        forced_intent=forced_intent,
-        forced_tool_runs=forced_tool_runs,
         tool_skill_bodies=tool_skill_bodies,
         cancel_token=cancel_token,
     )
