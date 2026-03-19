@@ -49,8 +49,7 @@ from app.services.aelin_tools import (
     should_resume_active_plane_for_query,
     summarize_tool_results_for_prompt,
 )
-from app.services.aelin_planes import get_active_plane_task, plane_catalog_prompt
-from app.services.skill_loader import render_skill_catalog_prompt
+from app.services.aelin_planes import get_active_plane_task
 from app.services.deepagents_loop import run_deepagents_loop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
@@ -2176,24 +2175,6 @@ def _try_agent_loop_chat(
         tool_hub_latency_ms,
     )
     _emit_prefixed("preflight.tool_hub_ready", status="completed", detail=f"latency_ms={tool_hub_latency_ms}", count=1)
-
-    tool_skill_bodies: list[str] = []
-    if llm_available:
-        # 根据当前可用工具和用户 query，按需注入技能说明（SKILL）作为额外的 system 提示。
-        # 这些技能说明是“如何正确使用工具”的可复用规范，而不是新的可执行工具。
-        tool_defs = tool_hub.tool_definitions()
-        tool_names: list[str] = []
-        for td in tool_defs:
-            fn = td.get("function") if isinstance(td, dict) else None
-            if not isinstance(fn, dict):
-                continue
-            name = str(fn.get("name") or "").strip()
-            if name:
-                tool_names.append(name)
-        skill_catalog_prompt = render_skill_catalog_prompt(payload.query, tool_names)
-        tool_skill_bodies = [skill_catalog_prompt] if skill_catalog_prompt else []
-        if "plane" in tool_names:
-            tool_skill_bodies = [plane_catalog_prompt(), *tool_skill_bodies]
 
     def _ensure_attachment_prefetch() -> dict[str, Any]:
         nonlocal attachment_prefetch_result
