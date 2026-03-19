@@ -2301,11 +2301,12 @@ def _try_agent_loop_chat(
         service=service,
         provider=provider,
         tool_hub=tool_hub,
+        policy=policy,
+        query=payload.query,
         memory_summary=memory_summary,
         history_turns=history_turns,
         images=images,
         attachment_ids=attachment_ids,
-        tool_skill_bodies=tool_skill_bodies,
         cancel_token=cancel_token,
     )
 

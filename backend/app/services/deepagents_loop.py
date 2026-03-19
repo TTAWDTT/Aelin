@@ -6,10 +6,12 @@ from typing import Any
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from langchain_anthropic import ChatAnthropic
+from langchain_core.tools import Tool
 
-from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopTraceStep
+from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopTraceStep, AgentLoopToolRun
 from app.services.aelin_tools import AelinToolHub
 from app.services.llm import LLMService
+from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 
 _log = logging.getLogger(__name__)
 
@@ -34,11 +36,12 @@ def run_deepagents_loop(
     service: LLMService,
     provider: str,
     tool_hub: AelinToolHub,
+    policy: AelinToolPolicy,
+    query: str,
     memory_summary: str,
     history_turns: list[dict[str, Any]],
     images: list[dict[str, Any]],
     attachment_ids: list[int],
-    tool_skill_bodies: dict[str, str],
     cancel_token: Any | None = None,
 ) -> AelinAgentLoopResult:
     """
@@ -87,6 +90,67 @@ def run_deepagents_loop(
 
     backend = StateBackend  # factory; DeepAgents 会在内部按需实例化
 
+    # Policy usage & tool run tracking for this loop invocation.
+    usage = ToolPolicyUsage()
+    tool_runs: list[AgentLoopToolRun] = []
+
+    def _make_tool(name: str, description: str) -> Tool:
+        def _call_tool(**kwargs: Any) -> dict[str, Any]:
+            nonlocal usage
+            args = dict(kwargs or {})
+            decision = policy.evaluate(name=name, args=args, usage=usage)
+            started = time.perf_counter()
+            if not decision.allowed:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                tool_runs.append(
+                    AgentLoopToolRun(
+                        round_index=1,
+                        name=name,
+                        args=args,
+                        status="denied",
+                        result={"ok": False, "error": decision.reason},
+                        error=decision.reason,
+                        is_write=decision.is_write,
+                        latency_ms=latency_ms,
+                    )
+                )
+                return {"ok": False, "error": decision.reason}
+
+            result = tool_hub.execute(name, args)
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            usage.round_calls += 1
+            usage.total_calls += 1
+            if decision.is_write:
+                usage.write_calls += 1
+            status = "completed" if bool(result.get("ok", True)) else "failed"
+            error = "" if status == "completed" else str(result.get("error") or "")[:160]
+            tool_runs.append(
+                AgentLoopToolRun(
+                    round_index=1,
+                    name=name,
+                    args=args,
+                    status=status,
+                    result=result,
+                    error=error,
+                    is_write=decision.is_write,
+                    latency_ms=latency_ms,
+                )
+            )
+            return result
+
+        return Tool.from_function(func=_call_tool, name=name, description=description)
+
+    # For now expose a minimal but representative subset of tools.
+    tools: list[Tool] = []
+    for td in tool_hub.tool_definitions():
+        fn = td.get("function") if isinstance(td, dict) else None
+        if not isinstance(fn, dict):
+            continue
+        name = str(fn.get("name") or "").strip()
+        desc = str(fn.get("description") or "").strip() or name
+        if name in {"context_get", "profile", "device", "web_search", "attachment_search", "google_workspace", "plane"}:
+            tools.append(_make_tool(name, desc))
+
     # TODO: 暴露 Aelin 工具为 DeepAgents 工具；当前仅测试 DeepAgents wiring。
     system_prompt = (
         "You are Aelin running on DeepAgents. "
@@ -122,11 +186,9 @@ def run_deepagents_loop(
                 )
 
         # DeepAgents 主入口通过 chat history 驱动，我们把最新 query 作为最后一条 user 消息。
-        latest_query = memory_summary  # 占位，真正的 query 由上层写入 memory_summary 时暂用
-        if tool_skill_bodies.get("__latest_query__"):
-            latest_query = str(tool_skill_bodies["__latest_query__"])
-        if latest_query.strip():
-            messages.append({"role": "user", "content": latest_query.strip()})
+        latest_query = str(query or "").strip()
+        if latest_query:
+            messages.append({"role": "user", "content": latest_query})
 
         response = agent.invoke({"messages": messages})
         answer = str(getattr(response, "content", "") or "")
