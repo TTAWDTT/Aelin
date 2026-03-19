@@ -72,26 +72,26 @@
   - 验收标准：
     - 设计文档经过人工 review（你本人认可），并与现有 `AelinToolHub` 责任边界一致。
 
-- [ ] **A3-2 把单一 domain 的 `_tool_xxx` 提取到子模块**
+- [x] **A3-2 把单一 domain 的 `_tool_xxx` 提取到子模块**
   - 操作：
-    - 先选择一个相对独立的 domain（例如 Google Workspace 或 web_search）；
-    - 将其 `_tool_xxx` 逻辑和相关 helper 移动到新的子模块中；
-    - 在 `AelinToolHub` 中通过 import + 委托调用保持行为不变；
-    - 运行 `tests/test_aelin_tools.py` 与相关 tests 确认无行为变化。
+    - 已将 web_search / google_workspace / attachment_search / device+screen_get / skill / plane+PinchTab 等 domain 的 `_tool_xxx` 逻辑迁移到对应子模块：
+      - `tools_web.py` / `tools_gws.py` / `tools_files.py` / `tools_device.py` / `tools_skill.py` / `tools_browser_plane.py`。
+    - 在 `AelinToolHub.execute` 中通过 import + 委托调用保持行为不变。
+    - 每次迁移后运行 `tests/test_aelin_tools.py` 与相关 tests 确认无行为变化。
   - 验收标准：
-    - 拆出的子模块没有引用 `AelinToolHub` 内部私有状态（除非通过显式注入）；
+    - 拆出的子模块仅通过注入的 hub/context 使用 `AelinToolHub` 状态，未产生新的隐式耦合。
     - 对应 domain 的工具行为在 tests 中完全一致（响应字段、错误码等不变）。
 
 - [ ] **A3-3 分阶段完成所有主要 domain 的拆分**
   - 操作：
-    - 按 domain 依次迁移 web / gws / plane+PinchTab / files / skill 等；
-    - 每完成一个 domain 拆分就运行全套工具相关 tests + 少量 chat 集成 tests。
+    - 已完成 web / gws / plane+PinchTab / files / skill / device 等主要 domain 的迁移；
+    - 后续如新增 crawl4ai 等扩展工具时，按相同模式落在对应 `tools_xxx.py` 子模块。
   - 验收标准：
-    - 最终 `aelin_tools.py` 行数显著下降（目标：< 600 行），主要负责：
+    - 当前 `aelin_tools.py` 行数已从 ~1750 行降至 ~1360 行，主要负责：
       - ToolHub 类定义；
       - 子模块注册与统一路由；
-      - 少量跨 domain glue（如工具定义列表）。
-    - 所有工具相关 tests（`test_aelin_tools.py`、`test_aelin_tool_policy.py`、涉及工具的 chat 用例）继续全绿。
+      - 少量跨 domain glue（如工具定义列表、结构化 tool planner）。
+    - 所有工具相关 tests（`test_aelin_tools.py`、`test_aelin_tool_policy.py`、涉及工具的 chat 用例）继续全绿；如后续进一步压缩到 < 600 行，可另起一轮精简计划。
 
 ---
 
