@@ -36,6 +36,12 @@ from app.services.tools_gws import tool_google_workspace
 from app.services.tools_skill import tool_skill
 from app.services.tools_files import tool_attachment_search
 from app.services.tools_device import tool_device, tool_screen_get
+from app.services.tools_browser_plane import (
+    tool_plane,
+    tool_pinchtab,
+    tool_pinchtab_agent,
+    tool_pinchtab_session,
+)
 
 _TOOL_KEYWORDS = (
     "profile",
@@ -727,15 +733,13 @@ class AelinToolHub:
         if tool == "skill":
             return tool_skill(self, args)
         if tool == "plane":
-            return self._tool_plane(args)
+            return tool_plane(self, args)
         if tool == "pinchtab":
-            return self._tool_pinchtab(args)
+            return tool_pinchtab(self, args)
         if tool == "pinchtab_agent":
-            return self._tool_pinchtab_agent(args)
+            return tool_pinchtab_agent(self, args)
         if tool == "pinchtab_session":
-            # Implemented as a module-level helper to keep the session table
-            # shared across hub instances.
-            return _tool_pinchtab_session(self, args)
+            return tool_pinchtab_session(self, args)
         return _result_error(f"unsupported tool: {tool}")
 
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -842,102 +846,6 @@ class AelinToolHub:
             detail=str(result.get("detail") or ""),
             summary=f"Aelin 已尝试切换到 {str(result.get('route') or route)[:120]}",
         )
-
-    def _tool_plane(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "").strip().lower()
-        plane = str(args.get("plane") or "browser").strip().lower() or "browser"
-        goal = str(args.get("goal") or "").strip()
-        task_id = " ".join(str(args.get("task_id") or "").strip().split())[:96]
-        force_new = bool(args.get("force_new"))
-
-        if action == "catalog":
-            planes = plane_catalog_entries()
-            return _result_ok(planes=planes, total=len(planes))
-
-        entry = get_plane_registry_entry(plane)
-        if entry is None:
-            return _result_error("unsupported_plane")
-
-        adapter = _build_plane_adapter_for_entry(entry, tool_hub=self)
-
-        if action == "delegate":
-            if not goal:
-                return _result_error("missing goal")
-            if not force_new:
-                active_task = get_active_plane_task(
-                    self.user_id,
-                    self.workspace,
-                    plane=entry.metadata.slug,
-                    db=self.db,
-                )
-                active_task_id = " ".join(str((active_task or {}).get("task_id") or "").strip().split())[:96]
-                active_state = str((active_task or {}).get("state") or "").strip().lower()
-                if active_task_id and _should_reuse_active_plane_task(active_task, goal=goal):
-                    if active_state == "waiting_user":
-                        resumed = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
-                        if bool(resumed.get("ok")) and not bool(resumed.get("stale_backing_task")):
-                            resumed["reused_existing_task"] = True
-                            resumed["reused_action"] = "continue"
-                            return resumed
-                        if bool(resumed.get("stale_backing_task")):
-                            restarted = adapter.delegate(goal=goal[:800])
-                            if bool(restarted.get("ok")):
-                                restarted["restarted_after_stale_task"] = True
-                                restarted["previous_task_id"] = active_task_id
-                            return restarted
-                        if _should_restart_plane_task_after_reuse_failure(resumed):
-                            close_plane_task(
-                                active_task_id,
-                                user_id=self.user_id,
-                                workspace=self.workspace,
-                                plane=entry.metadata.slug,
-                                db=self.db,
-                            )
-                            restarted = adapter.delegate(goal=goal[:800])
-                            if bool(restarted.get("ok")):
-                                restarted["restarted_after_stale_task"] = True
-                                restarted["previous_task_id"] = active_task_id
-                            return restarted
-                        return resumed
-                    continued = adapter.continue_task(task_id=active_task_id, goal=goal[:800])
-                    if bool(continued.get("ok")) and not bool(continued.get("stale_backing_task")):
-                        continued["reused_existing_task"] = True
-                        continued["reused_action"] = "continue"
-                        return continued
-                    if bool(continued.get("stale_backing_task")):
-                        restarted = adapter.delegate(goal=goal[:800])
-                        if bool(restarted.get("ok")):
-                            restarted["restarted_after_stale_task"] = True
-                            restarted["previous_task_id"] = active_task_id
-                        return restarted
-                    if _should_restart_plane_task_after_reuse_failure(continued):
-                        close_plane_task(
-                            active_task_id,
-                            user_id=self.user_id,
-                            workspace=self.workspace,
-                            plane=entry.metadata.slug,
-                            db=self.db,
-                        )
-                        restarted = adapter.delegate(goal=goal[:800])
-                        if bool(restarted.get("ok")):
-                            restarted["restarted_after_stale_task"] = True
-                            restarted["previous_task_id"] = active_task_id
-                        return restarted
-                    return continued
-            return adapter.delegate(goal=goal[:800])
-
-        if action not in {"status", "continue", "close"}:
-            return _result_error("unsupported plane action")
-        if not task_id:
-            return _result_error("missing task_id")
-
-        if action == "status":
-            return adapter.status(task_id=task_id)
-
-        if action == "continue":
-            return adapter.continue_task(task_id=task_id, goal=goal[:800])
-
-        return adapter.close(task_id=task_id)
 
     def _tool_pinchtab(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "").strip().lower()
