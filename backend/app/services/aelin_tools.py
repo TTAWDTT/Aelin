@@ -34,6 +34,8 @@ from app.services.web_search import WebSearchResult, WebSearchService
 from app.services.tools_web import tool_web_search
 from app.services.tools_gws import tool_google_workspace
 from app.services.tools_skill import tool_skill
+from app.services.tools_files import tool_attachment_search
+from app.services.tools_device import tool_device, tool_screen_get
 
 _TOOL_KEYWORDS = (
     "profile",
@@ -713,13 +715,13 @@ class AelinToolHub:
         if tool == "profile":
             return self._tool_profile(args)
         if tool == "device":
-            return self._tool_device(args)
+            return tool_device(self, args)
         if tool == "web_search":
             return tool_web_search(self, args)
         if tool == "attachment_search":
-            return self._tool_attachment_search(args)
+            return tool_attachment_search(self, args)
         if tool == "screen_get":
-            return self._tool_screen_get(args)
+            return tool_screen_get(self, args)
         if tool == "google_workspace":
             return tool_google_workspace(self, args)
         if tool == "skill":
@@ -839,76 +841,6 @@ class AelinToolHub:
             opened=bool(result.get("opened", result.get("activated"))),
             detail=str(result.get("detail") or ""),
             summary=f"Aelin 已尝试切换到 {str(result.get('route') or route)[:120]}",
-        )
-
-    def _tool_device(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "").strip().lower()
-        if action == "status":
-            return self._tool_device_status(args)
-        if action == "open_url":
-            return self._tool_desktop_open_url(args)
-        if action == "open_aelin":
-            return self._tool_desktop_open_aelin(args)
-        return _result_error("unsupported device action")
-
-    def _tool_attachment_search(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = str(args.get("query") or "").strip()[:500]
-        if not query:
-            return _result_error("missing query")
-        raw_ids = args.get("attachment_ids")
-        attachment_ids: list[int] = normalize_positive_ints(raw_ids if isinstance(raw_ids, list) else [], cap=20)
-        if not attachment_ids:
-            attachment_ids = list(self._available_attachment_ids)
-        if not attachment_ids:
-            return _result_error("missing attachment_ids")
-        top_k = _safe_int(args.get("top_k"), 5, low=1, high=20)
-        mode = str(args.get("mode") or "keyword").strip().lower()
-        if mode not in {"keyword", "hybrid"}:
-            mode = "keyword"
-        result = self._attachments.search(
-            self.db,
-            user_id=self.user_id,
-            workspace=self.workspace,
-            query=query,
-            attachment_ids=attachment_ids,
-            top_k=top_k,
-            mode=mode,
-        )
-        if not bool(result.get("ok")):
-            return _result_error(str(result.get("error") or "attachment_search_failed"))
-        return _result_ok(
-            query=query,
-            mode=mode,
-            attachment_ids=list(result.get("attachment_ids") or []),
-            total=int(result.get("total") or 0),
-            content=str(result.get("content") or "")[:8000],
-            hits=list(result.get("hits") or []),
-        )
-
-    def _tool_screen_get(self, args: dict[str, Any]) -> dict[str, Any]:
-        display_id = str(args.get("display_id") or "").strip()[:64]
-        max_edge = _safe_int(args.get("max_edge"), 1280, low=640, high=4096)
-        fmt = "png" if str(args.get("format") or "").strip().lower() == "png" else "jpeg"
-        quality = _safe_int(args.get("quality"), 72, low=35, high=95)
-        try:
-            shot = device_capture_screen(
-                display_id=display_id,
-                max_edge=max_edge,
-                image_format=fmt,
-                quality=quality,
-            )
-        except DeviceScreenCaptureError as exc:
-            return _result_error(f"screen_get_failed:{exc.detail}")
-        except Exception as exc:
-            return _result_error(f"screen_get_failed:{str(exc)[:160]}")
-
-        return _result_ok(
-            data_url=str(shot.get("data_url") or ""),
-            name=str(shot.get("name") or "")[:120],
-            width=max(0, int(shot.get("width") or 0)),
-            height=max(0, int(shot.get("height") or 0)),
-            source_display=str(shot.get("source_display") or "")[:64],
-            captured_at=str(shot.get("captured_at") or "")[:64],
         )
 
     def _tool_plane(self, args: dict[str, Any]) -> dict[str, Any]:
