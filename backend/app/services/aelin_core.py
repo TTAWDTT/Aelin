@@ -773,7 +773,7 @@ def _enforce_answer_first(
             return guarded
     return _rule_based_chat_answer(query, memory_summary=memory_summary, brief_summary=brief_summary)
 
-def _aelin_chat_impl(
+def _aelin_chat_impl_legacy(
     payload: AelinChatRequest,
     db: Session,
     current_user: User,
@@ -2128,7 +2128,89 @@ def _try_agent_loop_chat(
         workspace,
         summary_latency_ms,
     )
-    _emit_prefixed("preflight.memory_summary", status="completed", detail=f"latency_ms={summary_latency_ms}", count=1)
+    _emit_prefixed(
+        "preflight.memory_summary",
+        status="completed",
+        detail=f"latency_ms={summary_latency_ms}",
+        count=1,
+    )
+
+    # Auto-ingest supported media URLs (YouTube/Bilibili/抖音等) before entering
+    # the DeepAgents loop, preserving the old “drop a link → get summary”
+    # behaviour while keeping the new runtime.
+    media_result: Any | None = None
+    media_summary_intent = False
+    media_hit = _extract_first_supported_media_url(payload.query)
+    if media_hit is not None:
+        media_url, media_platform = media_hit
+        media_summary_intent = _is_media_summary_intent(payload.query, media_url)
+        _emit_prefixed(
+            "media_ingest",
+            status="running",
+            detail=f"{media_platform}:{media_url[:90]}",
+            count=0,
+        )
+        try:
+            media_result = _media_ingest.ingest(
+                user_id=current_user.id,
+                workspace=workspace,
+                url=media_url,
+                service=service,
+                provider=provider,
+                languages=None,
+            )
+            _emit_prefixed(
+                "media_ingest",
+                status="completed",
+                detail=(
+                    f"{media_result.platform}; "
+                    f"source={media_result.source_type}; "
+                    f"conf={media_result.confidence:.2f}"
+                ),
+                count=1,
+            )
+        except MediaIngestError as exc:
+            _emit_prefixed(
+                "media_ingest",
+                status="failed",
+                detail=f"{exc.code}:{exc.message[:140]}",
+                count=0,
+            )
+            media_result = None
+        except Exception as exc:  # pragma: no cover - defensive guardrail
+            _emit_prefixed(
+                "media_ingest",
+                status="failed",
+                detail=str(exc)[:160],
+                count=0,
+            )
+            media_result = None
+
+        # If the user essentially asked “帮我读/总结这个链接”，直接返回摘要，
+        # 不再进入 DeepAgents 回合，以获得更快、更稳定的体验。
+        if media_result is not None and media_summary_intent:
+            answer = _build_media_ingest_answer(media_result)
+            expression = _pick_expression(payload.query, answer)
+            if persist_memory and payload.use_memory and answer:
+                try:
+                    _memory.update_after_turn(
+                        db,
+                        current_user.id,
+                        [{"role": "user", "content": payload.query}],
+                        answer,
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            return AelinChatResponse(
+                answer=answer,
+                expression=expression,
+                citations=[],
+                actions=[],
+                tool_trace=prefixed_traces[:64],
+                memory_summary=memory_summary,
+                generated_at=datetime.now(timezone.utc),
+            )
     attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
 
     history_turns: list[dict[str, str]] = []
@@ -2428,4 +2510,24 @@ def _dispatch_aelin_chat(
         try_agent_loop_chat=_try_agent_loop_chat,
         pick_expression=_pick_expression,
         now_ms=_now_ms,
+    )
+
+
+def _aelin_chat_impl(
+    payload: AelinChatRequest,
+    db: Session,
+    current_user: User,
+    *,
+    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+) -> AelinChatResponse:
+    """
+    Legacy retrieval-era chat implementation.
+
+    This function is intentionally no longer used in the runtime. The
+    DeepAgents-based agent loop is now the only chat path. The symbol is
+    preserved so that older tests and router monkeypatches can still
+    reference it without breaking, but any direct call is considered a bug.
+    """
+    raise RuntimeError(
+        "legacy _aelin_chat_impl is no longer supported; use agent loop only"
     )

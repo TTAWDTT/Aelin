@@ -259,12 +259,6 @@ def test_aelin_chat_auto_ingest_media_url(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    def _legacy_try(payload, db, current_user, event_cb=None, **kwargs):
-        _ = kwargs
-        return aelin_router._aelin_chat_impl(payload, db, current_user, event_cb=event_cb)
-
-    monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", _legacy_try)
-
     monkeypatch.setattr(
         aelin_router._media_ingest,
         "ingest",
