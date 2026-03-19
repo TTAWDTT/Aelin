@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from deepagents import create_deep_agent
@@ -47,8 +48,8 @@ def run_deepagents_loop(
     """
     Bridge between Aelin core and a DeepAgents-powered agent loop.
 
-    第一版实现先不暴露任何工具，只验证 wiring 是否正常工作，
-    后续会逐步把 Aelin 的工具和 plane 接入 DeepAgents。
+    当前版本已经把 Aelin 的关键工具包装为 DeepAgents Tool，
+    同时保留对单元测试中 fake-model 的兼容路径。
     """
 
     # 当前测试环境在 _resolve_llm_service 中会注入一个假的 LLMService 实例，
@@ -140,7 +141,7 @@ def run_deepagents_loop(
 
         return Tool.from_function(func=_call_tool, name=name, description=description)
 
-    # For now expose a minimal but representative subset of tools.
+    # 暴露一组代表性的工具给 DeepAgents，后续可以再扩展。
     tools: list[Tool] = []
     for td in tool_hub.tool_definitions():
         fn = td.get("function") if isinstance(td, dict) else None
@@ -151,7 +152,6 @@ def run_deepagents_loop(
         if name in {"context_get", "profile", "device", "web_search", "attachment_search", "google_workspace", "plane"}:
             tools.append(_make_tool(name, desc))
 
-    # TODO: 暴露 Aelin 工具为 DeepAgents 工具；当前仅测试 DeepAgents wiring。
     system_prompt = (
         "You are Aelin running on DeepAgents. "
         "You see the conversation history and the latest user query. "
@@ -159,7 +159,7 @@ def run_deepagents_loop(
     )
 
     try:
-        agent = create_deep_agent(model=chat_model, system_prompt=system_prompt, backend=backend, tools=[])
+        agent = create_deep_agent(model=chat_model, system_prompt=system_prompt, backend=backend, tools=tools)
 
         # 构造 DeepAgents 期望的消息格式：带有历史对话和当前用户 query。
         messages: list[dict[str, Any]] = []
@@ -221,7 +221,7 @@ def run_deepagents_loop(
             rounds=1,
             total_calls=0,
             write_calls=0,
-            tool_runs=[],
+            tool_runs=tool_runs,
             trace_steps=[
                 AgentLoopTraceStep(stage="agent_loop", status="failed", detail="empty_answer_from_deepagents"),
             ],
@@ -234,9 +234,9 @@ def run_deepagents_loop(
         answer=answer.strip(),
         stop_reason="completed",
         rounds=1,
-        total_calls=0,
-        write_calls=0,
-        tool_runs=[],
+        total_calls=usage.total_calls,
+        write_calls=usage.write_calls,
+        tool_runs=tool_runs,
         trace_steps=[
             AgentLoopTraceStep(stage="agent_loop", status="completed", detail="deepagents_core_v0"),
         ],
