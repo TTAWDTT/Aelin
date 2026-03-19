@@ -142,7 +142,7 @@ def run_deepagents_loop(
 
         return Tool.from_function(func=_call_tool, name=name, description=description)
 
-    # 暴露一组代表性的工具给 DeepAgents，后续可以再扩展。
+    # 暴露一组代表性的工具给 DeepAgents。
     tools: list[Tool] = []
     for td in tool_hub.tool_definitions():
         fn = td.get("function") if isinstance(td, dict) else None
@@ -150,7 +150,18 @@ def run_deepagents_loop(
             continue
         name = str(fn.get("name") or "").strip()
         desc = str(fn.get("description") or "").strip() or name
-        if name in {"context_get", "profile", "device", "web_search", "attachment_search", "google_workspace", "plane"}:
+        # pinchtab 系列目前仅供内部 plane 使用，不直接暴露给 DeepAgents。
+        if name in {
+            "context_get",
+            "profile",
+            "device",
+            "web_search",
+            "attachment_search",
+            "screen_get",
+            "google_workspace",
+            "skill",
+            "plane",
+        }:
             tools.append(_make_tool(name, desc))
 
     system_prompt = (
