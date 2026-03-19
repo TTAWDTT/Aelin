@@ -2313,14 +2313,49 @@ def _try_agent_loop_chat(
         )
         _emit_trace(trace)
 
-    # 再把每一次工具调用显式映射为 agent_loop_tool 阶段，便于前端展示完整工具链。
+    # 再把每一次工具调用显式映射为更细粒度阶段，便于前端展示完整工具链。
     for run in result.tool_runs:
         detail = run.error or ""
         if not detail:
             # 对成功调用给一个简洁摘要，避免塞入整个 result。
-            detail = f"{run.name}({len(run.args)} args) -> {run.result.get('scope') or ''}".strip()
+            scope = ""
+            try:
+                scope = str(run.result.get("scope") or "")
+            except Exception:
+                scope = ""
+            detail = f"{run.name}({len(run.args)} args) -> {scope}".strip()
+
+        stage = "agent_loop_tool"
+        # 对 plane 工具按 action 细分阶段，方便 UI 展示 plane 链路。
+        if run.name == "plane":
+            action = str(run.args.get("action") or "").strip().lower()
+            plane_name = str(run.args.get("plane") or "").strip() or "browser"
+            state = str(run.result.get("state") or "").strip() if isinstance(run.result, dict) else ""
+            task_id = str(run.args.get("task_id") or "").strip()
+            if action == "delegate":
+                stage = "plane_delegate"
+                goal = str(run.args.get("goal") or "").strip()
+                if not run.error and goal:
+                    detail = f"delegate plane={plane_name} goal={goal[:120]}"
+            elif action == "status":
+                stage = "plane_status"
+                if not run.error:
+                    detail = f"status plane={plane_name} task_id={task_id or 'unknown'} state={state or 'unknown'}"
+            elif action == "continue":
+                stage = "plane_continue"
+                if not run.error:
+                    detail = f"continue plane={plane_name} task_id={task_id or 'unknown'} state={state or 'unknown'}"
+            elif action == "close":
+                stage = "plane_close"
+                if not run.error:
+                    detail = f"close plane={plane_name} task_id={task_id or 'unknown'}"
+            elif action == "catalog":
+                stage = "plane_catalog"
+                if not run.error:
+                    detail = f"catalog plane={plane_name}"
+
         tool_trace = AelinToolStep(
-            stage="agent_loop_tool",
+            stage=stage,
             status=str(run.status or "completed")[:24],
             detail=detail[:240],
             count=1,
