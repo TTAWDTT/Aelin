@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
@@ -158,8 +159,35 @@ def run_deepagents_loop(
         "Answer the user directly in the same language as the query."
     )
 
+    # 加载本地 skill 文件，并以 StateBackend 支持的方式注入给 DeepAgents。
+    # skills 参数使用 POSIX 风格路径，files 映射在 invoke 时传入。
+    skills_root = Path(__file__).resolve().parent.parent / "deepagents_skills"
+    skill_files: dict[str, str] = {}
+    skill_sources: list[str] = []
+    if skills_root.is_dir():
+        for subdir in skills_root.iterdir():
+            if not subdir.is_dir():
+                continue
+            # 形如 "/google_workspace/" 的前缀路径。
+            rel_dir = f"/{subdir.name}/"
+            skill_sources.append(rel_dir)
+            for file_path in subdir.rglob("*.md"):
+                try:
+                    text = file_path.read_text(encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    continue
+                # 将文件挂载到类似 "/google_workspace/README.md" 的路径下。
+                rel_path = f"/{subdir.name}/{file_path.name}"
+                skill_files[rel_path] = text
+
     try:
-        agent = create_deep_agent(model=chat_model, system_prompt=system_prompt, backend=backend, tools=tools)
+        agent = create_deep_agent(
+            model=chat_model,
+            system_prompt=system_prompt,
+            backend=backend,
+            tools=tools,
+            skills=skill_sources or None,
+        )
 
         # 构造 DeepAgents 期望的消息格式：带有历史对话和当前用户 query。
         messages: list[dict[str, Any]] = []
@@ -190,7 +218,11 @@ def run_deepagents_loop(
         if latest_query:
             messages.append({"role": "user", "content": latest_query})
 
-        response = agent.invoke({"messages": messages})
+        invoke_payload: dict[str, Any] = {"messages": messages}
+        if skill_files:
+            invoke_payload["files"] = skill_files
+
+        response = agent.invoke(invoke_payload)
         answer = str(getattr(response, "content", "") or "")
     except Exception as exc:  # noqa: BLE001
         _log.exception("deepagents_unhandled_error provider=%s", provider)
