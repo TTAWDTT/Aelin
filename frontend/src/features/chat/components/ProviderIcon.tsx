@@ -1,4 +1,5 @@
 import { cn } from '@/shared/utils/cn'
+import { Plane as PlaneIcon, Globe2, Monitor, Sparkles, Circle } from 'lucide-react'
 
 type ProviderKind = 'google' | 'plane' | 'device' | 'web' | 'core'
 
@@ -20,41 +21,38 @@ function resolveKind(raw: string): ProviderKind {
 
 export function ProviderIcon({ provider, className, size = 'md' }: ProviderIconProps) {
   const kind = resolveKind(provider)
-  const baseSize = size === 'sm' ? 'h-4 w-4 text-[8px]' : 'h-5 w-5 text-[9px]'
+  const baseSize = size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'
+  const iconSize = size === 'sm' ? 11 : 13
 
-  const emoji =
-    kind === 'google'
-      ? '🟢'
-      : kind === 'plane'
-        ? '🛫'
-        : kind === 'device'
-          ? '💻'
-          : kind === 'web'
-            ? '🌐'
-            : '◇'
-
-  const label =
-    kind === 'google'
-      ? 'G'
-      : kind === 'plane'
-        ? 'P'
-        : kind === 'device'
-          ? 'D'
-          : kind === 'web'
-            ? 'W'
-            : 'A'
+  let Icon: React.ComponentType<{ size?: number }>
+  switch (kind) {
+    case 'google':
+      Icon = Sparkles
+      break
+    case 'plane':
+      Icon = PlaneIcon
+      break
+    case 'device':
+      Icon = Monitor
+      break
+    case 'web':
+      Icon = Globe2
+      break
+    default:
+      Icon = Circle
+      break
+  }
 
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] uppercase tracking-wide text-[var(--color-text)]',
+        'inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text)]',
         baseSize,
         className,
       )}
       aria-hidden="true"
     >
-      <span className="leading-none">{emoji}</span>
-      <span className="ml-0.5 leading-none">{label}</span>
+      <Icon size={iconSize} />
     </span>
   )
 }
