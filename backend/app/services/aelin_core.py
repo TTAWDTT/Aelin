@@ -2086,7 +2086,6 @@ def _try_agent_loop_chat(
     prefixed_traces: list[AelinToolStep] = []
     prefixed_actions: list[AelinAction] = []
     forced_intent = ""
-    forced_tool_runs: list[dict[str, Any]] = []
     attachment_prefetch_result: dict[str, Any] = {}
 
     def _emit_prefixed(stage: str, *, status: str, detail: str = "", count: int = 0) -> None:
@@ -2212,13 +2211,6 @@ def _try_agent_loop_chat(
         prefetch_started = time.perf_counter()
         attachment_prefetch_result = tool_hub.execute("attachment_search", attachment_prefetch_args)
         prefetch_latency_ms = int((time.perf_counter() - prefetch_started) * 1000)
-        forced_tool_runs.append(
-            {
-                "name": "attachment_search",
-                "args": attachment_prefetch_args,
-                "result": attachment_prefetch_result,
-            }
-        )
         if bool(attachment_prefetch_result.get("ok")):
             _emit_prefixed(
                 "attachment_prefetch",
@@ -2254,22 +2246,12 @@ def _try_agent_loop_chat(
         plane_snapshot = get_active_plane_task(current_user.id, workspace, plane="browser", db=db)
     except Exception:
         plane_snapshot = None
-    if (
+    if not (
         isinstance(plane_snapshot, dict)
         and plane_snapshot.get("task_id")
         and should_resume_active_plane_for_query(plane_snapshot, payload.query)
     ):
-        forced_tool_runs.append(
-            {
-                "name": "plane",
-                "args": {
-                    "action": "status",
-                    "plane": "browser",
-                    "task_id": plane_snapshot.get("task_id"),
-                },
-                "result": {"ok": True, **plane_snapshot},
-            }
-        )
+        plane_snapshot = None
 
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
 
@@ -2296,7 +2278,6 @@ def _try_agent_loop_chat(
         detail=f"total_preflight_ms={int((time.perf_counter() - pre_loop_started) * 1000)}",
         count=1,
     )
-    # TODO: 将 policy / forced_intent / forced_tool_runs 接入 DeepAgents graph。
     result = run_deepagents_loop(
         service=service,
         provider=provider,
@@ -2307,6 +2288,7 @@ def _try_agent_loop_chat(
         history_turns=history_turns,
         images=images,
         attachment_ids=attachment_ids,
+        plane_snapshot=plane_snapshot,
         cancel_token=cancel_token,
     )
 
