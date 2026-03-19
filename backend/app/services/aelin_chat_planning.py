@@ -10,6 +10,14 @@ from app.services.aelin_chat_answering import _extract_score_clues, _looks_like_
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult
 
+#
+# Section: JSON parsing & low-level helpers
+# ----------------------------------------
+# These helpers are shared across intent planning, tool planning and web
+# boundary decomposition. They do not perform any I/O and are intentionally
+# tolerant of imperfect LLM outputs.
+#
+
 _MAX_WEB_SUBAGENTS = 5
 _MAX_LOCAL_SUBAGENTS = 5
 _MAX_CONTEXT_BOUNDARIES = 10
@@ -116,6 +124,11 @@ def _normalize_web_queries(query: str, items: Any, *, limit: int = _MAX_WEB_SUBA
 
 def _is_cjk_text(text: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
+
+#
+# Section: Web search subject & query pack builders
+#
 
 def _extract_search_subject_dynamic(query: str) -> str:
     text = (query or "").strip()
