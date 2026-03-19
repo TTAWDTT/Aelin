@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     pinchtab_data_dir: str = "../data/pinchtab"
     pinchtab_startup_timeout_seconds: float = 20.0
     pinchtab_shutdown_timeout_seconds: float = 8.0
+    # PinchTab instance mode: "headless" (no visible window) or "headed" (visible Chrome).
+    # For local开发/调试推荐使用 headed；生产环境建议保持 headless 以节省资源。
+    pinchtab_instance_mode: str = "headless"
     # Google Workspace CLI (gws) integration.
     # `google_workspace_cli_bin` 可以是 "gws"（放在 PATH 中），也可以是一个绝对路径。
     google_workspace_cli_bin: str = "gws"

@@ -167,6 +167,8 @@ class PinchTabLauncher:
 
     def _config_payload(self) -> dict[str, Any]:
         bind, port = self._base_server_config()
+        raw_mode = str(settings.pinchtab_instance_mode or "").strip().lower()
+        instance_mode = raw_mode if raw_mode in {"headless", "headed"} else "headless"
         return {
             "server": {
                 "bind": bind,
@@ -178,7 +180,7 @@ class PinchTabLauncher:
                 "defaultProfile": "default",
             },
             "instanceDefaults": {
-                "mode": "headless",
+                "mode": instance_mode,
             },
         }
 
