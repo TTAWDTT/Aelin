@@ -32,6 +32,7 @@ from app.services.plane_runtime import get_plane_registry_entry
 from app.services.skill_loader import get_skill_prompt_by_slug, list_skill_catalog_for_query_and_tools
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult, WebSearchService
+from app.services.tools_web import tool_web_search
 
 _TOOL_KEYWORDS = (
     "profile",
@@ -713,7 +714,7 @@ class AelinToolHub:
         if tool == "device":
             return self._tool_device(args)
         if tool == "web_search":
-            return self._tool_web_search(args)
+            return tool_web_search(self, args)
         if tool == "attachment_search":
             return self._tool_attachment_search(args)
         if tool == "screen_get":
@@ -848,64 +849,6 @@ class AelinToolHub:
         if action == "open_aelin":
             return self._tool_desktop_open_aelin(args)
         return _result_error("unsupported device action")
-
-    def _tool_web_search(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "search_and_fetch").strip().lower()
-        if action not in {"search", "search_and_fetch"}:
-            return _result_error("unsupported action")
-        query = str(args.get("query") or "").strip()[:400]
-        if not query:
-            return _result_error("missing query")
-
-        max_results = _safe_int(args.get("max_results"), 15, low=1, high=15)
-        fetch_top_k = _safe_int(args.get("fetch_top_k"), 3, low=0, high=6)
-        fetch_top_k = min(fetch_top_k, max_results)
-
-        rows: list[WebSearchResult] = []
-        if action == "search":
-            rows = list(self._web_search.search(query, max_results=max_results) or [])
-        else:
-            rows = list(
-                self._web_search.search_and_fetch(
-                    query,
-                    max_results=max_results,
-                    fetch_top_k=fetch_top_k,
-                )
-                or []
-            )
-
-        providers: set[str] = set()
-        items: list[dict[str, Any]] = []
-        for idx, row in enumerate(rows[:max_results], start=1):
-            title = str(getattr(row, "title", "") or "").strip()
-            url = str(getattr(row, "url", "") or "").strip()
-            snippet = str(getattr(row, "snippet", "") or "").strip()
-            provider = str(getattr(row, "provider", "") or "").strip() or "unknown"
-            source = str(getattr(row, "source", "") or "").strip() or "web"
-            fetched_excerpt = str(getattr(row, "fetched_excerpt", "") or "").strip()
-            fetch_mode = str(getattr(row, "fetch_mode", "") or "").strip() or "none"
-            rank = _safe_int(getattr(row, "rank", idx), idx, low=1, high=9999)
-            providers.add(provider)
-            items.append(
-                {
-                    "title": title[:220],
-                    "url": url[:600],
-                    "snippet": snippet[:320],
-                    "provider": provider[:32],
-                    "source": source[:24],
-                    "fetch_mode": fetch_mode[:24],
-                    "rank": rank,
-                    "fetched_excerpt": fetched_excerpt[:1200],
-                }
-            )
-
-        return _result_items(
-            items,
-            query=query,
-            action=action,
-            providers=sorted(providers),
-            fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
-        )
 
     def _tool_attachment_search(self, args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()[:500]
