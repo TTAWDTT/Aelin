@@ -556,96 +556,7 @@ def _decompose_web_context_boundaries_dynamic(
 def _extract_search_subject(query: str) -> str:
     return _extract_search_subject_dynamic(query)
 
-def _extract_search_subject_legacy(query: str) -> str:
-    text = (query or "").strip()
-    if not text:
-        return ""
-    cleaned = re.sub(r"[?？!！,，。;；:：()（）【】\\[\\]\"'`]+", " ", text)
-    lowered = cleaned.lower()
-    stop_phrases = [
-        "最近",
-        "最新",
-        "今天",
-        "昨日",
-        "昨天",
-        "前天",
-        "刚刚",
-        "实时",
-        "打了",
-        "进行了",
-        "什么",
-        "哪些",
-        "几场",
-        "比赛",
-        "赛果",
-        "比分",
-        "结果",
-        "情况",
-        "是多少",
-        "多少",
-        "告诉我",
-        "帮我",
-        "一下",
-        "请问",
-        "有没有",
-        "怎么",
-        "如何",
-        "who won",
-        "what",
-        "latest",
-        "recent",
-        "today",
-        "yesterday",
-        "result",
-        "results",
-        "score",
-        "scores",
-        "game",
-        "games",
-        "match",
-        "matches",
-    ]
-    subject = lowered
-    for phrase in stop_phrases:
-        subject = subject.replace(phrase, " ")
-    subject = re.sub(r"\s+", " ", subject).strip()
-    if len(subject) >= 2:
-        return subject[:90]
-
-    leagues = re.findall(r"\b(?:nba|wnba|cba|nfl|nhl|mlb|epl)\b", lowered, flags=re.I)
-    if leagues:
-        uniq: list[str] = []
-        seen: set[str] = set()
-        for row in leagues:
-            key = row.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            uniq.append(row.upper())
-        return " ".join(uniq)[:90]
-
-    tokens = re.findall(r"[A-Za-z0-9]{2,}|[\u4e00-\u9fff]{2,}", cleaned)
-    if tokens:
-        return " ".join(tokens[:4])[:90]
-    return text[:90]
-
 def _build_web_query_pack(
-    *,
-    query: str,
-    base_queries: list[str] | None,
-    intent_contract: dict[str, Any] | None,
-    memory_snapshot: dict[str, Any] | None = None,
-    limit: int = _MAX_WEB_SUBAGENTS,
-) -> list[str]:
-    return _build_web_query_pack_dynamic(
-        query=query,
-        base_queries=base_queries,
-        intent_contract=intent_contract,
-        memory_snapshot=memory_snapshot,
-        limit=limit,
-    )
-
-def _build_web_query_pack_legacy(
     *,
     query: str,
     base_queries: list[str] | None,
@@ -748,24 +659,6 @@ def _build_web_query_pack_legacy(
     return _normalize_web_queries(query_text, seeds, limit=limit)
 
 def _decompose_web_context_boundaries(
-    *,
-    query: str,
-    web_boundaries: list[dict[str, str]],
-    intent_contract: dict[str, Any] | None,
-    memory_snapshot: dict[str, Any] | None,
-    service: LLMService,
-    provider: str,
-) -> dict[str, Any]:
-    return _decompose_web_context_boundaries_dynamic(
-        query=query,
-        web_boundaries=web_boundaries,
-        intent_contract=intent_contract,
-        memory_snapshot=memory_snapshot,
-        service=service,
-        provider=provider,
-    )
-
-def _decompose_web_context_boundaries_legacy(
     *,
     query: str,
     web_boundaries: list[dict[str, str]],
@@ -1991,3 +1884,27 @@ def _build_retry_web_queries(
         if len(out) >= 3:
             break
     return out
+
+
+def _decompose_web_context_boundaries(
+    *,
+    query: str,
+    web_boundaries: list[dict[str, str]],
+    intent_contract: dict[str, Any] | None,
+    memory_snapshot: dict[str, Any] | None,
+    service: LLMService,
+    provider: str,
+) -> dict[str, Any]:
+    """
+    Public wrapper that delegates to the dynamic implementation. Keeping this
+    indirection makes it easier to evolve the dynamic behaviour (including
+    retry) without changing the external surface or tests.
+    """
+    return _decompose_web_context_boundaries_dynamic(
+        query=query,
+        web_boundaries=web_boundaries,
+        intent_contract=intent_contract,
+        memory_snapshot=memory_snapshot,
+        service=service,
+        provider=provider,
+    )
