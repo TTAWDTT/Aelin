@@ -311,6 +311,69 @@ class FileMemoryBridge:
     def _memory_root(self, *, user_id: int, workspace: str) -> Path:
         return self._workspace_root(user_id=user_id, workspace=workspace) / "memory"
 
+    def read_agents_memory(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+    ) -> str | None:
+        """
+        Read the workspace-level AGENTS.md memory file, if present.
+
+        This is the canonical DeepAgents-style memory file used to provide
+        persistent context for a given user + workspace pair.
+        """
+        if not self.enabled:
+            return None
+        memory_root = self._memory_root(user_id=user_id, workspace=workspace)
+        path = (memory_root / "AGENTS.md").resolve()
+        try:
+            if not path.exists() or not path.is_file():
+                return None
+        except Exception:
+            return None
+
+        loaded = self._load_local_doc_entry(path)
+        if loaded is None:
+            return None
+        _ts, text, _meta = loaded
+        return text
+
+    def write_agents_memory(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        content: str,
+    ) -> str | None:
+        """
+        Overwrite the workspace-level AGENTS.md memory file with provided content.
+
+        The file is stored under the user's memory root:
+            users/{user_id}/workspaces/{workspace}/memory/AGENTS.md
+        """
+        if not self.enabled:
+            return None
+        text = str(content or "").strip()
+        if not text:
+            return None
+
+        memory_root = self._memory_root(user_id=user_id, workspace=workspace)
+        with self._io_lock:
+            try:
+                memory_root.mkdir(parents=True, exist_ok=True)
+                path = (memory_root / "AGENTS.md").resolve()
+                path.write_text(text, encoding="utf-8")
+            except Exception:
+                return None
+
+        # Warm the local doc cache so subsequent reads are fast and consistent.
+        try:
+            self._load_local_doc_entry(path)
+        except Exception:
+            pass
+        return str(path)
+
     def _normalize_topic_path(self, topic_path: list[str] | None, *, fallback: str = "综合") -> list[str]:
         out: list[str] = []
         seen: set[str] = set()

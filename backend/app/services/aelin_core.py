@@ -840,6 +840,19 @@ def _try_agent_loop_chat(
             db.commit()
         except Exception:
             db.rollback()
+        # Persist DeepAgents-style AGENTS.md snapshot for this workspace so that
+        # future runs can treat it as canonical long-term memory.
+        try:
+            snapshot = latest_memory_snapshot or memory_summary
+            if snapshot.strip():
+                _file_memory.write_agents_memory(
+                    user_id=int(current_user.id),
+                    workspace=workspace,
+                    content=snapshot,
+                )
+        except Exception:
+            # Persistence failures should not break the main chat flow.
+            pass
 
     expression = _pick_expression(payload.query, result.answer)
     actions: list[AelinAction] = [*prefixed_actions]
