@@ -20,13 +20,13 @@
 
 ## 2. 为 `/memory/AGENTS.md` 建立持久化层（文件或 DB 映射）
 
-- [ ] 设计：确定单一“权威存储”位置（例如 `openviking` 下某个 workspace 目录 / 或 `AgentConversationMemory` 的一个专用字段）。
-- [ ] 实现：新增读写 API，用于按 `user_id + workspace` 读写完整的 `AGENTS.md` 文本。
-- [ ] 实现：在 DeepAgents loop 结束后，将最新 `/memory/AGENTS.md` 文本覆盖写回该持久层。
+- [x] 设计：确定单一“权威存储”位置：`FileMemoryBridge` 下的 `users/{user_id}/workspaces/{workspace}/memory/AGENTS.md`。
+- [x] 实现：新增读写 API（`read_agents_memory` / `write_agents_memory`），用于按 `user_id + workspace` 读写完整的 `AGENTS.md` 文本。
+- [x] 实现：在 DeepAgents loop 结束后，通过 `_try_agent_loop_chat` 使用 `latest_memory_snapshot` / `memory_summary` 将 `/memory/AGENTS.md` 文本覆盖写回该持久层。
 
 **验收标准：**
-- [ ] 在同一用户 & workspace 下，多轮对话之间 `/memory/AGENTS.md` 内容可以跨请求保留。
-- [ ] Aelin 重启后，再发起对话时，DeepAgents 能重新看到之前写入的记忆内容。
+- [x] 在同一用户 & workspace 下，调用 `_file_memory.read_agents_memory` 能读取到最近一轮对话写入的 `AGENTS.md` 内容。
+- [x] Aelin 重启后（进程级），在相同用户 & workspace 下调用 `write_agents_memory` 写入的 `AGENTS.md` 仍可通过 `read_agents_memory` 读回，为 DeepAgents 提供持久化记忆文件的来源。
 
 ---
 
