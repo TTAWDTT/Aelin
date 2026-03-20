@@ -24,7 +24,7 @@ def build_context_bundle(
     memory_service: AgentMemoryService,
 ) -> dict:
     workspace_norm = workspace
-    summary = memory_service.get_summary(db, user_id)
+    summary = memory_service.get_summary(db, user_id, workspace=workspace_norm)
     note_rows = memory_service.list_notes(db, user_id, limit=24)
     notes: list[AgentMemoryNoteOut] = []
     for row in note_rows:

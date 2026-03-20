@@ -279,7 +279,7 @@ def test_build_context_bundle_reuses_shared_memory_primitives(monkeypatch):
     }
 
     class _FakeMemory:
-        def get_summary(self, db, user_id):
+        def get_summary(self, db, user_id, *, workspace: str = "default"):
             calls["get_summary"] += 1
             return "summary"
 

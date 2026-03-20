@@ -19,6 +19,7 @@ from app.services.agent_memory_utils import (
     _parse_json_or_none,
     _truncate,
 )
+from app.services.openviking_bridge import file_memory_bridge
 
 _SOCIAL_SOURCES = {"x", "douyin", "bilibili", "xiaohongshu", "weibo", "rss"}
 _SOURCE_LABELS = {
@@ -63,7 +64,40 @@ def serialize_focus_item(item: FocusItem) -> dict[str, Any]:
 
 
 class AgentMemoryService:
-    def get_summary(self, db: Session, user_id: int) -> str:
+    def get_summary(self, db: Session, user_id: int, *, workspace: str = "default") -> str:
+        """
+        Return the short conversation summary for a user.
+
+        When available, this prefers the DeepAgents-style AGENTS.md memory file
+        stored via FileMemoryBridge; otherwise it falls back to the legacy
+        AgentConversationMemory.summary field in the database.
+        """
+        try:
+            agents_md = file_memory_bridge.read_agents_memory(user_id=user_id, workspace=workspace)
+        except Exception:
+            agents_md = None
+        if agents_md:
+            text = _clean_text(agents_md)
+            # Prefer the "## 会话摘要" section if present.
+            summary = ""
+            marker = "## 会话摘要"
+            idx = text.find(marker)
+            if idx >= 0:
+                tail = text[idx + len(marker) :]
+                lines: list[str] = []
+                for raw in tail.splitlines():
+                    row = raw.strip()
+                    if not row:
+                        continue
+                    if row.startswith("#"):
+                        break
+                    lines.append(row)
+                    if len(" ".join(lines)) >= 1000:
+                        break
+                summary = _truncate(" ".join(lines), 1000)
+            if summary:
+                return summary.strip()
+        # Fallback: legacy DB summary.
         row = db.get(AgentConversationMemory, user_id)
         if row is None:
             return ""
@@ -1179,54 +1213,69 @@ class AgentMemoryService:
         return dedup
 
     def build_system_memory_prompt(self, db: Session, user_id: int, *, query: str = "") -> str:
-        snap = self.snapshot(db, user_id, query=query)
-        layers = self.build_memory_layers(db, user_id, workspace="default", query=query)
+        """
+        Build a single concise markdown string representing the user's memory.
+
+        This is designed to be mounted as a virtual AGENTS.md-style file for
+        DeepAgents, and to serve as the `memory_summary` passed through the
+        rest of the Aelin pipeline. It intentionally avoids legacy inbox /
+        layout / notification concepts and focuses on:
+        - recent conversation summary
+        - long-term notes (facts / preferences / in-progress)
+        - open todos
+        - optional current query hint
+        """
+        # Short conversation summary.
+        raw_summary = self.get_summary(db, user_id)
+        summary = _truncate(_clean_text(raw_summary or ""), 1000)
+
+        # Long-term notes and todos.
+        note_rows = self.list_notes(db, user_id, limit=12)
+        todo_rows = self.list_todos(db, user_id, include_done=False, limit=12)
+
         parts: list[str] = []
 
-        layout_cards = self.get_latest_layout_cards(db, user_id, workspace="default")
-        if layout_cards:
-            ordered = sorted(layout_cards, key=lambda x: (float(x.get("y") or 0), float(x.get("x") or 0)))
-            pinned = [c for c in ordered if bool(c.get("pinned"))][:6]
-            top_front = ordered[:6]
-            front_names = [str(c.get("display_name") or c.get("contact_id")) for c in top_front]
-            pinned_names = [str(c.get("display_name") or c.get("contact_id")) for c in pinned]
-            lines = [
-                f"- 置顶联系人: {', '.join(pinned_names) if pinned_names else '无'}",
-                f"- 画板前排: {', '.join(front_names) if front_names else '无'}",
-            ]
-            parts.append("当前画板优先联系人（优先参考）:\n" + "\n".join(lines))
-
-        summary = _clean_text(snap["summary"])
         if summary:
-            parts.append(f"短期记忆（最近对话摘要）:\n{_truncate(summary, 1000)}")
+            parts.append("## 会话摘要\n" + summary)
 
-        notes = snap["notes"][:8]
-        if notes:
-            lines = [f"- {n['content']}" for n in notes]
-            parts.append("长期记忆（用户偏好/已确认信息）:\n" + "\n".join(lines))
+        if note_rows:
+            note_lines: list[str] = []
+            for row in note_rows[:8]:
+                content = _truncate(_clean_text(str(getattr(row, "content", "") or "")), 220)
+                if not content:
+                    continue
+                kind = _truncate(_clean_text(str(getattr(row, "kind", "") or "")), 32).lower()
+                prefix = ""
+                if kind in {"preference", "profile"}:
+                    prefix = "[偏好] "
+                elif kind in {"fact"}:
+                    prefix = "[事实] "
+                elif kind in {"in_progress", "todo"}:
+                    prefix = "[进行中] "
+                note_lines.append(f"- {prefix}{content}")
+            if note_lines:
+                parts.append("## 长期记忆\n" + "\n".join(note_lines))
 
-        focus_items = snap["focus_items"][:8]
-        if focus_items:
-            lines = [
-                f"- [{it['source_label']}] {it['title']} (from {it['sender']}, {it['received_at']})"
-                for it in focus_items
-            ]
-            parts.append("最近关注信息与帖子（优先参考）:\n" + "\n".join(lines))
+        if todo_rows:
+            todo_lines: list[str] = []
+            for item in todo_rows[:8]:
+                title = _truncate(_clean_text(str(item.get("title") or "")), 140)
+                if not title:
+                    continue
+                priority = str(item.get("priority") or "normal").lower()
+                badge = "!" if priority == "high" else "-"
+                todo_lines.append(f"- [{badge}] {title}")
+            if todo_lines:
+                parts.append("## 待办\n" + "\n".join(todo_lines))
 
-        fact_rows = layers.get("facts", [])[:6]
-        pref_rows = layers.get("preferences", [])[:6]
-        progress_rows = layers.get("in_progress", [])[:6]
-        if fact_rows:
-            lines = [f"- {row.get('title')}（置信度 {float(row.get('confidence') or 0):.2f}）" for row in fact_rows]
-            parts.append("分层记忆 / 事实层:\n" + "\n".join(lines))
-        if pref_rows:
-            lines = [f"- {row.get('title')}（用户偏好）" for row in pref_rows]
-            parts.append("分层记忆 / 偏好层:\n" + "\n".join(lines))
-        if progress_rows:
-            lines = [f"- {row.get('title')}（进行中）" for row in progress_rows]
-            parts.append("分层记忆 / 进行中层:\n" + "\n".join(lines))
+        query_text = _clean_text(query or "")
+        if query_text:
+            parts.append("## 当前问题\n" + _truncate(query_text, 240))
 
-        return "\n\n".join(parts).strip()
+        body = "\n\n".join(parts).strip()
+        if not body:
+            return ""
+        return "# Aelin Session Memory\n\n" + body
 
     def update_after_turn(self, db: Session, user_id: int, messages: Iterable[dict[str, str]], assistant_reply: str) -> None:
         cleaned_msgs = [
