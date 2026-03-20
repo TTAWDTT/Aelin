@@ -96,6 +96,7 @@ def run_deepagents_loop(
             ],
             actions=[],
             error="",
+            memory_snapshot="",
         )
 
     chat_model = _build_chat_model(service, provider)
@@ -111,6 +112,7 @@ def run_deepagents_loop(
             trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail="llm_not_configured")],
             actions=[],
             error="llm_not_configured",
+            memory_snapshot="",
         )
 
     backend = StateBackend  # factory; DeepAgents 会在内部按需实例化
@@ -221,13 +223,20 @@ def run_deepagents_loop(
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []
     if memory_summary.strip():
-        mem_body_lines = [
-            "# Aelin Session Memory",
-            "",
-            "## User summary",
-            memory_summary.strip(),
-        ]
-        mem_body = "\n".join(mem_body_lines)
+        mem_text = memory_summary.strip()
+        # If the summary already looks like an AGENTS.md-style document
+        # (starts with a markdown heading), mount it as-is. Otherwise,
+        # wrap it into a minimal AGENTS.md skeleton.
+        if mem_text.lstrip().startswith("#"):
+            mem_body = mem_text
+        else:
+            mem_body_lines = [
+                "# Aelin Session Memory",
+                "",
+                "## User summary",
+                mem_text,
+            ]
+            mem_body = "\n".join(mem_body_lines)
         mem_path = "/memory/AGENTS.md"
         memory_files[mem_path] = mem_body
         memory_paths.append(mem_path)
@@ -282,8 +291,13 @@ def run_deepagents_loop(
             messages.append({"role": "user", "content": latest_query})
 
         invoke_payload: dict[str, Any] = {"messages": messages}
+        invoke_files: dict[str, str] = {}
         if skill_files:
-            invoke_payload["files"] = skill_files
+            invoke_files.update(skill_files)
+        if memory_files:
+            invoke_files.update(memory_files)
+        if invoke_files:
+            invoke_payload["files"] = invoke_files
 
         response = agent.invoke(invoke_payload)
         answer = str(getattr(response, "content", "") or "")
@@ -306,6 +320,7 @@ def run_deepagents_loop(
             ],
             actions=[],
             error=str(exc)[:200],
+            memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
         )
 
     if not answer.strip():
@@ -322,6 +337,7 @@ def run_deepagents_loop(
             ],
             actions=[],
             error="empty_answer_from_deepagents",
+             memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
         )
 
     return AelinAgentLoopResult(
@@ -337,4 +353,5 @@ def run_deepagents_loop(
         ],
         actions=[],
         error="",
+        memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
     )

@@ -49,6 +49,7 @@ class _FakeRunner:
             trace_steps=[],
             actions=[],
             error="",
+            memory_snapshot="",
         )
 
 

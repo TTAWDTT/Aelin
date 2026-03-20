@@ -42,3 +42,5 @@ class AelinAgentLoopResult:
     trace_steps: list[AgentLoopTraceStep]
     actions: list[dict[str, str]]
     error: str = ""
+    # Optional snapshot of the agent's memory file (e.g. /memory/AGENTS.md)
+    memory_snapshot: str = ""
