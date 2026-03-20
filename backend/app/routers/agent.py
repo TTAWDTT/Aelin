@@ -13,30 +13,16 @@ from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import (
-    AgentAdvancedSearchRequest,
-    AgentAdvancedSearchResponse,
     AgentChatRequest,
-    AgentCardLayoutUpdate,
     AgentConfigOut,
     AgentConfigUpdate,
-    AgentDailyBriefResponse,
-    AgentFocusItemOut,
-    AgentMemoryNoteCreate,
-    AgentMemoryNoteOut,
-    AgentMemorySnapshot,
-    AgentPinRecommendationItem,
-    AgentPinRecommendationResponse,
     AgentSummarizeRequest,
     AgentSummarizeResponse,
-    AgentTodoCreate,
-    AgentTodoOut,
-    AgentTodoUpdate,
     AgentTestResponse,
     DraftReplyRequest,
     DraftReplyResponse,
     ModelCatalogResponse,
 )
-from app.services.agent_memory import AgentMemoryService
 from app.services.agent_tools import TOOLS_DEFINITIONS, ToolExecutor, filter_tool_definitions
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
@@ -46,7 +32,6 @@ from app.services.summarizer import RuleBasedSummarizer
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 _summarizer = RuleBasedSummarizer()
-_memory = AgentMemoryService()
 
 # ... (Previous helper functions: _default_config, _config_out, _get_llm_service) ...
 def _default_config() -> AgentConfigOut:
@@ -320,182 +305,6 @@ def update_agent_config(
         has_api_key=bool(api_key),
         web_search_proxy_url=str(config.web_search_proxy_url or ""),
     )
-
-
-@router.get("/memory", response_model=AgentMemorySnapshot)
-def get_agent_memory(
-    query: str = Query(default=""),
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    snapshot = _memory.snapshot(db, current_user.id, query=query)
-    return AgentMemorySnapshot(
-        summary=snapshot["summary"],
-        notes=[AgentMemoryNoteOut(**n) for n in snapshot["notes"]],
-        focus_items=[AgentFocusItemOut(**it) for it in snapshot["focus_items"]],
-    )
-
-
-@router.post("/memory/notes", response_model=AgentMemoryNoteOut)
-def add_agent_memory_note(
-    payload: AgentMemoryNoteCreate,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    row = _memory.add_note(db, current_user.id, payload.content, kind=payload.kind, source="manual")
-    db.commit()
-    db.refresh(row)
-    return AgentMemoryNoteOut(
-        id=row.id,
-        kind=row.kind,
-        content=row.content,
-        source=row.source,
-        updated_at=row.updated_at.isoformat() if row.updated_at else "",
-    )
-
-
-@router.delete("/memory/notes/{note_id}")
-def delete_agent_memory_note(
-    note_id: int,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    deleted = _memory.delete_note(db, current_user.id, note_id)
-    if deleted:
-        db.commit()
-    return {"deleted": deleted, "note_id": note_id}
-
-
-@router.post("/memory/layout")
-def upsert_agent_card_layout(
-    payload: AgentCardLayoutUpdate,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    row = _memory.upsert_card_layout(
-        db,
-        current_user.id,
-        cards=[item.model_dump() for item in payload.cards],
-        workspace=payload.workspace,
-    )
-    db.flush()
-    db.commit()
-    return {"ok": True, "note_id": row.id, "count": len(payload.cards)}
-
-
-@router.get("/pin-recommendations", response_model=AgentPinRecommendationResponse)
-def get_pin_recommendations(
-    limit: int = Query(default=6, ge=1, le=20),
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    rows = _memory.recommend_pins(db, current_user.id, limit=limit)
-    return AgentPinRecommendationResponse(
-        generated_at=datetime.now(timezone.utc),
-        items=[AgentPinRecommendationItem(**row) for row in rows],
-    )
-
-
-@router.get("/daily-brief", response_model=AgentDailyBriefResponse)
-def get_daily_brief(
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    data = _memory.build_daily_brief(db, current_user.id)
-    return AgentDailyBriefResponse(**data)
-
-
-@router.get("/todos", response_model=list[AgentTodoOut])
-def list_todos(
-    include_done: bool = Query(default=True),
-    limit: int = Query(default=100, ge=1, le=200),
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    rows = _memory.list_todos(db, current_user.id, include_done=include_done, limit=limit)
-    return [AgentTodoOut(**row) for row in rows]
-
-
-@router.post("/todos", response_model=AgentTodoOut)
-def create_todo(
-    payload: AgentTodoCreate,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    row = _memory.create_todo(
-        db,
-        current_user.id,
-        title=payload.title,
-        detail=payload.detail,
-        due_at=payload.due_at,
-        priority=payload.priority,
-        contact_id=payload.contact_id,
-        message_id=payload.message_id,
-    )
-    db.commit()
-    db.refresh(row)
-    parsed = _memory.list_todos(db, current_user.id, include_done=True, limit=200)
-    found = next((x for x in parsed if int(x["id"]) == int(row.id)), None)
-    if found is None:
-        raise HTTPException(status_code=500, detail="todo create failed")
-    return AgentTodoOut(**found)
-
-
-@router.patch("/todos/{todo_id}", response_model=AgentTodoOut)
-def update_todo(
-    todo_id: int,
-    payload: AgentTodoUpdate,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    row = _memory.update_todo(
-        db,
-        current_user.id,
-        todo_id,
-        done=payload.done,
-        title=payload.title,
-        detail=payload.detail,
-        due_at=payload.due_at,
-        priority=payload.priority,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    db.commit()
-    rows = _memory.list_todos(db, current_user.id, include_done=True, limit=200)
-    found = next((x for x in rows if int(x["id"]) == int(todo_id)), None)
-    if found is None:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return AgentTodoOut(**found)
-
-
-@router.delete("/todos/{todo_id}")
-def delete_todo(
-    todo_id: int,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    deleted = _memory.delete_todo(db, current_user.id, todo_id)
-    if deleted:
-        db.commit()
-    return {"deleted": deleted, "todo_id": todo_id}
-
-
-@router.post("/search/advanced", response_model=AgentAdvancedSearchResponse)
-def advanced_search(
-    payload: AgentAdvancedSearchRequest,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    data = _memory.advanced_search(
-        db,
-        current_user.id,
-        query=payload.query,
-        source=payload.source,
-        unread_only=payload.unread_only,
-        days=payload.days,
-        limit=payload.limit,
-    )
-    return AgentAdvancedSearchResponse(**data)
 
 
 @router.post("/test", response_model=AgentTestResponse)
