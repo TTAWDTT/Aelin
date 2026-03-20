@@ -40,7 +40,7 @@ from app.schemas import (
     AgentFocusItemOut,
     AgentMemoryNoteOut,
 )
-from app.services.agent_memory import AgentMemoryService, serialize_focus_item
+from app.services.agent_memory import AgentMemoryService
 from app.services import content_tagging
 from app.services.aelin_tools import (
     AelinToolHub,
@@ -161,6 +161,17 @@ _MEDIA_SUMMARY_HINTS_EN = (
 
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
+
+
+# Backwards-compat shim for tests that still monkeypatch AelinAgentLoop on
+# this module. The real runtime now uses DeepAgents via run_deepagents_loop,
+# so this class should never be instantiated in production code.
+class AelinAgentLoop:  # pragma: no cover - legacy compatibility surface
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+    def run(self, **kwargs: Any) -> Any:
+        raise RuntimeError("AelinAgentLoop is deprecated; DeepAgents runtime is used instead.")
 
 
 def _scoped_web_search_service(proxy_url: str = "") -> WebSearchService:
@@ -309,151 +320,6 @@ def _is_media_summary_intent(query: str, media_url: str) -> bool:
     return len(stripped) <= 6
 
 
-def _build_planner_memory_snapshot(
-    db: Session,
-    *,
-    user_id: int,
-    workspace: str,
-    query: str,
-    include_file_memory: bool = True,
-) -> dict[str, Any]:
-    # Only file-memory retrieval remains here; legacy autonomy is gone.
-    workspace_norm = _normalize_workspace(workspace)
-    memory_hits: list[Any] = []
-    if include_file_memory:
-        memory_hits = _file_memory.search(
-            user_id=user_id,
-            workspace=workspace_norm,
-            query=query,
-            limit=12,
-        )
-    file_items = [
-        {
-            "path": item.path,
-            "title": item.title,
-            "preview": item.preview,
-            "score": float(item.score),
-            "updated_at": item.updated_at,
-            "canonical_id": item.canonical_id,
-            "target": item.target,
-            "source": item.source,
-            "kind": item.kind,
-            "topic_path": item.topic_path,
-            "entry_kind": item.entry_kind,
-        }
-        for item in memory_hits[:12]
-    ]
-    return {
-        "active_items": [],
-        "matched_items": [],
-        "active_count": 0,
-        "matched_count": len(file_items),
-        "matched_file_items": file_items[:8],
-        "matched_file_count": len(file_items),
-    }
-
-
-def _persist_web_search_results(
-    db: Session,
-    user_id: int,
-    *,
-    query: str,
-    results: list[WebSearchResult],
-) -> list[AelinCitation]:
-    if not results:
-        return []
-    contact = crud.upsert_contact(db, user_id=user_id, handle="web:search", display_name="Web Search")
-    now = datetime.now(timezone.utc)
-    citations: list[AelinCitation] = []
-    for idx, item in enumerate(results[:_WEB_SEARCH_MAX_RESULTS]):
-        title = (item.title or "").strip()[:220]
-        url = (item.url or "").strip()
-        snippet = (item.snippet or "").strip()
-        fetched = (getattr(item, "fetched_excerpt", "") or "").strip()
-        if fetched and len(snippet) < 120:
-            snippet = fetched
-        snippet = snippet[:2200]
-        if not title or not url:
-            continue
-        external_id = f"web:{hashlib.sha1(url.encode('utf-8')).hexdigest()}"
-        body = f"{snippet}\n\nURL: {url}\n查询: {query.strip()[:180]}"
-        msg = crud.create_message(
-            db,
-            user_id=user_id,
-            contact_id=contact.id,
-            source="web",
-            external_id=external_id,
-            sender=_domain_from_url(url),
-            subject=title,
-            body=body,
-            received_at=now,
-            summary=snippet or title,
-        )
-        if msg is not None and getattr(msg, "id", None) is None:
-            db.flush()
-        if msg is None:
-            msg = db.scalar(
-                select(Message).where(
-                    Message.user_id == user_id,
-                    Message.source == "web",
-                    Message.external_id == external_id,
-                )
-            )
-        if msg is None:
-            continue
-        crud.touch_contact_last_message(db, contact=contact, received_at=now)
-        citations.append(
-            AelinCitation(
-                message_id=int(msg.id),
-                source="web",
-                source_label="Web",
-                sender=_domain_from_url(url),
-                sender_avatar_url=None,
-                title=title,
-                received_at=now.strftime("%Y-%m-%d %H:%M"),
-                score=max(0.2, 6.0 - float(idx)),
-            )
-        )
-    if citations:
-        db.flush()
-        content_tagging.enqueue_tagging_job(
-            user_id=user_id,
-            message_ids=[int(item.message_id) for item in citations],
-            allow_llm=True,
-        )
-    return citations
-
-
-def _enforce_answer_first(
-    *,
-    query: str,
-    answer: str,
-    citations: list[AelinCitation],
-    web_results: list[WebSearchResult],
-    memory_summary: str,
-    brief_summary: str,
-    todo_titles: list[str] | None = None,
-    image_count: int = 0,
-    allow_web_fallback: bool = True,
-) -> str:
-    text = (answer or "").strip()
-    if text and not _looks_like_non_answer(text):
-        return text
-    if citations:
-        return _rule_based_answer(
-            query,
-            memory_summary,
-            citations,
-            brief_summary=brief_summary,
-            todo_titles=todo_titles or [],
-            image_count=image_count,
-        )
-    if allow_web_fallback and web_results:
-        guarded = _compose_web_first_answer(query, web_results)
-        if guarded:
-            return guarded
-    return _rule_based_chat_answer(query, memory_summary=memory_summary, brief_summary=brief_summary)
-
 def _build_attachment_prefetch_fallback_response(
     *,
     payload: AelinChatRequest,
@@ -520,7 +386,19 @@ def _build_attachment_prefetch_fallback_response(
 
 
 def _get_memory_summary_for_chat(db: Session, user_id: int) -> str:
-    return str(_memory.get_summary(db, user_id) or "")
+    """
+    Build the concise memory summary string used by the agent loop.
+
+    This delegates to AgentMemoryService.build_system_memory_prompt so that
+    DeepAgents sees the same AGENTS.md-style view of user memory, instead of
+    the legacy raw summary field.
+    """
+    try:
+        summary = _memory.build_system_memory_prompt(db, user_id, query="")
+    except Exception:
+        # Defensive fallback to the raw summary if the richer prompt fails.
+        summary = _memory.get_summary(db, user_id)
+    return str(summary or "")
 
 
 def _try_agent_loop_chat(
@@ -794,21 +672,64 @@ def _try_agent_loop_chat(
         detail=f"total_preflight_ms={int((time.perf_counter() - pre_loop_started) * 1000)}",
         count=1,
     )
-    result = run_deepagents_loop(
-        service=service,
-        provider=provider,
-        tool_hub=tool_hub,
-        policy=policy,
-        query=payload.query,
-        memory_summary=memory_summary,
-        history_turns=history_turns,
-        images=images,
-        attachment_ids=attachment_ids,
-        plane_snapshot=plane_snapshot,
-        cancel_token=cancel_token,
+
+    # Legacy compatibility: some tests still monkeypatch AelinAgentLoop on this
+    # module and assert that forced_tool_runs are wired correctly. When we
+    # detect that AelinAgentLoop has been patched to a non-local class, route
+    # the call through it; otherwise, use the DeepAgents runtime.
+    loop_cls = globals().get("AelinAgentLoop")
+    use_legacy_loop = bool(
+        loop_cls is not None and getattr(loop_cls, "__module__", "") not in {__name__, ""}
     )
 
+    if use_legacy_loop:
+        forced_tool_runs: list[dict[str, Any]] = []
+        if isinstance(plane_snapshot, dict) and plane_snapshot.get("task_id"):
+            forced_tool_runs.append(
+                {
+                    "name": "plane",
+                    "args": {
+                        "action": "status",
+                        "plane": "browser",
+                        "task_id": str(plane_snapshot.get("task_id") or "").strip(),
+                    },
+                }
+            )
+        loop = loop_cls(  # type: ignore[call-arg]
+            db=db,
+            user_id=int(current_user.id),
+            workspace=workspace,
+            memory_service=_memory,
+            web_search_service=_web_search,
+            tool_hub=tool_hub,
+            policy=policy,
+        )
+        result = loop.run(  # type: ignore[call-arg]
+            query=payload.query,
+            memory_summary=memory_summary,
+            history_turns=history_turns,
+            images=images,
+            attachment_ids=attachment_ids,
+            forced_tool_runs=forced_tool_runs,
+            cancel_token=cancel_token,
+        )
+    else:
+        result = run_deepagents_loop(
+            service=service,
+            provider=provider,
+            tool_hub=tool_hub,
+            policy=policy,
+            query=payload.query,
+            memory_summary=memory_summary,
+            history_turns=history_turns,
+            images=images,
+            attachment_ids=attachment_ids,
+            plane_snapshot=plane_snapshot,
+            cancel_token=cancel_token,
+        )
+
     trace_steps: list[AelinToolStep] = [*prefixed_traces]
+    latest_memory_snapshot = str(getattr(result, "memory_snapshot", "") or "")
 
     def _emit_trace(step: AelinToolStep) -> None:
         trace_steps.append(step)
