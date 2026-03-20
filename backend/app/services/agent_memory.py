@@ -1433,8 +1433,9 @@ class AgentMemoryService:
         When an AGENTS.md file already exists for the default workspace, it is
         treated as the primary truth and used directly, with an optional
         “当前问题” section appended for the caller's query. If no AGENTS.md is
-        available, a fresh document is synthesized from the legacy DB-backed
-        summary/notes/todos.
+        available, an empty skeleton document is created instead of falling
+        back to legacy DB-backed summary/notes/todos, so that the DeepAgents
+        runtime can remain file-first and DB-independent for memory.
         """
         # Prefer an existing AGENTS.md snapshot for the default workspace.
         agents_md = self._read_agents_md_text(user_id=user_id, workspace="default")
@@ -1449,54 +1450,15 @@ class AgentMemoryService:
                 return base + sep + extra
             return base
 
-        # Fallback: synthesize a minimal AGENTS.md from DB-backed state.
-        raw_summary = self.get_summary(db, user_id)
-        summary = _truncate(_clean_text(raw_summary or ""), 1000)
-
-        note_rows = self.list_notes(db, user_id, limit=12)
-        todo_rows = self.list_todos(db, user_id, include_done=False, limit=12)
-
+        # Fallback: synthesize a minimal, empty AGENTS.md skeleton. We do not
+        # attempt to reconstruct historical memory from the DB here, so that
+        # the runtime only depends on file-backed memory.
         parts: list[str] = []
-
-        if summary:
-            parts.append("## 会话摘要\n" + summary)
-
-        if note_rows:
-            note_lines: list[str] = []
-            for row in note_rows[:8]:
-                content = _truncate(_clean_text(str(getattr(row, "content", "") or "")), 220)
-                if not content:
-                    continue
-                kind = _truncate(_clean_text(str(getattr(row, "kind", "") or "")), 32).lower()
-                prefix = ""
-                if kind in {"preference", "profile"}:
-                    prefix = "[偏好] "
-                elif kind in {"fact"}:
-                    prefix = "[事实] "
-                elif kind in {"in_progress", "todo"}:
-                    prefix = "[进行中] "
-                note_lines.append(f"- {prefix}{content}")
-            if note_lines:
-                parts.append("## 长期记忆\n" + "\n".join(note_lines))
-
-        if todo_rows:
-            todo_lines: list[str] = []
-            for item in todo_rows[:8]:
-                title = _truncate(_clean_text(str(item.get("title") or "")), 140)
-                if not title:
-                    continue
-                priority = str(item.get("priority") or "normal").lower()
-                badge = "!" if priority == "high" else "-"
-                todo_lines.append(f"- [{badge}] {title}")
-            if todo_lines:
-                parts.append("## 待办\n" + "\n".join(todo_lines))
-
         if query_text:
             parts.append("## 当前问题\n" + _truncate(query_text, 240))
-
         body = "\n\n".join(parts).strip()
         if not body:
-            return ""
+            return "# Aelin Session Memory\n"
         return "# Aelin Session Memory\n\n" + body
 
     def update_after_turn(self, db: Session, user_id: int, messages: Iterable[dict[str, str]], assistant_reply: str) -> None:
