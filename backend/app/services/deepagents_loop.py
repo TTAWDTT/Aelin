@@ -337,7 +337,7 @@ def run_deepagents_loop(
             ],
             actions=[],
             error="empty_answer_from_deepagents",
-             memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
+            memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
         )
 
     return AelinAgentLoopResult(

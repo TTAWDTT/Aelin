@@ -121,7 +121,10 @@ function extractLatencyFromDetail(detail: string): number {
 export function extractPlaneTaskMeta(trace: AelinToolStep[] | undefined): PlaneTaskMeta | null {
   if (!trace || trace.length === 0) return null
 
-  const planeSteps = trace.filter((step) => normalizeStage(step.stage) === 'agent_loop_plane')
+  const planeSteps = trace.filter((step) => {
+    const stage = normalizeStage(step.stage)
+    return stage === 'plane_delegate' || stage === 'plane_status' || stage === 'plane_continue'
+  })
   if (planeSteps.length === 0) return null
 
   const last = planeSteps[planeSteps.length - 1]

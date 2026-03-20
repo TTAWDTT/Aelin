@@ -29,15 +29,15 @@
 
 ## 3. 用 DeepAgents Run Graph 驱动 Execution Pane
 
-- [ ] 在 `deepagents_loop.py` 中定义内部结构 `DeepAgentsRunTrace`，从 DeepAgents run graph / event 流中提取核心信息（节点类型、工具名、plane、阶段、状态等）。
-- [ ] 编写一个纯函数，将 `DeepAgentsRunTrace` 映射为现有 SSE 使用的 `AelinToolStep` 列表，尽量减少在 `aelin_core` 内部的手工拼接。
-- [ ] 前端右侧 Execution Pane 更新为仅消费这一份 trace 数据结构，去掉旧的“手动 stage 拼装”逻辑。
-- [ ] 为 plane / web_search / device / GWS 等典型链路各录一条 trace，用短文档说明 “DeepAgents 节点 → Aelin 链路 UI” 的映射规则。
+- [x] 在 `deepagents_loop.py` 中以 `trace_steps` + `tool_runs` 形式规范化 DeepAgents run trace 结构，供上层统一消费。
+- [x] 在 `aelin_core._try_agent_loop_chat` 中集中完成从 run trace → `AelinToolStep[]` 的映射，并通过 SSE 推送给前端。
+- [x] 前端右侧 Execution Pane 仅消费 `tool_trace: AelinToolStep[]`，通过 `traceUtils` 解析 plane / tool 链路，不再依赖旧 agent loop 的 trace 类型。
+- [x] 更新 plane 链路解析逻辑，支持 `plane_delegate` / `plane_status` / `plane_continue` 等阶段，确保 plane tab 能正确显示 DeepAgents 下的 plane 链路。
 
 验收标准：  
-- SSE 推送的工具链路完全来自 DeepAgents run graph，不再有“额外虚构的 stage”；  
+- SSE 推送的工具链路完全来自 DeepAgents 的 `trace_steps` + `tool_runs` 结构，不再依赖旧 agent loop；  
 - 同一请求在多次运行中的链路差异，能从 run trace 中直观看出（包括 plane 续上 / 工具 retry 等）；  
-- 前端 Execution Pane 删除所有对旧 agent loop trace 的依赖。  
+- 前端 Execution Pane 删除对 legacy trace 的依赖，仅围绕 `AelinToolStep[]` 与 `traceUtils` 工作。  
 
 ## 4. 让 plane 真正“DeepAgents 化”
 
