@@ -745,12 +745,18 @@ class AelinToolHub:
     def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query") or "").strip()[:400]
         limit = _safe_int(args.get("max_items"), 8, low=1, high=20)
-        summary = str(self._memory.get_summary(self.db, self.user_id) or "")
+        summary = str(self._memory.get_summary(self.db, self.user_id, workspace=self.workspace) or "")
         focus_items = [
             serialize_focus_item(item)
             for item in self._memory.build_focus_items(self.db, self.user_id, query=query, limit=limit)
         ]
-        todos = self._memory.list_todos(self.db, self.user_id, include_done=False, limit=limit)
+        todos = self._memory.list_todos(
+            self.db,
+            self.user_id,
+            include_done=False,
+            limit=limit,
+            workspace=self.workspace,
+        )
         return _result_ok(
             workspace=self.workspace,
             summary=summary,

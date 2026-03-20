@@ -25,7 +25,7 @@ def build_context_bundle(
 ) -> dict:
     workspace_norm = workspace
     summary = memory_service.get_summary(db, user_id, workspace=workspace_norm)
-    note_rows = memory_service.list_notes(db, user_id, limit=24)
+    note_rows = memory_service.list_notes(db, user_id, limit=24, workspace=workspace_norm)
     notes: list[AgentMemoryNoteOut] = []
     for row in note_rows:
         src = (row.source or "").strip().lower()
@@ -43,7 +43,7 @@ def build_context_bundle(
         if len(notes) >= 12:
             break
 
-    todos_raw = memory_service.list_todos(db, user_id, include_done=False, limit=10)
+    todos_raw = memory_service.list_todos(db, user_id, include_done=False, limit=10, workspace=workspace_norm)
     todos: list[AelinTodoItem] = []
     for row in todos_raw:
         try:

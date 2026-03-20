@@ -76,7 +76,7 @@ def _reset_fakes() -> None:
 def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
-    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id: "summary")
+    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
     monkeypatch.setattr(aelin_core, "AelinAgentLoop", _FakeRunner)
     monkeypatch.setattr(aelin_core, "get_active_plane_task", lambda user_id, workspace, plane="browser", db=None: None)
@@ -99,7 +99,7 @@ def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
 def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
-    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id: "fast-summary")
+    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "fast-summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
     monkeypatch.setattr(aelin_core, "AelinAgentLoop", _FakeRunner)
     monkeypatch.setattr(aelin_core, "get_active_plane_task", lambda user_id, workspace, plane="browser", db=None: None)
@@ -126,7 +126,7 @@ def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(
 def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeUnconfiguredService(), "openai"))
-    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id: "summary")
+    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
     monkeypatch.setattr(aelin_core, "AelinAgentLoop", _FakeRunner)
     monkeypatch.setattr(aelin_core, "get_active_plane_task", lambda user_id, workspace, plane="browser", db=None: None)
@@ -283,11 +283,11 @@ def test_build_context_bundle_reuses_shared_memory_primitives(monkeypatch):
             calls["get_summary"] += 1
             return "summary"
 
-        def list_notes(self, db, user_id, limit=12):
+        def list_notes(self, db, user_id, limit=12, workspace: str = "default"):
             calls["list_notes"] += 1
             return [SimpleNamespace(id=1, kind="note", content="hello", source="chat", updated_at=now)]
 
-        def list_todos(self, db, user_id, *, include_done=True, limit=100):
+        def list_todos(self, db, user_id, *, include_done=True, limit=100, workspace: str = "default"):
             calls["list_todos"] += 1
             return [
                 {

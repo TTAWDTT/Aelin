@@ -64,6 +64,180 @@ def serialize_focus_item(item: FocusItem) -> dict[str, Any]:
 
 
 class AgentMemoryService:
+    def _read_agents_md_text(self, user_id: int, workspace: str = "default") -> str:
+        """
+        Best-effort read of the DeepAgents-style AGENTS.md memory file.
+
+        This is a thin wrapper around FileMemoryBridge with defensive guards,
+        so that higher-level helpers do not need to catch IO errors.
+        """
+        try:
+            text = file_memory_bridge.read_agents_memory(user_id=user_id, workspace=workspace)
+        except Exception:
+            return ""
+        return str(text or "")
+
+    def _parse_agents_md_sections(self, text: str) -> dict[str, list[str]]:
+        """
+        Parse a minimal section map from an AGENTS.md-style markdown document.
+
+        The map keys are headings without the leading '## ', values are the
+        raw lines (including bullet markers) that belong to that section.
+        """
+        sections: dict[str, list[str]] = {}
+        if not text:
+            return sections
+        current: str | None = None
+        for raw in str(text).splitlines():
+            line = str(raw or "")
+            if line.startswith("## "):
+                current = line[3:].strip()
+                if not current:
+                    current = None
+                else:
+                    sections.setdefault(current, [])
+                continue
+            if current is None:
+                continue
+            sections.setdefault(current, []).append(line)
+        return sections
+
+    def _notes_from_agents_md(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        limit: int,
+    ) -> list[AgentMemoryNote]:
+        """
+        Project long-term notes from the '## 长期记忆' section of AGENTS.md.
+
+        This returns in-memory AgentMemoryNote rows only; they are never
+        attached to the DB session.
+        """
+        text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
+        if not text:
+            return []
+        sections = self._parse_agents_md_sections(text)
+        lines = sections.get("长期记忆") or []
+        if not lines:
+            return []
+
+        out: list[AgentMemoryNote] = []
+        n = max(1, min(50, int(limit or 12)))
+        for raw in lines:
+            line = str(raw or "").strip()
+            if not line or not line.lstrip().startswith("-"):
+                continue
+            bullet = line.lstrip()[1:].strip()
+            if not bullet:
+                continue
+
+            tag = ""
+            body = bullet
+            m = re.match(r"\[(?P<tag>[^\]]+)\]\s*(?P<body>.+)", bullet)
+            if m:
+                tag = str(m.group("tag") or "").strip()
+                body = str(m.group("body") or "").strip()
+
+            content = _truncate(_clean_text(body), 500)
+            if not content:
+                continue
+
+            kind_norm = _clean_text(tag).lower()
+            kind = "note"
+            if kind_norm in {"偏好", "preference", "profile", "喜好"}:
+                kind = "preference"
+            elif kind_norm in {"事实", "fact"}:
+                kind = "fact"
+            elif kind_norm in {"进行中", "in_progress", "todo"}:
+                kind = "in_progress"
+
+            row = AgentMemoryNote(
+                user_id=user_id,
+                kind=kind,
+                content=content,
+                source="agents_md",
+            )
+            out.append(row)
+            if len(out) >= n:
+                break
+        return out
+
+    def _todos_from_agents_md(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        include_done: bool,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """
+        Project todos from the '## 待办' section of AGENTS.md.
+
+        The returned structure matches list_todos() so that callers can use it
+        transparently. When AGENTS.md does not define any todos, an empty list
+        is returned and callers can fall back to DB-backed todos.
+        """
+        text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
+        if not text:
+            return []
+        sections = self._parse_agents_md_sections(text)
+        lines = sections.get("待办") or []
+        if not lines:
+            return []
+
+        out: list[dict[str, Any]] = []
+        n = max(1, min(200, int(limit or 100)))
+        for idx, raw in enumerate(lines):
+            if len(out) >= n:
+                break
+            line = str(raw or "").strip()
+            if not line or not line.lstrip().startswith("-"):
+                continue
+            bullet = line.lstrip()[1:].strip()
+            if not bullet:
+                continue
+
+            tag = ""
+            title = bullet
+            m = re.match(r"\[(?P<tag>[^\]]*)\]\s*(?P<title>.+)", bullet)
+            if m:
+                tag = str(m.group("tag") or "").strip()
+                title = str(m.group("title") or "").strip()
+
+            title_clean = _truncate(_clean_text(title), 240)
+            if not title_clean:
+                continue
+
+            tag_norm = _clean_text(tag).lower()
+            done = False
+            priority = "normal"
+            if tag_norm in {"x", "done", "✓", "✔", "完成"}:
+                done = True
+            elif tag_norm in {"!", "high", "重要", "high-priority"}:
+                priority = "high"
+
+            if done and not include_done:
+                continue
+
+            out.append(
+                {
+                    # Use a stable, local identifier; DB-backed callers should
+                    # treat AGENTS.md todos as read-only projections.
+                    "id": idx + 1,
+                    "title": title_clean,
+                    "detail": "",
+                    "done": done,
+                    "due_at": None,
+                    "priority": priority,
+                    "contact_id": None,
+                    "message_id": None,
+                    "updated_at": "",
+                }
+            )
+        return out
+
     def get_summary(self, db: Session, user_id: int, *, workspace: str = "default") -> str:
         """
         Return the short conversation summary for a user.
@@ -72,10 +246,7 @@ class AgentMemoryService:
         stored via FileMemoryBridge; otherwise it falls back to the legacy
         AgentConversationMemory.summary field in the database.
         """
-        try:
-            agents_md = file_memory_bridge.read_agents_memory(user_id=user_id, workspace=workspace)
-        except Exception:
-            agents_md = None
+        agents_md = self._read_agents_md_text(user_id=user_id, workspace=workspace)
         if agents_md:
             text = _clean_text(agents_md)
             # Prefer the "## 会话摘要" section if present.
@@ -113,8 +284,24 @@ class AgentMemoryService:
             row.summary = clean_summary
             db.add(row)
 
-    def list_notes(self, db: Session, user_id: int, limit: int = 12) -> list[AgentMemoryNote]:
+    def list_notes(
+        self,
+        db: Session,
+        user_id: int,
+        limit: int = 12,
+        workspace: str = "default",
+    ) -> list[AgentMemoryNote]:
+        """
+        List recent long-term memory notes.
+
+        When AGENTS.md defines a '长期记忆' section, this returns an in-memory
+        projection from that file. Otherwise it falls back to the legacy DB
+        records for compatibility.
+        """
         n = max(1, min(50, int(limit or 12)))
+        projected = self._notes_from_agents_md(user_id=user_id, workspace=workspace, limit=n)
+        if projected:
+            return projected
         stmt = (
             select(AgentMemoryNote)
             .where(AgentMemoryNote.user_id == user_id)
@@ -292,8 +479,31 @@ class AgentMemoryService:
         db.add(row)
         return row
 
-    def list_todos(self, db: Session, user_id: int, *, include_done: bool = True, limit: int = 100) -> list[dict[str, Any]]:
+    def list_todos(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        include_done: bool = True,
+        limit: int = 100,
+        workspace: str = "default",
+    ) -> list[dict[str, Any]]:
+        """
+        List todo items for the user.
+
+        When AGENTS.md defines a '待办' section, this returns todos projected
+        from that file. Otherwise it falls back to the legacy DB-backed todo
+        notes so that existing endpoints remain compatible.
+        """
         n = max(1, min(200, int(limit or 100)))
+        projected = self._todos_from_agents_md(
+            user_id=user_id,
+            workspace=workspace,
+            include_done=include_done,
+            limit=n,
+        )
+        if projected:
+            return projected
         rows = db.scalars(
             select(AgentMemoryNote)
             .where(AgentMemoryNote.user_id == user_id, AgentMemoryNote.source == _TODO_SOURCE)
@@ -762,9 +972,9 @@ class AgentMemoryService:
         query: str = "",
     ) -> dict[str, list[dict[str, Any]]]:
         now_iso = datetime.now(timezone.utc).isoformat()
-        notes = self.list_notes(db, user_id, limit=120)
+        notes = self.list_notes(db, user_id, limit=120, workspace=workspace)
         focus_items = self.build_focus_items(db, user_id, query=query, limit=10)
-        todos = self.list_todos(db, user_id, include_done=False, limit=20)
+        todos = self.list_todos(db, user_id, include_done=False, limit=20, workspace=workspace)
         layout_cards = self.get_latest_layout_cards(db, user_id, workspace=workspace)
 
         facts: list[dict[str, Any]] = []
@@ -1218,18 +1428,31 @@ class AgentMemoryService:
 
         This is designed to be mounted as a virtual AGENTS.md-style file for
         DeepAgents, and to serve as the `memory_summary` passed through the
-        rest of the Aelin pipeline. It intentionally avoids legacy inbox /
-        layout / notification concepts and focuses on:
-        - recent conversation summary
-        - long-term notes (facts / preferences / in-progress)
-        - open todos
-        - optional current query hint
+        rest of the Aelin pipeline.
+
+        When an AGENTS.md file already exists for the default workspace, it is
+        treated as the primary truth and used directly, with an optional
+        “当前问题” section appended for the caller's query. If no AGENTS.md is
+        available, a fresh document is synthesized from the legacy DB-backed
+        summary/notes/todos.
         """
-        # Short conversation summary.
+        # Prefer an existing AGENTS.md snapshot for the default workspace.
+        agents_md = self._read_agents_md_text(user_id=user_id, workspace="default")
+        query_text = _clean_text(query or "")
+        if agents_md:
+            base = str(agents_md).strip()
+            if not base:
+                return ""
+            if query_text:
+                extra = "## 当前问题\n" + _truncate(query_text, 240)
+                sep = "\n\n" if not base.endswith("\n") else "\n"
+                return base + sep + extra
+            return base
+
+        # Fallback: synthesize a minimal AGENTS.md from DB-backed state.
         raw_summary = self.get_summary(db, user_id)
         summary = _truncate(_clean_text(raw_summary or ""), 1000)
 
-        # Long-term notes and todos.
         note_rows = self.list_notes(db, user_id, limit=12)
         todo_rows = self.list_todos(db, user_id, include_done=False, limit=12)
 
@@ -1268,7 +1491,6 @@ class AgentMemoryService:
             if todo_lines:
                 parts.append("## 待办\n" + "\n".join(todo_lines))
 
-        query_text = _clean_text(query or "")
         if query_text:
             parts.append("## 当前问题\n" + _truncate(query_text, 240))
 

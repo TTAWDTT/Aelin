@@ -39,12 +39,9 @@ def test_aelin_context_and_chat_endpoints():
     ctx_data = ctx.json()
     assert ctx_data.get("workspace") == "life"
     assert "summary" in ctx_data
-    assert isinstance(ctx_data.get("focus_items"), list)
     assert isinstance(ctx_data.get("notes"), list)
     assert isinstance(ctx_data.get("todos"), list)
-    assert isinstance(ctx_data.get("pin_recommendations"), list)
-    assert isinstance(ctx_data.get("layout_cards"), list)
-    assert isinstance(ctx_data.get("daily_brief"), dict)
+    assert "memory_layers" in ctx_data
     assert "generated_at" in ctx_data
 
     chat = client.post(
@@ -682,31 +679,6 @@ def test_time_sensitive_detection_covers_recent_sports_query():
     assert aelin_router._is_sports_result_query("NBA最近打了什么比赛")
 
 
-def test_build_fixed_profile_injection_uses_layers_and_profile_notes():
-    bundle = {
-        "memory_layers": SimpleNamespace(
-            preferences=[
-                SimpleNamespace(title="称呼", detail="用户希望被叫 TTAWDTT"),
-                SimpleNamespace(title="风格偏好", detail="回答尽量简洁"),
-            ],
-            facts=[
-                SimpleNamespace(title="项目阶段", detail="正在做记忆系统重构"),
-            ],
-        ),
-        "notes": [
-            SimpleNamespace(kind="profile", source="profile:manual", content="用户长期关注模型发布节奏"),
-            SimpleNamespace(kind="memory_insight", source="memory", content="这条不应进入固定注入"),
-        ],
-    }
-    lines = aelin_router._build_fixed_profile_injection(bundle, max_items=12)
-    assert lines
-    assert any(("称呼" in line) for line in lines)
-    assert any(("风格偏好" in line) for line in lines)
-    assert any(("项目阶段" in line) for line in lines)
-    assert any(("用户长期关注模型发布节奏" in line) for line in lines)
-    assert not any(("这条不应进入固定注入" in line) for line in lines)
-
-
 def test_plan_tool_usage_invalid_json_fallback_still_dispatches_web():
     class _FakePlannerService:
         def is_configured(self) -> bool:
@@ -956,17 +928,14 @@ def test_aelin_chat_local_subagents_execute_in_parallel(monkeypatch):
         bundle = original_build_context_bundle(db, user_id, workspace=workspace, query=query)
         if query.strip():
             time.sleep(0.24)
+            # Simulate a slower, minimal bundle for query != "" cases.
             return {
                 "workspace": bundle.get("workspace", workspace),
                 "summary": bundle.get("summary", ""),
-                "focus_items": [],
-                "focus_items_raw": [],
                 "notes": [],
                 "notes_count": 0,
                 "todos": bundle.get("todos", []),
-                "pin_recommendations": bundle.get("pin_recommendations", []),
-                "daily_brief": bundle.get("daily_brief"),
-                "layout_cards": bundle.get("layout_cards", []),
+                "memory_layers": bundle.get("memory_layers"),
             }
         return bundle
 
@@ -1055,4 +1024,3 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     )
     assert isinstance(web_step, dict)
     assert web_step.get("status") == "skipped"
-

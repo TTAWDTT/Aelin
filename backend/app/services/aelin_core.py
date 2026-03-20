@@ -385,7 +385,7 @@ def _build_attachment_prefetch_fallback_response(
     )
 
 
-def _get_memory_summary_for_chat(db: Session, user_id: int) -> str:
+def _get_memory_summary_for_chat(db: Session, user_id: int, *, workspace: str = "default") -> str:
     """
     Build the concise memory summary string used by the agent loop.
 
@@ -450,7 +450,7 @@ def _try_agent_loop_chat(
 
     workspace = _normalize_workspace(payload.workspace)
     summary_started = time.perf_counter()
-    memory_summary = _get_memory_summary_for_chat(db, current_user.id)
+    memory_summary = _get_memory_summary_for_chat(db, current_user.id, workspace=workspace)
     summary_latency_ms = int((time.perf_counter() - summary_started) * 1000)
     _log.info(
         "agent_loop preflight phase=memory_summary user_id=%s source=%s workspace=%s latency_ms=%s",

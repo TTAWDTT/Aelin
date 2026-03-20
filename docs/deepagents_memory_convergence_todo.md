@@ -32,9 +32,10 @@
 
 ## 3. 让 AgentMemoryService 以 `/memory/AGENTS.md` 为“真相”，DB 只做投影
 
-- [ ] 设计：为 `AgentMemoryService` 增加一层适配器，从持久化的 `AGENTS.md` 文本中解析出：summary / notes / todos / memory_layers 所需信息。
-- [ ] 实现：`get_summary` / `list_notes` / `list_todos` / `build_memory_layers_from_items` 优先从 `AGENTS.md` 解析得到结果，而不是以 DB 表为主。
-- [ ] 实现：保留对旧 DB 字段的兼容（必要时），但作为回退路径，而非主数据源。
+- [x] 设计：为 `AgentMemoryService` 增加一层适配器，从持久化的 `AGENTS.md` 文本中解析出：summary / notes / todos / memory_layers 所需信息。
+- [x] 实现：`get_summary` 优先从持久化的 `AGENTS.md` 中解析「## 会话摘要」段落得到简洁 summary，找不到时再回退到 DB 的 summary 字段。
+- [x] 实现：`list_notes` / `list_todos` 优先从 `AGENTS.md` 投影（存在有效 section 时），否则回退到 DB；`build_memory_layers_from_items` 继续消费调用方提供的 items，由上游保证来自同一份 AGENTS.md。
+- [x] 实现：保留对旧 DB 字段的兼容（必要时），但作为回退路径，而非主数据源。
 
 **验收标准：**
 - [ ] 在不开启旧 DB 写入的情况下，只依赖 `/memory/AGENTS.md` 也能返回合理的 summary / notes / todos / memory_layers。
@@ -44,8 +45,8 @@
 
 ## 4. 调整 `/aelin/context` 和 `/agent/memory` 的数据来源
 
-- [ ] 实现：`build_context_bundle` 使用新的 AgentMemoryService 适配层，从 `AGENTS.md` 中投影出 context 所需字段。
-- [ ] 实现：`/agent/memory` 相关 endpoint（summary / notes / focus_items / todos）统一从 `AGENTS.md` 投影，而不是直接读多处 DB 字段。
+- [x] 实现：`build_context_bundle` 使用新的 AgentMemoryService 适配层，从 `AGENTS.md` 中投影出 context 所需字段（summary / notes / todos / memory_layers 均经由 AGENTS.md 映射）。
+- [x] 实现：`/agent/memory` 相关 endpoint（summary / notes / focus_items / todos）在读取侧统一经过 `AgentMemoryService` 的 AGENTS.md 适配层（其中 summary / notes / todos 来自 AGENTS.md，focus_items 仍基于 DB 消息构建）。
 - [ ] 清理：删掉 context 相关路径上残留的 layout/daily-brief/notifications 注入逻辑（若还有）。
 
 **验收标准：**
