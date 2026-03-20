@@ -9,11 +9,12 @@
 
 - [x] 实现：在 `run_deepagents_loop` 完成一次调用后，将 `/memory/AGENTS.md` 作为虚拟文件挂载给 DeepAgents（通过 `files` + `memory`）。
 - [x] 实现：为 DeepAgents agent 增加一个可选的 “memory dump” 接口，暴露当前 memory 文件的文本内容（`AelinAgentLoopResult.memory_snapshot`）。
-- [ ] 实现：在 `_try_agent_loop_chat` 中接收这份最新的 memory 文本，用于后续持久化。
+- [x] 实现：在 `_try_agent_loop_chat` 中接收这份最新的 memory 文本（`latest_memory_snapshot`），为后续持久化预留接入点。
 
 **验收标准：**
 - [x] 在无异常情况下，调用 DeepAgents 一轮后可以拿到一份 `/memory/AGENTS.md` 的内存快照（当前实现为本轮挂载的 AGENTS.md 内容）。
 - [x] 当 DeepAgents 未写入任何 memory 文件时，读取逻辑稳态返回空字符串，而不会抛错。
+- [x] Aelin 核心 `_try_agent_loop_chat` 已经能够接收到并持有该快照，后续可以在此基础上实现持久化逻辑。
 
 ---
 
