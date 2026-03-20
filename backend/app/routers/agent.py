@@ -13,7 +13,6 @@ from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import (
-    AgentChatRequest,
     AgentConfigOut,
     AgentConfigUpdate,
     AgentSummarizeRequest,
@@ -23,7 +22,6 @@ from app.schemas import (
     DraftReplyResponse,
     ModelCatalogResponse,
 )
-from app.services.agent_tools import TOOLS_DEFINITIONS, ToolExecutor, filter_tool_definitions
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
 from app.services.model_catalog import get_model_catalog
@@ -79,110 +77,6 @@ def _get_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
 
     return LLMService(config, api_key), "openai"
 
-
-@router.post("/chat")
-def chat_stream(
-    payload: AgentChatRequest,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    service, provider = _get_llm_service(db, current_user)
-
-    incoming_messages = [
-        {
-            "role": str(m.get("role") or "").strip(),
-            "content": str(m.get("content") or ""),
-        }
-        for m in payload.messages
-        if isinstance(m, dict)
-    ]
-
-    if provider == "rule_based":
-        def _iter_simple():
-            yield "目前仅支持在配置 OpenAI 兼容接口后使用对话功能。"
-        return StreamingResponse(_iter_simple(), media_type="text/event-stream")
-
-    messages = list(incoming_messages)
-
-    # Inject Context if needed
-    if payload.context_contact_id:
-        contact = crud.get_contact_by_id(db, user_id=current_user.id, contact_id=payload.context_contact_id)
-        if contact:
-            # Fetch recent messages for context
-            recent_msgs = crud.list_messages(db, user_id=current_user.id, contact_id=contact.id, limit=10)
-            context_str = f"Current Contact Context:\nName: {contact.display_name}\nHandle: {contact.handle}\n"
-            if recent_msgs:
-                context_str += "Recent Interactions:\n"
-                for m in reversed(recent_msgs):
-                    context_str += f"- [{m.received_at.strftime('%Y-%m-%d %H:%M')}] {m.sender}: {m.body_preview[:200]}\n"
-            else:
-                context_str += "No recent messages.\n"
-
-            # Insert context as a system message at the beginning
-            messages.insert(0, {"role": "system", "content": context_str})
-
-    # Initialize memory context
-    user_query = ""
-    for m in reversed(incoming_messages):
-        if m["role"] == "user":
-            user_query = m["content"]
-            break
-    if payload.use_memory:
-        memory_prompt = _memory.build_system_memory_prompt(db, current_user.id, query=user_query)
-        if memory_prompt:
-            messages.insert(0, {"role": "system", "content": memory_prompt})
-
-    # Initialize Tool Executor with optional per-message allowlist
-    tool_allowlist = {t.strip() for t in payload.tools if isinstance(t, str) and t.strip()} if payload.tools else None
-    executor = ToolExecutor(db, current_user.id, allowlist=tool_allowlist)
-    active_tool_defs = filter_tool_definitions(executor.available_tools) if tool_allowlist else TOOLS_DEFINITIONS
-
-    # Core System Prompt
-    system_prompt = """You are MercuryDesk AI, an intelligent assistant for a unified messaging platform.
-Your goal is to help the user manage their communications efficiently.
-
-Capabilities:
-1.  **Search**: You can search through the user's message history (emails, DMs, etc.) using the `search_messages` tool.
-2.  **Contact Info**: You can look up details about contacts using `get_contact_info`.
-3.  **Drafting**: You can help draft replies.
-4.  **Summarization**: You can summarize long conversation threads.
-
-Guidelines:
--   **Be Concise**: Users are busy. Keep responses brief and to the point unless asked for details.
--   **Context Aware**: Use the provided contact context to answer questions like "What was the last thing he sent?" or "Summarize our chat".
--   **Proactive**: If a user asks a vague question like "Any updates from John?", use your tools to find out.
--   **Tone**: Professional yet helpful and friendly.
-
-Current Time: {current_time}
-""".format(current_time=datetime.now().strftime("%Y-%m-%d %H:%M"))
-
-    messages.insert(0, {"role": "system", "content": system_prompt})
-
-    try:
-        def _stream():
-            chunks: list[str] = []
-            generator = service.chat_stream(
-                messages=messages,
-                tools=active_tool_defs,
-                tool_executor=executor,
-                max_rounds=3,
-                max_calls_per_round=6,
-            )
-            for chunk in generator:
-                chunks.append(chunk)
-                yield chunk
-
-            if payload.use_memory:
-                assistant_reply = "".join(chunks).strip()
-                if assistant_reply:
-                    _memory.update_after_turn(db, current_user.id, incoming_messages, assistant_reply)
-                    db.commit()
-
-        return StreamingResponse(_stream(), media_type="text/event-stream")
-    except ValueError as e:
-         def _iter_err():
-            yield f"Error: {str(e)}"
-         return StreamingResponse(_iter_err(), media_type="text/event-stream")
 
 # ... (Rest of the router: catalog, summarize, draft-reply, config, test) ...
 @router.get("/catalog", response_model=ModelCatalogResponse)

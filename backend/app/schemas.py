@@ -133,14 +133,6 @@ class MessageDetail(BaseModel):
     summary: Optional[str] = None
 
 
-class AgentChatRequest(BaseModel):
-    messages: list[dict[str, str]]
-    context_contact_id: Optional[int] = None
-    tools: list[str] = Field(default_factory=list)
-    use_memory: bool = True
-    stream: bool = True
-
-
 class AgentMemoryNoteCreate(BaseModel):
     content: str = Field(min_length=1, max_length=500)
     kind: str = Field(default="note", min_length=1, max_length=32)
@@ -399,15 +391,10 @@ class AgentMemorySnapshot(BaseModel):
 class AelinContextResponse(BaseModel):
     workspace: str = "default"
     summary: str = ""
-    focus_items: list[AgentFocusItemOut] = Field(default_factory=list)
     notes: list[AgentMemoryNoteOut] = Field(default_factory=list)
     notes_count: int = 0
     todos: list[AelinTodoItem] = Field(default_factory=list)
-    pin_recommendations: list[AelinPinRecommendationItem] = Field(default_factory=list)
-    daily_brief: Optional[AelinDailyBrief] = None
-    layout_cards: list[AelinLayoutCard] = Field(default_factory=list)
     memory_layers: AelinMemoryLayers
-    notifications: list[AelinNotificationItem] = Field(default_factory=list)
     generated_at: datetime
 
 

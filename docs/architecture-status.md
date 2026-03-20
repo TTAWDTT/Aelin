@@ -24,17 +24,14 @@
 - RSSHub 镜像并发: `backend/app/settings.py` `crawler_rsshub_parallelism=12`
 - 前端“同步全部”默认并发: `frontend/src/components/Dashboard.tsx` 默认 `12`（可被 `VITE_DASHBOARD_SYNC_CONCURRENCY` 覆盖）
 
-## 表 2: 当前完备 Chat Agent 架构
+## 表 2: 当前 Chat Agent 架构（DeepAgents 版本）
 
 | 层级 | 组件/文件 | 当前能力 | 说明 |
 |---|---|---|---|
-| API 入口层 | `backend/app/routers/agent.py` | `/agent/chat`、`/agent/memory`、`/agent/memory/notes` | Chat、记忆快照、增删笔记接口 |
-| 协议层 | `backend/app/schemas.py` | `AgentChatRequest` 新增 `tools`、`use_memory` | 支持每条消息工具白名单与记忆开关 |
-| LLM 编排层 | `backend/app/services/llm.py` | 多轮工具编排（3 轮 × 每轮 6 次） | 非单轮 tool-call；可处理更复杂任务链 |
-| 工具执行层 | `backend/app/services/agent_tools.py` | `search_messages`、`get_contact_info` + allowlist 过滤 | 工具可按消息动态授权 |
-| 记忆核心层 | `backend/app/services/agent_memory.py` | 短期摘要、长期 notes、焦点内容提取 | 焦点内容来自近期消息的“关注信息/帖子”评分 |
-| 记忆数据层 | `backend/app/models.py` | `AgentConversationMemory`、`AgentMemoryNote` | 持久化会话摘要与用户偏好记忆 |
-| Prompt 组装层 | `backend/app/routers/agent.py` | 系统提示 + 联系人上下文 + 记忆注入 | 记忆以系统上下文注入，提高连贯性 |
-| 前端交互层 | `frontend/src/components/AgentChatPanel.tsx` | 工具选择、记忆开关、记忆卡片展示 | 直接可见“最近关注信息/帖子” |
-| 前端 API 层 | `frontend/src/api.ts` | chat options、memory 获取/增删 | 前后端协议已联通 |
-| 测试层 | `backend/tests/test_agent_memory.py` | 覆盖记忆接口与基本链路 | 后端测试已通过 |
+| API 入口层 | `backend/app/routers/aelin.py` | `/aelin/chat` | DeepAgents 驱动的主 Chat 入口 |
+| 协议层 | `backend/app/schemas.py` | `AelinChatRequest` | 支持 workspace、history、search_mode、images 等 |
+| LLM 编排层 | `backend/app/services/deepagents_loop.py`、`backend/app/services/llm.py` | DeepAgents + 多 provider 兼容 | 统一通过 DeepAgents agent loop 调用模型与工具 |
+| 工具执行层 | `backend/app/services/aelin_tools.py` | `context_get`、`device`、`web_search`、`attachment_search`、`google_workspace`、`skill`、`plane`、`memory` | 工具支持 plane、远程控制、联网搜索与记忆写入 |
+| 记忆核心层 | `backend/app/services/agent_memory.py` | 从 `/memory/AGENTS.md` 投影 summary/notes/todos/memory_layers | 以 AGENTS.md 为唯一权威记忆源，DB 仅作兼容回退 |
+| 记忆数据层 | `backend/app/services/openviking_bridge.py` | workspace 级 AGENTS.md 持久化 | `users/{user_id}/workspaces/{workspace}/memory/AGENTS.md` |
+| Prompt 组装层 | `backend/app/services/aelin_core.py` | 系统提示 + 历史对话 + memory_summary | 所有上下文通过 DeepAgents 注入模型 |
