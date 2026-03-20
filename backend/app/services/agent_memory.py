@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any, Iterable
 
-from sqlalchemy import Select, desc, func, select
+from sqlalchemy import Select, desc, select
 from sqlalchemy.orm import Session
 
 from app.models import AgentConversationMemory, AgentMemoryNote, Contact, Message
@@ -373,21 +373,14 @@ class AgentMemoryService:
         """
         List recent long-term memory notes.
 
-        When AGENTS.md defines a '长期记忆' section, this returns an in-memory
-        projection from that file. Otherwise it falls back to the legacy DB
-        records for compatibility.
+        In the DeepAgents runtime this method is expected to project notes from
+        the AGENTS.md file only. Legacy DB-backed notes are no longer used as a
+        primary memory source and are intentionally ignored here so that the
+        chat loop depends solely on file-backed memory.
         """
         n = max(1, min(50, int(limit or 12)))
         projected = self._notes_from_agents_md(user_id=user_id, workspace=workspace, limit=n)
-        if projected:
-            return projected
-        stmt = (
-            select(AgentMemoryNote)
-            .where(AgentMemoryNote.user_id == user_id)
-            .order_by(AgentMemoryNote.updated_at.desc(), AgentMemoryNote.id.desc())
-            .limit(n)
-        )
-        return db.scalars(stmt).all()
+        return projected
 
     def add_note(self, db: Session, user_id: int, content: str, *, kind: str = "note", source: str | None = None) -> AgentMemoryNote:
         clean = _truncate(_clean_text(content), 500)
@@ -440,9 +433,9 @@ class AgentMemoryService:
         """
         List todo items for the user.
 
-        When AGENTS.md defines a '待办' section, this returns todos projected
-        from that file. Otherwise it falls back to the legacy DB-backed todo
-        notes so that existing endpoints remain compatible.
+        In the DeepAgents runtime this method is expected to project todos from
+        the AGENTS.md file only. Legacy DB-backed todo notes are no longer
+        surfaced via this API so that the memory model is fully file-first.
         """
         n = max(1, min(200, int(limit or 100)))
         projected = self._todos_from_agents_md(
@@ -451,37 +444,7 @@ class AgentMemoryService:
             include_done=include_done,
             limit=n,
         )
-        if projected:
-            return projected
-        rows = db.scalars(
-            select(AgentMemoryNote)
-            .where(AgentMemoryNote.user_id == user_id, AgentMemoryNote.source == _TODO_SOURCE)
-            .order_by(desc(AgentMemoryNote.updated_at), desc(AgentMemoryNote.id))
-            .limit(n)
-        ).all()
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            parsed = _parse_json_or_none(row.content)
-            if not isinstance(parsed, dict):
-                continue
-            done = bool(parsed.get("done"))
-            if done and not include_done:
-                continue
-            out.append(
-                {
-                    "id": row.id,
-                    "title": _truncate(_clean_text(str(parsed.get("title") or "")), 240),
-                    "detail": _truncate(_clean_text(str(parsed.get("detail") or "")), 2000),
-                    "done": done,
-                    "due_at": _truncate(_clean_text(str(parsed.get("due_at") or "")), 64) or None,
-                    "priority": _truncate(_clean_text(str(parsed.get("priority") or "normal")), 16) or "normal",
-                    "contact_id": int(parsed.get("contact_id")) if str(parsed.get("contact_id") or "").isdigit() else None,
-                    "message_id": int(parsed.get("message_id")) if str(parsed.get("message_id") or "").isdigit() else None,
-                    "updated_at": row.updated_at.isoformat() if row.updated_at else "",
-                }
-            )
-        out.sort(key=lambda x: (x["done"], x["priority"] != "high", x["updated_at"]), reverse=False)
-        return out
+        return projected
 
     # Historic "pin recommendations" based on layout + message statistics have
     # been removed from the public API surface and are no longer used by the
@@ -558,115 +521,6 @@ class AgentMemoryService:
 
         scored.sort(key=lambda x: (x.score, x.received_at), reverse=True)
         return scored[:n]
-
-    def build_daily_brief(self, db: Session, user_id: int) -> dict[str, Any]:
-        focus_items = self.build_focus_items(db, user_id, query="", limit=6)
-        todos = self.list_todos(db, user_id, include_done=False, limit=20)
-
-        actions: list[dict[str, Any]] = []
-        for item in focus_items[:3]:
-            actions.append(
-                {
-                    "kind": "review",
-                    "title": f"查看: {item.title}",
-                    "detail": f"来源 { _SOURCE_LABELS.get(item.source, item.source) }，发送者 {item.sender}",
-                    "message_id": item.message_id,
-                    "priority": "high" if item.score >= 8 else "normal",
-                }
-            )
-
-        for todo in todos[:4]:
-            actions.append(
-                {
-                    "kind": "todo",
-                    "title": todo["title"],
-                    "detail": todo.get("detail") or "",
-                    "contact_id": todo.get("contact_id"),
-                    "message_id": todo.get("message_id"),
-                    "priority": todo.get("priority") or "normal",
-                }
-            )
-
-        total_unread = db.scalar(
-            select(func.count(Message.id)).where(Message.user_id == user_id, Message.is_read.is_(False))
-        )
-        unread_count = int(total_unread or 0)
-        summary_parts = [
-            f"今天你有 {unread_count} 条未读消息",
-            f"高价值更新 {len(focus_items[:3])} 条",
-            f"待跟进事项 {len(todos)} 项",
-        ]
-
-        return {
-            "generated_at": datetime.now(timezone.utc),
-            "summary": "；".join(summary_parts) + "。",
-            "top_updates": [
-                {
-                    "message_id": item.message_id,
-                    "source": item.source,
-                    "source_label": _SOURCE_LABELS.get(item.source, item.source),
-                    "sender": item.sender,
-                    "sender_avatar_url": item.sender_avatar_url,
-                    "title": item.title,
-                    "received_at": item.received_at,
-                    "score": round(item.score, 2),
-                }
-                for item in focus_items
-            ],
-            "actions": actions[:10],
-        }
-
-    def build_daily_brief_from_items(
-        self,
-        db: Session,
-        user_id: int,
-        *,
-        focus_items: list[FocusItem] | None = None,
-        todos: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        focus_rows = list(focus_items or self.build_focus_items(db, user_id, query="", limit=6))
-        todo_rows = list(todos or self.list_todos(db, user_id, include_done=False, limit=20))
-
-        actions: list[dict[str, Any]] = []
-        for item in focus_rows[:3]:
-            actions.append(
-                {
-                    "kind": "review",
-                    "title": f"查看: {item.title}",
-                    "detail": f"来源 {_SOURCE_LABELS.get(item.source, item.source)}，发送者 {item.sender}",
-                    "message_id": item.message_id,
-                    "priority": "high" if item.score >= 8 else "normal",
-                }
-            )
-
-        for todo in todo_rows[:4]:
-            actions.append(
-                {
-                    "kind": "todo",
-                    "title": todo["title"],
-                    "detail": todo.get("detail") or "",
-                    "contact_id": todo.get("contact_id"),
-                    "message_id": todo.get("message_id"),
-                    "priority": todo.get("priority") or "normal",
-                }
-            )
-
-        total_unread = db.scalar(
-            select(func.count(Message.id)).where(Message.user_id == user_id, Message.is_read.is_(False))
-        )
-        unread_count = int(total_unread or 0)
-        summary_parts = [
-            f"今天你有 {unread_count} 条未读消息",
-            f"高价值更新 {len(focus_rows[:3])} 条",
-            f"待跟进事项 {len(todo_rows)} 项",
-        ]
-
-        return {
-            "generated_at": datetime.now(timezone.utc),
-            "summary": "；".join(summary_parts) + "。",
-            "top_updates": [serialize_focus_item(item) for item in focus_rows],
-            "actions": actions[:10],
-        }
 
     # Advanced inbox search for the legacy `/agent` surface has been removed.
     # New search scenarios should be implemented as explicit tools instead of
@@ -810,163 +664,6 @@ class AgentMemoryService:
             "in_progress": in_progress[:14],
         }
 
-    def build_notifications(self, db: Session, user_id: int, *, limit: int = 20) -> list[dict[str, Any]]:
-        max_items = max(1, min(100, int(limit or 20)))
-        now = datetime.now(timezone.utc)
-        items: list[dict[str, Any]] = []
-
-        brief = self.build_daily_brief(db, user_id)
-        summary = _truncate(_clean_text(str(brief.get("summary") or "")), 220)
-        if summary:
-            items.append(
-                {
-                    "id": "brief-summary",
-                    "level": "info",
-                    "title": "每日简报已更新",
-                    "detail": summary,
-                    "source": "daily_brief",
-                    "ts": now.isoformat(),
-                    "action_kind": "open_brief",
-                    "action_payload": {"path": "/"},
-                }
-            )
-
-        for idx, item in enumerate((brief.get("top_updates") or [])[:4], start=1):
-            try:
-                message_id = int(item.get("message_id") or 0)
-            except Exception:
-                message_id = 0
-            title = _truncate(_clean_text(str(item.get("title") or "")), 120)
-            if not title:
-                continue
-            items.append(
-                {
-                    "id": f"brief-top-{idx}-{message_id or idx}",
-                    "level": "info",
-                    "title": f"高价值更新: {title}",
-                    "detail": f"{item.get('source_label') or item.get('source') or '来源'} · {item.get('sender') or 'unknown'}",
-                    "source": "focus",
-                    "ts": now.isoformat(),
-                    "action_kind": "open_brief",
-                    "action_payload": {"path": "/"},
-                }
-            )
-
-        todos = self.list_todos(db, user_id, include_done=False, limit=20)
-        for todo in todos[:8]:
-            todo_id = int(todo.get("id") or 0)
-            priority = str(todo.get("priority") or "normal").lower()
-            title = _truncate(_clean_text(str(todo.get("title") or "")), 120)
-            if not title:
-                continue
-            items.append(
-                {
-                    "id": f"todo-{todo_id}",
-                    "level": "warning" if priority == "high" else "info",
-                    "title": f"待跟进: {title}",
-                    "detail": _truncate(_clean_text(str(todo.get("detail") or "")), 180) or "你有一个待办事项待处理",
-                    "source": "todo",
-                    "ts": str(todo.get("updated_at") or now.isoformat()),
-                    "action_kind": "open_todo",
-                    "action_payload": {"todo_id": str(todo_id)},
-                }
-            )
-
-        items.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
-        dedup: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        for row in items:
-            row_id = str(row.get("id") or "")
-            if not row_id or row_id in seen_ids:
-                continue
-            seen_ids.add(row_id)
-            dedup.append(row)
-            if len(dedup) >= max_items:
-                break
-        return dedup
-
-    def build_notifications_from_items(
-        self,
-        db: Session,
-        user_id: int,
-        *,
-        brief: dict[str, Any] | None = None,
-        todos: list[dict[str, Any]] | None = None,
-        limit: int = 20,
-    ) -> list[dict[str, Any]]:
-        max_items = max(1, min(100, int(limit or 20)))
-        now = datetime.now(timezone.utc)
-        items: list[dict[str, Any]] = []
-
-        brief_payload = brief or self.build_daily_brief(db, user_id)
-        summary = _truncate(_clean_text(str(brief_payload.get("summary") or "")), 220)
-        if summary:
-            items.append(
-                {
-                    "id": "brief-summary",
-                    "level": "info",
-                    "title": "每日简报已更新",
-                    "detail": summary,
-                    "source": "daily_brief",
-                    "ts": now.isoformat(),
-                    "action_kind": "open_brief",
-                    "action_payload": {"path": "/"},
-                }
-            )
-
-        for idx, item in enumerate((brief_payload.get("top_updates") or [])[:4], start=1):
-            try:
-                message_id = int(item.get("message_id") or 0)
-            except Exception:
-                message_id = 0
-            title = _truncate(_clean_text(str(item.get("title") or "")), 120)
-            if not title:
-                continue
-            items.append(
-                {
-                    "id": f"brief-top-{idx}-{message_id or idx}",
-                    "level": "info",
-                    "title": f"高价值更新: {title}",
-                    "detail": f"{item.get('source_label') or item.get('source') or '来源'} · {item.get('sender') or 'unknown'}",
-                    "source": "focus",
-                    "ts": now.isoformat(),
-                    "action_kind": "open_brief",
-                    "action_payload": {"path": "/"},
-                }
-            )
-
-        todo_rows = list(todos or self.list_todos(db, user_id, include_done=False, limit=20))
-        for todo in todo_rows[:8]:
-            todo_id = int(todo.get("id") or 0)
-            priority = str(todo.get("priority") or "normal").lower()
-            title = _truncate(_clean_text(str(todo.get("title") or "")), 120)
-            if not title:
-                continue
-            items.append(
-                {
-                    "id": f"todo-{todo_id}",
-                    "level": "warning" if priority == "high" else "info",
-                    "title": f"待跟进: {title}",
-                    "detail": _truncate(_clean_text(str(todo.get("detail") or "")), 180) or "你有一个待办事项待处理",
-                    "source": "todo",
-                    "ts": str(todo.get("updated_at") or now.isoformat()),
-                    "action_kind": "open_todo",
-                    "action_payload": {"todo_id": str(todo_id)},
-                }
-            )
-
-        items.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
-        dedup: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-        for row in items:
-            row_id = str(row.get("id") or "")
-            if not row_id or row_id in seen_ids:
-                continue
-            seen_ids.add(row_id)
-            dedup.append(row)
-            if len(dedup) >= max_items:
-                break
-        return dedup
 
     def build_system_memory_prompt(self, db: Session, user_id: int, *, query: str = "") -> str:
         """

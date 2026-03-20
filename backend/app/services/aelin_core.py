@@ -28,12 +28,9 @@ from app.schemas import (
     AelinChatRequest,
     AelinChatResponse,
     AelinCitation,
-    AelinDailyBrief,
-    AelinDailyBriefAction,
     AelinLayoutCard,
     AelinMemoryLayerItem,
     AelinMemoryLayers,
-    AelinNotificationItem,
     AelinPinRecommendationItem,
     AelinToolStep,
     AelinTodoItem,
@@ -126,8 +123,6 @@ _MAX_LOCAL_SUBAGENTS = 5
 _MAX_CONTEXT_BOUNDARIES = 10
 _WEB_SEARCH_MAX_RESULTS = 15
 _WEB_SEARCH_FETCH_TOP_K = 5
-_PROACTIVE_STATE_SOURCE_PREFIX = "proactive_state"
-_PROACTIVE_SEEN_LIMIT = 180
 _AELIN_BASE_CONTEXT_CACHE_TTL_SECONDS = max(
     0.0,
     float(getattr(settings, "aelin_base_context_cache_ttl_seconds", 4.0) or 4.0),

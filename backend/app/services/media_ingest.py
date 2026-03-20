@@ -42,6 +42,24 @@ from app.settings import settings
 _LOG = logging.getLogger(__name__)
 
 
+def _build_limitations(source_type: str) -> list[str]:
+    """
+    Normalize the standard limitations note list based on the text source type.
+    Kept as a module-level helper to keep MediaIngestService.ingest slimmer
+    without changing any external behaviour.
+    """
+    limitations = ["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"]
+    if source_type == "description":
+        limitations.append("当前未提取到字幕，改用描述文本生成，置信度较低。")
+    if source_type == "douyin_api":
+        limitations.append("当前基于抖音页面/API抓取文本生成，非官方字幕逐字稿。")
+    if source_type == "subtitle_asr":
+        limitations.append("当前字幕由 ASR 转写生成，可能存在听写误差。")
+    if source_type == "subtitle_auto":
+        limitations.append("当前使用自动字幕，可能存在识别误差。")
+    return limitations
+
+
 class MediaIngestError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -210,41 +228,21 @@ class MediaIngestService:
             source_type=source_type,
             content_length=len(extracted_text),
         )
-        limitations = ["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"]
-        if source_type == "description":
-            limitations.append("当前未提取到字幕，改用描述文本生成，置信度较低。")
-        if source_type == "douyin_api":
-            limitations.append("当前基于抖音页面/API抓取文本生成，非官方字幕逐字稿。")
-        if source_type == "subtitle_asr":
-            limitations.append("当前字幕由 ASR 转写生成，可能存在听写误差。")
-        if source_type == "subtitle_auto":
-            limitations.append("当前使用自动字幕，可能存在识别误差。")
+        limitations = _build_limitations(source_type)
 
-        insight_title = str(summary_struct.get("title") or title).strip()[:180] or title
-        overview = self._normalize_paragraph(str(summary_struct.get("overview") or ""), max_len=500)
-        information_note = self._normalize_paragraph(str(summary_struct.get("information_note") or ""), max_len=1400)
-        key_points = self._normalize_string_list(summary_struct.get("key_points"), max_items=6)
-        evidence = self._normalize_string_list(summary_struct.get("evidence"), max_items=5)
-        actions = self._normalize_string_list(summary_struct.get("actions"), max_items=4)
-        if not overview:
-            overview = self._normalize_paragraph(self._fallback.summarize(extracted_text), max_len=500)
-        if not key_points:
-            key_points = self._split_sentences(extracted_text)[:4]
-        if not evidence:
-            evidence = self._split_sentences(extracted_text)[4:7]
-            if not evidence:
-                evidence = key_points[:2]
-        if not actions:
-            actions = ["如需用于决策，请结合原视频或原帖再核对一次关键信息。"]
-        if not information_note:
-            information_note = self._compose_information_note(
-                title=insight_title,
-                overview=overview,
-                key_points=key_points,
-                evidence=evidence,
-                actions=actions,
-                source_type=source_type,
-            )
+        (
+            insight_title,
+            overview,
+            information_note,
+            key_points,
+            evidence,
+            actions,
+        ) = self._build_summary_fields(
+            summary_struct=summary_struct,
+            title=title,
+            source_type=source_type,
+            extracted_text=extracted_text,
+        )
 
         quality = self._assess_summary_quality(
             source_type=source_type,
@@ -1755,6 +1753,44 @@ class MediaIngestService:
             parts.append("由于本次主要依据描述文本而非完整字幕，使用时建议再回看原始内容确认细节。")
 
         return self._normalize_paragraph(" ".join(parts), max_len=1400)
+
+    def _build_summary_fields(
+        self,
+        *,
+        summary_struct: dict[str, Any],
+        title: str,
+        source_type: str,
+        extracted_text: str,
+    ) -> tuple[str, str, str, list[str], list[str], list[str]]:
+        insight_title = str(summary_struct.get("title") or title).strip()[:180] or title
+        overview = self._normalize_paragraph(str(summary_struct.get("overview") or ""), max_len=500)
+        information_note = self._normalize_paragraph(
+            str(summary_struct.get("information_note") or ""),
+            max_len=1400,
+        )
+        key_points = self._normalize_string_list(summary_struct.get("key_points"), max_items=6)
+        evidence = self._normalize_string_list(summary_struct.get("evidence"), max_items=5)
+        actions = self._normalize_string_list(summary_struct.get("actions"), max_items=4)
+        if not overview:
+            overview = self._normalize_paragraph(self._fallback.summarize(extracted_text), max_len=500)
+        if not key_points:
+            key_points = self._split_sentences(extracted_text)[:4]
+        if not evidence:
+            evidence = self._split_sentences(extracted_text)[4:7]
+            if not evidence:
+                evidence = key_points[:2]
+        if not actions:
+            actions = ["如需用于决策，请结合原视频或原帖再核对一次关键信息。"]
+        if not information_note:
+            information_note = self._compose_information_note(
+                title=insight_title,
+                overview=overview,
+                key_points=key_points,
+                evidence=evidence,
+                actions=actions,
+                source_type=source_type,
+            )
+        return insight_title, overview, information_note, key_points, evidence, actions
 
     def _normalize_paragraph(self, text: str, *, max_len: int = 1000) -> str:
         normalized = self._normalize_text(text).replace("\n", " ")

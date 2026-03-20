@@ -37,14 +37,9 @@ def get_aelin_context(
     return AelinContextResponse(
         workspace=bundle["workspace"],
         summary=bundle["summary"],
-        focus_items=bundle["focus_items"],
         notes=bundle["notes"],
         notes_count=bundle["notes_count"],
         todos=bundle["todos"],
-        pin_recommendations=bundle["pin_recommendations"],
-        daily_brief=bundle["daily_brief"],
-        layout_cards=bundle["layout_cards"],
         memory_layers=bundle["memory_layers"],
-        notifications=bundle["notifications"],
         generated_at=datetime.now(timezone.utc),
     )

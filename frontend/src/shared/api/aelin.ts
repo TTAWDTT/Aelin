@@ -1,7 +1,6 @@
 import { fetchFormData, fetchJson } from './client'
 import type {
   AelinChatRequest, AelinChatResponse, AelinContextResponse,
-  AelinNotificationResponse, AelinProactivePollResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinBrowserLoginCheckpointListResponse,
   AelinDeviceCapabilitiesResponse,
@@ -25,12 +24,6 @@ export const aelinApi = {
 
   context: (workspace = 'default') =>
     fetchJson<AelinContextResponse>(`/api/v1/aelin/context?workspace=${workspace}`),
-
-  notifications: () =>
-    fetchJson<AelinNotificationResponse>('/api/v1/aelin/notifications'),
-
-  proactivePoll: (workspace = 'default') =>
-    fetchJson<AelinProactivePollResponse>(`/api/v1/aelin/proactive/poll?workspace=${workspace}`),
 
   confirmBrowserAction: (body: AelinBrowserConfirmRequest) =>
     fetchJson<AelinBrowserConfirmResponse>('/api/v1/aelin/agent/browser/confirm', { method: 'POST', body: JSON.stringify(body) }),

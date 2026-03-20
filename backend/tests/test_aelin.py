@@ -451,13 +451,6 @@ def test_aelin_file_memory_content_endpoint_returns_markdown(monkeypatch):
     monkeypatch.setattr(aelin_router._web_search, "search_and_fetch", lambda query, max_results=6, fetch_top_k=3: [row])
 
     search_resp = client.get(
-        "/api/v1/aelin/proactive/poll",  # warm up state
-        params={"workspace": "default", "limit": 8},
-        headers=headers,
-    )
-    assert search_resp.status_code == 200, search_resp.text
-
-    search_resp = client.get(
         "/api/v1/aelin/context",  # context endpoint should still surface file memory
         params={"workspace": "default", "query": "Notebook", "limit": 10},
         headers=headers,

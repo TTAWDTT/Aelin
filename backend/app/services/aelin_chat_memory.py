@@ -126,16 +126,6 @@ def _save_parallel_draft_entry(
     )
     if out_path is None:
         return {"written": False, "reason": "file_write_failed", "path": ""}
-    try:
-        _memory.add_note(
-            db,
-            user_id,
-            f"[parallel-draft] {draft_result.title}\npath: {str(out_path)}",
-            kind="memory_insight",
-            source="chat:parallel-draft",
-        )
-    except Exception:
-        pass
     return {"written": True, "reason": "", "path": str(out_path)}
 
 def _decide_memory_insight_write(

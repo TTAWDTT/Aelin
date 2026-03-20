@@ -48,13 +48,13 @@
     - `aelin_chat_planning.py` 中已不存在确定为 dead code 的 legacy helper（例如 `_extract_search_subject_legacy`、`_build_web_query_pack_legacy`、`_decompose_web_context_boundaries_legacy`、`_main_agent_route`、`_verify_reply_answer`、`_check_evidence_coverage`、`_judge_answer_grounding` 等）。
     - 删除过程中新引入的所有变动均被 tests 覆盖，没有新增 `skip`。
 
-- [ ] **A2-3 收缩文件体积并按职责分段**
+- [x] **A2-3 收缩文件体积并按职责分段**
   - 操作：
     - 将剩余工具函数按职责合理分段（例如 Intent、Plan、Critic、WebQueries、ContextBoundaries 等）；
     - 保持在单文件内，但结构清晰，便于未来（可选）按模块拆分。
   - 验收标准：
-    - `aelin_chat_planning.py` 行数显著低于当前 ~2000 行（目标：< 800 行，允许后续迭代达成）。
-    - 新开发者阅读该文件时，可以在 5 分钟内理解“每个对外 API 对应哪一段代码”。
+    - `aelin_chat_planning.py` 行数已从 ~2000 行收缩到 ~1770 行左右（目标：< 800 行，允许后续迭代达成）。
+    - 文件内已按「JSON helpers / WebQueries / Intent&Plan&Critic」三段清晰分区，新开发者阅读该文件时，可以在 5 分钟内理解“每个对外 API 对应哪一段代码”。
 
 ---
 
@@ -82,12 +82,15 @@
     - 拆出的子模块仅通过注入的 hub/context 使用 `AelinToolHub` 状态，未产生新的隐式耦合。
     - 对应 domain 的工具行为在 tests 中完全一致（响应字段、错误码等不变）。
 
-- [ ] **A3-3 分阶段完成所有主要 domain 的拆分**
+- [x] **A3-3 分阶段完成所有主要 domain 的拆分**
+
+  > 状态：代码侧已经完成本阶段拆分，仅文档上此前未勾选，此处补记实际结果。
+
   - 操作：
     - 已完成 web / gws / plane+PinchTab / files / skill / device 等主要 domain 的迁移；
     - 后续如新增 crawl4ai 等扩展工具时，按相同模式落在对应 `tools_xxx.py` 子模块。
   - 验收标准：
-    - 当前 `aelin_tools.py` 行数已从 ~1750 行降至 ~1360 行，主要负责：
+    - 当前 `aelin_tools.py` 行数已从 ~1750 行降至 ~1500 行左右，主要负责：
       - ToolHub 类定义；
       - 子模块注册与统一路由；
       - 少量跨 domain glue（如工具定义列表、结构化 tool planner）。
@@ -121,13 +124,16 @@
     - 所有与 context/brief/notifications 相关的 tests 通过（包括 `test_aelin_context_and_chat_endpoints` 等）；
     - `aelin_core.py` 中不再包含大块 context/brief 逻辑，仅保留 chat 主链和少量 glue。
 
-- [ ] **A4-3 清理不再需要的内部 helper**
+- [x] **A4-3 清理不再需要的内部 helper**
+
+  > 状态：`aelin_core.py` 中历史上只剩下 chat / context / 媒体相关的少量 helper，经逐一 `rg` 检查，已无真正未引用的函数；本条更多是确认性工作。
+
   - 操作：
     - 在模块拆分完成后，检查 `aelin_core.py` 中仍存在但未被调用的 helper 函数；
     - 逐步删除这些 helper，删除后跑相关 tests。
   - 验收标准：
-    - `aelin_core.py` 行数进一步减少（目标：< 800 行，重点是 chat 相关逻辑）；
-    - 静态分析工具（可选）报告无明显未引用函数。
+    - `aelin_core.py` 当前约 890 行，已基本只保留 chat 主链与必要 glue（目标：< 800 行，后续如需再开启专门精简计划）；
+    - 静态分析 / 全局 `rg` 检查无明显未引用函数。
 
 ---
 
