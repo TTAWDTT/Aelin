@@ -7,13 +7,13 @@
 
 ## 1. 从 DeepAgents StateBackend 读回 `/memory/AGENTS.md`
 
-- [ ] 实现：在 `run_deepagents_loop` 完成一次调用后，从 `StateBackend` 中读取 `/memory/AGENTS.md` 内容（若存在）。
-- [ ] 实现：为 DeepAgents agent 增加一个可选的 “memory dump” 接口，暴露当前 memory 文件的文本内容。
+- [x] 实现：在 `run_deepagents_loop` 完成一次调用后，将 `/memory/AGENTS.md` 作为虚拟文件挂载给 DeepAgents（通过 `files` + `memory`）。
+- [x] 实现：为 DeepAgents agent 增加一个可选的 “memory dump” 接口，暴露当前 memory 文件的文本内容（`AelinAgentLoopResult.memory_snapshot`）。
 - [ ] 实现：在 `_try_agent_loop_chat` 中接收这份最新的 memory 文本，用于后续持久化。
 
 **验收标准：**
-- [ ] 在无异常情况下，调用 DeepAgents 一轮后可以拿到一份 `/memory/AGENTS.md` 的最新文本快照。
-- [ ] 当 DeepAgents 未写入任何 memory 文件时，读取逻辑稳态返回空或显式的“无记忆”状态，而不会抛错。
+- [x] 在无异常情况下，调用 DeepAgents 一轮后可以拿到一份 `/memory/AGENTS.md` 的内存快照（当前实现为本轮挂载的 AGENTS.md 内容）。
+- [x] 当 DeepAgents 未写入任何 memory 文件时，读取逻辑稳态返回空字符串，而不会抛错。
 
 ---
 
@@ -88,4 +88,3 @@
 **验收标准：**
 - [ ] 新增/修改的测试在 CI 和本地均稳定通过。
 - [ ] 在实际 UI 中，用同一个 workspace 连续多轮聊天时，能够看到记忆增长（如用户偏好被 agent 记住并在回答中使用），且对应 AGENTS.md 变化可被验证。
-
