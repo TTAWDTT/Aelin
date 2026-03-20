@@ -10,6 +10,17 @@ from app.services.aelin_chat_answering import _extract_score_clues, _looks_like_
 from app.services.llm import LLMService
 from app.services.web_search import WebSearchResult
 
+# Public, router-exposed planning helpers (see app.routers.aelin):
+# - _build_intent_contract
+# - _plan_tool_usage
+# - _critic_tool_plan
+# - _build_web_query_pack
+# - _build_retry_web_queries
+# - _extract_search_subject
+# - _decompose_web_context_boundaries
+# - _normalize_search_mode
+# - _is_time_sensitive_query
+# - _is_sports_result_query
 #
 # Section: JSON parsing & low-level helpers
 # ----------------------------------------
