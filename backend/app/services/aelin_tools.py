@@ -507,6 +507,36 @@ class AelinToolHub:
             {
                 "type": "function",
                 "function": {
+                    "name": "memory",
+                    "description": "通过编辑 `/memory/AGENTS.md` 更新长期记忆与待办事项。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["append_fact", "append_preference", "add_todo"],
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "当 action 为 append_fact/append_preference 时，要追加的记忆内容。",
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "当 action=add_todo 时，待办标题。",
+                            },
+                            "priority": {
+                                "type": "string",
+                                "enum": ["low", "normal", "high"],
+                                "description": "当 action=add_todo 时，可选的待办优先级。默认 normal。",
+                            },
+                        },
+                        "required": ["action"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "device",
                     "description": (
                         "统一的设备工具。"
@@ -720,6 +750,8 @@ class AelinToolHub:
             return self._tool_context_get(args)
         if tool == "profile":
             return self._tool_profile(args)
+        if tool == "memory":
+            return self._tool_memory(args)
         if tool == "device":
             return tool_device(self, args)
         if tool == "web_search":
@@ -763,6 +795,34 @@ class AelinToolHub:
             focus_items=focus_items,
             todos=todos,
         )
+
+    def _tool_memory(self, args: dict[str, Any]) -> dict[str, Any]:
+        action = str(args.get("action") or "").strip().lower()
+        workspace = self.workspace
+
+        if action == "append_fact":
+            content = re.sub(r"\s+", " ", str(args.get("content") or "")).strip()
+            if not content:
+                return _result_error("empty_content")
+            self._memory.append_fact_to_memory(user_id=self.user_id, workspace=workspace, content=content)
+            return _result_ok(kind="fact", content=content)
+
+        if action == "append_preference":
+            content = re.sub(r"\s+", " ", str(args.get("content") or "")).strip()
+            if not content:
+                return _result_error("empty_content")
+            self._memory.append_preference_to_memory(user_id=self.user_id, workspace=workspace, content=content)
+            return _result_ok(kind="preference", content=content)
+
+        if action == "add_todo":
+            title = re.sub(r"\s+", " ", str(args.get("title") or "")).strip()
+            if not title:
+                return _result_error("empty_title")
+            priority = str(args.get("priority") or "normal").strip().lower() or "normal"
+            self._memory.add_todo_to_memory(user_id=self.user_id, workspace=workspace, title=title, priority=priority)
+            return _result_ok(kind="todo", title=title, priority=priority)
+
+        return _result_error(f"unsupported_memory_action:{action or 'missing'}")
 
     def _tool_profile(self, args: dict[str, Any]) -> dict[str, Any]:
         action = str(args.get("action") or "get").strip().lower()

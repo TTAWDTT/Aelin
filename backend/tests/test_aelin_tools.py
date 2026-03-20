@@ -425,7 +425,7 @@ def test_context_get_reuses_shared_memory_primitives_without_snapshot():
     calls = {"get_summary": 0, "build_focus_items": 0, "list_todos": 0, "snapshot": 0}
 
     class _Memory:
-        def get_summary(self, db, user_id):
+        def get_summary(self, db, user_id, *, workspace: str = "default"):
             calls["get_summary"] += 1
             return "summary"
 
@@ -443,7 +443,7 @@ def test_context_get_reuses_shared_memory_primitives_without_snapshot():
                 )
             ]
 
-        def list_todos(self, db, user_id, *, include_done=True, limit=100):
+        def list_todos(self, db, user_id, *, include_done=True, limit=100, workspace: str = "default"):
             calls["list_todos"] += 1
             return [{"id": 1, "title": "todo", "done": False, "updated_at": "2026-03-11T10:00:00+00:00"}]
 

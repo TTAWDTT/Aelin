@@ -77,6 +77,22 @@ class AgentMemoryService:
             return ""
         return str(text or "")
 
+    def _write_agents_md_text(self, user_id: int, workspace: str, content: str) -> None:
+        """
+        Best-effort write of the AGENTS.md memory file for a workspace.
+
+        This wraps FileMemoryBridge so callers do not have to deal with paths
+        or IO errors. Failures are swallowed to avoid breaking the main flow.
+        """
+        try:
+            file_memory_bridge.write_agents_memory(
+                user_id=user_id,
+                workspace=workspace,
+                content=str(content or ""),
+            )
+        except Exception:
+            return
+
     def _parse_agents_md_sections(self, text: str) -> dict[str, list[str]]:
         """
         Parse a minimal section map from an AGENTS.md-style markdown document.
@@ -101,6 +117,69 @@ class AgentMemoryService:
                 continue
             sections.setdefault(current, []).append(line)
         return sections
+
+    def _append_line_to_section(self, text: str, section: str, line: str) -> str:
+        """
+        Append a single markdown line to the given section, creating the
+        section and document skeleton if needed.
+        """
+        base = str(text or "")
+        header = f"## {section}"
+        if not base.strip():
+            base = "# Aelin Session Memory\n\n"
+
+        idx = base.find(header)
+        if idx < 0:
+            # Append a new section at the end.
+            if not base.endswith("\n"):
+                base += "\n"
+            return base + f"\n{header}\n{line}\n"
+
+        # Insert inside existing section, before the next heading.
+        tail = base[idx:]
+        next_rel = min(
+            (pos for pos in (tail.find("\n## "), tail.find("\n# ")) if pos > 0),
+            default=-1,
+        )
+        end_idx = idx + next_rel if next_rel > 0 else len(base)
+        section_block = base[idx:end_idx]
+        if not section_block.endswith("\n"):
+            section_block += "\n"
+        section_block = section_block + line + "\n"
+        return base[:idx] + section_block + base[end_idx:]
+
+    def append_fact_to_memory(self, *, user_id: int, workspace: str, content: str) -> None:
+        clean = _truncate(_clean_text(content), 280)
+        if not clean:
+            return
+        text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
+        updated = self._append_line_to_section(text, "长期记忆", f"- [事实] {clean}")
+        self._write_agents_md_text(user_id=user_id, workspace=workspace, content=updated)
+
+    def append_preference_to_memory(self, *, user_id: int, workspace: str, content: str) -> None:
+        clean = _truncate(_clean_text(content), 280)
+        if not clean:
+            return
+        text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
+        updated = self._append_line_to_section(text, "长期记忆", f"- [偏好] {clean}")
+        self._write_agents_md_text(user_id=user_id, workspace=workspace, content=updated)
+
+    def add_todo_to_memory(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        title: str,
+        priority: str = "normal",
+    ) -> None:
+        clean_title = _truncate(_clean_text(title), 200)
+        if not clean_title:
+            return
+        priority_norm = (_clean_text(priority) or "normal").lower()
+        badge = "!" if priority_norm == "high" else "-"
+        text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
+        updated = self._append_line_to_section(text, "待办", f"- [{badge}] {clean_title}")
+        self._write_agents_md_text(user_id=user_id, workspace=workspace, content=updated)
 
     def _notes_from_agents_md(
         self,
