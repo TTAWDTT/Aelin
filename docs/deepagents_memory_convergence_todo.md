@@ -38,8 +38,8 @@
 - [x] 实现：保留对旧 DB 字段的兼容（必要时），但作为回退路径，而非主数据源。
 
 **验收标准：**
-- [ ] 在不开启旧 DB 写入的情况下，只依赖 `/memory/AGENTS.md` 也能返回合理的 summary / notes / todos / memory_layers。
-- [ ] 修改 `AGENTS.md` 文本后（例如手工编辑或通过工具），调用 `/aelin/context` 即可看到对应变化。
+- [x] 在不开启旧 DB 写入的情况下，只依赖 `/memory/AGENTS.md` 也能返回合理的 summary / notes / todos / memory_layers。
+- [x] 修改 `AGENTS.md` 文本后（例如手工编辑或通过工具），调用 `/aelin/context` 即可看到对应变化。
 
 ---
 
@@ -47,35 +47,35 @@
 
 - [x] 实现：`build_context_bundle` 使用新的 AgentMemoryService 适配层，从 `AGENTS.md` 中投影出 context 所需字段（summary / notes / todos / memory_layers 均经由 AGENTS.md 映射）。
 - [x] 实现：`/agent/memory` 相关 endpoint（summary / notes / focus_items / todos）在读取侧统一经过 `AgentMemoryService` 的 AGENTS.md 适配层（其中 summary / notes / todos 来自 AGENTS.md，focus_items 仍基于 DB 消息构建）。
-- [ ] 清理：删掉 context 相关路径上残留的 layout/daily-brief/notifications 注入逻辑（若还有）。
+- [x] 清理：删掉 context 相关路径上残留的 layout/daily-brief/notifications 注入逻辑（若还有）。
 
 **验收标准：**
-- [ ] `/aelin/context` 返回的数据在结构上保持兼容（字段不退化），但修改 `AGENTS.md` 就能驱动所有记忆相关字段更新。
-- [ ] `/agent/memory` 返回的 summary / notes / todos 与 `/aelin/context` 中对应部分内容一致，且都可追溯到同一份 `AGENTS.md` 文本。
+- [x] `/aelin/context` 返回的数据在结构上保持兼容（字段不退化），但修改 `AGENTS.md` 就能驱动所有记忆相关字段更新。
+- [x] `/agent/memory` 返回的 summary / notes / todos 与 `/aelin/context` 中对应部分内容一致，且都可追溯到同一份 `AGENTS.md` 文本。
 
 ---
 
 ## 5. 引入 DeepAgents 风格的“记忆写入工具”（编辑 `/memory/AGENTS.md`）
 
-- [ ] 设计：定义一个或若干 memory 工具（如 `memory_append_fact` / `memory_update_preference` / `memory_add_todo`），实现对 `/memory/AGENTS.md` 指定 section 的安全修改。
-- [ ] 实现：在 `deepagents_skills/` 目录下为这些工具补充 README / usage 说明，让 Agent 知道如何规范增删改记忆。
-- [ ] 实现：将上述工具通过 `AelinToolHub` 暴露给 DeepAgents，并在 policy 中标记为写工具。
+- [x] 设计：定义一个或若干 memory 工具（如 `memory_append_fact` / `memory_update_preference` / `memory_add_todo`），实现对 `/memory/AGENTS.md` 指定 section 的安全修改。
+- [x] 实现：在 `deepagents_skills/` 目录下为这些工具补充 README / usage 说明，让 Agent 知道如何规范增删改记忆。
+- [x] 实现：将上述工具通过 `AelinToolHub` 暴露给 DeepAgents，并在 policy 中标记为写工具。
 
 **验收标准：**
-- [ ] 模型可以通过调用 memory 工具在 `/memory/AGENTS.md` 中新增或更新一条事实/偏好/待办条目。
-- [ ] 更新后的 `AGENTS.md` 能被下一轮对话正确读回，体现为 context / memory_layers 的变化。
+- [x] 模型可以通过调用 memory 工具在 `/memory/AGENTS.md` 中新增或更新一条事实/偏好/待办条目。
+- [x] 更新后的 `AGENTS.md` 能被下一轮对话正确读回，体现为 context / memory_layers 的变化。
 
 ---
 
 ## 6. 弱化 / 清理旧 DB 记忆结构与逻辑（在确保兼容的前提下）
 
-- [ ] 分析：列出当前仍有写入行为的 DB 记忆表字段（`AgentConversationMemory`, `AgentMemoryNote`, todo notes 等），标记哪些可以降级为缓存或废弃。
-- [ ] 实现：对确认废弃的写入路径打上“no-op”或迁移到 `/memory/AGENTS.md` 的过渡逻辑，避免同一信息写两份。
-- [ ] 清理：去掉完全不可达的老 helper（旧版 layout-based memory、notifications-based memory 等）。
+- [x] 分析：列出当前仍有写入行为的 DB 记忆表字段（`AgentConversationMemory`, `AgentMemoryNote`, todo notes 等），标记哪些可以降级为缓存或废弃。
+- [x] 实现：对确认废弃的写入路径打上“no-op”或迁移到 `/memory/AGENTS.md` 的过渡逻辑，避免同一信息写两份。
+- [x] 清理：去掉完全不可达的老 helper（旧版 layout-based memory、notifications-based memory 等）。
 
 **验收标准：**
-- [ ] 新写入行为（facts / preferences / in-progress / todos）只经过“DeepAgents memory 工具 → `/memory/AGENTS.md` → 投影”这条路径，不再直接写 DB 表作为主存。
-- [ ] 删除/弱化旧逻辑后，现有测试（尤其是 agent memory / aelin context / remote control 相关）全部绿灯。
+- [x] 新写入行为（facts / preferences / in-progress / todos）只经过“DeepAgents memory 工具 → `/memory/AGENTS.md` → 投影”这条路径，不再直接写 DB 表作为主存。
+- [x] 删除/弱化旧逻辑后，现有测试（尤其是 agent memory / aelin context / remote control 相关）全部绿灯。
 
 ---
 

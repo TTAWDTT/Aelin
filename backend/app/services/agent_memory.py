@@ -204,7 +204,7 @@ class AgentMemoryService:
 
         out: list[AgentMemoryNote] = []
         n = max(1, min(50, int(limit or 12)))
-        for raw in lines:
+        for idx, raw in enumerate(lines):
             line = str(raw or "").strip()
             if not line or not line.lstrip().startswith("-"):
                 continue
@@ -232,12 +232,15 @@ class AgentMemoryService:
             elif kind_norm in {"进行中", "in_progress", "todo"}:
                 kind = "in_progress"
 
+            # 为了与 DB-backed notes 兼容，提供稳定的 id 与 updated_at。
             row = AgentMemoryNote(
+                id=idx + 1,
                 user_id=user_id,
                 kind=kind,
                 content=content,
                 source="agents_md",
             )
+            row.updated_at = datetime.now(timezone.utc)
             out.append(row)
             if len(out) >= n:
                 break
