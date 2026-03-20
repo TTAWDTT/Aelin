@@ -97,24 +97,26 @@
 
 ## A4. 拆分 `aelin_core.py` 的多重职责
 
-- [ ] **A4-1 梳理 `aelin_core` 所有路由/功能块**
+- [x] **A4-1 梳理 `aelin_core` 所有路由/功能块**
   - 操作：
-    - 按功能分类标注当前 `aelin_core.py` 的主要块：
+    - 已在 `docs/aelin_core_refactor_plan.md` 中按功能分类标注当前 `aelin_core.py` 的主要块：
       - Chat 主链（`_try_agent_loop_chat` 等）
       - Context & Daily Brief（`_build_context_bundle`、`_build_cached_base_context_bundle` 等）
       - Memory summary / notifications
       - Media ingest glue（媒体 URL 自动摘要）
       - Attachment fallback 逻辑
-    - 在 docs 中记录这些块的边界和依赖。
+    - 记录了这些块的边界和依赖。
   - 验收标准：
     - 有一份简明的功能/依赖列表，新人可以用它快速定位具体逻辑位置。
 
-- [ ] **A4-2 将 context/brief/notifications 提取到独立 service 模块**
+- [x] **A4-2 将 context/brief/notifications 提取到独立 service 模块**
   - 操作：
-    - 新建例如 `app/services/aelin_context_service.py`（命名待定），迁移：
-      - context endpoint 所依赖的 `_build_context_bundle` 和相关 helper；
+    - 新建 `app/services/aelin_context_service.py`，迁移：
+      - context endpoint 所依赖的 `_build_context_bundle` 的核心实现；
       - daily brief / notifications / layout 相关逻辑；
-    - 保持 `app.routers.aelin` 的 API 兼容，只是调用路径从 `aelin_core` 转到新模块。
+    - `aelin_core.py` 中保留薄封装：
+      - `_build_context_bundle` / `_build_cached_base_context_bundle` 仅做 workspace 归一化与 service 调用。
+    - 保持 `app.routers.aelin` 的 API 兼容（context 与 chat 路由保持不变）。
   - 验收标准：
     - 所有与 context/brief/notifications 相关的 tests 通过（包括 `test_aelin_context_and_chat_endpoints` 等）；
     - `aelin_core.py` 中不再包含大块 context/brief 逻辑，仅保留 chat 主链和少量 glue。

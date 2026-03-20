@@ -128,6 +128,9 @@ def _is_cjk_text(text: str) -> bool:
 
 #
 # Section: Web search subject & query pack builders
+# -------------------------------------------------
+# Helpers that normalize a user query into a concise "subject" and construct
+# a small pack of search queries for web tools.
 #
 
 def _extract_search_subject_dynamic(query: str) -> str:
@@ -931,6 +934,13 @@ def _build_trace_context_boundaries(
         )
 
     return [*local[:local_cap], *web[:web_cap]][:_MAX_CONTEXT_BOUNDARIES]
+
+#
+# Section: Intent contract & tool planning
+# ----------------------------------------
+# Decide whether a query is smalltalk vs retrieval, how time-sensitive it is,
+# and how tools / web search should be planned.
+#
 
 def _normalize_search_mode(raw: str) -> str:
     return "auto"
