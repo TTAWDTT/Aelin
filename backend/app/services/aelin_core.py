@@ -522,17 +522,7 @@ def _try_agent_loop_chat(
         if media_result is not None and media_summary_intent:
             answer = _build_media_ingest_answer(media_result)
             expression = _pick_expression(payload.query, answer)
-            if persist_memory and payload.use_memory and answer:
-                try:
-                    _memory.update_after_turn(
-                        db,
-                        current_user.id,
-                        [{"role": "user", "content": payload.query}],
-                        answer,
-                    )
-                    db.commit()
-                except Exception:
-                    db.rollback()
+            # DeepAgents 记忆收拢后不再依赖 DB 记忆更新，这里仅返回媒体摘要。
             return AelinChatResponse(
                 answer=answer,
                 expression=expression,
@@ -830,16 +820,6 @@ def _try_agent_loop_chat(
         return None
 
     if persist_memory and payload.use_memory:
-        try:
-            _memory.update_after_turn(
-                db,
-                current_user.id,
-                [{"role": "user", "content": payload.query}],
-                result.answer,
-            )
-            db.commit()
-        except Exception:
-            db.rollback()
         # Persist DeepAgents-style AGENTS.md snapshot for this workspace so that
         # future runs can treat it as canonical long-term memory.
         try:

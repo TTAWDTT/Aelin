@@ -1007,78 +1007,12 @@ class AgentMemoryService:
             return "# Aelin Session Memory\n"
         return "# Aelin Session Memory\n\n" + body
 
-    def update_after_turn(self, db: Session, user_id: int, messages: Iterable[dict[str, str]], assistant_reply: str) -> None:
-        cleaned_msgs = [
-            {
-                "role": (m.get("role") or "").strip().lower(),
-                "content": _truncate(_clean_text(m.get("content") or ""), 220),
-            }
-            for m in messages
-            if isinstance(m, dict)
-        ]
-        chat_lines = [m for m in cleaned_msgs if m["role"] in {"user", "assistant"} and m["content"]]
-        if chat_lines:
-            tail = chat_lines[-10:]
-            transcript = "\n".join(("用户" if m["role"] == "user" else "助手") + ": " + m["content"] for m in tail)
-            base = self.get_summary(db, user_id)
-            merged = f"{base}\n近期对话更新:\n{transcript}" if base else f"近期对话更新:\n{transcript}"
-            self.set_summary(db, user_id, merged)
+    def update_after_turn(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - legacy shim
+        """
+        Legacy no-op shim for older callers.
 
-        last_user = ""
-        for m in reversed(cleaned_msgs):
-            if m["role"] == "user" and m["content"]:
-                last_user = m["content"]
-                break
-
-        candidates = _note_candidates_from_user_text(last_user)
-        fact_candidates: list[str] = []
-        progress_candidates: list[str] = []
-
-        user_text = _clean_text(last_user)
-        if user_text:
-            fact_patterns = [
-                r"我叫([^\s，。,.!?？]{2,24})",
-                r"我是([^\s，。,.!?？]{2,24})",
-                r"我的职业是([^\s，。,.!?？]{2,30})",
-                r"我住在([^\s，。,.!?？]{2,30})",
-            ]
-            for pat in fact_patterns:
-                m = re.search(pat, user_text, flags=re.I)
-                if not m:
-                    continue
-                fact_candidates.append(_truncate(_clean_text(f"用户事实: {m.group(0)}"), 280))
-
-            if any(token in user_text for token in ["跟踪", "追踪", "持续关注", "订阅", "提醒我"]):
-                progress_candidates.append(_truncate(_clean_text(f"用户进行中关注: {user_text}"), 280))
-
-        if assistant_reply:
-            assistant_short = _truncate(_clean_text(assistant_reply), 180)
-            if assistant_short and ("记住" in last_user or "remember" in last_user.lower()):
-                candidates.append(f"用户最近确认: {assistant_short}")
-
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for c in candidates:
-            if c in seen:
-                continue
-            seen.add(c)
-            deduped.append(c)
-            if len(deduped) >= 3:
-                break
-
-        for c in deduped:
-            self.add_note(db, user_id, c, kind="preference", source="chat")
-
-        seen_fact: set[str] = set()
-        for c in fact_candidates[:3]:
-            if not c or c in seen_fact:
-                continue
-            seen_fact.add(c)
-            self.add_note(db, user_id, c, kind="fact", source="chat")
-
-        seen_progress: set[str] = set()
-        for c in progress_candidates[:2]:
-            if not c or c in seen_progress:
-                continue
-            seen_progress.add(c)
-            self.add_note(db, user_id, c, kind="in_progress", source="chat")
+        DeepAgents 版本的 Aelin 不再通过这个入口写入 DB 记忆；所有长期
+        记忆写入都应通过 `memory` 工具直接编辑 `/memory/AGENTS.md`。
+        该方法仅为兼容旧测试/调用点而保留，不做任何实质操作。
+        """
+        return None
