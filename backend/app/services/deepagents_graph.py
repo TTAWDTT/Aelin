@@ -293,9 +293,14 @@ def build_chat_agent(
         "- Treat `/memory/AGENTS.md` as the authoritative long-term memory summary for this workspace."
     )
 
-    skills_root = skills_root or (Path(__file__).resolve().parent.parent / "deepagents_skills")
+    skills_root = skills_root or (Path(__file__).resolve().parent.parent.parent / "deepagents_skills")
     skill_files: dict[str, str] = {}
+    # DeepAgents SkillsMiddleware 期望 sources 是“技能根目录”，其下每个子目录
+    # 才是单个 skill（包含 SKILL.md）。因此我们在虚拟文件系统中统一挂载到
+    # `/skills/aelin/<skill-name>/SKILL.md` 之类的路径，而不是早期版本那样直接
+    # 使用 `/<skill-name>/README.md`。
     skill_sources: list[str] = []
+    aelin_skills_root_path = "/skills/aelin/"
     if skills_root.is_dir():
         # DeepAgents skills 目前只挂载仍然有效的技能目录。与 plane/PinchTab
         # 强相关的技能（plane_browser / plane_goose / plane_cli_anything 等）
@@ -306,20 +311,32 @@ def build_chat_agent(
             "plane_cli_anything",
             "plane_goose",
         }
+        has_any_skill = False
         for subdir in skills_root.iterdir():
             if not subdir.is_dir():
                 continue
             if subdir.name in deprecated_skill_dirs:
                 continue
-            rel_dir = f"/{subdir.name}/"
-            skill_sources.append(rel_dir)
-            for file_path in subdir.rglob("*.md"):
+            # 物理目录名允许使用下划线，但按照 Agent Skills 规范，skill name /
+            # 虚拟目录名只能包含小写字母、数字和连字符，因此这里做一次规范化。
+            raw_dir_name = subdir.name
+            skill_dir_name = raw_dir_name.replace("_", "-")
+            virtual_dir = f"{aelin_skills_root_path}{skill_dir_name}/"
+            md_files = list(subdir.rglob("*.md"))
+            if not md_files:
+                continue
+            has_any_skill = True
+            for file_path in md_files:
                 try:
                     text = file_path.read_text(encoding="utf-8")
                 except Exception:
                     continue
-                rel_path = f"/{subdir.name}/{file_path.name}"
-                skill_files[rel_path] = text
+                virtual_path = f"{virtual_dir}{file_path.name}"
+                skill_files[virtual_path] = text
+        if has_any_skill:
+            # SkillsMiddleware 会在 `/skills/aelin/` 之下查找子目录并解析其中的
+            # `SKILL.md` 文件，因此 sources 只需包含这一层根路径即可。
+            skill_sources.append(aelin_skills_root_path)
 
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []

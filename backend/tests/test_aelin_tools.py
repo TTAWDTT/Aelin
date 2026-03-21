@@ -582,3 +582,67 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     assert isinstance(content, list) and content
     text = "\n".join(str(line) for line in content)
     assert "User profile: likes agents." in text
+
+
+def test_deepagents_skills_files_and_sources(monkeypatch, tmp_path):
+    """
+    Ensure build_chat_agent mounts DeepAgents skills under /skills/aelin/
+    and passes a skills root compatible with SkillsMiddleware.
+    """
+    from app.services import deepagents_graph as dag
+    from app.services.aelin_tool_policy import AelinToolPolicy
+    from app.services.aelin_tools import AelinToolHub
+
+    fake_web = _FakeWebSearch()
+    hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=1,
+        workspace="default",
+        memory_service=_DummyMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+    )
+
+    # Avoid creating a real ChatModel / DeepAgents graph in this unit test.
+    from app.services import deepagents_loop as dloop
+
+    monkeypatch.setattr(dloop, "_build_chat_model", lambda service, provider: object())
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    policy = AelinToolPolicy(
+        max_calls_per_round=4,
+        max_tool_calls=8,
+        max_write_calls=2,
+        allow_write_tools=False,
+    )
+
+    memory_summary = ""
+
+    agent, usage, tool_runs, files = dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        tool_hub=hub,
+        policy=policy,
+        memory_summary=memory_summary,
+        skills_root=None,
+    )
+
+    # create_deep_agent should have been called once with a skills root under /skills/aelin/.
+    assert isinstance(agent, object)
+    skills_param = captured.get("skills")
+    # When DeepAgents skills目录存在时，skills 应为包含唯一根路径的列表。
+    assert isinstance(skills_param, list)
+    assert "/skills/aelin/" in skills_param  # type: ignore[operator]
+
+    # Files mapping should include SKILL.md for each DeepAgents skill.
+    assert isinstance(files, dict)
+    skill_paths = [p for p in files.keys() if str(p).startswith("/skills/aelin/")]
+    # 至少包含 file-tools 与 google-workspace 这两个技能的 SKILL.md。
+    assert any("file-tools/SKILL.md" in p for p in skill_paths)
+    assert any("google-workspace/SKILL.md" in p for p in skill_paths)
