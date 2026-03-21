@@ -7,6 +7,7 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
+from deepagents.backends.utils import create_file_data
 from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import Tool
 from langchain_openai import ChatOpenAI
@@ -291,11 +292,12 @@ def run_deepagents_loop(
             messages.append({"role": "user", "content": latest_query})
 
         invoke_payload: dict[str, Any] = {"messages": messages}
-        invoke_files: dict[str, str] = {}
-        if skill_files:
-            invoke_files.update(skill_files)
-        if memory_files:
-            invoke_files.update(memory_files)
+        # DeepAgents 的 StateBackend 期望 files 映射中的 value 为 FileData 结构，
+        # 而不是原始字符串；否则在 MemoryMiddleware / FilesystemMiddleware 中
+        # 使用 file_data_to_string 时会因为类型不匹配而报错。
+        invoke_files: dict[str, Any] = {}
+        for path, text in {**skill_files, **memory_files}.items():
+            invoke_files[path] = create_file_data(text)
         if invoke_files:
             invoke_payload["files"] = invoke_files
 
