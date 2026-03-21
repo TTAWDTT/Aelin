@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.services.agent_memory import AgentMemoryService
 from app.services.llm import LLMService
 from app.services.memory_draft import ParallelMemoryDraftResult
-from app.services.openviking_bridge import file_memory_bridge
+from app.services.file_memory_bridge import file_memory_bridge
 from app.settings import settings
 from app.routers.aelin_text_helpers import (
     _build_source_indices_from_citations,

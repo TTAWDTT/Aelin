@@ -49,14 +49,6 @@ class Settings(BaseSettings):
     crawler_playwright_poll_seconds: int = 10
 
     # File memory bridge (OpenViking-compatible projection + retrieval fallback).
-    openviking_enabled: bool = True
-    openviking_semantic_enabled: bool = True
-    openviking_sync_on_write: bool = True
-    openviking_wait_processed_on_search: bool = False
-    openviking_resync_interval_seconds: float = 120.0
-    openviking_data_dir: str = "../data/aelin_memory"
-    openviking_query_limit: int = 8
-    openviking_local_cache_max_entries: int = 2000
     aelin_parallel_memory_draft_enabled: bool = True
     aelin_parallel_memory_draft_workers: int = 4
     aelin_parallel_memory_draft_timeout_seconds: float = 2.0
@@ -101,15 +93,6 @@ class Settings(BaseSettings):
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
     desktop_module_base_url: str = ""
-    pinchtab_base_url: str = "http://127.0.0.1:9867"
-    pinchtab_executable_path: str = f"./bin/{_PINCHTAB_EXE}"
-    pinchtab_source_dir: str = "./.pinchtab"
-    pinchtab_data_dir: str = "../data/pinchtab"
-    pinchtab_startup_timeout_seconds: float = 20.0
-    pinchtab_shutdown_timeout_seconds: float = 8.0
-    # PinchTab instance mode: "headless" (no visible window) or "headed" (visible Chrome).
-    # For local开发/调试推荐使用 headed；生产环境建议保持 headless 以节省资源。
-    pinchtab_instance_mode: str = "headless"
     # Google Workspace CLI (gws) integration.
     # `google_workspace_cli_bin` 可以是 "gws"（放在 PATH 中），也可以是一个绝对路径。
     google_workspace_cli_bin: str = "gws"

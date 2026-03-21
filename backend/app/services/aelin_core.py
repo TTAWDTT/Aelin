@@ -41,10 +41,8 @@ from app.services.agent_memory import AgentMemoryService
 from app.services import content_tagging
 from app.services.aelin_tools import (
     AelinToolHub,
-    should_resume_active_plane_for_query,
     summarize_tool_results_for_prompt,
 )
-from app.services.aelin_planes import get_active_plane_task
 from app.services.deepagents_loop import run_deepagents_loop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import (
@@ -82,7 +80,7 @@ from app.services.aelin_chat_memory import (
 )
 from app.services.memory_draft import ParallelMemoryDraftResult, build_parallel_memory_draft
 from app.services.media_ingest import MediaIngestError
-from app.services.openviking_bridge import file_memory_bridge
+from app.services.file_memory_bridge import file_memory_bridge
 from app.services.summarizer import RuleBasedSummarizer
 from app.services.sync_jobs import enqueue_sync_job
 from app.services.web_search import WebSearchResult, WebSearchService
@@ -375,9 +373,10 @@ def _get_memory_summary_for_chat(db: Session, user_id: int, *, workspace: str = 
     try:
         summary = _memory.build_system_memory_prompt(db, user_id, query="")
     except Exception:
-        # Defensive fallback to the raw summary if the richer prompt fails.
-        summary = _memory.get_summary(db, user_id)
-    return str(summary or "")
+        # In DeepAgents 模式下，记忆完全依赖 `/memory/AGENTS.md` 虚拟文件；
+        # 当构建失败时，不再回退到任何 DB 记忆字段，直接返回空串由上层兜底。
+        summary = ""
+    return str(summary or "").strip()
 
 
 def _try_agent_loop_chat(
@@ -604,17 +603,6 @@ def _try_agent_loop_chat(
 
     # 如果已经存在一个活跃 plane task，让模型知道可以“续上”它，
     # 而不是每次都重新开始委派。
-    try:
-        plane_snapshot = get_active_plane_task(current_user.id, workspace, plane="browser", db=db)
-    except Exception:
-        plane_snapshot = None
-    if not (
-        isinstance(plane_snapshot, dict)
-        and plane_snapshot.get("task_id")
-        and should_resume_active_plane_for_query(plane_snapshot, payload.query)
-    ):
-        plane_snapshot = None
-
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
 
     policy = AelinToolPolicy(
@@ -651,7 +639,6 @@ def _try_agent_loop_chat(
         history_turns=history_turns,
         images=images,
         attachment_ids=attachment_ids,
-        plane_snapshot=plane_snapshot,
         cancel_token=cancel_token,
     )
 
@@ -677,15 +664,8 @@ def _try_agent_loop_chat(
         )
         _emit_trace(trace)
 
-    # 再把每一次工具调用显式映射为更细粒度阶段，便于前端展示完整工具链。
     for run in result.tool_runs:
-        # 某些内部错误对 DeepAgents 有学习价值，但对前端链路展示噪声过大，
-        # 这里仅在 trace 中隐藏这些细节（保留在 raw tool_runs 中）。
         if run.name == "web_search" and isinstance(run.error, str) and run.error.startswith("missing query"):
-            continue
-        if run.name == "plane" and isinstance(run.error, str) and (
-            run.error.startswith("unsupported plane action") or run.error.startswith("missing task_id")
-        ):
             continue
 
         detail = run.error or ""
@@ -699,33 +679,6 @@ def _try_agent_loop_chat(
             detail = f"{run.name}({len(run.args)} args) -> {scope}".strip()
 
         stage = "agent_loop_tool"
-        # 对 plane 工具按 action 细分阶段，方便 UI 展示 plane 链路。
-        if run.name == "plane":
-            action = str(run.args.get("action") or "").strip().lower()
-            plane_name = str(run.args.get("plane") or "").strip() or "browser"
-            state = str(run.result.get("state") or "").strip() if isinstance(run.result, dict) else ""
-            task_id = str(run.args.get("task_id") or "").strip()
-            if action == "delegate":
-                stage = "plane_delegate"
-                goal = str(run.args.get("goal") or "").strip()
-                if not run.error and goal:
-                    detail = f"delegate plane={plane_name} goal={goal[:120]}"
-            elif action == "status":
-                stage = "plane_status"
-                if not run.error:
-                    detail = f"status plane={plane_name} task_id={task_id or 'unknown'} state={state or 'unknown'}"
-            elif action == "continue":
-                stage = "plane_continue"
-                if not run.error:
-                    detail = f"continue plane={plane_name} task_id={task_id or 'unknown'} state={state or 'unknown'}"
-            elif action == "close":
-                stage = "plane_close"
-                if not run.error:
-                    detail = f"close plane={plane_name} task_id={task_id or 'unknown'}"
-            elif action == "catalog":
-                stage = "plane_catalog"
-                if not run.error:
-                    detail = f"catalog plane={plane_name}"
 
         tool_trace = AelinToolStep(
             stage=stage,

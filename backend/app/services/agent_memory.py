@@ -7,10 +7,11 @@ import json
 import re
 from typing import Any, Iterable
 
-from sqlalchemy import Select, desc, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AgentConversationMemory, AgentMemoryNote, Contact, Message
+from app.models import Contact, Message
+from app.services.file_memory_bridge import file_memory_bridge
 from app.services.agent_memory_utils import (
     _clean_text,
     _extract_terms,
@@ -19,7 +20,6 @@ from app.services.agent_memory_utils import (
     _parse_json_or_none,
     _truncate,
 )
-from app.services.openviking_bridge import file_memory_bridge
 
 _SOCIAL_SOURCES = {"x", "douyin", "bilibili", "xiaohongshu", "weibo", "rss"}
 _SOURCE_LABELS = {
@@ -61,6 +61,24 @@ def serialize_focus_item(item: FocusItem) -> dict[str, Any]:
         "received_at": _truncate(_clean_text(getattr(item, "received_at", "")), 32),
         "score": float(getattr(item, "score", 0.0) or 0.0),
     }
+
+
+@dataclass
+class MemoryNote:
+    """
+    Lightweight in-memory representation of a long-term memory note.
+
+    This replaces the legacy DB-backed AgentMemoryNote ORM model so that the
+    memory service can operate purely on file-backed AGENTS.md content while
+    keeping the rest of the codebase unchanged.
+    """
+
+    id: int
+    user_id: int
+    kind: str
+    content: str
+    source: str | None
+    updated_at: datetime
 
 
 class AgentMemoryService:
@@ -187,7 +205,7 @@ class AgentMemoryService:
         user_id: int,
         workspace: str,
         limit: int,
-    ) -> list[AgentMemoryNote]:
+    ) -> list[MemoryNote]:
         """
         Project long-term notes from the '## 长期记忆' section of AGENTS.md.
 
@@ -202,7 +220,7 @@ class AgentMemoryService:
         if not lines:
             return []
 
-        out: list[AgentMemoryNote] = []
+        out: list[MemoryNote] = []
         n = max(1, min(50, int(limit or 12)))
         for idx, raw in enumerate(lines):
             line = str(raw or "").strip()
@@ -232,15 +250,16 @@ class AgentMemoryService:
             elif kind_norm in {"进行中", "in_progress", "todo"}:
                 kind = "in_progress"
 
-            # 为了与 DB-backed notes 兼容，提供稳定的 id 与 updated_at。
-            row = AgentMemoryNote(
+            # 为了与旧调用点兼容，提供稳定的 id 与 updated_at 形态，但完全
+            # 不再依赖底层数据库表。
+            row = MemoryNote(
                 id=idx + 1,
                 user_id=user_id,
                 kind=kind,
                 content=content,
                 source="agents_md",
+                updated_at=datetime.now(timezone.utc),
             )
-            row.updated_at = datetime.now(timezone.utc)
             out.append(row)
             if len(out) >= n:
                 break
@@ -324,47 +343,42 @@ class AgentMemoryService:
         """
         Return the short conversation summary for a user.
 
-        When available, this prefers the DeepAgents-style AGENTS.md memory file
-        stored via FileMemoryBridge; otherwise it falls back to the legacy
-        AgentConversationMemory.summary field in the database.
+        In the DeepAgents 版本下，摘要只从 AGENTS.md 中的“## 会话摘要”段落
+        解析，不再回落到任何 DB 表。若缺少该段落，则返回空字符串。
         """
+        _ = db  # DB is no longer used for conversational summary.
         agents_md = self._read_agents_md_text(user_id=user_id, workspace=workspace)
-        if agents_md:
-            text = _clean_text(agents_md)
-            # Prefer the "## 会话摘要" section if present.
-            summary = ""
-            marker = "## 会话摘要"
-            idx = text.find(marker)
-            if idx >= 0:
-                tail = text[idx + len(marker) :]
-                lines: list[str] = []
-                for raw in tail.splitlines():
-                    row = raw.strip()
-                    if not row:
-                        continue
-                    if row.startswith("#"):
-                        break
-                    lines.append(row)
-                    if len(" ".join(lines)) >= 1000:
-                        break
-                summary = _truncate(" ".join(lines), 1000)
-            if summary:
-                return summary.strip()
-        # Fallback: legacy DB summary.
-        row = db.get(AgentConversationMemory, user_id)
-        if row is None:
+        if not agents_md:
             return ""
-        return (row.summary or "").strip()
+        text = _clean_text(agents_md)
+        marker = "## 会话摘要"
+        idx = text.find(marker)
+        if idx < 0:
+            return ""
+        tail = text[idx + len(marker) :]
+        lines: list[str] = []
+        for raw in tail.splitlines():
+            row = raw.strip()
+            if not row:
+                continue
+            if row.startswith("#"):
+                break
+            lines.append(row)
+            if len(" ".join(lines)) >= 1000:
+                break
+        summary = _truncate(" ".join(lines), 1000)
+        return summary.strip()
 
     def set_summary(self, db: Session, user_id: int, summary: str) -> None:
-        row = db.get(AgentConversationMemory, user_id)
-        clean_summary = _truncate(_clean_text(summary), 1800)
-        if row is None:
-            row = AgentConversationMemory(user_id=user_id, summary=clean_summary)
-            db.add(row)
-        else:
-            row.summary = clean_summary
-            db.add(row)
+        """
+        Legacy shim kept for API compatibility.
+
+        Callers that need to update the summary should instead edit
+        `/memory/AGENTS.md` directly via DeepAgents 文件工具或外部流程。
+        这里不再写入 DB，也不会强行修改 AGENTS.md。
+        """
+        _ = db, user_id, summary
+        return None
 
     def list_notes(
         self,
@@ -372,7 +386,7 @@ class AgentMemoryService:
         user_id: int,
         limit: int = 12,
         workspace: str = "default",
-    ) -> list[AgentMemoryNote]:
+    ) -> list[MemoryNote]:
         """
         List recent long-term memory notes.
 
@@ -385,39 +399,54 @@ class AgentMemoryService:
         projected = self._notes_from_agents_md(user_id=user_id, workspace=workspace, limit=n)
         return projected
 
-    def add_note(self, db: Session, user_id: int, content: str, *, kind: str = "note", source: str | None = None) -> AgentMemoryNote:
+    def add_note(
+        self,
+        db: Session,
+        user_id: int,
+        content: str,
+        *,
+        kind: str = "note",
+        source: str | None = None,
+        workspace: str = "default",
+    ) -> MemoryNote:
+        """
+        Append a note-style entry into AGENTS.md and return a lightweight
+        MemoryNote projection. The DB is no longer used as a backing store.
+        """
+        _ = db
         clean = _truncate(_clean_text(content), 500)
         if not clean:
             raise ValueError("memory note content is empty")
-        dup_stmt: Select[tuple[AgentMemoryNote]] = (
-            select(AgentMemoryNote)
-            .where(AgentMemoryNote.user_id == user_id, AgentMemoryNote.content == clean)
-            .order_by(AgentMemoryNote.updated_at.desc(), AgentMemoryNote.id.desc())
-            .limit(1)
-        )
-        existing = db.scalar(dup_stmt)
-        if existing is not None:
-            existing.kind = kind
-            existing.source = source
-            db.add(existing)
-            return existing
 
-        row = AgentMemoryNote(
+        tag = _truncate(_clean_text(kind or "note"), 32) or "note"
+        line = f"- [{tag}] {clean}"
+        text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
+        updated_doc = self._append_line_to_section(text, "长期记忆", line)
+        self._write_agents_md_text(user_id=user_id, workspace=workspace, content=updated_doc)
+
+        notes = self._notes_from_agents_md(user_id=user_id, workspace=workspace, limit=64)
+        # 取最新一条作为刚写入的 note 投影；如果解析失败就构造一个兜底对象。
+        if notes:
+            return notes[-1]
+        return MemoryNote(
+            id=1,
             user_id=user_id,
-            kind=_truncate(_clean_text(kind), 32) or "note",
+            kind=tag,
             content=clean,
-            source=_truncate(_clean_text(source or ""), 64) or None,
+            source=source or "profile",
+            updated_at=datetime.now(timezone.utc),
         )
-        db.add(row)
-        return row
 
     def delete_note(self, db: Session, user_id: int, note_id: int) -> bool:
-        stmt = select(AgentMemoryNote).where(AgentMemoryNote.user_id == user_id, AgentMemoryNote.id == note_id)
-        row = db.scalar(stmt)
-        if row is None:
-            return False
-        db.delete(row)
-        return True
+        """
+        Legacy no-op stub for deleting notes.
+
+        当前 DeepAgents 版本下，长期记忆完全基于 AGENTS.md，删除操作需要
+        重新设计更精细的文本编辑流程，这里先保留一个总是返回 False 的兼容
+        函数，避免旧调用崩溃。
+        """
+        _ = db, user_id, note_id
+        return False
 
     # Layout-based memory is no longer used as part of the core context and has
     # been removed from the public API surface. The corresponding helpers and
@@ -533,7 +562,7 @@ class AgentMemoryService:
         self,
         *,
         summary: str,
-        notes: list[AgentMemoryNote] | None,
+        notes: list[MemoryNote] | None,
         focus_items: list[FocusItem] | None,
         todos: list[dict[str, Any]] | None,
         layout_cards: list[dict[str, Any]] | None,

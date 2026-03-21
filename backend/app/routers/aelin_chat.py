@@ -25,7 +25,7 @@ from app.schemas import (
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
 from app.services.aelin_chat_worker import run_aelin_chat_with_local_session
-from app.services.openviking_bridge import file_memory_bridge
+from app.services.file_memory_bridge import file_memory_bridge
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])

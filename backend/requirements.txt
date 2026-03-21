@@ -23,7 +23,6 @@ pytesseract>=0.3.10
 rapidocr-onnxruntime>=1.4.4
 defusedxml>=0.7.1
 # optional semantic file-memory backend
-openviking>=0.1.18
 
 # test
 pytest>=7.0
