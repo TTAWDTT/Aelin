@@ -61,7 +61,6 @@ def run_deepagents_loop(
     history_turns: list[dict[str, Any]],
     images: list[dict[str, Any]],
     attachment_ids: list[int],
-    plane_snapshot: dict[str, Any] | None = None,
     cancel_token: Any | None = None,
 ) -> AelinAgentLoopResult:
     """

@@ -41,11 +41,6 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return action in {"calendar_create_event", "gmail_send", "gmail_draft", "docs_create"}
     if tool == "skill":
         return False
-    if tool == "plane":
-        return action in {"delegate", "continue", "close"}
-    if tool in {"pinchtab", "pinchtab_agent", "pinchtab_session"}:
-        # PinchTab 调用会驱动真实浏览器行为，统一视为写操作以纳入配额控制。
-        return True
     return False
 
 
@@ -80,10 +75,6 @@ class AelinToolPolicy:
             "screen_get",
             "google_workspace",
             "skill",
-            "plane",
-            "pinchtab",
-            "pinchtab_agent",
-            "pinchtab_session",
         }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 

@@ -2,10 +2,10 @@
 
 `backend/skills/*/SKILL.md` 是 Aelin 的本地 skill 目录。这里的 skill 不是“可执行工具”，而是会在特定 query 和工具集合命中时，被注入到 Agent Loop system prompt 里的**可复用使用规范**。
 
-这些规范既可以指导：
+这些规范主要用来指导：
 
 - 如何正确使用某个原子工具
-- 也可以指导如何把任务委派给某个 plane
+- 如何在复杂工具 + 多步骤场景中拆分任务、规避常见误用
 
 ## 目标
 
@@ -19,9 +19,9 @@
 
 ```text
 backend/skills/
-  pinchtab/
-    SKILL.md
   crawl4ai/
+    SKILL.md
+  google/
     SKILL.md
 ```
 
@@ -31,11 +31,11 @@ backend/skills/
 
 ```md
 ---
-name: PinchTab Browser Control
-slug: pinchtab
+name: Crawl4AI Web Capture
+slug: crawl4ai
 version: 1.0.0
-applies_to_tools: pinchtab,pinchtab_agent,pinchtab_session
-trigger_keywords: 网页,浏览器,登录,网站
+applies_to_tools: web_search,attachment_search
+trigger_keywords: 网页,爬取,抓取,采集
 ---
 ```
 
@@ -82,12 +82,11 @@ trigger_keywords: 网页,浏览器,登录,网站
 可以把它理解成：
 
 - `tool` 决定“能不能做”
-- `plane` 决定“能不能把整件事托管出去”
 - `skill` 决定“该怎么做更对”
 
 ## 当前样例
 
-- `pinchtab`: browser plane 的委派规范，负责复杂浏览器任务的交付与续办
 - `crawl4ai`: 网页摄取层，负责抓取、markdown 化、结构化提取、深度爬取
+- `google`: 针对 `google_workspace` 工具的使用规范与注意事项
 
 这两个样例刻意分属不同能力面，方便后面继续扩展 Aelin 的 skill 生态。

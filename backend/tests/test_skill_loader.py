@@ -56,34 +56,22 @@ def test_skill_loader_injects_google_skill_for_workspace_queries():
     assert "google_drive_search" in prompt
 
 
-def test_skill_loader_injects_pinchtab_plane_skill_for_browser_plane_queries():
-    prompts = get_skill_prompts_for_query_and_tools(
-        "帮我总结我的 X 关注列表，并在登录后继续处理",
-        ["plane", "web_search"],
-    )
-
-    assert prompts
-    prompt = "\n".join(prompts)
-    assert "PinchTab" in prompt
-    assert "browser plane" in prompt.lower()
-
-
 def test_skill_loader_builds_catalog_prompt_and_can_read_by_slug():
     entries = list_skill_catalog_for_query_and_tools(
-        "帮我总结我的 X 关注列表，并在登录后继续处理",
-        ["plane", "skill"],
+        "帮我抓取这个文档站并转成 markdown 后总结",
+        ["crawl4ai_fetch", "skill"],
     )
-
     assert entries
-    pinchtab = next(item for item in entries if item.get("slug") == "pinchtab")
-    assert "summary" in pinchtab
+    crawl4ai = next(item for item in entries if item.get("slug") == "crawl4ai")
+    assert "summary" in crawl4ai
+
     catalog_prompt = render_skill_catalog_prompt(
-        "帮我总结我的 X 关注列表，并在登录后继续处理",
-        ["plane", "skill"],
+        "帮我抓取这个文档站并转成 markdown 后总结",
+        ["crawl4ai_fetch", "skill"],
     )
     assert "[AELIN SKILL CATALOG]" in catalog_prompt
-    assert "pinchtab" in catalog_prompt
+    assert "crawl4ai" in catalog_prompt
 
-    prompt = get_skill_prompt_by_slug("pinchtab")
+    prompt = get_skill_prompt_by_slug("crawl4ai")
     assert "[AELIN SKILL]" in prompt
-    assert "slug=pinchtab" in prompt
+    assert "slug=crawl4ai" in prompt

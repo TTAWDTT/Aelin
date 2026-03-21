@@ -1,5 +1,11 @@
 # Aelin 能力架构
 
+> 注意：本文件主要记录的是早期的「plane / PinchTab」分层能力架构设想。  
+> 在当前 DeepAgents 纯壳分支中，browser plane / PinchTab 能力已完全下线，
+> 浏览与 remote-control 能力只通过 `device` 工具（+ DeepAgents 自身的多轮
+> 推理与工具组合）提供。本文件保留作为历史设计参考，请以
+> `docs/deepagents_arch.md` 中的说明作为当前架构的权威来源。
+
 ## 文档目的
 
 这份文档用于定义 Aelin 的 Agent 能力架构。
@@ -431,8 +437,11 @@ Skill 层通过 `backend/skills/google/SKILL.md` 指导 Aelin：
 - 在未安装或未登录时，如何用中文解释 `install_hint` / `login_command`；
 - 在规划层面，如何将 gws 的“读结果”与 diary / memory 结合，用于后续推理，而不是把 gws 当成 plane 来托管长任务。
 
-总结来说：
+总结来说（**以下为历史架构视角**）：
 
-- PinchTab 属于第三层 plane，负责承接复杂浏览器任务；
+- 早期设计中，PinchTab 被视为第三层 plane，负责承接复杂浏览器任务；
 - `google_workspace` 属于第二层工具，负责把 Gmail / Drive / Calendar 的结构化数据“端上来”；
 - Aelin 则在第四层对这些数据做规划、归纳、记忆和最终汇报。
+
+在当前 DeepAgents 分支中，plane / PinchTab 已下线，浏览器与桌面能力统一收敛到
+`device` 工具与 DeepAgents 内部的多轮工具调用逻辑。

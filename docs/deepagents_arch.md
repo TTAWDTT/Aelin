@@ -58,7 +58,7 @@
 
 ---
 
-## 2. 工具与 Plane：以 DeepAgents 为中心的工具宇宙
+## 2. 工具与 Plane（历史/草案）：以 DeepAgents 为中心的工具宇宙
 
 ### 2.1 AelinToolHub → DeepAgents Tool 的完整接入
 
@@ -78,6 +78,10 @@
 - 上层如果需要结构化工具信息（前端 Execution Pane / 调试），统一从 `AelinToolHub.tool_definitions()` 读取，而不是再从散落的 prompt 片段中拼接。
 
 ### 2.2 Plane 当作「特殊 Tool + Subagent」
+
+> 提示：当前 DeepAgents 纯壳分支中并未启用 plane 工具，browser plane /
+> PinchTab 相关实现也已下线。本小节保留作为未来如果再次引入 plane 概念时
+> 的设计草案，而非当前实现的要求。
 
 待办：
 - [ ] 定义 plane 工具的标准 schema（`action=delegate/status/continue`、`plane=browser/goose/...` 等）。
@@ -157,6 +161,10 @@
 ## 4. Subagents：用 DeepAgents 原生多 agent 模型承载 plane / 特殊工具
 
 ### 4.1 把 plane 视为「一种子 agent 类型」
+
+> 提示：这里的 plane 同样是“未来可能的扩展方向”。在当前分支中，Aelin 只
+> 通过 DeepAgents 的常规工具与记忆能力工作，不再存在浏览器 plane / PinchTab
+> 这类长期托管子系统。
 
 待办：
 - [ ] 明确定义 plane 的「子 agent」语义：

@@ -82,7 +82,7 @@ class AelinToolHub:
     Thin registry that binds the current DB/user/workspace context to a small
     set of capability tools (memory/profile/device/web/attachments/GWS/skill).
 
-    DeepAgents 只依赖这里暴露的工具集合，其余复杂逻辑（旧 plane/PinchTab 等）
+    DeepAgents 只依赖这里暴露的工具集合，其余复杂逻辑（旧浏览器 runtime 等）
     已经完全移除。
     """
 

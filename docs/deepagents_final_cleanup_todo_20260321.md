@@ -26,10 +26,10 @@
 
 ## 4. plane / PinchTab：彻底从运行时和认知中消失
 
-- [ ] 删除剩余的 pinchtab / plane 常量与配置：从 `backend/app/settings.py` 等处移除 `_PINCHTAB_EXE` 及 plane/pinchtab 相关配置常量。
-- [ ] 删除或归档 plane/pinchtab skills：把 `backend/skills/pinchtab/`、`backend/deepagents_skills/plane_browser/` 等与 plane/pinchtab 强相关的 skill 目录和 README 要么整体移入 `docs/archive/`，要么直接删除（取决于你是否还想作为历史文档保留）。
-- [ ] 全局搜索 `pinchtab`、`plane`：确保在代码、配置、提示词、文档中不再出现任何会误导 DeepAgents 或未来维护者“这里还有 plane”的痕迹；仅允许在 `docs/archive/` 中出现。
-- [ ] 更新能力总览文档：在 `docs/*` 里明确声明 plane/pinchtab 已下线，当前浏览/remote-control 能力只通过 device 工具 + 其他 DeepAgents 能力提供。
+- [x] 删除剩余的 pinchtab / plane 常量与配置：从 `backend/app/settings.py` 等处移除 `_PINCHTAB_EXE` 及 plane/pinchtab 相关配置常量。
+- [x] 删除或归档 plane/pinchtab skills：把 `backend/skills/pinchtab/`、`backend/deepagents_skills/plane_browser/` 等与 plane/pinchtab 强相关的 skill 目录和 README 要么整体移入 `docs/archive/`，要么直接删除（取决于你是否还想作为历史文档保留）。
+- [x] 全局搜索 `pinchtab`、`plane`：确保在代码、配置、提示词、文档中不再出现任何会误导 DeepAgents 或未来维护者“这里还有 plane”的痕迹；仅允许在 `docs/archive/` 中出现。
+- [x] 更新能力总览文档：在 `docs/*` 里明确声明 plane/pinchtab 已下线，当前浏览/remote-control 能力只通过 device 工具 + 其他 DeepAgents 能力提供。
 
 ## 5. 代码体量：大文件彻底瘦身到 DeepAgents 风格
 

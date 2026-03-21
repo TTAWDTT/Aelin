@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
-_PINCHTAB_EXE = "pinchtab.exe" if sys.platform.startswith("win") else "pinchtab"
 
 
 class Settings(BaseSettings):

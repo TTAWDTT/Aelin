@@ -256,8 +256,19 @@ def build_chat_agent(
     skill_files: dict[str, str] = {}
     skill_sources: list[str] = []
     if skills_root.is_dir():
+        # DeepAgents skills 目前只挂载仍然有效的技能目录。与 plane/PinchTab
+        # 强相关的技能（plane_browser / plane_goose / plane_cli_anything 等）
+        # 已在本分支下线，只作为历史文档保存在 docs/archive 中，因此这里显式
+        # 跳过这些目录，即便它们作为空目录仍然存在于仓库中。
+        deprecated_skill_dirs = {
+            "plane_browser",
+            "plane_cli_anything",
+            "plane_goose",
+        }
         for subdir in skills_root.iterdir():
             if not subdir.is_dir():
+                continue
+            if subdir.name in deprecated_skill_dirs:
                 continue
             rel_dir = f"/{subdir.name}/"
             skill_sources.append(rel_dir)

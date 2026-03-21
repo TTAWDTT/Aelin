@@ -24,6 +24,10 @@
 
 ## 2. Plane 工具契约（plane）
 
+> 注意：在当前 DeepAgents 纯壳分支中，`plane` 工具以及 browser plane /
+> PinchTab 相关运行时代码已全部下线。本小节保留作为旧实现的记录和未来如需
+> 重启 plane 概念时的参考，不再描述当前生效的工具契约。
+
 - [x] 在 `build_chat_tools` 中为 `plane` 工具补充清晰的 description：
   - [x] 列出允许的 `action`：`"delegate"`, `"status"`, `"continue"`, `"close"`, `"catalog"`。
   - [x] 说明首次使用浏览器 plane 时必须使用 `{"action":"delegate","plane":"browser","goal":"..."}`。
