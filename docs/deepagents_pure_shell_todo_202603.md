@@ -74,15 +74,15 @@
 ### 2.3 下线 Aelin 记忆类工具（从 DeepAgents 视角）
 
 - [x] 从 DeepAgents 的工具集合中移除 `memory` 工具：
-  - [ ] `tool_definitions()` 中不再返回 `memory` 对应 definition。
-  - [ ] DeepAgents graph 不再把 `memory` 列入可调用工具列表。
-- [ ] `context_get` / `profile`：
-  - [ ] 从 DeepAgents tools 中去除（不给 agent 调用），只保留为 REST/API 或 UI 查询接口（如果当前 UI 仍依赖）。
-  - [ ] 在文档里注明：记忆/画像的真实来源是 `/memory/AGENTS.md` 与 DeepAgents MemoryMiddleware，这些接口仅作为视图/只读投影，不参与 agent 决策。
+  - [x] `tool_definitions()` 中不再返回 `memory` 对应 definition（当前 AelinToolHub 仅定义 `context_get` / `profile` 等旧视图工具，不再暴露写记忆的 `memory` 工具）。
+  - [x] DeepAgents graph 不再把 `memory` 列入可调用工具列表（`build_chat_tools` 仅 allowlist `web_search` / `attachment_search` / `google_workspace` / `device` / `screen_get` / `plane`）。
+- [x] `context_get` / `profile`：
+  - [x] 从 DeepAgents tools 中去除（不给 agent 调用），只保留为 REST/API 或 UI 查询接口（通过 AelinToolHub.execute 供侧边栏/调试页面使用）。
+  - [x] 在文档里注明：记忆/画像的真实来源是 `/memory/AGENTS.md` 与 DeepAgents MemoryMiddleware，这些接口仅作为视图/只读投影，不参与 agent 决策。
 
 验收标准：
-- [ ] DeepAgents 在内部不会再看到名为 `memory` 的工具，也不会试图通过工具来更新长期记忆。
-- [ ] 所有记忆读写都通过 DeepAgents 的 memory（AGENTS.md 文件 + MemoryMiddleware）完成，Aelin 工具只作为外部 UI/查询接口存在（如有需要）。
+- [x] DeepAgents 在内部不会再看到名为 `memory` 的工具，也不会试图通过工具来更新长期记忆；所有长期记忆均来源于挂载在 `/memory/AGENTS.md` 上的虚拟文件。
+- [x] 所有记忆读写都通过 DeepAgents 的 memory（AGENTS.md 文件 + MemoryMiddleware）完成，Aelin 侧的 `context_get` / `profile` 等工具只作为外部 UI/查询接口存在，不再影响 DeepAgents 的决策逻辑。
 
 ---
 
