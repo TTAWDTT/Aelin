@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
-from app.services.agent_memory import AgentMemoryService, MemoryNote, serialize_focus_item
+from app.services.agent_memory import AgentMemoryService, serialize_focus_item
 from app.services.aelin_attachment_service import (
     AelinAttachmentService,
     get_aelin_attachment_service,
@@ -30,6 +30,7 @@ from app.services.tools_files import tool_attachment_search
 from app.services.tools_gws import tool_google_workspace
 from app.services.tools_skill import tool_skill
 from app.services.tools_web import tool_web_search
+from app.services.tools_context import tool_context_get, tool_profile
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -341,9 +342,9 @@ class AelinToolHub:
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         tool = str(name or "").strip().lower()
         if tool == "context_get":
-            return self._tool_context_get(args)
+            return tool_context_get(self, args)
         if tool == "profile":
-            return self._tool_profile(args)
+            return tool_profile(self, args)
         if tool == "device":
             return tool_device(self, args)
         if tool == "web_search":
@@ -357,95 +358,6 @@ class AelinToolHub:
         if tool == "skill":
             return tool_skill(self, args)
         return _result_error(f"unsupported tool: {tool}")
-
-    # ---- context/profile helpers -------------------------------------------------
-
-    def _tool_context_get(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = str(args.get("query") or "").strip()[:400]
-        limit = _safe_int(args.get("max_items"), 8, low=1, high=20)
-
-        summary = str(
-            self._memory.get_summary(self.db, self.user_id, workspace=self.workspace)
-            or ""
-        )
-        focus_items = [
-            serialize_focus_item(item)
-            for item in self._memory.build_focus_items(
-                self.db, self.user_id, query=query, limit=limit
-            )
-        ]
-        todos = self._memory.list_todos(
-            self.db,
-            self.user_id,
-            include_done=False,
-            limit=limit,
-            workspace=self.workspace,
-        )
-        return _result_ok(
-            workspace=self.workspace,
-            summary=summary,
-            focus_items=focus_items,
-            todos=todos,
-        )
-
-    def _tool_profile(self, args: dict[str, Any]) -> dict[str, Any]:
-        action = str(args.get("action") or "get").strip().lower()
-        if action == "append_note":
-            note = re.sub(r"\s+", " ", str(args.get("note") or "")).strip()[:500]
-            if not note:
-                return _result_error("empty note")
-            row = self._memory.add_note(
-                self.db,
-                self.user_id,
-                note,
-                kind="profile",
-                source=f"profile:{self.workspace}",
-                workspace=self.workspace,
-            )
-            return _result_ok(
-                note_id=int(getattr(row, "id", 0) or 0),
-                note=note,
-            )
-
-        max_items = _safe_int(args.get("max_items"), 12, low=1, high=24)
-        # 在 DeepAgents 版本中，profile 视图也完全从 AGENTS.md 投影，不再
-        # 直接访问 DB-backed notes。这里通过 list_notes() 读取全部 notes，再在
-        # 内存中过滤出画像/偏好类条目。
-        raw_notes = self._memory.list_notes(
-            self.db,
-            self.user_id,
-            limit=max_items,
-            workspace=self.workspace,
-        )
-        notes: list[MemoryNote] = []
-        for row in raw_notes:
-            kind_norm = str(getattr(row, "kind", "") or "").lower()
-            if kind_norm in {
-                "profile",
-                "identity",
-                "preference",
-                "user_profile",
-                "user_note",
-                "manual_note",
-            }:
-                notes.append(row)
-            if len(notes) >= max_items:
-                break
-        items = [
-            {
-                "id": int(it.id),
-                "kind": str(it.kind or ""),
-                "content": str(it.content or "")[:220],
-                "source": str(it.source or ""),
-                "updated_at": (
-                    it.updated_at.isoformat()
-                    if getattr(it, "updated_at", None)
-                    else ""
-                ),
-            }
-            for it in notes
-        ]
-        return _result_items(items)
 
     # ---- device helpers (used by tools_device) -----------------------------------
 

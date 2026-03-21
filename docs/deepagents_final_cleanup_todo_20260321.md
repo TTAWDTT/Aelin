@@ -13,10 +13,10 @@
 
 ## 2. 工具：彻底统一为 DeepAgents 工具层
 
-- [ ] 确认 Agent Loop 中不再存在任何 “手搓工具 planner”：在 `backend/app/services/aelin_core.py` 中搜索并删除所有基于 query 自己决定先用哪个工具的逻辑，保证工具调用只来自 DeepAgents 图（`run_deepagents_loop` → `build_chat_agent` → `build_chat_tools`）。
-- [ ] 将所有仍在用的能力型工具都收口到 `tools_*.py` + `build_chat_tools`：确保 web_search / attachments / GWS / device / screen_get 及以后新增工具，全部通过 `backend/app/services/tools_*.py` + `backend/app/services/deepagents_graph.py` 暴露，而不是在别处再造壳。
-- [ ] 把 `AelinToolHub` 压缩为“最薄壳”：在 `backend/app/services/aelin_tools.py` 中移除所有执行逻辑，只负责注入上下文 + 暴露 OpenAI-style 描述给前端/调试；执行统一走 `tools_*.py`。
-- [ ] 在 docs 中明确写清：工具契约由 DeepAgents 工具描述决定，Aelin 不再维护第二套 planner 或签名。
+- [x] 确认 Agent Loop 中不再存在任何 “手搓工具 planner”：在 `backend/app/services/aelin_core.py` 中搜索并删除所有基于 query 自己决定先用哪个工具的逻辑，保证工具调用只来自 DeepAgents 图（`run_deepagents_loop` → `build_chat_agent` → `build_chat_tools`）。
+- [x] 将所有仍在用的能力型工具都收口到 `tools_*.py` + `build_chat_tools`：确保 web_search / attachments / GWS / device / screen_get 及以后新增工具，全部通过 `backend/app/services/tools_*.py` + `backend/app/services/deepagents_graph.py` 暴露，而不是在别处再造壳。
+- [x] 把 `AelinToolHub` 压缩为“最薄壳”：在 `backend/app/services/aelin_tools.py` 中移除所有执行逻辑，只负责注入上下文 + 暴露 OpenAI-style 描述给前端/调试；执行统一走 `tools_*.py`。
+- [x] 在 docs 中明确写清：工具契约由 DeepAgents 工具描述决定，Aelin 不再维护第二套 planner 或签名。
 
 ## 3. Skills：彻底 DeepAgents 化 & 接入方法明确
 

@@ -62,25 +62,20 @@
 
 ### 2.1 AelinToolHub → DeepAgents Tool 的完整接入
 
-待办：
-- [ ] 在 `deepagents_loop.py` 中：
-  - [ ] 遍历 `tool_hub.tool_definitions()` 时，按工具类型分类（普通工具 / plane 工具）。
-  - [ ] 为所有对外暴露的 Aelin 工具建立 LangChain Tool 封装（不仅限于当前的 subset）：
-    - [ ] `context_get`
-    - [ ] `profile`
-    - [ ] `device`
-    - [ ] `web_search`
-    - [ ] `attachment_search`
-    - [ ] `google_workspace`
-    - [ ] `plane`（browser / goose / cli-anything 等 plane 都通过此入口）
-    - [ ] 其他已有 file/attachment 工具（视实际情况添加）。
-  - [ ] 保证每一次调用都通过 `AelinToolPolicy` + `ToolPolicyUsage` 进行权限与次数控制。
-- [ ] 为 plane 工具提供更语义化的 description，使 DeepAgents 清楚「这是一个可长时间运行的委派 plane」。
+当前状态：
+- `AelinToolHub` 只承担「把 db/user/workspace 等上下文注入到工具实现」+「提供 OpenAI-style tool_definitions」两件事。  
+- 所有能力型工具的实现都拆分在 `backend/app/services/tools_*.py` 中：
+  - `tools_web.py`（`web_search`）
+  - `tools_files.py`（`attachment_search`）
+  - `tools_gws.py`（`google_workspace`）
+  - `tools_device.py`（`device` / `screen_get`）
+  - `tools_skill.py`（`skill`）
+  - `tools_context.py`（`context_get` / `profile`，用于上下文/画像视图）
+- `deepagents_graph.build_chat_tools()` 只从 `AelinToolHub.tool_definitions()` 中挑选核心能力型工具（`web_search` / `attachment_search` / `google_workspace` / `device` / `screen_get`），为它们构建 LangChain Tool，并通过 `AelinToolPolicy` + `ToolPolicyUsage` 统一做次数与写操作控制。
 
-验收标准：
-- [ ] 所有曾经可通过 Aelin 调用的工具，在 DeepAgents 环境下也能被调用成功（功能不退步）。
-- [ ] 工具调用次数、写操作次数严格受 `AelinToolPolicy` 限制，超限后有可读错误信息。
-- [ ] 在不借助 Aelin 旧 prompt 的情况下，DeepAgents 能自然选择合适的工具（如 web_search vs plane）。
+工具契约：
+- 工具的正式契约（参数、错误语义）以 `deepagents_graph.build_chat_tools()` 中的 Tool 描述为准，Aelin 不再单独维护第二套 planner 或签名。  
+- 上层如果需要结构化工具信息（前端 Execution Pane / 调试），统一从 `AelinToolHub.tool_definitions()` 读取，而不是再从散落的 prompt 片段中拼接。
 
 ### 2.2 Plane 当作「特殊 Tool + Subagent」
 
