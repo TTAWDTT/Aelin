@@ -20,9 +20,9 @@
 
 ## 3. Skills：彻底 DeepAgents 化 & 接入方法明确
 
-- [ ] 固化 skills 目录结构：以 `backend/deepagents_skills/` 为唯一技能入口，移除旧的与 Agent Loop 强耦合的 skills 目录或说明，将 plane/pinchtab 相关 skill 整体归档或删除（见第 4 点）。
-- [ ] 补一份简短的 `docs/deepagents_skills_guide.md`：说明“如何新增一个 skill、目录结构、DeepAgents 如何自动挂载 skill 文件到 files/memory”，给未来你自己和别人看。
-- [ ] 确认 `build_chat_agent` 中对 skills 的挂载完全按照 DeepAgents 官方推荐写法，不再额外包一层 Aelin 特有逻辑。
+- [x] 固化 skills 目录结构：以 `backend/deepagents_skills/` 为唯一技能入口，移除旧的与 Agent Loop 强耦合的 skills 目录或说明，将 plane/pinchtab 相关 skill 整体归档或删除（见第 4 点）。
+- [x] 补一份简短的 `docs/deepagents_skills_guide.md`：说明“如何新增一个 skill、目录结构、DeepAgents 如何自动挂载 skill 文件到 files/memory”，给未来你自己和别人看。
+- [x] 确认 `build_chat_agent` 中对 skills 的挂载完全按照 DeepAgents 官方推荐写法，不再额外包一层 Aelin 特有逻辑。
 
 ## 4. plane / PinchTab：彻底从运行时和认知中消失
 
