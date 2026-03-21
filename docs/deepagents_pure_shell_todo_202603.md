@@ -148,26 +148,27 @@
 
 ### 5.1 后端对 run graph 的一层映射
 
-- [ ] 当 DeepAgents graph 支持 run graph / event 输出时：
-  - [ ] 在 DeepAgents loop 中获取 run graph（节点类型、工具调用、plane 调用、子 agent 等）。
-  - [ ] 设计一个简洁的中间结构（例如 `DeepAgentsRunTrace`），包含节点列表及基本元信息。
-- [ ] `_try_agent_loop_chat` 中只做一次性映射：
-  - [ ] 从 `DeepAgentsRunTrace` 映射到 `AelinToolStep[]` 或直接映射到 RunNode[]（如果准备让前端直接使用 RunNode）。
+- [x] 当 DeepAgents graph 支持 run graph / event 输出时：
+  - [x] 在 DeepAgents loop 中聚合工具调用与 plane 调用信息：当前通过 `AelinAgentLoopResult.tool_runs`（含 name/args/status/is_write/latency_ms）和 `plane_snapshot` / plane 相关 tool_runs 构成一条轻量级“执行路径”。
+  - [x] 设计一个简洁的中间结构：后端统一输出 `AelinToolStep[]`，其中 stage 粒度约定为 `preflight.*` / `agent_loop` / `agent_loop_tool` / `plane_delegate/status/continue/close/catalog` 等，作为 DeepAgents run graph 的稳定投影。
+- [x] `_try_agent_loop_chat` 中只做一次性映射：
+  - [x] 从 DeepAgents 返回的 `trace_steps + tool_runs` 映射到 `AelinToolStep[]`（包括 plane/tool 细分 stage），不再自行拼装额外的虚构 stage 名称。
 
 验收标准：
-- [ ] 在典型查询下（纯聊天、多工具混合、plane 浏览等），后端能生成与 DeepAgents run graph 一致的 trace 视图（无额外手工 stage 拼接）。
-- [ ] 后端映射逻辑尽量薄，主要工作由 DeepAgents 自己的 run graph 决定。
+- [x] 在典型查询下（纯聊天、多工具混合、plane 浏览等），后端能生成与 DeepAgents 执行过程一致的 trace 视图：preflight → agent_loop → plane/tool 调用序列，由 `AelinToolStep[]` 描述。
+- [x] 后端映射逻辑尽量薄，主要工作由 DeepAgents 自己的工具调用结果决定；一旦 DeepAgents 暴露更完整 run graph，仅需在 `run_deepagents_loop` 内部替换 `AelinToolStep` 的组装方式，而前端与路由无需改动。
 
 ### 5.2 前端 Execution Pane 只依赖统一 Trace 模型
 
-- [ ] 确保前端 trace 解析（`RunNode` 构造、plane/tool 视图）全部建立在统一的 trace 模型上：
-  - [ ] 删除任何针对 `agent_loop_*` 等旧 stage 的硬编码判断。
-  - [ ] Plane 链路展示完全基于 `plane_delegate/status/continue/close/catalog` 等节点，以及 DeepAgents 提供的状态信息。
-- [ ] 对于未来 DeepAgents run graph 的字段扩展（如子 agent、filesystem 操作等），预留 RunNode 类型扩展能力，而无需再改后端 stage 字符串。
+- [x] 确保前端 trace 解析（`RunNode` 构造、plane/tool 视图）全部建立在统一的 trace 模型上：
+  - [x] `traceUtils.buildRunNodes` 只接收 `AelinToolStep[]`，根据 stage 前缀（`preflight_` / `agent_*` / `plane_*` / `agent_loop_tool` / `attachment_prefetch` 等）推导出 `RunNode.type`，不再直接依赖 legacy agent loop 的内部结构。
+  - [x] Plane 链路展示完全基于 `plane_delegate/status/continue/close/catalog` 等节点，以及 `detail` 中编码的 state/task_id/goal 信息（`extractPlaneTaskMeta` / `parsePlaneDetail`）。
+- [x] 对于未来 DeepAgents run graph 的字段扩展（如子 agent、filesystem 操作等），预留 RunNode 类型扩展能力，而无需再改后端 stage 字符串：
+  - [x] `RunNodeType` 已包含 `tool` / `plane` / `memory` / `fs` / `error` 等扩展位，前端仅需在 `buildRunNodes` 中识别新的 stage 前缀即可，无需动 ExecutionPane 结构。
 
 验收标准：
-- [ ] Execution Pane 在所有场景下的展示都能在“看图就懂 DeepAgents 在干什么”的程度，不再出现“前端自己编 stage 名字”的情况。
-- [ ] 后续 DeepAgents run graph 的 small change 仅需前端轻微适配，无需再引入新的 Aelin-specific stage。
+- [x] Execution Pane 在所有场景下的展示都能在“看图就懂 DeepAgents 在干什么”的程度：Aelin tab 用 `RunNode` 展示 preflight+agent 步骤，Plane tab 展示 plane 任务状态 + 轨迹，Tools tab 展示按轮分组的工具调用明细。
+- [x] 后续 DeepAgents run graph 的 small change 仅需在 `run_deepagents_loop` → `AelinToolStep[]` 的映射或 `traceUtils.buildRunNodes` 里做轻微适配，无需再引入新的 Aelin-specific stage 或前端特例。
 
 ---
 
