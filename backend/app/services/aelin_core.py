@@ -520,14 +520,10 @@ def _try_agent_loop_chat(
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
 
     policy = AelinToolPolicy(
-        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 2) or 2),
-        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 6) or 6),
-        max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 1) or 1),
-        allow_write_tools=(
-            False
-            if force_disable_writes
-            else allow_write_tools
-        ),
+        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 128) or 128),
+        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 512) or 512),
+        max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 128) or 128),
+        allow_write_tools=(False if force_disable_writes else allow_write_tools),
     )
     _log.info(
         "agent_loop preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
