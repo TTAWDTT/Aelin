@@ -8,9 +8,14 @@ from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import create_file_data
 from langchain_core.tools import Tool
 
-from app.services.aelin_tools import AelinToolHub
+from app.services.aelin_tools import AelinToolHub, _result_error
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.llm import LLMService
+from app.services.tools_web import tool_web_search
+from app.services.tools_files import tool_attachment_search
+from app.services.tools_gws import tool_google_workspace
+from app.services.tools_device import tool_device, tool_screen_get
+from app.services.tools_browser_plane import tool_plane
 
 
 def build_chat_tools(
@@ -19,12 +24,12 @@ def build_chat_tools(
     policy: AelinToolPolicy,
 ) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
     """
-    Build the set of DeepAgents tools and return them together with
+    Build the set of DeepAgents-native tools and return them together with
     an empty tool_runs list and a shared ToolPolicyUsage tracker.
 
-    This function is intentionally light-weight and only depends on
-    AelinToolHub for actual capability execution; DeepAgents sees a
-    flat list of tools.
+    与其在 tool wrapper 里再次调用 ``tool_hub.execute(name, args)``，这里直接
+    绑定到每个领域的能力函数（tools_web/tools_files/tools_gws/...），这样
+    DeepAgents 看到的是“真正的能力工具”，而不是 Aelin ToolHub 的二次壳。
     """
     usage = ToolPolicyUsage()
     tool_runs: list[dict[str, Any]] = []
@@ -55,7 +60,23 @@ def build_chat_tools(
                 )
                 return {"ok": False, "error": decision.reason}
 
-            result = tool_hub.execute(name, args)
+            if name == "web_search":
+                result = tool_web_search(tool_hub, args)
+            elif name == "attachment_search":
+                result = tool_attachment_search(tool_hub, args)
+            elif name == "google_workspace":
+                result = tool_google_workspace(tool_hub, args)
+            elif name == "device":
+                result = tool_device(tool_hub, args)
+            elif name == "screen_get":
+                result = tool_screen_get(tool_hub, args)
+            elif name == "plane":
+                result = tool_plane(tool_hub, args)
+            else:
+                # This should not happen because we only register a fixed
+                # allowlist of names below, but keep a defensive fallback so
+                # that DeepAgents 得到清晰的错误而不是爆栈。
+                result = _result_error(f"unsupported_deepagents_tool:{name}")
             latency_ms = int((perf_counter() - started) * 1000)
             usage.round_calls += 1
             usage.total_calls += 1

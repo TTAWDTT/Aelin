@@ -60,16 +60,16 @@
 
 ### 2.2 将能力型工具转为「DeepAgents-native 工具」
 
-- [ ] 为每类能力抽象出最小的工具实现接口（不依赖 Aelin ToolHub 的 heavy wrapper）：
-  - [ ] 示例：`deepagents_tools.web_search_tool`, `deepagents_tools.attachment_search_tool` 等。
-  - [ ] 工具函数只依赖底层 service（`WebSearchService` / `AelinAttachmentService` / GWS CLI / plane runtime 等），而不是整个 `AelinToolHub`。
-- [ ] 在 DeepAgents graph 构造阶段，直接注册这些工具为 LangChain/DeepAgents tools：
-  - [ ] 从 `tools=[...]` 列表中移除“通过 AelinToolHub 反射执行”的工具包装。
-  - [ ] 改为直接使用上述能力型工具函数作为 tool 实现。
+- [x] 为每类能力抽象出最小的工具实现接口（不依赖 Aelin ToolHub 的 heavy wrapper）：
+  - [x] 已存在按领域拆分的实现：`tools_web.tool_web_search` / `tools_files.tool_attachment_search` / `tools_gws.tool_google_workspace` / `tools_device.tool_device` & `tools_device.tool_screen_get` / `tools_browser_plane.tool_plane`，它们直接操作底层 `WebSearchService` / `AelinAttachmentService` / GWS CLI / plane runtime / device runtime。
+  - [x] DeepAgents 侧使用这些函数，而不是再通过 `tool_hub.execute(name, args)` 进行二次分发。
+- [x] 在 DeepAgents graph 构造阶段，直接注册这些工具为 LangChain/DeepAgents tools：
+  - [x] 从 `tools=[...]` 列表中去掉“通过 AelinToolHub.execute 反射执行”的包装，在 `build_chat_tools` 中根据 name 直接调用对应的 `tool_*` 函数。
+  - [x] DeepAgents 工具 wrapper 只负责策略检查（`AelinToolPolicy.evaluate`）和记录 `tool_runs`，实际能力由领域函数承担。
 
 验收标准：
-- [ ] DeepAgents 的 `tools` 列表中，不再出现“在 tool 里再调用 `AelinToolHub.execute`”这一层。
-- [ ] 典型场景（web_search + attachment_search + google_workspace + plane + device）全部由新的 DeepAgents-native 工具实现，行为与现在保持一致或更好。
+- [x] DeepAgents 的 `tools` 列表中，不再出现“在 tool 里再调用 `AelinToolHub.execute`”这一层（现在是按 name 直连 `tool_web_search` / `tool_attachment_search` / `tool_google_workspace` / `tool_device` / `tool_screen_get` / `tool_plane`）。
+- [x] 典型场景（web_search + attachment_search + google_workspace + plane + device）全部由新的 DeepAgents-native 工具实现，现有测试（含浏览器 plane 与 GWS/附件链路）全部通过，行为与之前保持一致。
 
 ### 2.3 下线 Aelin 记忆类工具（从 DeepAgents 视角）
 
