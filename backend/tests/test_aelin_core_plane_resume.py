@@ -30,14 +30,23 @@ class _FakeToolHub:
         return {"ok": True}
 
 
-class _FakeRunner:
+def _reset_runner() -> None:
+    # No-op in the DeepAgents-only runtime; plane resume tests now track calls
+    # via the local `calls` list inside the test body instead of a fake loop
+    # class. This helper is kept only to satisfy legacy imports.
+    return None
+
+
+def test_try_agent_loop_chat_only_injects_active_plane_for_related_query(monkeypatch):
+    _reset_runner()
+    monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
+    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
+    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
+
     calls: list[dict] = []
 
-    def __init__(self, **kwargs) -> None:
-        self.kwargs = kwargs
-
-    def run(self, **kwargs):
-        _FakeRunner.calls.append(dict(kwargs))
+    def _fake_run_loop(**kwargs):
+        calls.append(dict(kwargs))
         return AelinAgentLoopResult(
             ok=True,
             answer="ok",
@@ -52,17 +61,7 @@ class _FakeRunner:
             memory_snapshot="",
         )
 
-
-def _reset_runner() -> None:
-    _FakeRunner.calls.clear()
-
-
-def test_try_agent_loop_chat_only_injects_active_plane_for_related_query(monkeypatch):
-    _reset_runner()
-    monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
-    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id: "summary")
-    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
-    monkeypatch.setattr(aelin_core, "AelinAgentLoop", _FakeRunner)
+    monkeypatch.setattr(aelin_core, "run_deepagents_loop", _fake_run_loop)
     monkeypatch.setattr(
         aelin_core,
         "get_active_plane_task",
@@ -94,10 +93,8 @@ def test_try_agent_loop_chat_only_injects_active_plane_for_related_query(monkeyp
 
     assert unrelated is not None
     assert related is not None
-    assert len(_FakeRunner.calls) == 2
-    assert _FakeRunner.calls[0]["forced_tool_runs"] == []
-    assert _FakeRunner.calls[1]["forced_tool_runs"]
-    injected = _FakeRunner.calls[1]["forced_tool_runs"][0]
-    assert injected["name"] == "plane"
-    assert injected["args"]["action"] == "status"
-    assert injected["args"]["task_id"] == "browser-task-1"
+    assert len(calls) == 2
+    # DeepAgents path should only receive a plane_snapshot for the related query.
+    assert calls[0]["plane_snapshot"] is None
+    assert isinstance(calls[1]["plane_snapshot"], dict)
+    assert calls[1]["plane_snapshot"]["task_id"] == "browser-task-1"

@@ -153,17 +153,6 @@ _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 
 
-# Backwards-compat shim for tests that still monkeypatch AelinAgentLoop on
-# this module. The real runtime now uses DeepAgents via run_deepagents_loop,
-# so this class should never be instantiated in production code.
-class AelinAgentLoop:  # pragma: no cover - legacy compatibility surface
-    def __init__(self, **kwargs: Any) -> None:
-        self.kwargs = kwargs
-
-    def run(self, **kwargs: Any) -> Any:
-        raise RuntimeError("AelinAgentLoop is deprecated; DeepAgents runtime is used instead.")
-
-
 def _scoped_web_search_service(proxy_url: str = "") -> WebSearchService:
     return WebSearchService(
         timeout_seconds=float(getattr(_web_search, "timeout_seconds", 10.0) or 10.0),
@@ -652,60 +641,19 @@ def _try_agent_loop_chat(
         count=1,
     )
 
-    # Legacy compatibility: some tests still monkeypatch AelinAgentLoop on this
-    # module and assert that forced_tool_runs are wired correctly. When we
-    # detect that AelinAgentLoop has been patched to a non-local class, route
-    # the call through it; otherwise, use the DeepAgents runtime.
-    loop_cls = globals().get("AelinAgentLoop")
-    use_legacy_loop = bool(
-        loop_cls is not None and getattr(loop_cls, "__module__", "") not in {__name__, ""}
+    result = run_deepagents_loop(
+        service=service,
+        provider=provider,
+        tool_hub=tool_hub,
+        policy=policy,
+        query=payload.query,
+        memory_summary=memory_summary,
+        history_turns=history_turns,
+        images=images,
+        attachment_ids=attachment_ids,
+        plane_snapshot=plane_snapshot,
+        cancel_token=cancel_token,
     )
-
-    if use_legacy_loop:
-        forced_tool_runs: list[dict[str, Any]] = []
-        if isinstance(plane_snapshot, dict) and plane_snapshot.get("task_id"):
-            forced_tool_runs.append(
-                {
-                    "name": "plane",
-                    "args": {
-                        "action": "status",
-                        "plane": "browser",
-                        "task_id": str(plane_snapshot.get("task_id") or "").strip(),
-                    },
-                }
-            )
-        loop = loop_cls(  # type: ignore[call-arg]
-            db=db,
-            user_id=int(current_user.id),
-            workspace=workspace,
-            memory_service=_memory,
-            web_search_service=_web_search,
-            tool_hub=tool_hub,
-            policy=policy,
-        )
-        result = loop.run(  # type: ignore[call-arg]
-            query=payload.query,
-            memory_summary=memory_summary,
-            history_turns=history_turns,
-            images=images,
-            attachment_ids=attachment_ids,
-            forced_tool_runs=forced_tool_runs,
-            cancel_token=cancel_token,
-        )
-    else:
-        result = run_deepagents_loop(
-            service=service,
-            provider=provider,
-            tool_hub=tool_hub,
-            policy=policy,
-            query=payload.query,
-            memory_summary=memory_summary,
-            history_turns=history_turns,
-            images=images,
-            attachment_ids=attachment_ids,
-            plane_snapshot=plane_snapshot,
-            cancel_token=cancel_token,
-        )
 
     trace_steps: list[AelinToolStep] = [*prefixed_traces]
     latest_memory_snapshot = str(getattr(result, "memory_snapshot", "") or "")

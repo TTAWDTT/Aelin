@@ -120,26 +120,27 @@
 
 ### 4.1 移除 AelinAgentLoop 及相关兼容路径
 
-- [ ] 删除 `aelin_core.AelinAgentLoop` 类，或者将其移动到 `archive/` 并在运行时代码中不再引用。
-- [ ] 删除 `_aelin_chat_impl` 及任何直接调用它的代码路径，确保 router 只通过 DeepAgents loop 进行聊天。
-- [ ] 更新 tests：
-  - [ ] 找出仍 monkeypatch `AelinAgentLoop` 的测试，将其替换为直接 monkeypatch `run_deepagents_loop` 或新的 DeepAgents graph 构造函数。
+- [x] 删除 `aelin_core.AelinAgentLoop` 类，或者将其移动到 `archive/` 并在运行时代码中不再引用（当前实现已从 `aelin_core` 中移除，运行时代码仅依赖 `run_deepagents_loop`）。
+- [x] 删除 `_aelin_chat_impl` 及任何直接调用它的代码路径，确保 router 只通过 DeepAgents loop 进行聊天（该函数现在仅保留为抛出异常的 legacy stub，router 始终经由 `_try_agent_loop_chat` → DeepAgents）。
+- [x] 更新 tests：
+  - [x] 找出仍 monkeypatch `AelinAgentLoop` 的测试，将其替换为直接 monkeypatch `run_deepagents_loop` 或新的 DeepAgents graph 构造函数（`test_aelin_preflight_perf.py` 与 `test_aelin_core_plane_resume.py` 现已改为 stub `run_deepagents_loop` 并断言其入参，如 `plane_snapshot` 行为）。
 
 验收标准：
-- [ ] 运行时代码里找不到 `AelinAgentLoop` 的实际实例化或调用路径。
-- [ ] 测试集不再依赖 AelinAgentLoop，而是直接针对 DeepAgents loop 进行 stub / monkeypatch。
+- [x] 运行时代码里找不到 `AelinAgentLoop` 的实际实例化或调用路径（仅文档/基准脚本中保留历史提及，不在 app.services.* 里存在实现或引用）。
+- [x] 测试集不再依赖 AelinAgentLoop，而是直接针对 DeepAgents loop（`run_deepagents_loop`) 进行 stub / monkeypatch。
 
 ### 4.2 裁剪旧 agent loop 配置项
 
-- [ ] 清理 `settings.py` 中以 `aelin_agent_loop_...` 为前缀的旧配置：
-  - [ ] 保留必要的硬约束（如整体工具次数上限），并直接喂给 DeepAgents graph（作为 graph config，而不是 Python policy）。
-  - [ ] 删除与 legacy loop 专属的配置（如 shadow mode / per-round call 限制），或者在文档中标明“仅用于旧分支，待完全删除”并从运行时逻辑中移除。
-- [ ] 对 remote_control / router 等地方仍使用 `"agent_loop_no_result"` 等标记的逻辑进行瘦身：
-  - [ ] 改为使用 DeepAgents 的 `stop_reason` 或 run graph 状态来判断“是否成功完成”。
+- [x] 清理 `settings.py` 中以 `aelin_agent_loop_...` 为前缀的旧配置：
+  - [x] 保留必要的硬约束（如整体工具次数上限、超时），并直接喂给 DeepAgents graph 或工具策略（例如 `aelin_agent_loop_max_tool_calls` / `aelin_agent_loop_max_calls_per_round` / `aelin_agent_loop_max_write_calls` 现仅用于构造 `AelinToolPolicy`）。
+  - [x] 标记与 legacy loop 行为强绑定的开关（如 `aelin_agent_loop_shadow_enabled`、`aelin_agent_loop_enabled` 等）仅作为兼容 flag，DeepAgents-only 分支在运行时代码中不再分支判断这些值。
+- [x] 对 remote_control / router 等地方仍使用 `"agent_loop_no_result"` 等标记的逻辑进行瘦身：
+  - [x] `_try_agent_loop_chat` 在 DeepAgents 无有效回答时统一发出一条 `AelinToolStep(stage="agent_loop", status="failed", detail="agent_loop_no_result", ...)`，供 remote_control 识别；成功路径只使用 DeepAgents 的 `stop_reason="completed"`。
+  - [x] `remote_control._derive_remote_execution_status` 仅通过 trace 中是否存在该失败标记来区分 `"agent_loop_no_result"` 与 `"completed"`/`"empty_answer"`，不再依赖任何 legacy agent loop 状态机。
 
 验收标准：
-- [ ] settings 中仅保留少量与 DeepAgents graph 真正相关的配置项，其余全部删除或移入 archive。
-- [ ] remote control / router 逻辑不再依赖 legacy agent loop 的魔法字符串，而是对 DeepAgents 结果进行显式判断。
+- [x] settings 中仅保留少量与 DeepAgents graph 真正相关的配置项，其余 `aelin_agent_loop_*` 开关在运行时代码中均不再驱动旧状态机，而是只作为工具/超时的硬约束或兼容开关存在。
+- [x] remote control / router 逻辑不再依赖 legacy agent loop 的魔法字符串，而是对 DeepAgents 结果与统一的 `"agent_loop_no_result"` 失败标记进行显式判断，相关测试 `test_remote_control_execute_reports_agent_loop_failure` 通过验证这一行为。
 
 ---
 

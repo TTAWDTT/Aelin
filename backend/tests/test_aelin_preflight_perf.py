@@ -49,23 +49,16 @@ class _FakeRunner:
     calls: list[dict] = []
 
     def __init__(self, **kwargs) -> None:
+        # Mirror the DeepAgents bridge constructor surface without depending
+        # on the actual implementation, so this fake can be injected via
+        # monkeypatch in tests.
         self.kwargs = kwargs
 
-    def run(self, **kwargs):
-        _FakeRunner.calls.append(dict(kwargs))
-        return AelinAgentLoopResult(
-            ok=True,
-            answer="ok",
-            stop_reason="final_answer",
-            rounds=1,
-            total_calls=0,
-            write_calls=0,
-            tool_runs=[],
-            trace_steps=[],
-            actions=[],
-            error="",
-            memory_snapshot="",
-        )
+    def __call__(self, invoke_payload):
+        # DeepAgents agent is invoked as a callable with {"messages": ...}
+        # and optional "files" mapping; record the payload for assertions.
+        _FakeRunner.calls.append(dict(invoke_payload))
+        return SimpleNamespace(content="ok")
 
 
 def _reset_fakes() -> None:
@@ -78,7 +71,19 @@ def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
-    monkeypatch.setattr(aelin_core, "AelinAgentLoop", _FakeRunner)
+    monkeypatch.setattr(aelin_core, "run_deepagents_loop", lambda **kwargs: AelinAgentLoopResult(
+        ok=True,
+        answer="ok",
+        stop_reason="final_answer",
+        rounds=1,
+        total_calls=0,
+        write_calls=0,
+        tool_runs=[],
+        trace_steps=[],
+        actions=[],
+        error="",
+        memory_snapshot="",
+    ))
     monkeypatch.setattr(aelin_core, "get_active_plane_task", lambda user_id, workspace, plane="browser", db=None: None)
     monkeypatch.setattr(aelin_core, "_build_cached_base_context_bundle", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not build base context")))
 
@@ -101,7 +106,25 @@ def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "fast-summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
-    monkeypatch.setattr(aelin_core, "AelinAgentLoop", _FakeRunner)
+    calls: list[dict] = []
+
+    def _fake_run_loop(**kwargs):
+        calls.append(dict(kwargs))
+        return AelinAgentLoopResult(
+            ok=True,
+            answer="ok",
+            stop_reason="final_answer",
+            rounds=1,
+            total_calls=0,
+            write_calls=0,
+            tool_runs=[],
+            trace_steps=[],
+            actions=[],
+            error="",
+            memory_snapshot="",
+        )
+
+    monkeypatch.setattr(aelin_core, "run_deepagents_loop", _fake_run_loop)
     monkeypatch.setattr(aelin_core, "get_active_plane_task", lambda user_id, workspace, plane="browser", db=None: None)
     monkeypatch.setattr(
         aelin_core,
@@ -119,8 +142,8 @@ def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(
 
     assert response is not None
     assert response.memory_summary == "fast-summary"
-    assert _FakeRunner.calls
-    assert _FakeRunner.calls[0]["memory_summary"] == "fast-summary"
+    assert calls
+    assert calls[0]["memory_summary"] == "fast-summary"
 
 
 def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback(monkeypatch):
@@ -128,7 +151,6 @@ def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeUnconfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
-    monkeypatch.setattr(aelin_core, "AelinAgentLoop", _FakeRunner)
     monkeypatch.setattr(aelin_core, "get_active_plane_task", lambda user_id, workspace, plane="browser", db=None: None)
 
     def _fake_execute(self, name: str, args: dict) -> dict:
