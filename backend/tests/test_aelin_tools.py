@@ -376,7 +376,7 @@ def test_device_tool_rejects_unknown_action():
     result = hub.execute("device", {"action": "capabilities"})
 
     assert result["ok"] is False
-    assert result["error"] == "unsupported device action"
+    assert str(result.get("error") or "").startswith("unsupported device action")
 
 
 def test_attachment_search_uses_available_ids_fallback():

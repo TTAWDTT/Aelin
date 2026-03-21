@@ -64,5 +64,8 @@ def tool_device(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
         return hub._tool_desktop_open_url(args)
     if action == "open_aelin":
         return hub._tool_desktop_open_aelin(args)
-    return _result_error("unsupported device action")
-
+    # Help DeepAgents understand exactly which actions are valid so it can
+    # correct bad calls instead of repeating them.
+    return _result_error(
+        "unsupported device action: allowed actions are 'status', 'open_url', 'open_aelin'"
+    )

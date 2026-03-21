@@ -67,9 +67,10 @@ class Settings(BaseSettings):
     # Agent tool policy knobs (DeepAgents-only). Legacy AelinAgentLoop 已经移除，
     # 这些配置仅用于构造 AelinToolPolicy，限制 DeepAgents 工具调用行为。
     # 当前默认值刻意放宽，以便 DeepAgents 在每轮对话中可以更自由地尝试工具调用。
-    aelin_agent_loop_max_tool_calls: int = 128
-    aelin_agent_loop_max_calls_per_round: int = 32
-    aelin_agent_loop_max_write_calls: int = 32
+    # DeepAgents 工具策略：默认给足够大的空间，让复杂任务可以自由使用工具。
+    aelin_agent_loop_max_tool_calls: int = 512
+    aelin_agent_loop_max_calls_per_round: int = 128
+    aelin_agent_loop_max_write_calls: int = 128
     aelin_agent_loop_allow_write_tools: bool = True
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
@@ -134,7 +135,8 @@ class Settings(BaseSettings):
     aelin_attachment_rapidocr_enabled: bool = True
 
     # LLM client runtime tuning.
-    llm_request_timeout_seconds: float = 90.0
+    # DeepAgents 回路可能会触发多轮工具调用，因此默认超时时间相对更长。
+    llm_request_timeout_seconds: float = 180.0
     backend_log_level: str = "INFO"
 
     # Media ingest (yt-dlp) network/auth tuning.

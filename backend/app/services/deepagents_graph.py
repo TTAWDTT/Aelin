@@ -140,6 +140,19 @@ def build_chat_tools(
                 "Any action outside this list will return \"unsupported plane action\". If you see "
                 "\"missing task_id\" you must include the task_id returned from the previous plane call."
             )
+        elif name == "device":
+            # 统一 device 工具的契约，让 DeepAgents 知道允许的 action 以及参数要求。
+            desc = (
+                "Unified device tool for querying desktop status and opening URLs on the user's desktop.\n\n"
+                "Allowed actions: \"status\", \"open_url\", \"open_aelin\".\n"
+                "- \"status\": no extra arguments; returns platform, capabilities and desktop plugin status.\n"
+                "- \"open_url\": requires a `url` string starting with http:// or https:// to open in the desktop browser.\n"
+                "- \"open_aelin\": optionally takes a `route` string (e.g. \"/\") to bring the Aelin desktop app to front.\n\n"
+                "Any other action will return "
+                "\"unsupported device action: allowed actions are 'status', 'open_url', 'open_aelin'\".\n"
+                "If you see errors like \"invalid_url_scheme\" or \"desktop_open_url_failed:...\", fix the URL "
+                "or wait for the desktop plugin to become available before retrying."
+            )
 
         if name in {
             "web_search",
@@ -192,7 +205,12 @@ def build_chat_agent(
         "- Allowed actions: \"delegate\", \"status\", \"continue\", \"close\", \"catalog\". Do NOT invent new actions.\n"
         "- To start a new browsing task, use `action=\"delegate\"`, usually with `plane=\"browser\"` and a clear `goal`.\n"
         "- To check or continue an existing task, you MUST include the `task_id` returned from a previous plane call.\n"
-        "- If you see errors like \"unsupported plane action\" or \"missing task_id\", fix the arguments before retrying."
+        "- If you see errors like \"unsupported plane action\" or \"missing task_id\", fix the arguments before retrying.\n\n"
+        "Device tool (`device` for desktop actions):\n"
+        "- Allowed actions: \"status\", \"open_url\", \"open_aelin\". Do NOT invent new actions.\n"
+        "- Use `status` to understand which desktop capabilities are available.\n"
+        "- For `open_url`, always provide a valid http(s) URL in `url` and avoid dangerous schemes like `file://`.\n"
+        "- Only call `device` when you genuinely need desktop interaction; otherwise prefer pure chat or web tools."
     )
 
     skills_root = skills_root or (Path(__file__).resolve().parent.parent / "deepagents_skills")
