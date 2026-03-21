@@ -532,3 +532,53 @@ def test_deepagents_device_tool_structured_invocation(monkeypatch):
 
     # Tool runs should contain a completed device entry.
     assert any(tr["name"] == "device" and tr["status"] == "completed" for tr in tool_runs)
+
+
+def test_deepagents_memory_files_include_agents_md(monkeypatch):
+    """Ensure build_chat_agent mounts /memory/AGENTS.md as a DeepAgents file."""
+    from app.services import deepagents_graph as dag
+    from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
+    from app.services.aelin_tools import AelinToolHub
+
+    fake_web = _FakeWebSearch()
+    hub = AelinToolHub(
+        db=None,  # type: ignore[arg-type]
+        user_id=1,
+        workspace="default",
+        memory_service=_DummyMemory(),  # type: ignore[arg-type]
+        web_search_service=fake_web,  # type: ignore[arg-type]
+    )
+
+    # Avoid creating a real ChatModel / DeepAgents graph in this unit test.
+    from app.services import deepagents_loop as dloop
+
+    monkeypatch.setattr(dloop, "_build_chat_model", lambda service, provider: object())
+    monkeypatch.setattr(dag, "create_deep_agent", lambda **kwargs: object())
+
+    policy = AelinToolPolicy(
+        max_calls_per_round=4,
+        max_tool_calls=8,
+        max_write_calls=2,
+        allow_write_tools=False,
+    )
+
+    memory_summary = "User profile: likes agents.\nRecent change: migrated to DeepAgents shell."
+
+    agent, usage, tool_runs, files = dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        tool_hub=hub,
+        policy=policy,
+        memory_summary=memory_summary,
+        skills_root=None,
+    )
+
+    assert isinstance(usage, ToolPolicyUsage)
+    assert isinstance(files, dict)
+    assert "/memory/AGENTS.md" in files
+    file_data = files["/memory/AGENTS.md"]
+    assert isinstance(file_data, dict)
+    content = file_data.get("content")
+    assert isinstance(content, list) and content
+    text = "\n".join(str(line) for line in content)
+    assert "User profile: likes agents." in text

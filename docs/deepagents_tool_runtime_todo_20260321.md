@@ -91,7 +91,7 @@
       - `tool_trace` 中出现一次或少数几次 `google_workspace(gmail_list_unread_summary)` 调用。
       - 回答内容能合理提炼最近未读邮件的关键信息（在本地账号已正确授权的前提下）。
 
-- [ ] **3.3 放宽工具策略中对 GWS 的限制**
+- [x] **3.3 放宽工具策略中对 GWS 的限制**
   - 操作：
     - 在 `AelinToolPolicy` 和 DeepAgents 工具注册处，确保：
       - 对上述只读 action 不再按“写工具”对待，不被过早拒绝。
@@ -107,7 +107,7 @@
 > 对「Use ls and read_file to inspect /memory/AGENTS.md and summarize it.」请求，  
 > `tool_trace` 里只有 `agent_loop(deepagents_core_v0)`，没有任何 `ls` / `read_file` 工具调用。
 
-- [ ] **4.1 在 system prompt 中显式提示文件工具使用方式**
+- [x] **4.1 在 system prompt 中显式提示文件工具使用方式**
   - 操作：
     - 在 DeepAgents chat agent 的 system prompt 中补充一节说明：
       - 当用户显式要求使用 `ls/read_file`/等文件工具时，应优先调用这些工具，而不是凭空臆测。
@@ -116,7 +116,7 @@
     - 再次发出「Use ls and read_file to inspect /memory/AGENTS.md and summarize it.」：
       - `tool_trace` 中能看到至少一次 `ls` 和一次 `read_file` 调用。
 
-- [ ] **4.2 为 AGENTS.md 自省增加轻量测试**
+- [x] **4.2 为 AGENTS.md 自省增加轻量测试**
   - 操作：
     - 在后端测试中增加一个不依赖真实网络/桌面的用例，模拟：
       - DeepAgents 使用 `ls` / `read_file` 访问挂载的 `/memory/AGENTS.md` 虚拟文件。

@@ -285,7 +285,12 @@ def build_chat_agent(
         "- Allowed actions: \"status\", \"open_url\", \"open_aelin\". Do NOT invent new actions.\n"
         "- Use `status` to understand which desktop capabilities are available.\n"
         "- For `open_url`, always provide a valid http(s) URL in `url` and avoid dangerous schemes like `file://`.\n"
-        "- Only call `device` when you genuinely need desktop interaction; otherwise prefer pure chat or web tools."
+        "- Only call `device` when you genuinely need desktop interaction; otherwise prefer pure chat or web tools.\n\n"
+        "Filesystem tools (DeepAgents built-ins such as `ls`, `read_file`, `write_file`, `edit_file`, `grep`, `glob`):\n"
+        "- When the user explicitly asks you to inspect or summarize `/memory/AGENTS.md`, you SHOULD use `ls` and "
+        "`read_file` to open that file instead of guessing its contents.\n"
+        "- Prefer to keep writes minimal; for memory inspection tasks, `read_file` is usually enough.\n"
+        "- Treat `/memory/AGENTS.md` as the authoritative long-term memory summary for this workspace."
     )
 
     skills_root = skills_root or (Path(__file__).resolve().parent.parent / "deepagents_skills")
