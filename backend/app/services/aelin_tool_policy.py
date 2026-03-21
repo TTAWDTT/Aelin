@@ -39,8 +39,6 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         # 读操作（runtime/auth_status/gmail_list/gmail_get/drive_list/calendar_list）视为只读；
         # 写操作在工具层预留，占位 action 统一视为写，以便配额与安全策略可以统一控制。
         return action in {"calendar_create_event", "gmail_send", "gmail_draft", "docs_create"}
-    if tool == "skill":
-        return False
     return False
 
 
@@ -74,7 +72,6 @@ class AelinToolPolicy:
             "attachment_search",
             "screen_get",
             "google_workspace",
-            "skill",
         }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 

@@ -147,7 +147,6 @@ def test_tool_definitions_expose_core_tools_only():
     assert "screen_get" in names
     assert "context_get" in names
     assert "profile" in names
-    assert "skill" in names
     assert "plane" not in names
 
 

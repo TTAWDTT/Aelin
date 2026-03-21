@@ -28,7 +28,6 @@ from app.services.web_search import WebSearchService
 from app.services.tools_device import tool_device, tool_screen_get
 from app.services.tools_files import tool_attachment_search
 from app.services.tools_gws import tool_google_workspace
-from app.services.tools_skill import tool_skill
 from app.services.tools_web import tool_web_search
 from app.services.tools_context import tool_context_get, tool_profile
 
@@ -80,10 +79,10 @@ def _safe_load_json(raw: str) -> dict[str, Any]:
 class AelinToolHub:
     """
     Thin registry that binds the current DB/user/workspace context to a small
-    set of capability tools (memory/profile/device/web/attachments/GWS/skill).
+    set of capability tools (memory/profile/device/web/attachments/GWS).
 
-    DeepAgents 只依赖这里暴露的工具集合，其余复杂逻辑（旧浏览器 runtime 等）
-    已经完全移除。
+    DeepAgents 只依赖这里暴露的工具集合，其余复杂逻辑（旧浏览器 runtime、
+    旧式 skill 注入等）已经完全移除。
     """
 
     def __init__(
@@ -118,7 +117,7 @@ class AelinToolHub:
 
         DeepAgents 本身只使用 web_search/attachment_search/google_workspace/
         device/screen_get 这几个能力工具，但为了 UI 展示和结构化 planner，
-        这里同时暴露 context_get/profile/skill。
+        这里同时暴露 context_get/profile。
         """
         if self._tool_definitions_cache is not None:
             return self._tool_definitions_cache
@@ -311,31 +310,6 @@ class AelinToolHub:
                     },
                 },
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "skill",
-                    "description": "查看可用 skill 目录，或按 slug 读取某个 skill 的正文，用于获取更细的工具使用策略。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {
-                                "type": "string",
-                                "enum": ["catalog", "read"],
-                            },
-                            "slug": {
-                                "type": "string",
-                                "description": "当 action=read 时填写要阅读的 skill slug。",
-                            },
-                            "query": {
-                                "type": "string",
-                                "description": "当 action=catalog 时可选，用于筛选更相关的 skill。",
-                            },
-                        },
-                        "required": ["action"],
-                    },
-                },
-            },
         ]
         return self._tool_definitions_cache
 
@@ -355,8 +329,6 @@ class AelinToolHub:
             return tool_screen_get(self, args)
         if tool == "google_workspace":
             return tool_google_workspace(self, args)
-        if tool == "skill":
-            return tool_skill(self, args)
         return _result_error(f"unsupported tool: {tool}")
 
     # ---- device helpers (used by tools_device) -----------------------------------
