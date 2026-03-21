@@ -5,17 +5,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from deepagents import create_deep_agent
-from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import create_file_data
 from langchain_anthropic import ChatAnthropic
-from langchain_core.tools import Tool
 from langchain_openai import ChatOpenAI
 
 from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopTraceStep, AgentLoopToolRun
 from app.services.aelin_tools import AelinToolHub
 from app.services.llm import LLMService
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
+from app.services.deepagents_graph import build_chat_agent
 
 _log = logging.getLogger(__name__)
 
@@ -116,141 +114,28 @@ def run_deepagents_loop(
             memory_snapshot="",
         )
 
-    backend = StateBackend  # factory; DeepAgents 会在内部按需实例化
-
-    # Policy usage & tool run tracking for this loop invocation.
-    usage = ToolPolicyUsage()
-    tool_runs: list[AgentLoopToolRun] = []
-
-    def _make_tool(name: str, description: str) -> Tool:
-        def _call_tool(*params: Any, **kwargs: Any) -> dict[str, Any]:
-            nonlocal usage
-            # LangGraph ToolNode 可能以位置参数传入一个 dict，这里统一归一化为 kwargs。
-            if params and not kwargs and isinstance(params[0], dict):
-                kwargs = params[0]
-            args = dict(kwargs or {})
-            decision = policy.evaluate(name=name, args=args, usage=usage)
-            started = time.perf_counter()
-            if not decision.allowed:
-                latency_ms = int((time.perf_counter() - started) * 1000)
-                tool_runs.append(
-                    AgentLoopToolRun(
-                        round_index=1,
-                        name=name,
-                        args=args,
-                        status="denied",
-                        result={"ok": False, "error": decision.reason},
-                        error=decision.reason,
-                        is_write=decision.is_write,
-                        latency_ms=latency_ms,
-                    )
-                )
-                return {"ok": False, "error": decision.reason}
-
-            result = tool_hub.execute(name, args)
-            latency_ms = int((time.perf_counter() - started) * 1000)
-            usage.round_calls += 1
-            usage.total_calls += 1
-            if decision.is_write:
-                usage.write_calls += 1
-            status = "completed" if bool(result.get("ok", True)) else "failed"
-            error = "" if status == "completed" else str(result.get("error") or "")[:160]
-            tool_runs.append(
-                AgentLoopToolRun(
-                    round_index=1,
-                    name=name,
-                    args=args,
-                    status=status,
-                    result=result,
-                    error=error,
-                    is_write=decision.is_write,
-                    latency_ms=latency_ms,
-                )
-            )
-            return result
-
-        return Tool.from_function(func=_call_tool, name=name, description=description)
-
-    # 暴露一组代表性的工具给 DeepAgents。
-    tools: list[Tool] = []
-    for td in tool_hub.tool_definitions():
-        fn = td.get("function") if isinstance(td, dict) else None
-        if not isinstance(fn, dict):
-            continue
-        name = str(fn.get("name") or "").strip()
-        desc = str(fn.get("description") or "").strip() or name
-        # pinchtab 系列目前仅供内部 plane 使用，不直接暴露给 DeepAgents。
-        if name in {
-            "context_get",
-            "profile",
-            "device",
-            "web_search",
-            "attachment_search",
-            "screen_get",
-            "google_workspace",
-            "skill",
-            "plane",
-        }:
-            tools.append(_make_tool(name, desc))
-
-    system_prompt = (
-        "You are Aelin running on DeepAgents. "
-        "You see the conversation history and the latest user query. "
-        "Answer the user directly in the same language as the query."
-    )
-
-    # 加载本地 skill 文件，并以 StateBackend 支持的方式注入给 DeepAgents。
-    # skills 参数使用 POSIX 风格路径，files 映射在 invoke 时传入。
-    skills_root = Path(__file__).resolve().parent.parent / "deepagents_skills"
-    skill_files: dict[str, str] = {}
-    skill_sources: list[str] = []
-    if skills_root.is_dir():
-        for subdir in skills_root.iterdir():
-            if not subdir.is_dir():
-                continue
-            # 形如 "/google_workspace/" 的前缀路径。
-            rel_dir = f"/{subdir.name}/"
-            skill_sources.append(rel_dir)
-            for file_path in subdir.rglob("*.md"):
-                try:
-                    text = file_path.read_text(encoding="utf-8")
-                except Exception:  # noqa: BLE001
-                    continue
-                # 将文件挂载到类似 "/google_workspace/README.md" 的路径下。
-                rel_path = f"/{subdir.name}/{file_path.name}"
-                skill_files[rel_path] = text
-
-    # 为 DeepAgents 提供 memory 文件（AGENTS.md），通过 StateBackend 的虚拟文件系统挂载。
-    memory_files: dict[str, str] = {}
-    memory_paths: list[str] = []
-    if memory_summary.strip():
-        mem_text = memory_summary.strip()
-        # If the summary already looks like an AGENTS.md-style document
-        # (starts with a markdown heading), mount it as-is. Otherwise,
-        # wrap it into a minimal AGENTS.md skeleton.
-        if mem_text.lstrip().startswith("#"):
-            mem_body = mem_text
-        else:
-            mem_body_lines = [
-                "# Aelin Session Memory",
-                "",
-                "## User summary",
-                mem_text,
-            ]
-            mem_body = "\n".join(mem_body_lines)
-        mem_path = "/memory/AGENTS.md"
-        memory_files[mem_path] = mem_body
-        memory_paths.append(mem_path)
-
     try:
-        agent = create_deep_agent(
-            model=chat_model,
-            system_prompt=system_prompt,
-            backend=backend,
-            tools=tools,
-            skills=skill_sources or None,
-            memory=memory_paths or None,
+        agent, usage, raw_tool_runs, files_mapping = build_chat_agent(
+            service=service,
+            provider=provider,
+            tool_hub=tool_hub,
+            policy=policy,
+            memory_summary=memory_summary,
         )
+        if agent is None:
+            return AelinAgentLoopResult(
+                ok=False,
+                answer="",
+                stop_reason="llm_not_configured",
+                rounds=0,
+                total_calls=0,
+                write_calls=0,
+                tool_runs=[],
+                trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail="llm_not_configured")],
+                actions=[],
+                error="llm_not_configured",
+                memory_snapshot="",
+            )
 
         # 构造 DeepAgents 期望的消息格式：带有历史对话和当前用户 query。
         messages: list[dict[str, Any]] = []
@@ -292,14 +177,8 @@ def run_deepagents_loop(
             messages.append({"role": "user", "content": latest_query})
 
         invoke_payload: dict[str, Any] = {"messages": messages}
-        # DeepAgents 的 StateBackend 期望 files 映射中的 value 为 FileData 结构，
-        # 而不是原始字符串；否则在 MemoryMiddleware / FilesystemMiddleware 中
-        # 使用 file_data_to_string 时会因为类型不匹配而报错。
-        invoke_files: dict[str, Any] = {}
-        for path, text in {**skill_files, **memory_files}.items():
-            invoke_files[path] = create_file_data(text)
-        if invoke_files:
-            invoke_payload["files"] = invoke_files
+        if files_mapping:
+            invoke_payload["files"] = files_mapping
 
         response = agent.invoke(invoke_payload)
         answer = str(getattr(response, "content", "") or "")
