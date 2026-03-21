@@ -42,19 +42,21 @@
 
 ### 2.1 盘点 Aelin ToolHub 中的工具能力
 
-- [ ] 在 `AelinToolHub.tool_definitions()` 和 `AelinToolHub.execute()` 中标记出纯“能力型”工具：
-  - [ ] `web_search`（联网搜索）。
-  - [ ] `attachment_search`（文件检索）。
-  - [ ] `google_workspace`（GWS）。
-  - [ ] `device` / `screen_get`（设备 + 截图）。
-  - [ ] `plane` / `pinchtab` 系列（browser plane）。
-  - [ ] 媒体 ingest 相关（如果通过工具暴露）。
-- [ ] 标记出“已不再适合作为 DeepAgents 决策入口”的旧工具：
-  - [ ] `memory`（编辑 `/memory/AGENTS.md` 的 Aelin memory 工具）。
-  - [ ] `context_get` / `profile` 等围绕旧记忆/画像模型的读取工具。
+- [x] 在 `AelinToolHub.tool_definitions()` 和 `AelinToolHub.execute()` 中标记出纯“能力型”工具：
+  - [x] `web_search`（联网搜索）。
+  - [x] `attachment_search`（文件检索）。
+  - [x] `google_workspace`（GWS）。
+  - [x] `device` / `screen_get`（设备 + 截图）。
+  - [x] `plane` / `pinchtab` 系列（browser plane）。
+  - [x] 媒体 ingest 相关目前不再通过 ToolHub 暴露，后续仅作为 DeepAgents 内部能力接入。
+- [x] 标记出“已不再适合作为 DeepAgents 决策入口”的旧工具：
+  - [x] `context_get` / `profile` 等围绕旧记忆/画像模型的读取工具（仅适合作为 UI/只读视图）。
+  - [x] `skill`（用于浏览 skill 目录与正文，供人类/外层系统参考，不再作为 DeepAgents 主决策入口）。
 
 验收标准：
-- [ ] 有一份简明列表，将 Aelin ToolHub 中的工具分为“保留为 DeepAgents 工具能力”与“待下线/不再暴露给 DeepAgents”的两类。
+- [x] 有一份简明列表，将 Aelin ToolHub 中的工具分为“保留为 DeepAgents 工具能力”与“待下线/不再暴露给 DeepAgents”的两类：
+  - 保留为 DeepAgents 工具能力：`web_search` / `attachment_search` / `google_workspace` / `device` / `screen_get` / `plane` / `pinchtab` / `pinchtab_agent` / `pinchtab_session`。
+  - 待下线或不再暴露给 DeepAgents：`context_get` / `profile` / `skill`（后续仅通过 REST/UI 使用）。
 
 ### 2.2 将能力型工具转为「DeepAgents-native 工具」
 
