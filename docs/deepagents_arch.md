@@ -25,24 +25,22 @@
 
 ## 1. DeepAgents + Skills 一体化
 
-### 1.1 把现有 SKILL 文档映射为 DeepAgents skills
+### 1.1 把现有 SKILL 文档映射为 DeepAgents skills（当前状态：已完成第一轮收敛）
 
-待办：
-- [ ] 在 `backend/deepagents_skills/` 下建立统一 skill 根目录。
-- [ ] 为每类能力建立子目录，例如：
-  - [ ] `google_workspace/README.md`（gws 使用说明与注意事项）
-  - [ ] `plane_browser/README.md`（browser plane 行为规范）
-  - [ ] `plane_goose/README.md`（goose plane 行为规范）
-  - [ ] `file_tools/README.md`（文件工具使用约定）
-- [ ] 从已有的 `docs/gws*.md`、`cli_anything_plane.md`、`goose_plane.md` 等文档中抽取「对 LLM 有用的操作说明」，整理到对应 skill 目录。
-- [ ] 在 `deepagents_loop.py` 中：
-  - [ ] 初始化 `StateBackend` 时挂载 skill 目录（或通过配置传入路径）。
-  - [ ] 调用 `create_deep_agent(..., skills=[...])` 把这些 skill 暴露给 DeepAgents。
+当前实现：
+- DeepAgents 运行时的技能根目录为 `backend/deepagents_skills/`，对应虚拟路径 `/skills/aelin/`。
+- 该目录下的每个子目录表示一个技能主题（slug），例如：
+  - `backend/deepagents_skills/google_workspace/` → `/skills/aelin/google-workspace/`
+  - `backend/deepagents_skills/file_tools/` → `/skills/aelin/file-tools/`
+- 每个子目录中包含一个 `SKILL.md`（DeepAgents / Agent Skills 规范），可选附带 `README.md` 等辅助文档。
+- `app/services/deepagents_graph.build_chat_agent()` 会：
+  - 将所有 `.md` 文件挂载为 DeepAgents `StateBackend` 的文件，例如 `/skills/aelin/google-workspace/SKILL.md`。
+  - 统一传入 `skills=["/skills/aelin/"]` 给 `create_deep_agent(...)`，由 DeepAgents 的 `SkillsMiddleware` 负责枚举技能目录并解析 `SKILL.md`。
 
-验收标准：
-- [ ] 对于 gws / plane 等工具，agent 在没有 Aelin 手工 prompt 注入的情况下也能稳定调用（尤其写操作）。
-- [ ] 移除 `aelin_core` 中依赖的「手写技能 prompt 注入」逻辑后，gws / plane 的行为仍然正确。
-- [ ] 所有 skill 文档修改只需要动 `backend/deepagents_skills/` 目录，无需改 Python 代码。
+效果：
+- 对于 GWS / 文件工具等能力，DeepAgents 在没有 Aelin 手工 prompt 注入的情况下就能看到完整的技能列表与说明。
+- 旧的「tool_skill_bodies 注入」逻辑已经从 Agent Loop 中移除，技能知识的唯一来源就是 DeepAgents skills + 虚拟文件系统。
+- 所有 DeepAgents skill 文档修改只需编辑 `backend/deepagents_skills/*/SKILL.md`，无需改 Python 代码。
 
 ### 1.2 用 skills 替代旧的 tool_skill_bodies 注入
 

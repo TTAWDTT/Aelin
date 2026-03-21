@@ -27,12 +27,12 @@
 
 ### 3. 收敛/删除 Aelin 自己手搓的 “skill tool” 逻辑
 
-- [ ] 3.1 审查 backend 中现有的 skill 相关工具与路由
+- [x] 3.1 审查 backend 中现有的 skill 相关工具与路由
   - 在 `backend/app/services` 和 `backend/app/routers` 下搜索 `skill`, `skills`，列出：
     - 自定义的 `skill` 工具（如果仍存在）
     - 任何直接读取 `SKILL.md` 并拼接到 prompt 的逻辑。
 
-- [ ] 3.2 删除/改写这些自定义 skill 代码，改为完全依赖 DeepAgents SkillsMiddleware
+- [x] 3.2 删除/改写这些自定义 skill 代码，改为完全依赖 DeepAgents SkillsMiddleware
   - 保留的唯一入口是：用户通过 DeepAgents 暴露的文件工具（`ls`, `read_file` 等）去读取 `SKILL.md`。
   - 如果前端有“skill 列表”展示需求，可以从 server 端调用 DeepAgents backend 的 `list_dir` / `download_files` 来读取技能元信息，而不是在 agent prompt 中重复一份逻辑。
 
@@ -45,29 +45,29 @@
 
 ### 4. 为外部技能（如 chrome-cdp-skill）预留/落地接入方式
 
-- [ ] 4.1 设计 chrome-cdp-skill 的 DeepAgents 接入方案（文档级）
+- [x] 4.1 设计 chrome-cdp-skill 的 DeepAgents 接入方案（文档级）
   - 在 docs 中描述：
     - 如何把一个 GitHub skills 仓库（如 `chrome-cdp-skill`）放到 Aelin 的 `/skills/aelin/` 下面。
     - 如何在 `SKILL.md` frontmatter 的 `allowed_tools` 中声明需要的 DeepAgents 工具（例如自定义的 `browser_cdp` tool）。
 
-- [ ] 4.2 若需要，增加一个最小样例 skill 目录到仓库中（可选）
-  - 示例：`backend/deepagents_skills/demo/` → 在启动时由 backend 映射为 `/skills/aelin/demo/`。
+- [x] 4.2 若需要，增加一个最小样例 skill 目录到仓库中（可选）
+  - 示例：`backend/deepagents_skills/google_workspace/`、`backend/deepagents_skills/file_tools/` → 在启动时由 backend 映射为 `/skills/aelin/google-workspace/` 等。
   - 用于测试 DeepAgents SkillsMiddleware 的加载流程，帮助后续用户添加技能时对照。
 
 ### 5. 清理与文档同步
 
-- [ ] 5.1 清理与 skill 有关的旧文档/注释
+- [x] 5.1 清理与 skill 有关的旧文档/注释
   - 在 `docs/` 中搜索 `skill` / `skills`：
     - 标记或归档已经与 plane/pinchtab 或旧 agent loop 相关的说明。
     - 把仍然有效的部分整合到一个新的 “DeepAgents Skills Guide” 中。
 
-- [ ] 5.2 更新 `deepagents_skills_guide.md` 与架构文档
+- [x] 5.2 更新 `deepagents_skills_guide.md` 与架构文档
   - 明确写出：
     - Aelin 现在只使用 DeepAgents SkillsMiddleware。
     - 标准技能目录结构和文件命名规范。
     - 如何本地添加/移除/调试技能。
 
-- [ ] 5.3 在完成所有步骤后，运行完整后端测试 & 一次真实链路验证
+- [x] 5.3 在完成所有步骤后，运行完整后端测试 & 一次真实链路验证
   - `cd backend && pytest -q`
   - 启动 Aelin，发起一个请求：“列出所有可用技能并告诉我各自的作用；然后选择一个最适合当前任务的技能，按其中步骤执行第一步”。
   - 确认：
