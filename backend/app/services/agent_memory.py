@@ -712,7 +712,8 @@ class AgentMemoryService:
         Legacy no-op shim for older callers.
 
         DeepAgents 版本的 Aelin 不再通过这个入口写入 DB 记忆；所有长期
-        记忆写入都应通过 `memory` 工具直接编辑 `/memory/AGENTS.md`。
+        记忆写入均应通过显式编辑 `/memory/AGENTS.md`（例如经由 DeepAgents
+        的文件工具或 AgentMemoryService 的 append_* 接口）完成。
         该方法仅为兼容旧测试/调用点而保留，不做任何实质操作。
         """
         return None
