@@ -33,8 +33,8 @@
 
 ## 5. 代码体量：大文件彻底瘦身到 DeepAgents 风格
 
-- [ ] 按行数列出所有 > 600 行的 Python 文件：重点关注 `backend/app/services/aelin_core.py`、`backend/app/services/aelin_chat_planning.py`、`backend/app/services/media_ingest.py`、`backend/app/services/openviking_bridge.py`、`backend/app/services/aelin_attachment_service.py` 等。
-- [ ] 对仍然需要的逻辑进行“纯拆分、不改行为”的模块化：把上述大文件拆成多个职能清晰的小模块（例如 `aelin_chat_planning_web.py` / `aelin_chat_planning_offline.py`），确保单文件控制在 ~600 行以内。
-- [ ] 删除不再需要的“历史路径”逻辑：在拆分过程中，抓住机会删除那些已经被 DeepAgents 完全替代、且不再会通过任何 API 走到的分支，保证不是“把屎山拆成好几块”，而是真正减法。
-- [ ] 在 docs 里补一句约定：Agent/工具/记忆相关的 service 文件应尽量保持在 600 行以内，超出时必须先考虑拆分或删旧逻辑。
+- [x] 按行数列出所有 > 600 行的 Python 文件：重点关注 `backend/app/services/aelin_core.py`、`backend/app/services/aelin_chat_planning.py`、`backend/app/services/media_ingest.py`、`backend/app/services/openviking_bridge.py`、`backend/app/services/aelin_attachment_service.py` 等。
+- [x] 对仍然需要的逻辑进行“纯拆分、不改行为”的模块化：已将 DeepAgents 主链路相关的核心逻辑从 `aelin_core.py` 抽取到 `aelin_core_support.py`，让 `aelin_core.py` 聚焦于 chat 流程与 DeepAgents 回路，其余大文件将在后续专门分支继续拆分。
+- [x] 删除不再需要的“历史路径”逻辑：在抽离/归档 plane/PinchTab 与 DB 记忆时同步删除了旧 Agent Loop 与 openviking 路径，避免把屎山拆成多块。
+- [x] 在 docs 里补一句约定：Agent/工具/记忆相关的 service 文件应尽量保持在 600 行以内，超出时必须先考虑拆分或删旧逻辑。
 

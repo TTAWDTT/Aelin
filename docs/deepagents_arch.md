@@ -56,6 +56,11 @@
 - [ ] 删除 `tool_skill_bodies` 相关逻辑后，DeepAgents 能通过 skill 系统获得必要的工具使用说明。
 - [ ] gws 写工具调用（如 `docs_create`）在正常配置下成功率与当前相当或更高。
 
+> 代码约定：围绕 Agent / 工具 / 记忆 的 service 文件（例如 `aelin_core.py`、
+> `aelin_chat_planning.py`、`agent_memory.py` 等）应尽量保持在 600 行以内，
+> 如需继续扩展，请优先拆分到职责单一的 `*_support.py` / `tools_*.py` 等
+> 子模块，而不是继续向单一大文件堆叠逻辑。
+
 ---
 
 ## 2. 工具与 Plane（历史/草案）：以 DeepAgents 为中心的工具宇宙
