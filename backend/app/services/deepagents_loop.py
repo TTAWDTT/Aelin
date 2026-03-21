@@ -255,5 +255,5 @@ def run_deepagents_loop(
         ],
         actions=[],
         error="",
-        memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
+        memory_snapshot=memory_summary,
     )
