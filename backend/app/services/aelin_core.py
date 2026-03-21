@@ -679,6 +679,15 @@ def _try_agent_loop_chat(
 
     # 再把每一次工具调用显式映射为更细粒度阶段，便于前端展示完整工具链。
     for run in result.tool_runs:
+        # 某些内部错误对 DeepAgents 有学习价值，但对前端链路展示噪声过大，
+        # 这里仅在 trace 中隐藏这些细节（保留在 raw tool_runs 中）。
+        if run.name == "web_search" and isinstance(run.error, str) and run.error.startswith("missing query"):
+            continue
+        if run.name == "plane" and isinstance(run.error, str) and (
+            run.error.startswith("unsupported plane action") or run.error.startswith("missing task_id")
+        ):
+            continue
+
         detail = run.error or ""
         if not detail:
             # 对成功调用给一个简洁摘要，避免塞入整个 result。

@@ -93,6 +93,30 @@
 - [ ] 通过 DeepAgents 调用 browser plane 打开页面并总结内容时，能稳定完成多轮 status / continue 流程。
 - [ ] 对同一 plane 多次查询时，可以在 DeepAgents 层面自然地「续上」已有 task，而不依赖 Aelin 旧的强制续上逻辑。
 
+### 2.3 Web / Plane 工具契约与策略上限（当前实现状态）
+
+> 本小节对应 `deepagents_tool_contract_todo_20260321.md` 中的工具契约与上限调整，记录当前约定，方便后续维护。
+
+- `web_search` 工具（通过 `AelinToolHub` 暴露给 DeepAgents）：
+  - `action` 仅允许 `"search"` 或 `"search_and_fetch"` 两种取值。
+  - 必须提供非空的 `query` 字段（中文或英文均可）；缺失时工具会返回 `missing query` 错误。
+  - `max_results` 建议范围为 `1–15`，`fetch_top_k` 范围为 `0–6`，且不得大于 `max_results`。
+  - DeepAgents 收到 `missing query` / `unsupported action` 一类错误时，应视为参数错误并在下一次调用中修正参数，而不是放弃工具。
+
+- `plane` 工具（browser plane）：
+  - 支持的 `action` 枚举为：`"delegate"`, `"status"`, `"continue"`, `"close"`, `"catalog"`。
+  - 首次启动浏览任务时必须使用 `{"action": "delegate", "plane": "browser", "goal": "..."}` 形式。
+  - 只有在已有合法 `task_id` 的情况下才允许使用 `status` / `continue` / `close`，否则会返回 `missing task_id`。
+  - 任意未在枚举中的 `action` 都会返回 `unsupported plane action` 错误，错误消息中会带上允许的 action 列表。
+
+- 工具调用策略上限（Aelin → DeepAgents）：
+  - `settings.aelin_agent_loop_max_calls_per_round = 32`
+  - `settings.aelin_agent_loop_max_tool_calls = 128`
+  - `settings.aelin_agent_loop_max_write_calls = 32`
+  - `settings.aelin_agent_loop_allow_write_tools = True`
+  - `_try_agent_loop_chat` 仅使用这些配置构造 `AelinToolPolicy`，不再有额外的硬编码上限。  
+    在常规对话和典型工具场景下，DeepAgents 几乎不受限地尝试工具，只有在极端多轮调用下才会触发总次数保护。
+
 ---
 
 ## 3. Trace：DeepAgents 原生运行图 → Aelin Execution Pane
@@ -192,4 +216,3 @@
 - [ ] 右侧 Execution Pane 直接基于 DeepAgents run trace 展示链路，信息清晰丰富。
 - [ ] plane / 子 agent 行为围绕 DeepAgents 的 subagents middleware 来设计，而不是 Aelin 侧状态机。
 - [ ] provider 切换和配置仅需改 LLM 配置，不需要动 agent loop 代码。
-

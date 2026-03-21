@@ -109,6 +109,38 @@ def build_chat_tools(
             continue
         name = str(fn.get("name") or "").strip()
         desc = str(fn.get("description") or "").strip() or name
+
+        if name == "web_search":
+            # 约束 DeepAgents 使用的 web_search 契约，避免缺失 query 等常见错误。
+            desc = (
+                "Web search across the public internet.\n\n"
+                "Required arguments:\n"
+                '- \"action\": \"search\" or \"search_and_fetch\".\n'
+                '- \"query\": non-empty string (Chinese or English). If missing or empty the tool will return '
+                "\"missing query\".\n\n"
+                "Optional arguments:\n"
+                '- \"max_results\": integer in [1, 15], defaults to 15.\n'
+                '- \"fetch_top_k\": integer in [0, 6], must be <= max_results; defaults to 3.\n\n'
+                "Example calls:\n"
+                '{"action": "search_and_fetch", "query": "最近三天的国际要闻", "max_results": 8, "fetch_top_k": 3}\n'
+                '{"action": "search", "query": "DeepAgents architecture design", "max_results": 5}\n\n'
+                "If you receive an error like \"missing query\" or \"unsupported action\", fix the arguments and "
+                "call this tool again instead of repeating the same invalid call."
+            )
+        elif name == "plane":
+            # 在 plane 工具上提前写清楚允许的 action 和典型调用方式。
+            desc = (
+                "Browser plane controller for long-running browsing tasks.\n\n"
+                "Allowed actions: \"delegate\", \"status\", \"continue\", \"close\", \"catalog\".\n"
+                "- Use \"delegate\" to start a new browsing task, e.g. "
+                '{\"action\": \"delegate\", \"plane\": \"browser\", \"goal\": \"打开 https://www.baidu.com 并查看首页要闻\"}.\n'
+                "- Use \"status\" / \"continue\" / \"close\" only when you already have a task_id from a previous "
+                "plane call, e.g. {\"action\": \"status\", \"plane\": \"browser\", \"task_id\": \"...\"}.\n"
+                "- Use \"catalog\" to list available planes.\n\n"
+                "Any action outside this list will return \"unsupported plane action\". If you see "
+                "\"missing task_id\" you must include the task_id returned from the previous plane call."
+            )
+
         if name in {
             "web_search",
             "attachment_search",
@@ -148,7 +180,19 @@ def build_chat_agent(
     system_prompt = (
         "You are Aelin running on DeepAgents. "
         "You see the conversation history and the latest user query. "
-        "Answer the user directly in the same language as the query."
+        "Answer the user directly in the same language as the query.\n\n"
+        "Tool usage guidelines:\n"
+        "- Be deliberate when calling tools; only call a tool when it is clearly helpful to the user.\n"
+        "- Prefer to call a tool once with well-structured arguments instead of many times with incomplete ones.\n\n"
+        "Web search tool (`web_search`):\n"
+        "- Required arguments: `action` (\"search\" or \"search_and_fetch\") and a non-empty `query` string.\n"
+        "- Optional arguments: `max_results` in [1, 15], `fetch_top_k` in [0, 6] and <= `max_results`.\n"
+        "- If you ever see an error like \"missing query\", you MUST include a non-empty `query` field the next time.\n\n"
+        "Plane tool (`plane` for browser automation):\n"
+        "- Allowed actions: \"delegate\", \"status\", \"continue\", \"close\", \"catalog\". Do NOT invent new actions.\n"
+        "- To start a new browsing task, use `action=\"delegate\"`, usually with `plane=\"browser\"` and a clear `goal`.\n"
+        "- To check or continue an existing task, you MUST include the `task_id` returned from a previous plane call.\n"
+        "- If you see errors like \"unsupported plane action\" or \"missing task_id\", fix the arguments before retrying."
     )
 
     skills_root = skills_root or (Path(__file__).resolve().parent.parent / "deepagents_skills")

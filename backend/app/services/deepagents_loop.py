@@ -161,7 +161,37 @@ def run_deepagents_loop(
             invoke_payload["files"] = files_mapping
 
         response = agent.invoke(invoke_payload)
-        answer = str(getattr(response, "content", "") or "")
+
+        # DeepAgents 默认返回的是 LangGraph 的 state dict，其中通常包含
+        # `messages` 列表；也兼容直接返回 ChatMessage / str 等多种形态。
+        answer: str = ""
+        try:
+            # 1) ChatModel / ChatMessage 风格：`response.content`
+            if hasattr(response, "content"):
+                answer = str(getattr(response, "content", "") or "")
+            # 2) 字符串：直接视为最终回答
+            elif isinstance(response, str):
+                answer = response
+            # 3) LangGraph state dict：优先从 messages 中取最后一条 AI 消息
+            elif isinstance(response, dict):
+                if "answer" in response:
+                    answer = str(response.get("answer") or "")
+                elif "output" in response:
+                    answer = str(response.get("output") or "")
+                elif "messages" in response:
+                    msgs = response.get("messages") or []
+                    if isinstance(msgs, list) and msgs:
+                        last = msgs[-1]
+                        if hasattr(last, "content"):
+                            answer = str(getattr(last, "content", "") or "")
+                        elif isinstance(last, dict) and "content" in last:
+                            answer = str(last.get("content") or "")
+            # 4) 兜底：避免完全空字符串导致上层直接认为没有结果
+            if not answer.strip():
+                answer = str(response)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("deepagents_parse_response_failed error=%s", str(exc)[:160])
+            answer = ""
 
         tool_runs: list[AgentLoopToolRun] = [
             AgentLoopToolRun(

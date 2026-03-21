@@ -15,7 +15,6 @@ from app.main import create_app
 from app.models import Base
 from app.services.aelin_media_pipeline import build_media_ingest_answer
 from app.services.media_ingest import MediaIngestError, MediaIngestOutput, MediaIngestService
-from app.settings import settings
 
 
 def _create_test_client() -> TestClient:
@@ -33,8 +32,6 @@ def _create_test_client() -> TestClient:
     db_module._engine = engine  # type: ignore[attr-defined]
     db_module._SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)  # type: ignore[attr-defined]
 
-    settings.aelin_agent_loop_enabled = False
-    settings.aelin_agent_loop_shadow_enabled = False
     app = create_app()
     return TestClient(app)
 

@@ -10,7 +10,6 @@ from sqlalchemy.exc import OperationalError
 
 import app.routers.aelin as aelin_router
 from app.services.web_search import WebSearchResult
-from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client, _sync_and_wait
 
 
@@ -231,8 +230,6 @@ def test_aelin_chat_loop_only_even_when_agent_loop_toggle_disabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", False)
-
     loop_resp = aelin_router.AelinChatResponse(
         answer="loop-path-even-when-disabled",
         expression="exp-04",
@@ -271,10 +268,6 @@ def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
-    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
-
     loop_resp = aelin_router.AelinChatResponse(
         answer="loop-path",
         expression="exp-03",
@@ -310,11 +303,6 @@ def test_aelin_chat_agent_loop_enabled_prefers_loop(monkeypatch):
 def test_aelin_chat_agent_loop_hard_fail_without_legacy(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
-
-    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
-    monkeypatch.setattr(settings, "aelin_agent_loop_hard_fail", True)
-    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
     monkeypatch.setattr(aelin_router, "_try_agent_loop_chat", lambda payload, db, current_user, event_cb=None, **kwargs: None)
 
     def _legacy_should_not_run(*args, **kwargs):
@@ -342,14 +330,6 @@ def test_aelin_chat_agent_loop_hard_fail_without_legacy(monkeypatch):
 def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
-
-    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", True)
-    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_max_rounds", 2)
-    monkeypatch.setattr(settings, "aelin_agent_loop_max_tool_calls", 3)
-    monkeypatch.setattr(settings, "aelin_agent_loop_max_calls_per_round", 2)
-    monkeypatch.setattr(settings, "aelin_agent_loop_allow_write_tools", True)
 
     class _FakeCompletions:
         def __init__(self):
@@ -401,11 +381,6 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
 def test_aelin_chat_loop_only_even_when_shadow_toggle_enabled(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
-
-    monkeypatch.setattr(settings, "aelin_agent_loop_enabled", False)
-    monkeypatch.setattr(settings, "aelin_agent_loop_shadow_enabled", True)
-    monkeypatch.setattr(settings, "aelin_agent_loop_user_whitelist_csv", "")
-    monkeypatch.setattr(settings, "aelin_agent_loop_workspace_whitelist_csv", "")
 
     loop_resp = aelin_router.AelinChatResponse(
         answer="loop-shadow-ignored",

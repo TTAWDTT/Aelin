@@ -109,9 +109,12 @@ def tool_plane(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
         return adapter.delegate(goal=goal[:800])
 
     if action not in {"status", "continue", "close"}:
-        return _result_error("unsupported plane action")
+        # Keep the error explicit so the agent learns which actions are valid.
+        return _result_error(
+            "unsupported plane action: allowed actions are 'delegate', 'status', 'continue', 'close', 'catalog'"
+        )
     if not task_id:
-        return _result_error("missing task_id")
+        return _result_error("missing task_id: you must pass the 'task_id' from a previous plane call")
 
     if action == "status":
         return adapter.status(task_id=task_id)
@@ -150,4 +153,3 @@ def tool_pinchtab_session(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str
     from app.services.aelin_tools import _tool_pinchtab_session
 
     return _tool_pinchtab_session(hub, args)
-

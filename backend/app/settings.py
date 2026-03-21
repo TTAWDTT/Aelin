@@ -63,22 +63,14 @@ class Settings(BaseSettings):
     aelin_parallel_memory_draft_min_confidence: float = 0.58
     aelin_base_context_cache_ttl_seconds: float = 4.0
     aelin_base_context_cache_max_entries: int = 128
-    aelin_agent_loop_enabled: bool = True
-    aelin_agent_loop_shadow_enabled: bool = False
-    aelin_agent_loop_max_rounds: int = 8
-    aelin_agent_loop_max_tool_calls: int = 15
-    aelin_agent_loop_max_calls_per_round: int = 2
-    aelin_agent_loop_max_write_calls: int = 15
-    aelin_agent_loop_max_plane_supervision_calls: int = 6
-    aelin_agent_loop_max_plane_supervision_calls_per_round: int = 1
+
+    # Agent tool policy knobs (DeepAgents-only). Legacy AelinAgentLoop 已经移除，
+    # 这些配置仅用于构造 AelinToolPolicy，限制 DeepAgents 工具调用行为。
+    # 当前默认值刻意放宽，以便 DeepAgents 在每轮对话中可以更自由地尝试工具调用。
+    aelin_agent_loop_max_tool_calls: int = 128
+    aelin_agent_loop_max_calls_per_round: int = 32
+    aelin_agent_loop_max_write_calls: int = 32
     aelin_agent_loop_allow_write_tools: bool = True
-    aelin_agent_loop_hard_fail: bool = True
-    aelin_agent_loop_user_whitelist_csv: str = ""
-    aelin_agent_loop_workspace_whitelist_csv: str = ""
-    # Agent-loop timeouts (per round + overall)。如需调整针对 PinchTab 等长任务的等待窗口，
-    # 建议通过环境变量显式覆盖，而不是在代码里硬编码过大的默认值。
-    aelin_agent_loop_round_timeout_seconds: float = 40.0
-    aelin_agent_loop_total_timeout_seconds: float = 120.0
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""

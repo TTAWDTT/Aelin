@@ -20,13 +20,15 @@ def tool_web_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]
     if action not in {"search", "search_and_fetch"}:
         from app.services.aelin_tools import _result_error
 
-        return _result_error("unsupported action")
+        # Keep the error short and explicit so DeepAgents can easily recover.
+        return _result_error("unsupported action: expected 'search' or 'search_and_fetch'")
 
     query = str(args.get("query") or "").strip()[:400]
     if not query:
         from app.services.aelin_tools import _result_error
 
-        return _result_error("missing query")
+        # Explicitly tell the agent that query must be a non-empty string.
+        return _result_error("missing query: you must pass a non-empty 'query' field")
 
     max_results = _safe_int(args.get("max_results"), 15, low=1, high=15)
     fetch_top_k = _safe_int(args.get("fetch_top_k"), 3, low=0, high=6)
@@ -77,4 +79,3 @@ def tool_web_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]
         providers=sorted(providers),
         fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
     )
-
