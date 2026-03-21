@@ -74,14 +74,14 @@
 > 「请帮我列出最近5封未读邮件的大致情况」的回答里没有任何 `google_workspace(...)` 记录，  
 > `tool_trace` 中反而多次出现 `"agent_loop_tool": "failed", "detail": "unsupported_action"`。
 
-- [ ] **3.1 梳理现有 GWS 工具 action 集**
+- [x] **3.1 梳理现有 GWS 工具 action 集**
   - 操作：
     - 检查 `tools_gws.py` 和 `google_workspace_cli.py` 中当前支持的 action（例如 `drive_list` / `docs_create` 等）。
     - 标记哪些 action 实际对“列出最近未读邮件摘要”有帮助，哪些是高风险写操作。
   - 验收：
     - 文档或注释中有一份简短列表：当前支持的安全 GWS 读操作，以及暂不开放的写操作。
 
-- [ ] **3.2 为典型 read-only 场景提供稳定 action**
+- [x] **3.2 为典型 read-only 场景提供稳定 action**
   - 操作：
     - 设计一到两个稳定的、抽象程度较高的只读动作，例如：
       - `gmail_list_unread_summary`：返回最近 N 封未读邮件的发件人/主题/时间摘要。
