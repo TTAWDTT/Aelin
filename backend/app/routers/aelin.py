@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.models import User
 from app.schemas import AelinChatRequest, AelinChatResponse
 import app.services.aelin_core as _core
+import app.services.aelin_chat_planning as _planning
+
 
 
 # Re-export all legacy symbols for compatibility (tests and other modules).
@@ -15,6 +17,12 @@ for _name in dir(_core):
     if _name.startswith("__"):
         continue
     globals()[_name] = getattr(_core, _name)
+
+# Explicitly re-export selected planning helpers from aelin_chat_planning so
+# that tests can still call aelin_router._plan_tool_usage/_critic_tool_plan.
+for _name in ["_plan_tool_usage", "_critic_tool_plan"]:
+    if hasattr(_planning, _name):
+        globals()[_name] = getattr(_planning, _name)
 
 
 _ORIG_DISPATCH = _core._dispatch_aelin_chat

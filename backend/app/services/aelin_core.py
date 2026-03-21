@@ -41,8 +41,6 @@ from app.services.agent_memory import AgentMemoryService
 from app.services import content_tagging
 from app.services.aelin_tools import (
     AelinToolHub,
-    run_aelin_structured_tools,
-    should_attempt_aelin_tools,
     should_resume_active_plane_for_query,
     summarize_tool_results_for_prompt,
 )
@@ -66,8 +64,6 @@ from app.services.aelin_runtime import (
 from app.services.aelin_chat_planning import (
     _normalize_search_mode,
     _build_intent_contract,
-    _plan_tool_usage,
-    _critic_tool_plan,
     _build_web_query_pack,
     _build_retry_web_queries,
     _extract_search_subject,
@@ -76,7 +72,6 @@ from app.services.aelin_chat_planning import (
     _is_sports_result_query,
 )
 from app.services.aelin_chat_answering import (
-    _compose_web_first_answer,
     _domain_from_url,
     _looks_like_link_dump_answer,
     _looks_like_non_answer,
@@ -410,7 +405,6 @@ def _try_agent_loop_chat(
     query_preview = " ".join(str(payload.query or "").split())[:120]
     prefixed_traces: list[AelinToolStep] = []
     prefixed_actions: list[AelinAction] = []
-    forced_intent = ""
     attachment_prefetch_result: dict[str, Any] = {}
 
     def _emit_prefixed(stage: str, *, status: str, detail: str = "", count: int = 0) -> None:

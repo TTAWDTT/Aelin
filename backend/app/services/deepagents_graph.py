@@ -79,6 +79,8 @@ def build_chat_tools(
 
         return Tool.from_function(func=_call_tool, name=name, description=description)
 
+    # DeepAgents 主图只暴露核心能力型工具，不再包含 memory/context/profile 等
+    # 旧式记忆/画像入口；这些能力今后由 AGENTS.md + DeepAgents Memory 负责。
     tools: list[Tool] = []
     for td in tool_hub.tool_definitions():
         fn = td.get("function") if isinstance(td, dict) else None
@@ -87,14 +89,11 @@ def build_chat_tools(
         name = str(fn.get("name") or "").strip()
         desc = str(fn.get("description") or "").strip() or name
         if name in {
-            "context_get",
-            "profile",
-            "device",
             "web_search",
             "attachment_search",
-            "screen_get",
             "google_workspace",
-            "skill",
+            "device",
+            "screen_get",
             "plane",
         }:
             tools.append(_make_tool(name, desc))
@@ -180,4 +179,3 @@ def build_chat_agent(
     )
 
     return agent, usage, tool_runs, files
-

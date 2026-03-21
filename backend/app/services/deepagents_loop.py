@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
 from typing import Any
 
-from deepagents.backends.utils import create_file_data
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
@@ -22,9 +19,8 @@ def _build_chat_model(service: LLMService, provider: str) -> ChatAnthropic | Non
     """
     根据 Aelin 的 AgentConfig 构造 DeepAgents 使用的底层 ChatModel。
 
-    优先走 OpenAI 兼容协议（ChatOpenAI），以复用 Aelin 原本对“任意
-    OpenAI-Compatible Provider”的兼容能力；如后续需要，也可以针对
-    特定 provider（例如 Anthropic 官方 API）走 ChatAnthropic 支路。
+    目前该函数仅由 deepagents_graph.build_chat_agent 复用，用于统一
+    ChatModel 的构造逻辑；run_deepagents_loop 自身不再直接依赖它。
     """
     try:
         model_name = getattr(service.config, "model", "") or "gpt-4o-mini"
@@ -98,22 +94,6 @@ def run_deepagents_loop(
             memory_snapshot="",
         )
 
-    chat_model = _build_chat_model(service, provider)
-    if chat_model is None:
-        return AelinAgentLoopResult(
-            ok=False,
-            answer="",
-            stop_reason="llm_not_configured",
-            rounds=0,
-            total_calls=0,
-            write_calls=0,
-            tool_runs=[],
-            trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail="llm_not_configured")],
-            actions=[],
-            error="llm_not_configured",
-            memory_snapshot="",
-        )
-
     try:
         agent, usage, raw_tool_runs, files_mapping = build_chat_agent(
             service=service,
@@ -182,6 +162,20 @@ def run_deepagents_loop(
 
         response = agent.invoke(invoke_payload)
         answer = str(getattr(response, "content", "") or "")
+
+        tool_runs: list[AgentLoopToolRun] = [
+            AgentLoopToolRun(
+                round_index=int(tr.get("round_index", 1)),
+                name=str(tr.get("name") or ""),
+                args=dict(tr.get("args") or {}),
+                status=str(tr.get("status") or ""),
+                result=dict(tr.get("result") or {}),
+                error=str(tr.get("error") or ""),
+                is_write=bool(tr.get("is_write", False)),
+                latency_ms=int(tr.get("latency_ms", 0)),
+            )
+            for tr in raw_tool_runs
+        ]
     except Exception as exc:  # noqa: BLE001
         _log.exception("deepagents_unhandled_error provider=%s", provider)
         return AelinAgentLoopResult(
@@ -201,10 +195,23 @@ def run_deepagents_loop(
             ],
             actions=[],
             error=str(exc)[:200],
-            memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
+            memory_snapshot=memory_summary,
         )
 
     if not answer.strip():
+        tool_runs: list[AgentLoopToolRun] = [
+            AgentLoopToolRun(
+                round_index=int(tr.get("round_index", 1)),
+                name=str(tr.get("name") or ""),
+                args=dict(tr.get("args") or {}),
+                status=str(tr.get("status") or ""),
+                result=dict(tr.get("result") or {}),
+                error=str(tr.get("error") or ""),
+                is_write=bool(tr.get("is_write", False)),
+                latency_ms=int(tr.get("latency_ms", 0)),
+            )
+            for tr in raw_tool_runs
+        ]
         return AelinAgentLoopResult(
             ok=False,
             answer="",
@@ -218,8 +225,22 @@ def run_deepagents_loop(
             ],
             actions=[],
             error="empty_answer_from_deepagents",
-            memory_snapshot=memory_files.get("/memory/AGENTS.md", ""),
+            memory_snapshot=memory_summary,
         )
+
+    tool_runs: list[AgentLoopToolRun] = [
+        AgentLoopToolRun(
+            round_index=int(tr.get("round_index", 1)),
+            name=str(tr.get("name") or ""),
+            args=dict(tr.get("args") or {}),
+            status=str(tr.get("status") or ""),
+            result=dict(tr.get("result") or {}),
+            error=str(tr.get("error") or ""),
+            is_write=bool(tr.get("is_write", False)),
+            latency_ms=int(tr.get("latency_ms", 0)),
+        )
+        for tr in raw_tool_runs
+    ]
 
     return AelinAgentLoopResult(
         ok=True,

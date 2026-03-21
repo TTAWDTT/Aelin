@@ -10,31 +10,31 @@
 
 ### 1.1 定义统一的 DeepAgents Chat Graph
 
-- [ ] 新建一个专门的 DeepAgents graph 构造模块（例如 `backend/app/services/deepagents_graph.py`）：
-  - [ ] 把当前 `run_deepagents_loop` 中的 DeepAgents 初始化逻辑（`create_deep_agent(...)`）迁移到此模块，并命名为清晰的构造函数（如 `build_chat_agent()` 或 `build_chat_graph()`）。
-  - [ ] 确认 graph 内部直接挂接以下工具能力：`web_search` / `attachment_search` / `google_workspace` / `device` / `plane` / 媒体 ingest（如适用），而不是通过 Aelin 的 ToolHub 二次包装。
-  - [ ] 将 `skills` / `memory` / `backend=StateBackend` 等配置集中在这个构造函数里，便于后续统一调整 DeepAgents 行为。
+- [x] 新建一个专门的 DeepAgents graph 构造模块（例如 `backend/app/services/deepagents_graph.py`）：
+  - [x] 把当前 `run_deepagents_loop` 中的 DeepAgents 初始化逻辑（`create_deep_agent(...)`）迁移到此模块，并命名为清晰的构造函数（如 `build_chat_agent()` 或 `build_chat_graph()`）。
+  - [x] 确认 graph 内部直接挂接以下工具能力：`web_search` / `attachment_search` / `google_workspace` / `device` / `plane` / 媒体 ingest（如适用），而不是通过 Aelin 的 ToolHub 二次包装。
+  - [x] 将 `skills` / `memory` / `backend=StateBackend` 等配置集中在这个构造函数里，便于后续统一调整 DeepAgents 行为。
 
 验收标准：
-- [ ] 代码层面有一个清晰的 `build_chat_agent()` 或等价函数，返回已配置好的 DeepAgents agent/graph。
-- [ ] 其它模块（包括 `run_deepagents_loop`）只通过这个构造函数获得 DeepAgents 实例，不再自己 scattered 地调用 `create_deep_agent`。
+- [x] 代码层面有一个清晰的 `build_chat_agent()` 或等价函数，返回已配置好的 DeepAgents agent/graph。
+- [x] 其它模块（包括 `run_deepagents_loop`）只通过这个构造函数获得 DeepAgents 实例，不再自己 scattered 地调用 `create_deep_agent`。
 
 ### 1.2 `_try_agent_loop_chat` 收缩为纯“适配层”
 
-- [ ] 梳理并标记 `_try_agent_loop_chat` 中仍属于“旧 Aelin loop”的逻辑分支（媒体 fallback、attachment fallback、planner、web-first answer 等）。
-- [ ] 在保持当前 API 行为的大前提下，设计一个“最小化 preflight”的结构：
-  - [ ] 保留：auth / workspace 归一化 / history & images 截断 / attachment_ids 归一化；
-  - [ ] 保留：必要的媒体 URL 检测（只用于触发专用 ingest graph，而非复杂 fallback）。
-  - [ ] 移除或迁移：所有 `_plan_tool_usage` / `_critic_tool_plan` / `_compose_web_first_answer` / `run_aelin_structured_tools` 等决策逻辑。
-- [ ] 调整 `_try_agent_loop_chat`：  
+- [x] 梳理并标记 `_try_agent_loop_chat` 中仍属于“旧 Aelin loop”的逻辑分支（媒体 fallback、attachment fallback、planner、web-first answer 等）。
+- [x] 在保持当前 API 行为的大前提下，设计一个“最小化 preflight”的结构：
+  - [x] 保留：auth / workspace 归一化 / history & images 截断 / attachment_ids 归一化；
+  - [x] 保留：必要的媒体 URL 检测（只用于触发专用 ingest graph，而非复杂 fallback）。
+  - [x] 移除或迁移：所有 `_plan_tool_usage` / `_critic_tool_plan` / `_compose_web_first_answer` / `run_aelin_structured_tools` 等决策逻辑。
+- [x] 调整 `_try_agent_loop_chat`：  
   只负责：
-  - [ ] 获取 `memory_summary`（AGENTS.md → system prompt），  
-  - [ ] 调用 DeepAgents chat graph，  
-  - [ ] 将返回的 answer + run graph 映射到 `AelinChatResponse` + `tool_trace`，推送 SSE。
+  - [x] 获取 `memory_summary`（AGENTS.md → system prompt），  
+  - [x] 调用 DeepAgents chat graph，  
+  - [x] 将返回的 answer + run graph 映射到 `AelinChatResponse` + `tool_trace`，推送 SSE。
 
 验收标准：
-- [ ] `_try_agent_loop_chat` 的代码量明显下降，主要职责可一句话概括为“拼装 payload → 调用 DeepAgents → 转换为 SSE/HTTP 响应”。
-- [ ] 所有 Python 层“什么时候搜网/什么时候看附件/怎么规划工具”的决策逻辑不再存在于 `_try_agent_loop_chat` 内，而是迁移到 DeepAgents graph 或 skills。
+- [x] `_try_agent_loop_chat` 的代码量明显下降，主要职责可一句话概括为“拼装 payload → 调用 DeepAgents → 转换为 SSE/HTTP 响应”。
+- [x] 所有 Python 层“什么时候搜网/什么时候看附件/怎么规划工具”的决策逻辑不再存在于 `_try_agent_loop_chat` 内，而是迁移到 DeepAgents graph 或 skills。
 
 ---
 
@@ -71,7 +71,7 @@
 
 ### 2.3 下线 Aelin 记忆类工具（从 DeepAgents 视角）
 
-- [ ] 从 DeepAgents 的工具集合中移除 `memory` 工具：
+- [x] 从 DeepAgents 的工具集合中移除 `memory` 工具：
   - [ ] `tool_definitions()` 中不再返回 `memory` 对应 definition。
   - [ ] DeepAgents graph 不再把 `memory` 列入可调用工具列表。
 - [ ] `context_get` / `profile`：
