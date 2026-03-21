@@ -7,11 +7,14 @@
 
 ## 0. 范围与前提
 
-- 仅针对 **agent loop 与工具/plane 集成层**，不改：
+- 仅针对 **agent loop 与工具集成层**，不改：
   - HTTP API 形状（`/api/v1/aelin/chat/stream` 等）
   - SSE 协议的基本字段（`tool_trace` / `actions` / `expression`）
-  - 数据库 schema 与 AgentMemory 行为
 - **默认假设 DeepAgents 为唯一 agent 核心**，不再保留旧 loop 的双轨逻辑。
+- 浏览器 plane / PinchTab 相关能力已在本分支中下线，相关文档迁移到 `docs/archive/`，仅作为历史参考。
+- **记忆的唯一权威来源已收敛为 DeepAgents 虚拟文件体系：**
+  - 长期记忆、会话摘要、待办等全部只写入 `/memory/AGENTS.md`（按 workspace 分隔）。
+  - 不再使用任何 DB 表（如 `AgentConversationMemory` / `AgentMemoryNote`）作为记忆源，旧表仅作为历史数据（可选保留或迁移，不再读写。
 
 验收标准：
 - [ ] 代码中没有任何 `AelinAgentLoop`、`aelin_loop_*`、旧自研状态机残留。

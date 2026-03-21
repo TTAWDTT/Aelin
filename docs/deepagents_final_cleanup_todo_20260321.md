@@ -9,7 +9,7 @@
 - [x] 清空 DB 记忆读写路径：从 `backend/app/services/agent_memory.py` 中删掉所有对 `AgentConversationMemory`、`AgentMemoryNote` 的 DB 级操作，只保留 AGENTS.md 读写和只读投影。
 - [x] 清理所有调用 DB 记忆的业务代码：在 `backend/app/services/aelin_core.py`、`backend/app/services/aelin_context_service.py`、`backend/app/services/aelin_tools.py` 等处，改成只依赖 `AgentMemoryService` 的 AGENTS.md 视图，不再 import / 使用 DB 记忆模型。
 - [x] 完全移除 openviking：从 `backend/requirements.txt`、`backend/app/settings.py`、`backend/app/services/openviking_bridge.py`、`backend/app/services/openviking_utils.py`、以及所有 `file_memory_bridge` 调用中，改为 DeepAgents/StateBackend 或简单文件 IO；然后删除整个 openviking 适配层和配置项。
-- [ ] 确认 `/memory/AGENTS.md` 是唯一“权威记忆源”：在 docs 中明确写出 “记忆 = DeepAgents 虚拟文件 + AGENTS.md，DB 中不再存储任何长期记忆或会话摘要”。
+- [x] 确认 `/memory/AGENTS.md` 是唯一“权威记忆源”：在 docs 中明确写出 “记忆 = DeepAgents 虚拟文件 + AGENTS.md，DB 中不再存储任何长期记忆或会话摘要”。
 
 ## 2. 工具：彻底统一为 DeepAgents 工具层
 
