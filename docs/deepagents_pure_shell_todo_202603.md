@@ -90,29 +90,29 @@
 
 ### 3.1 记忆写入路径统一到 AGENTS.md
 
-- [ ] 在 `agent_memory.py` / `openviking_bridge.py` 中检查所有记忆写入入口：
-  - [ ] 确认所有长期记忆写入最终都汇聚到 `write_agents_memory(user_id, workspace, content)`。
-  - [ ] 删除或标记弃用任何“直接写 DB 记忆表”的代码路径（除兼容性恢复场景外）。
-- [ ] 约定：  
+- [x] 在 `agent_memory.py` / `openviking_bridge.py` 中检查所有记忆写入入口：
+  - [x] 确认所有长期记忆写入最终都汇聚到 `write_agents_memory(user_id, workspace, content)`（AgentMemoryService 的 `append_fact_to_memory` / `append_preference_to_memory` / `add_todo_to_memory` 以及 DeepAgents MemoryMiddleware 都通过 FileMemoryBridge 写入 `/memory/AGENTS.md`）。
+  - [x] 删除或标记弃用任何“直接写 DB 记忆表”的代码路径（除兼容性恢复场景外）：`update_after_turn` 已明确为 no-op，layout-based memory 与 pin 推荐等旧表已从公共 API 移除；仅 `AgentConversationMemory.summary` 作为可选的简短摘要缓存保留，且不再回流到 DeepAgents 记忆。
+- [x] 约定：  
   所有“写记忆”操作应有且仅有两种合法途径：
-  - [ ] DeepAgents graph 内部通过工具/文件操作修改 `/memory/AGENTS.md`（推荐路径）。  
-  - [ ] 用户显式编辑 AGENTS.md（或一个 UI 包装），最终仍写入 `AGENTS.md` 文件。
+  - [x] DeepAgents graph 内部通过文件工具或 MemoryMiddleware 修改 `/memory/AGENTS.md`（推荐路径）。  
+  - [x] 用户显式编辑 AGENTS.md（或一个 UI 包装），最终仍写入 `AGENTS.md` 文件（由 FileMemoryBridge 负责落盘和索引）。
 
 验收标准：
-- [ ] 代码级别没有新的 DB-based 记忆写入逻辑；`AGENTS.md` 是唯一的长期记忆真源。
-- [ ] 文档中明确声明：DeepAgents 记忆基于虚拟文件 `/memory/AGENTS.md`，Aelin 只负责将其同步到磁盘。
+- [x] 代码级别没有新的 DB-based 记忆写入逻辑；`AGENTS.md` 是唯一的长期记忆真源，DB 中的 AgentMemoryNote/ConversationMemory 仅作为辅助视图或历史遗留兼容存在。
+- [x] 文档中明确声明：DeepAgents 记忆基于虚拟文件 `/memory/AGENTS.md`，Aelin 只负责将其同步到磁盘并在需要时投影为只读视图。
 
 ### 3.2 上下文 API 只作为 AGENTS.md 的投影
 
-- [ ] 审视 `aelin_context_service.build_context_bundle` 等上下文组装逻辑：
-  - [ ] 确认 `memory_layers` / `layout_cards` / `focus_items` / `todos` 都是从 AGENTS.md + DB 的投影构造出来，而不是反过来驱动 agent loop。
-  - [ ] 删除或简化任何仍会“反向影响 DeepAgents 决策逻辑”的上下文策略（例如，曾依赖 memory_layers 的 planner 分支）。
-- [ ] 更新文档：  
+- [x] 审视 `aelin_context_service.build_context_bundle` 等上下文组装逻辑：
+  - [x] 确认 `memory_layers` / `notes` / `todos` 都是从 AGENTS.md 投影出的视图：`get_summary` / `list_notes` / `list_todos` 在 DeepAgents 运行时都只使用 FileMemoryBridge + AGENTS.md（不再写入或依赖 layout-based DB 结构）。
+  - [x] 删除或简化任何仍会“反向影响 DeepAgents 决策逻辑”的上下文策略：`build_system_memory_prompt` 只从 `/memory/AGENTS.md` 构造 prompt，不再读取 context API 或 `memory_layers`，planner 与 agent loop 也不再引用这些视图结构。
+- [x] 更新文档：  
   把上下文 API 定位为“**读 AGENTS.md + 历史数据的视图**”，用于 UI 展示和侧边栏，不再被 DeepAgents 当成额外的“隐含记忆源”。
 
 验收标准：
-- [ ] DeepAgents 的调用路径（从 HTTP 到 graph）只依赖 `/memory/AGENTS.md` 和 chat history，不再显式读取 `memory_layers` / `layout_cards` 之类结构。
-- [ ] 即使暂时保留 context API，删掉它们也不会破坏 DeepAgents 的 chat 能力（只影响 UI 辅助信息）。
+- [x] DeepAgents 的调用路径（从 HTTP 到 graph）只依赖 `/memory/AGENTS.md` 和 chat history，不再显式读取 `memory_layers` / `layout_cards` 等结构；这些仅用于 `build_context_bundle` 的 UI 显示。
+- [x] 即使暂时保留 context API，删掉它们也不会破坏 DeepAgents 的 chat 能力（只影响 sidebar/调试信息），这在现有 tests 中已得到验证。
 
 ---
 
