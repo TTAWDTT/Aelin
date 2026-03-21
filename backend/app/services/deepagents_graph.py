@@ -15,7 +15,6 @@ from app.services.tools_web import tool_web_search
 from app.services.tools_files import tool_attachment_search
 from app.services.tools_gws import tool_google_workspace
 from app.services.tools_device import tool_device, tool_screen_get
-from app.services.tools_browser_plane import tool_plane
 
 
 def build_chat_tools(
@@ -70,8 +69,6 @@ def build_chat_tools(
                 result = tool_device(tool_hub, args)
             elif name == "screen_get":
                 result = tool_screen_get(tool_hub, args)
-            elif name == "plane":
-                result = tool_plane(tool_hub, args)
             else:
                 # This should not happen because we only register a fixed
                 # allowlist of names below, but keep a defensive fallback so
@@ -100,6 +97,70 @@ def build_chat_tools(
 
         return Tool.from_function(func=_call_tool, name=name, description=description)
 
+    def _make_device_tool(description: str) -> Tool:
+        """
+        Specialized wrapper for the `device` tool so that DeepAgents can call it
+        either with a dict input ({"action": "...", "url": "..."}) or with
+        positional arguments like ["open_url", "https://example.com"] without
+        tripping the single-input Tool contract.
+        """
+
+        def _run_device(action: str, url: str | None = None, route: str | None = None) -> dict[str, Any]:
+            nonlocal usage
+            from time import perf_counter
+
+            args: dict[str, Any] = {"action": str(action or "").strip()}
+            if url is not None and str(url).strip():
+                args["url"] = str(url).strip()
+            if route is not None and str(route).strip():
+                args["route"] = str(route).strip()
+
+            decision = policy.evaluate(name="device", args=args, usage=usage)
+            started = perf_counter()
+            if not decision.allowed:
+                latency_ms = int((perf_counter() - started) * 1000)
+                tool_runs.append(
+                    {
+                        "round_index": 1,
+                        "name": "device",
+                        "args": args,
+                        "status": "denied",
+                        "result": {"ok": False, "error": decision.reason},
+                        "error": decision.reason,
+                        "is_write": decision.is_write,
+                        "latency_ms": latency_ms,
+                    }
+                )
+                return {"ok": False, "error": decision.reason}
+
+            try:
+                result = tool_device(tool_hub, args)
+            except Exception as exc:  # noqa: BLE001
+                result = _result_error(f"device_tool_failed:{str(exc)[:160]}")
+
+            latency_ms = int((perf_counter() - started) * 1000)
+            usage.round_calls += 1
+            usage.total_calls += 1
+            if decision.is_write:
+                usage.write_calls += 1
+            status = "completed" if bool(result.get("ok", True)) else "failed"
+            error = "" if status == "completed" else str(result.get("error") or "")[:160]
+            tool_runs.append(
+                {
+                    "round_index": 1,
+                    "name": "device",
+                    "args": args,
+                    "status": status,
+                    "result": result,
+                    "error": error,
+                    "is_write": decision.is_write,
+                    "latency_ms": latency_ms,
+                }
+            )
+            return result
+
+        return Tool.from_function(func=_run_device, name="device", description=description)
+
     # DeepAgents 主图只暴露核心能力型工具，不再包含 memory/context/profile 等
     # 旧式记忆/画像入口；这些能力今后由 AGENTS.md + DeepAgents Memory 负责。
     tools: list[Tool] = []
@@ -127,19 +188,6 @@ def build_chat_tools(
                 "If you receive an error like \"missing query\" or \"unsupported action\", fix the arguments and "
                 "call this tool again instead of repeating the same invalid call."
             )
-        elif name == "plane":
-            # 在 plane 工具上提前写清楚允许的 action 和典型调用方式。
-            desc = (
-                "Browser plane controller for long-running browsing tasks.\n\n"
-                "Allowed actions: \"delegate\", \"status\", \"continue\", \"close\", \"catalog\".\n"
-                "- Use \"delegate\" to start a new browsing task, e.g. "
-                '{\"action\": \"delegate\", \"plane\": \"browser\", \"goal\": \"打开 https://www.baidu.com 并查看首页要闻\"}.\n'
-                "- Use \"status\" / \"continue\" / \"close\" only when you already have a task_id from a previous "
-                "plane call, e.g. {\"action\": \"status\", \"plane\": \"browser\", \"task_id\": \"...\"}.\n"
-                "- Use \"catalog\" to list available planes.\n\n"
-                "Any action outside this list will return \"unsupported plane action\". If you see "
-                "\"missing task_id\" you must include the task_id returned from the previous plane call."
-            )
         elif name == "device":
             # 统一 device 工具的契约，让 DeepAgents 知道允许的 action 以及参数要求。
             desc = (
@@ -154,15 +202,11 @@ def build_chat_tools(
                 "or wait for the desktop plugin to become available before retrying."
             )
 
-        if name in {
-            "web_search",
-            "attachment_search",
-            "google_workspace",
-            "device",
-            "screen_get",
-            "plane",
-        }:
-            tools.append(_make_tool(name, desc))
+        if name in {"web_search", "attachment_search", "google_workspace", "device", "screen_get"}:
+            if name == "device":
+                tools.append(_make_device_tool(desc))
+            else:
+                tools.append(_make_tool(name, desc))
 
     return tools, tool_runs, usage
 
@@ -201,11 +245,6 @@ def build_chat_agent(
         "- Required arguments: `action` (\"search\" or \"search_and_fetch\") and a non-empty `query` string.\n"
         "- Optional arguments: `max_results` in [1, 15], `fetch_top_k` in [0, 6] and <= `max_results`.\n"
         "- If you ever see an error like \"missing query\", you MUST include a non-empty `query` field the next time.\n\n"
-        "Plane tool (`plane` for browser automation):\n"
-        "- Allowed actions: \"delegate\", \"status\", \"continue\", \"close\", \"catalog\". Do NOT invent new actions.\n"
-        "- To start a new browsing task, use `action=\"delegate\"`, usually with `plane=\"browser\"` and a clear `goal`.\n"
-        "- To check or continue an existing task, you MUST include the `task_id` returned from a previous plane call.\n"
-        "- If you see errors like \"unsupported plane action\" or \"missing task_id\", fix the arguments before retrying.\n\n"
         "Device tool (`device` for desktop actions):\n"
         "- Allowed actions: \"status\", \"open_url\", \"open_aelin\". Do NOT invent new actions.\n"
         "- Use `status` to understand which desktop capabilities are available.\n"

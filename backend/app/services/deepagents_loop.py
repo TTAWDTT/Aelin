@@ -128,29 +128,6 @@ def run_deepagents_loop(
                 continue
             messages.append({"role": role, "content": content})
 
-        # 如果有可复用的 plane task，并且当前 query 明显是在“续上”该任务，
-        # 通过一条 system 提示让 DeepAgents 知道可以使用对应 task_id。
-        if isinstance(plane_snapshot, dict) and plane_snapshot.get("task_id"):
-            task_id = str(plane_snapshot.get("task_id") or "").strip()
-            plane_name = str(plane_snapshot.get("plane") or "browser").strip()
-            goal = str(plane_snapshot.get("goal") or "").strip()
-            state = str(plane_snapshot.get("state") or "").strip()
-            summary = str(plane_snapshot.get("summary") or "").strip()
-            parts: list[str] = [
-                "There is an existing plane task you can continue.",
-                f"plane={plane_name}, task_id={task_id}, state={state or 'unknown'}",
-            ]
-            if goal:
-                parts.append(f"goal={goal[:160]}")
-            if summary:
-                parts.append(f"summary={summary[:160]}")
-            parts.append(
-                "If the user appears to ask to continue this task, "
-                "call the `plane` tool with action='status' or 'continue', "
-                f"plane='{plane_name}', and task_id='{task_id}'."
-            )
-            messages.append({"role": "system", "content": "\n".join(parts)})
-
         # DeepAgents 主入口通过 chat history 驱动，我们把最新 query 作为最后一条 user 消息。
         latest_query = str(query or "").strip()
         if latest_query:
