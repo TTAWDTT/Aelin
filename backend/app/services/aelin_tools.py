@@ -23,7 +23,6 @@ from app.services.device_center import (
     open_desktop_external_url,
 )
 from app.services.google_workspace_cli import get_google_workspace_cli_service
-from app.services.llm import LLMService
 from app.services.web_search import WebSearchService
 from app.services.tools_device import tool_device, tool_screen_get
 from app.services.tools_files import tool_attachment_search
@@ -384,105 +383,6 @@ class AelinToolHub:
         )
 
 
-def _execute_tool_call(
-    tool_hub: AelinToolHub, *, name: str, args: dict[str, Any]
-) -> tuple[str, dict[str, Any], str, int]:
-    status = "completed"
-    result: dict[str, Any] = {}
-    error = ""
-    started = time.perf_counter()
-    try:
-        result = tool_hub.execute(name, args)
-        if not bool(result.get("ok", True)):
-            status = "failed"
-            error = str(result.get("error") or "tool returned not ok")[:180]
-    except Exception as exc:  # noqa: BLE001
-        status = "failed"
-        error = str(exc)[:180]
-        result = _result_error(error)
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    return status, result, error, latency_ms
-
-
-def run_aelin_structured_tools(
-    *,
-    service: LLMService,
-    provider: str,
-    query: str,
-    memory_summary: str,
-    tool_hub: AelinToolHub,
-    max_calls: int = 2,
-) -> tuple[list[dict[str, Any]], str]:
-    """
-    Lightweight planner that lets a model propose a small number of tool calls.
-
-    该函数主要用于调试和 UI 上的“工具跟踪”，不会参与 DeepAgents 主回路。
-    """
-    if provider == "rule_based":
-        return [], "provider_rule_based"
-    client = getattr(service, "client", None)
-    if client is None:
-        return [], "llm_not_configured"
-
-    tools = list(tool_hub.tool_definitions())
-    if not tools:
-        return [], "tool_definitions_empty"
-
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a tool planner for Aelin. "
-                "Only call tools when the user query clearly needs memory/profile/device/"
-                "screen/browser/attachment operations. "
-                "At most call 2 tools. If no tool is needed, respond directly without tool calls."
-            ),
-        },
-        {
-            "role": "user",
-            "content": f"query={query[:500]}\nmemory_summary={memory_summary[:600]}",
-        },
-    ]
-    try:
-        response = client.chat.completions.create(
-            model=service.config.model,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=180,
-            tools=tools,
-            tool_choice="auto",
-        )
-    except Exception as exc:  # noqa: BLE001
-        return [], f"planner_error:{str(exc)[:120]}"
-
-    choice = response.choices[0] if response and response.choices else None
-    message = getattr(choice, "message", None) if choice else None
-    raw_calls = list(getattr(message, "tool_calls", []) or [])
-    if not raw_calls:
-        return [], "no_tool_call"
-
-    out: list[dict[str, Any]] = []
-    cap = max(1, min(4, int(max_calls or 2)))
-    for tc in raw_calls[:cap]:
-        fn = getattr(tc, "function", None)
-        name = str(getattr(fn, "name", "") or "").strip()
-        args = _safe_load_json(str(getattr(fn, "arguments", "{}") or "{}"))
-        status, result, error, latency_ms = _execute_tool_call(
-            tool_hub, name=name, args=args
-        )
-        out.append(
-            {
-                "name": name,
-                "args": args,
-                "status": status,
-                "latency_ms": latency_ms,
-                "result": result,
-                "error": error,
-            }
-        )
-    return out, ""
-
-
 def summarize_tool_results_for_prompt(
     runs: list[dict[str, Any]], *, max_lines: int = 8
 ) -> list[str]:
@@ -532,6 +432,5 @@ __all__ = [
     "DeviceScreenCaptureError",
     "device_capture_screen",
     "get_google_workspace_cli_service",
-    "run_aelin_structured_tools",
     "summarize_tool_results_for_prompt",
 ]

@@ -25,7 +25,7 @@
 - [x] 在保持当前 API 行为的大前提下，设计一个“最小化 preflight”的结构：
   - [x] 保留：auth / workspace 归一化 / history & images 截断 / attachment_ids 归一化；
   - [x] 保留：必要的媒体 URL 检测（只用于触发专用 ingest graph，而非复杂 fallback）。
-  - [x] 移除或迁移：所有 `_plan_tool_usage` / `_critic_tool_plan` / `_compose_web_first_answer` / `run_aelin_structured_tools` 等决策逻辑。
+  - [x] 移除或迁移：所有 `_plan_tool_usage` / `_critic_tool_plan` / `_compose_web_first_answer` / `run_aelin_structured_tools` 等决策逻辑（现已全部下线，仅 DeepAgents 自身负责规划与工具调用）。
 - [x] 调整 `_try_agent_loop_chat`：  
   只负责：
   - [x] 获取 `memory_summary`（AGENTS.md → system prompt），  

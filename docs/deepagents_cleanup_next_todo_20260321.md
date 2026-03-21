@@ -93,7 +93,7 @@
   - [x] 提供 `execute(name, args)` 分发到按领域拆分的 `tool_*` 函数（`tools_web` / `tools_files` / `tools_gws` / `tools_device` / `tools_skill` 等）。
 - [x] 检查是否仍有地方通过 `AelinToolHub.execute` 走“万能工具入口”：
   - [x] 对 DeepAgents 主路径：依旧保持在 `build_chat_tools` 中直接调用领域函数（`tool_web_search` 等），尽量避免在 DeepAgents 里再绕一次 `execute`。
-  - [x] 对 planner / debug 路径：可以保留 `run_aelin_structured_tools` 使用 `execute`，但要保证它只使用上述精简后的工具集合。
+  - [x] 对 planner / debug 路径：早期曾保留 `run_aelin_structured_tools` 作为独立调试入口；现在已在 DeepAgents 分支中完全移除，仅保留 DeepAgents 自身的规划能力。
 
 验收：
 - [x] `AelinToolHub` 文件体量和复杂度明显下降，类的职责一句话即可概括：“按请求构造一个带上下文的工具 registry”。  
