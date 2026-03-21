@@ -12,7 +12,7 @@ import {
   Sparkles,
   XCircle,
 } from 'lucide-react'
-import type { AelinToolStep } from '@/shared/api/types'
+import type { RunNode } from '../traceUtils'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 
@@ -28,40 +28,33 @@ const STEP_ICON: Record<string, React.ComponentType<{ size?: number; className?:
   reply_verifier: CheckCircle2,
 }
 
-function compactTrace(trace: AelinToolStep[]): AelinToolStep[] {
-  const out: AelinToolStep[] = []
-  const indexByStage = new Map<string, number>()
-  for (const step of trace) {
-    const stage = String(step.stage || '').trim()
-    if (!stage) continue
-    const idx = indexByStage.get(stage)
+function compactRunNodes(nodes: RunNode[]): RunNode[] {
+  const out: RunNode[] = []
+  const indexByKey = new Map<string, number>()
+  for (const node of nodes) {
+    const key = `${node.type}:${node.label}`
+    const idx = indexByKey.get(key)
     if (idx == null) {
-      indexByStage.set(stage, out.length)
-      out.push(step)
+      indexByKey.set(key, out.length)
+      out.push(node)
       continue
     }
-    out[idx] = step
+    out[idx] = node
   }
   return out
 }
 
-function stageLabel(stage: string): string {
-  return stage
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (m) => m.toUpperCase())
-}
-
 export function AgentTracePanel({
-  trace,
+  nodes,
   live = false,
 }: {
-  trace: AelinToolStep[]
+  nodes: RunNode[]
   live?: boolean
 }) {
   const [open, setOpen] = useState(live)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const wasRunningRef = useRef(false)
-  const items = useMemo(() => compactTrace(trace), [trace])
+  const items = useMemo(() => compactRunNodes(nodes), [nodes])
   const preview = items.slice(-4)
   const runningCount = items.filter((it) => String(it.status || '').toLowerCase() === 'running').length
   const isRunning = live || runningCount > 0
@@ -109,7 +102,7 @@ export function AgentTracePanel({
             const status = String(step.status || '').toLowerCase()
             return (
               <span
-                key={`${step.stage}-${idx}`}
+                key={`${step.id}-${idx}`}
                 className={cn(
                   'rounded-full border px-2 py-1 text-[10px]',
                   status === 'completed' && 'border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text)]',
@@ -118,7 +111,7 @@ export function AgentTracePanel({
                   status === 'skipped' && 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]'
                 )}
               >
-                {stageLabel(step.stage)}
+                {step.label}
               </span>
             )
           })}
@@ -135,10 +128,11 @@ export function AgentTracePanel({
         <ol className="space-y-1.5">
           {items.map((step, idx) => {
             const status = String(step.status || '').toLowerCase()
-            const Icon = STEP_ICON[step.stage] ?? CircleDashed
+            const rawStage = String(step.raw.stage || '').trim()
+            const Icon = STEP_ICON[rawStage] ?? CircleDashed
             return (
               <li
-                key={`${step.stage}-${idx}`}
+                key={`${step.id}-${idx}`}
                 className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
               >
                 <div className="flex items-start gap-2">
@@ -148,7 +142,7 @@ export function AgentTracePanel({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">
-                        {stageLabel(step.stage)}
+                        {step.label}
                       </div>
                       <span className="text-[10px] text-[var(--color-text-muted)]">
                         {t(
@@ -164,9 +158,9 @@ export function AgentTracePanel({
                         )}
                       </span>
                     </div>
-                    {step.detail && (
+                    {step.raw.detail && (
                       <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                        {step.detail}
+                        {step.raw.detail}
                       </div>
                     )}
                   </div>

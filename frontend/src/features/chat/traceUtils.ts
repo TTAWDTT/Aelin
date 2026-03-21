@@ -35,12 +35,45 @@ export interface ToolCallMeta {
   kind: ToolCallKind
 }
 
+export type RunNodeType =
+  | 'preflight'
+  | 'agent'
+  | 'plan'
+  | 'tool'
+  | 'plane'
+  | 'memory'
+  | 'fs'
+  | 'error'
+  | 'other'
+
+export interface RunNode {
+  id: string
+  index: number
+  type: RunNodeType
+  label: string
+  status: string
+  round?: number
+  parentId?: string
+  groupId?: string
+  provider?: string
+  meta?: Record<string, unknown>
+  raw: AelinToolStep
+}
+
 function normalizeStage(stage: string | undefined): string {
   return String(stage || '').trim()
 }
 
 function normalizeStatus(status: string | undefined): string {
   return String(status || '').trim().toLowerCase() || 'unknown'
+}
+
+export function formatStageLabel(stage: string | undefined): string {
+  const s = String(stage || '').trim()
+  if (!s) return 'Step'
+  return s
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase())
 }
 
 function inferProviderFromToolName(name: string): string {
@@ -118,12 +151,163 @@ function extractLatencyFromDetail(detail: string): number {
   return num
 }
 
+interface PlaneDetailMeta {
+  taskId?: string
+  state?: PlaneTaskState
+  goal?: string
+  requiresUserInput?: boolean
+}
+
+function parsePlaneDetail(detail: string): PlaneDetailMeta {
+  const text = String(detail || '')
+  const meta: PlaneDetailMeta = {}
+
+  const stateIndex = text.indexOf('state=')
+  if (stateIndex >= 0) {
+    const after = text.slice(stateIndex + 'state='.length)
+    const token = after.split(/[;,\s]/, 1)[0]?.trim() || ''
+    const lowered = token.toLowerCase()
+    if (lowered === 'waiting_user') meta.state = 'waiting_user'
+    else if (lowered === 'running') meta.state = 'running'
+    else if (lowered === 'queued') meta.state = 'queued'
+    else if (lowered === 'blocked') meta.state = 'blocked'
+    else if (lowered === 'completed') meta.state = 'completed'
+    else if (lowered === 'failed') meta.state = 'failed'
+  }
+
+  const taskIndex = text.indexOf('task_id=')
+  if (taskIndex >= 0) {
+    const after = text.slice(taskIndex + 'task_id='.length)
+    meta.taskId = after.split(/[;,\s]/, 1)[0]?.trim() || undefined
+  }
+
+  const goalIndex = text.indexOf('goal=')
+  if (goalIndex >= 0) {
+    const after = text.slice(goalIndex + 'goal='.length)
+    meta.goal = after.split('\n', 1)[0]?.trim() || undefined
+  }
+
+  const loweredText = text.toLowerCase()
+  if (loweredText.includes('waiting_user') || loweredText.includes('waiting for user')) {
+    meta.requiresUserInput = true
+  }
+
+  return meta
+}
+
+export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
+  if (!trace || trace.length === 0) return []
+
+  const nodes: RunNode[] = []
+
+  trace.forEach((step, index) => {
+    const stage = normalizeStage(step.stage)
+    const status = normalizeStatus(step.status)
+    const detail = String(step.detail || '')
+
+    let type: RunNodeType = 'other'
+    let label = formatStageLabel(stage)
+    let provider: string | undefined
+    const meta: Record<string, unknown> = {}
+    let round: number | undefined
+    let groupId: string | undefined
+
+    if (stage.startsWith('preflight_')) {
+      type = 'preflight'
+    } else if (
+      stage === 'plane_delegate' ||
+      stage === 'plane_status' ||
+      stage === 'plane_continue' ||
+      stage === 'plane_close' ||
+      stage === 'plane_catalog'
+    ) {
+      type = 'plane'
+      provider = 'plane'
+      const planeMeta = parsePlaneDetail(detail)
+      meta.state = planeMeta.state ?? 'unknown'
+      meta.taskId = planeMeta.taskId
+      meta.goal = planeMeta.goal
+      meta.requiresUserInput = planeMeta.requiresUserInput ?? false
+      groupId = planeMeta.taskId
+      round = extractRoundFromDetail(detail)
+      label = formatStageLabel(stage)
+    } else if (stage === 'agent_loop_tool') {
+      const head = detail.split(':', 1)[0]?.trim() || ''
+      const toolName = head || 'tool'
+      const kind = inferKindFromToolName(toolName)
+      provider = inferProviderFromToolName(toolName)
+      const latencyMs = extractLatencyFromDetail(detail)
+      const isWrite = looksLikeWriteCall(toolName, detail)
+
+      meta.toolName = toolName
+      meta.kind = kind
+      meta.isWrite = isWrite
+      meta.latencyMs = latencyMs
+
+      label = toolName
+      round = extractRoundFromDetail(detail)
+
+      if (kind === 'plane_tool') {
+        type = 'tool'
+      } else if (toolName.startsWith('memory') || toolName.includes('memory')) {
+        type = 'memory'
+      } else if (toolName.startsWith('file') || toolName.startsWith('fs_')) {
+        type = 'fs'
+      } else {
+        type = 'tool'
+      }
+    } else if (stage === 'agent_loop_read_batch' || stage === 'attachment_prefetch') {
+      type = 'tool'
+      provider = 'aelin-core'
+      meta.kind = 'core'
+      meta.isWrite = false
+      meta.latencyMs = extractLatencyFromDetail(detail)
+      round = extractRoundFromDetail(detail)
+      label = formatStageLabel(stage)
+    } else if (
+      stage.startsWith('agent_') ||
+      (stage.startsWith('agent_loop_') && stage !== 'agent_loop_read_batch' && stage !== 'agent_loop_tool') ||
+      stage.startsWith('deepagents_')
+    ) {
+      type = stage.includes('plan') ? 'plan' : 'agent'
+      label = formatStageLabel(stage)
+    }
+
+    if (status === 'failed' || status.includes('error')) {
+      if (type === 'other') type = 'error'
+    }
+
+    const node: RunNode = {
+      id: `node-${index}-${stage || 'step'}`,
+      index,
+      type,
+      label,
+      status,
+      round,
+      groupId,
+      provider,
+      meta: Object.keys(meta).length ? meta : undefined,
+      raw: step,
+    }
+
+    nodes.push(node)
+  })
+
+  return nodes
+}
+
 export function extractPlaneTaskMeta(trace: AelinToolStep[] | undefined): PlaneTaskMeta | null {
   if (!trace || trace.length === 0) return null
 
   const planeSteps = trace.filter((step) => {
     const stage = normalizeStage(step.stage)
-    return stage === 'plane_delegate' || stage === 'plane_status' || stage === 'plane_continue'
+    return (
+      stage === 'plane_delegate' ||
+      stage === 'plane_status' ||
+      stage === 'plane_continue' ||
+      stage === 'plane_close' ||
+      stage === 'plane_catalog'
+    )
   })
   if (planeSteps.length === 0) return null
 

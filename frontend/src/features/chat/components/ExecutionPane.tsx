@@ -3,7 +3,14 @@ import type { AelinToolStep } from '@/shared/api/types'
 import { AgentTracePanel } from './AgentTracePanel'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
-import { extractPlaneTaskMeta, extractToolCalls, type ToolCallMeta } from '../traceUtils'
+import {
+  buildRunNodes,
+  extractPlaneTaskMeta,
+  extractToolCalls,
+  type PlaneTaskMeta,
+  type RunNode,
+  type ToolCallMeta,
+} from '../traceUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { ProviderIcon } from './ProviderIcon'
 
@@ -17,11 +24,20 @@ type ExecutionTab = 'aelin' | 'plane' | 'tools'
 
 export function ExecutionPane({ trace, isStreaming, compact = false }: ExecutionPaneProps) {
   const { t } = useChatI18n()
-  const { open, setOpen } = useExecutionPaneStore()
+  const { open } = useExecutionPaneStore()
   const hasTrace = useMemo(() => trace && trace.length > 0, [trace])
+  const runNodes = useMemo<RunNode[]>(() => buildRunNodes(trace), [trace])
   const planeMeta = useMemo(() => extractPlaneTaskMeta(trace), [trace])
   const toolCalls = useMemo(() => extractToolCalls(trace), [trace])
-  const hasTools = toolCalls.length > 0
+
+  const agentNodes = useMemo(
+    () => runNodes.filter((n) => n.type === 'preflight' || n.type === 'agent' || n.type === 'plan' || n.type === 'error'),
+    [runNodes],
+  )
+  const planeNodes = useMemo(
+    () => runNodes.filter((n) => n.type === 'plane'),
+    [runNodes],
+  )
 
   const [tab, setTab] = useState<ExecutionTab>('aelin')
 
@@ -102,7 +118,7 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
                       : 'opacity-0 pointer-events-none translate-y-1',
                   )}
                 >
-                  <AgentTracePanel trace={trace} live={isStreaming} />
+                  <AgentTracePanel nodes={agentNodes} live={isStreaming} />
                 </div>
                 <div
                   className={cn(
@@ -113,7 +129,8 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
                   )}
                 >
                   <PlaneTraceView
-                    trace={trace}
+                    planeMeta={planeMeta}
+                    planeNodes={planeNodes}
                     toolCalls={toolCalls}
                     onShowAllTools={() => setTab('tools')}
                   />
@@ -126,7 +143,7 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
                       : 'opacity-0 pointer-events-none translate-y-1',
                   )}
                 >
-                  <ToolCallsView trace={trace} />
+                  <ToolCallsView toolCalls={toolCalls} />
                 </div>
               </div>
             </div>
@@ -168,18 +185,17 @@ function ExecutionTabButton({ id, active, label, disabled, onClick }: ExecutionT
 }
 
 function PlaneTraceView({
-  trace,
+  planeMeta,
+  planeNodes,
   toolCalls,
   onShowAllTools,
 }: {
-  trace: AelinToolStep[]
+  planeMeta: PlaneTaskMeta | null
+  planeNodes: RunNode[]
   toolCalls: ToolCallMeta[]
   onShowAllTools: () => void
 }) {
   const { t } = useChatI18n()
-  const planeMeta = extractPlaneTaskMeta(trace)
-  const planeSteps = trace.filter((step) => String(step.stage || '').trim() === 'agent_loop_plane')
-
   const relatedToolCalls = useMemo(
     () =>
       toolCalls
@@ -188,7 +204,7 @@ function PlaneTraceView({
     [toolCalls],
   )
 
-  if (!planeMeta && planeSteps.length === 0 && relatedToolCalls.length === 0) {
+  if (!planeMeta && planeNodes.length === 0 && relatedToolCalls.length === 0) {
     return (
       <p
         id="execution-pane-plane"
@@ -236,13 +252,13 @@ function PlaneTraceView({
         </div>
       )}
 
-      {planeSteps.length > 0 && (
+      {planeNodes.length > 0 && (
         <div className="relative pl-3">
           <div className="pointer-events-none absolute left-[7px] top-1 bottom-1 w-px bg-[var(--color-border)]" />
           <ol className="space-y-1.5 text-[11px]">
-            {planeSteps.map((step, idx) => (
+            {planeNodes.map((node, idx) => (
               <li
-                key={`${step.stage}-${idx}`}
+                key={`${node.id}-${idx}`}
                 className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
               >
                 <div className="flex items-start gap-2">
@@ -252,15 +268,15 @@ function PlaneTraceView({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-[11px] font-semibold text-[var(--color-text)]">
-                        {String(step.detail || '').split(';', 1)[0] || 'plane'}
+                        {node.label || 'plane'}
                       </span>
                       <span className="text-[11px] text-[var(--color-text-muted)]">
-                        {String(step.status || '') || '-'}
+                        {node.status || '-'}
                       </span>
                     </div>
-                    {step.detail && (
+                    {node.raw.detail && (
                       <div className="mt-0.5 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                        {step.detail}
+                        {node.raw.detail}
                       </div>
                     )}
                   </div>
@@ -316,9 +332,9 @@ function PlaneTraceView({
   )
 }
 
-function ToolCallsView({ trace }: { trace: AelinToolStep[] }) {
+function ToolCallsView({ toolCalls }: { toolCalls: ToolCallMeta[] }) {
   const { t } = useChatI18n()
-  const calls = extractToolCalls(trace)
+  const calls = toolCalls
 
   if (!calls.length) {
     return (
