@@ -38,7 +38,7 @@
 > 实测错误：  
 > `ToolException: Too many arguments to single-input tool device. Args: ['open_url', 'https://www.baidu.com']`
 
-- [ ] **2.1 设计 `device` StructuredTool 输入模型**
+- [x] **2.1 设计 `device` StructuredTool 输入模型**
   - 操作：
     - 在 `tools_device.py` 或相邻模块中定义一个 Pydantic 模型，例如：
       - `DeviceToolInput { action: Literal['open_url', ...], url: Optional[str], text: Optional[str], ... }`
@@ -47,7 +47,7 @@
   - 验收：
     - `DeviceToolInput` 的字段和语义在代码和 docstring 中清晰可见，便于 LLM 根据描述构造参数。
 
-- [ ] **2.2 调整 DeepAgents 工具注册为 StructuredTool**
+- [x] **2.2 调整 DeepAgents 工具注册为 StructuredTool**
   - 操作：
     - 在 `deepagents_graph.build_chat_tools` 中，将 `device` 从简单单参数工具改为 StructuredTool：
       - 函数签名形如 `def device_tool(input: DeviceToolInput) -> dict[str, Any]: ...`
@@ -58,7 +58,7 @@
       - `tool_trace` 中有一条 `agent_loop_tool: completed: "device(...)"`。
       - 桌面侧浏览器确实被打开（在 desktop 插件已正常运行的前提下）。
 
-- [ ] **2.3 增加最小集成测试覆盖**
+- [x] **2.3 增加最小集成测试覆盖**
   - 操作：
     - 在 `backend/tests/test_aelin_tools.py` 或新增 test 文件中，模拟一个简单的 device 调用（使用 mock/假 DeviceCenter）：
       - 构造 DeviceToolInput(`action='open_url', url='https://example.com'`)。

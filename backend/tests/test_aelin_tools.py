@@ -491,3 +491,44 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
     assert unknown["ok"] is False
     assert unknown["error"] == "unsupported_action"
 
+
+def test_deepagents_device_tool_structured_invocation(monkeypatch):
+    """Ensure the DeepAgents-facing device tool uses structured input and delegates correctly."""
+    from app.services import deepagents_graph as dag
+    from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
+
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_tool_device(tool_hub, args):  # type: ignore[no-untyped-def]
+        # Record the arguments for assertions and return a dummy success.
+        calls.append({"tool_hub": tool_hub, "args": dict(args)})
+        return {"ok": True, "echo": dict(args)}
+
+    monkeypatch.setattr(dag, "tool_device", _fake_tool_device)
+
+    policy = AelinToolPolicy(
+        max_calls_per_round=10,
+        max_tool_calls=20,
+        max_write_calls=10,
+        allow_write_tools=True,
+    )
+
+    tools, tool_runs, usage = dag.build_chat_tools(tool_hub=hub, policy=policy)
+    assert isinstance(usage, ToolPolicyUsage)
+
+    device_tool = next(t for t in tools if t.name == "device")
+
+    # Simulate the way DeepAgents would call the tool: structured payload.
+    result = device_tool.invoke({"action": "open_url", "url": "https://example.com"})
+
+    assert result["ok"] is True
+    assert calls, "device tool should have been invoked at least once"
+    recorded_args = calls[0]["args"]  # type: ignore[assignment]
+    assert recorded_args["action"] == "open_url"
+    assert recorded_args["url"] == "https://example.com"
+
+    # Tool runs should contain a completed device entry.
+    assert any(tr["name"] == "device" and tr["status"] == "completed" for tr in tool_runs)

@@ -6,7 +6,8 @@ from typing import Any, Sequence
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import create_file_data
-from langchain_core.tools import Tool
+from langchain_core.tools import Tool, StructuredTool
+from pydantic import BaseModel, Field
 
 from app.services.aelin_tools import AelinToolHub, _result_error
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
@@ -15,6 +16,33 @@ from app.services.tools_web import tool_web_search
 from app.services.tools_files import tool_attachment_search
 from app.services.tools_gws import tool_google_workspace
 from app.services.tools_device import tool_device, tool_screen_get
+
+
+class DeviceToolInput(BaseModel):
+    """
+    Structured input schema for the unified `device` tool.
+
+    We intentionally keep `action` as a free string here and rely on the
+    underlying `tool_device` implementation to return a clear
+    "unsupported device action" error for unknown actions, instead of
+    failing Pydantic validation before the tool has a chance to respond.
+    """
+
+    action: str = Field(
+        ...,
+        description="Device action to perform. Allowed values: "
+        "'status', 'open_url', 'open_aelin'. Other values will result in "
+        "an 'unsupported device action' error.",
+    )
+    url: str | None = Field(
+        default=None,
+        description="HTTP or HTTPS URL to open when action == 'open_url'.",
+    )
+    route: str | None = Field(
+        default=None,
+        description="Optional route to activate when action == 'open_aelin', "
+        "for example '/'.",
+    )
 
 
 def build_chat_tools(
@@ -99,10 +127,13 @@ def build_chat_tools(
 
     def _make_device_tool(description: str) -> Tool:
         """
-        Specialized wrapper for the `device` tool so that DeepAgents can call it
-        either with a dict input ({"action": "...", "url": "..."}) or with
-        positional arguments like ["open_url", "https://example.com"] without
-        tripping the single-input Tool contract.
+        Structured wrapper for the unified `device` tool.
+
+        The underlying function accepts a single `DeviceToolInput` payload so
+        that DeepAgents / LangChain treat this as a StructuredTool instead of
+        a single-string tool. This avoids the
+        "Too many arguments to single-input tool device" error and gives the
+        model a clear JSON schema for constructing arguments.
         """
 
         def _run_device(action: str, url: str | None = None, route: str | None = None) -> dict[str, Any]:
@@ -159,7 +190,12 @@ def build_chat_tools(
             )
             return result
 
-        return Tool.from_function(func=_run_device, name="device", description=description)
+        return StructuredTool.from_function(
+            func=_run_device,
+            name="device",
+            description=description,
+            args_schema=DeviceToolInput,
+        )
 
     # DeepAgents 主图只暴露核心能力型工具，不再包含 memory/context/profile 等
     # 旧式记忆/画像入口；这些能力今后由 AGENTS.md + DeepAgents Memory 负责。
