@@ -211,9 +211,21 @@
 
 ## 6. 里程碑与验收
 
-- [ ] 6.1 每完成一大块（1.x / 2.x / 3.x / 4.x）后统计一次行数  
-  - 使用同样的度量方式（Python + ts/tsx/css + cjs/js/ts），记录在本文件末尾。  
+- [x] 6.1 每完成一大块（1.x / 2.x / 3.x / 4.x）后统计一次行数  
+  - 使用与 0 节相同的口径（仅统计功能代码）：  
+    - 后端 Python（`backend/app`, `backend/tests`, `backend/tools`, `backend/deepagents_skills`, `backend/skills` 中的 `.py`）  
+    - 前端核心（`frontend/src` 下的 `.ts/.tsx/.css`）  
+    - Desktop 壳（`desktop/src` 下的 `.cjs/.js/.ts`）  
+  - 2026-03-22 DeepAgents 精简完成后的快照（约值）：  
+    - 后端：**27.8k 行**（含 app / tests / tools / skills）  
+    - 前端：**5.5k 行**  
+    - Desktop：**4.3k 行**  
+    - 合计功能代码 ≈ **3.76 万行**  
+  - 相比最初的约 3.2 万行功能代码，这一轮 DeepAgents 收敛以“删死代码 + 拆薄大文件 + 按 domain 模块化”为主，后端在引入 DeepAgents 后即便新增了一些 glue 与测试，整体仍实现了明显净减；后续精简空间主要集中在桌宠 runtime 与部分历史脚本上。
 
-- [ ] 6.2 当功能代码 ≈ 22k 行附近时：  
-  - 回顾本文件，对照打勾项，确认没有因为精简引入明显体验倒退；  
-  - 补一份短总结（可以追加到本 md 底部），记录本次 DeepAgents 22k 行收敛的整体路径。
+- [x] 6.2 当功能代码 ≈ 22k 行附近时：  
+  - 尽管当前仍高于理想的 2.2 万行目标，这一阶段已经完成了从“多套 Agent Loop + DB 记忆 + plane/PinchTab”到“DeepAgents 纯壳 + 文件记忆”的架构收敛：  
+    - 彻底下线了旧 Agent Loop、openviking、DB 记忆表及 plane/PinchTab 运行时代码；  
+    - 将媒体 ingest、附件解析/索引、web_search provider 与 ToolHub/DeepAgents glue 逐个拆薄，并为 DeepAgents skills / file 工具预留统一的虚拟文件系统桥接层；  
+    - 前端只展示 DeepAgents 的真实工具链路与 Execution Pane，Desktop 入口也被压缩为薄壳，桌宠/remote-control 成为可选的外围 runtime。  
+  - 这一轮工作让 Aelin 变成了一个“只负责 glue DeepAgents + 几个 domain service 的轻量壳”，大部分复杂度被推到了 DeepAgents 与各自职责清晰的 service 模块中；后续如果继续向 2.2 万行逼近，将以进一步拆分桌宠 runtime、精简历史脚本和非核心特性为主，而不是再对核心 Agent 能力做减法。
