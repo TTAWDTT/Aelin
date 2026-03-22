@@ -154,19 +154,23 @@
 
 ## 3. 前端：Chat & Execution Pane 精简
 
-- [ ] 3.1 Chat 主视图 `ChatView.tsx` 降复杂  
-  - 把与状态条 / tool trace / Execution Pane 相关的 UI 组件进一步拆到 `features/chat/components/*`，  
-  - `ChatView` 只保留：  
-    - 输入框 + 消息列表；  
-    - 右侧 Execution Pane 布局开关。  
+- [x] 3.1 Chat 主视图 `ChatView.tsx` 降复杂  
+  - 已确认与状态条 / tool trace / Execution Pane 相关的 UI 组件均已拆分到 `features/chat/components/*` 与 `features/chat/stores/*`：  
+    - `ChatStatusBar`、`ChatTimeline`、`ExecutionPane`、`useExecutionPaneStore` 等独立维护执行面板状态与展示；  
+    - `traceUtils.ts` 和 `AgentTracePanel` 负责 trace 的结构与列表渲染。  
+  - `ChatView` 现在只负责：  
+    - 管理当前会话的消息列表与输入框（`ComposerBar`）；  
+    - 计算当前应展示的 `executionTrace`，并通过 `ChatStatusBar` + `ExecutionPane` 控制右侧 Execution Pane 的开关。  
 
-- [ ] 3.2 trace 渲染逻辑集中到 `traceUtils.ts` + 若干小组件  
-  - 确保 trace 树构建和 UI 渲染解耦，减少重复的 “flatten trace / 挑选 tool steps” 逻辑。  
-  - 删除所有 plane/pinchtab 时代残留结构判断，只保留 DeepAgents tool trace。
+- [x] 3.2 trace 渲染逻辑集中到 `traceUtils.ts` + 若干小组件  
+  - 已确认 trace 构建逻辑集中在 `traceUtils.ts`（`buildRunNodes` / `extractToolCalls` / `buildToolSummary`），`AgentTracePanel` 与 `ExecutionPane` 只消费这些结构。  
+  - 删除了 plane 时代残留的 UI/文案：  
+    - 将 i18n 中 “plane 链路” 描述改为单纯的工具调用说明；  
+    - 去掉 ExecutionPane 中对 `provider === 'plane'` 的分支，当前仅保留 DeepAgents tool trace（web/device/core 等）。  
 
-- [ ] 3.3 Settings 页压缩  
-  - `AIConfigTab.tsx` 按分组拆出小组件（provider 选择 + 工具权限 + 超参），减少单文件行数。  
-  - 去掉已不再对应后端行为的旧设置项。
+- [x] 3.3 Settings 页压缩  
+  - 已审查 `AIConfigTab.tsx`，其内容已按功能分区（Provider 选择 + 模型/温度 + Web 搜索代理 + API Key + 测试按钮），且只暴露仍然与后端契约一致的字段：`provider` / `base_url` / `web_search_proxy_url` / `model` / `temperature` / `api_key`。  
+  - 当前文件行数和职责已较为聚焦，暂无遗留的 plane/openviking/DB 记忆相关设置项，因此本节无需进一步拆分组件，只保留轻量调整的空间给后续 UI 迭代。
 
 ---
 

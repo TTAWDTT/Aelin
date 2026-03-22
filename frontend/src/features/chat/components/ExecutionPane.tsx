@@ -228,7 +228,6 @@ function ToolCallCard({ call }: { call: ToolCallMeta }) {
     const p = call.provider.toLowerCase()
     if (p === 'google') return 'Google'
     if (p === 'device') return 'Device'
-    if (p === 'plane') return 'Plane'
     if (p === 'web') return 'Web'
     return 'Core'
   })()

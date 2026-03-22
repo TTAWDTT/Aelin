@@ -106,7 +106,7 @@ const ZH: Record<ChatKeys, string> = {
   'trace.executionPane.empty': '暂无执行信息',
   'trace.executionPane.headerOpen': '执行面板',
   'trace.executionPane.headerClosed': '打开执行面板',
-  'trace.executionPane.emptyDetail': '暂无可展示的工具调用或 plane 链路。当 Aelin 使用工具或 plane 处理你的请求时，这里会显示更详细的执行步骤。',
+  'trace.executionPane.emptyDetail': '暂无可展示的工具调用。当 Aelin 使用工具处理你的请求时，这里会显示更详细的执行步骤。',
   'trace.tools.empty': '本轮暂未调用任何原子工具。',
   'trace.tools.round': 'Round {round}',
   'trace.tools.count': '{count} 个调用',
