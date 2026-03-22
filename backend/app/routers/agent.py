@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -17,7 +14,6 @@ from app.services.foundation.model_catalog import get_model_catalog
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-# ... (Previous helper functions: _default_config, _config_out, _get_llm_service) ...
 def _default_config() -> AgentConfigOut:
     return AgentConfigOut(
         provider="rule_based",
@@ -46,7 +42,6 @@ def _config_out(db: Session, user_id: int) -> AgentConfigOut:
 
 
 def _get_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
-    """Returns (service, provider_type)"""
     config = _config_out(db, user.id)
     provider = (config.provider or "rule_based").lower()
 
@@ -64,7 +59,6 @@ def _get_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
     return LLMService(config, api_key), "openai"
 
 
-# ... (Rest of the router: catalog, config, test) ...
 @router.get("/catalog", response_model=ModelCatalogResponse)
 def model_catalog(force_refresh: bool = Query(default=False)):
     return get_model_catalog(force_refresh=force_refresh)
@@ -127,7 +121,7 @@ def test_agent(
                 {"role": "user", "content": "ping"},
             ],
             max_tokens=30,
-            stream=False
+            stream=False,
         )
         return AgentTestResponse(ok=True, provider=service.config.provider, message=str(out) or "OK")
     except ValueError as e:

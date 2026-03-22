@@ -42,10 +42,8 @@ from app.services.aelin.core_support import (
     _get_memory_summary_for_chat,
     _file_memory,
 )
-from app.routers.aelin_text_helpers import (
-    _now_ms,
-    _pick_expression,
-)
+from app.services.aelin.expressions import _pick_expression
+from app.services.aelin.streaming import _now_ms
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 _log = logging.getLogger(__name__)
 

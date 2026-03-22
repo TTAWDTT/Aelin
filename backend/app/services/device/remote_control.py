@@ -12,11 +12,9 @@ from app import crud
 from app.models import User
 from app.schemas import AelinChatRequest, AelinChatResponse, AelinToolStep, RemoteControlExecuteRequest
 from app.services.aelin.chat_dispatch import dispatch_aelin_chat
-from app.services.aelin.core import (
-    _now_ms,
-    _pick_expression,
-    _try_agent_loop_chat,
-)
+from app.services.aelin.core import _try_agent_loop_chat
+from app.services.aelin.expressions import _pick_expression
+from app.services.aelin.streaming import _now_ms
 from app.services.device.device_center import device_status_snapshot
 from app.settings import settings
 

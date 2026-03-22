@@ -118,7 +118,6 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     app.include_router(auth.router, prefix="/api/v1")
-    app.include_router(auth.legacy_router, prefix="/api/v1")
     app.include_router(agent.router, prefix="/api/v1")
     app.include_router(aelin.router, prefix="/api/v1")
     app.include_router(aelin_chat.router, prefix="/api/v1")

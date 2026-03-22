@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session, create_session
 from app.models import AttachmentDocument, User
-from app.routers.aelin import _dispatch_aelin_chat
-from app.routers.aelin_text_helpers import _now_ms, _sse_event
+from app.services.aelin.core import _dispatch_aelin_chat
+from app.services.aelin.streaming import _now_ms, _sse_event
 from app.routers.auth import get_current_user
 from app.schemas import (
     AelinAttachmentUploadResponse,
