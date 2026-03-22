@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.aelin_runtime import normalize_workspace as _normalize_workspace
+
+
 def _iso(dt: datetime | None) -> str:
     if dt is None:
         return ""
@@ -14,11 +17,6 @@ def _iso(dt: datetime | None) -> str:
         return dt.astimezone(timezone.utc).isoformat()
     except Exception:
         return ""
-
-
-def _normalize_workspace(value: str) -> str:
-    clean = " ".join((value or "").strip().split())
-    return clean[:64] if clean else "default"
 
 
 def _safe_json(payload: Any) -> str:

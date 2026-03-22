@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
-
-from app.schemas import (
-    AelinCitation,
-    AelinMemoryLayers,
-    AelinMemoryLayerItem,
-)
 from app.services.agent_memory import AgentMemoryService
 from app.services.aelin_context_service import (
     build_context_bundle as _build_context_bundle_service,
@@ -17,13 +10,11 @@ from app.services.aelin_context_service import (
 )
 from app.services.aelin_runtime import normalize_workspace as _normalize_workspace
 from app.services.file_memory_bridge import file_memory_bridge
-from app.services.summarizer import RuleBasedSummarizer
-from app.services.web_search import WebSearchResult, WebSearchService
+from app.services.web_search import WebSearchService
 from app.settings import settings
 
 
 _memory = AgentMemoryService()
-_summarizer = RuleBasedSummarizer()
 _web_search = WebSearchService()
 _file_memory = file_memory_bridge
 
@@ -81,51 +72,11 @@ def _build_cached_base_context_bundle(db: Session, user_id: int, *, workspace: s
 
 
 def _empty_memory_snapshot() -> dict[str, Any]:
-    return {
-        "active_items": [],
-        "matched_items": [],
-        "active_count": 0,
-        "matched_count": 0,
-        "matched_file_items": [],
-    }
-
-
-def _build_cached_memory_snapshot(
-    db: Session,
-    *,
-    user_id: int,
-    workspace: str,
-    query: str,
-    include_file_memory: bool,
-) -> dict[str, Any]:
-    # The old follow-up subsystem is gone; only file-memory retrieval remains,
-    # and that is now handled directly by DeepAgents tools. For compatibility
-    # this returns an empty snapshot.
-    _ = (db, user_id, workspace, query, include_file_memory)
-    return _empty_memory_snapshot()
-
-
-def _to_citations(raw_focus_items: list[dict], max_items: int) -> list[AelinCitation]:
-    items: list[AelinCitation] = []
-    for row in raw_focus_items[: max(1, min(20, max_items))]:
-        try:
-            items.append(
-                AelinCitation(
-                    message_id=int(row.get("message_id") or 0),
-                    source=str(row.get("source") or "unknown"),
-                    source_label=str(row.get("source_label") or row.get("source") or "unknown"),
-                    sender=str(row.get("sender") or ""),
-                    sender_avatar_url=(
-                        str(row.get("sender_avatar_url") or "").strip() or None
-                    ),
-                    title=str(row.get("title") or ""),
-                    received_at=str(row.get("received_at") or ""),
-                    score=float(row.get("score") or 0.0),
-                )
-            )
-        except Exception:
-            continue
-    return items
+    # Legacy follow-up/citation snapshot has been fully removed in DeepAgents
+    # mode. This helper is kept only for type-compatibility in aelin_core,
+    # but callers should not rely on its structure and should instead use
+    # DeepAgents-native memory and tool traces.
+    return {}
 
 
 def _get_memory_summary_for_chat(db: Session, user_id: int, *, workspace: str = "default") -> str:
@@ -135,12 +86,13 @@ def _get_memory_summary_for_chat(db: Session, user_id: int, *, workspace: str = 
     说明：
     - 这是 DeepAgents chat path 获取 memory_summary 的唯一入口；其他
       代码不得绕过本函数自行拼装 summary，避免出现多套不一致的记忆视图。
-    - 实现上仅委托 `AgentMemoryService.build_system_memory_prompt`，这样
-      DeepAgents 始终看到与 `/memory/AGENTS.md` 一致的文件视图，而不会
-      回落到任何 legacy DB 字段。
+    - 实现上仅委托 `AgentMemoryService.build_system_memory_prompt`，并且
+      显式传入 workspace，这样 DeepAgents 始终看到与当前 workspace 下
+      `/memory/AGENTS.md` 一致的文件视图，而不会回落到任何 legacy DB 字段。
     """
+    workspace_norm = _normalize_workspace(workspace)
     try:
-        summary = _memory.build_system_memory_prompt(db, user_id, query="")
+        summary = _memory.build_system_memory_prompt(db, user_id, workspace=workspace_norm, query="")
     except Exception:
         # In DeepAgents 模式下，记忆完全依赖 `/memory/AGENTS.md` 虚拟文件；当构建失败时，
         # 不再回退到任何 DB 记忆字段，直接返回空串由上层兜底。
@@ -153,8 +105,6 @@ __all__ = [
     "_build_context_bundle",
     "_build_cached_base_context_bundle",
     "_empty_memory_snapshot",
-    "_build_cached_memory_snapshot",
-    "_to_citations",
     "_get_memory_summary_for_chat",
     "_file_memory",
     "_memory",

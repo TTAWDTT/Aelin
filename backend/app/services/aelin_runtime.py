@@ -54,28 +54,25 @@ def resolve_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
 
 
 def normalize_workspace(raw: str) -> str:
-    clean = " ".join((raw or "").strip().split())
-    return (clean[:64] if clean else "default") or "default"
+    """
+    Normalize a workspace identifier into a safe, slug-like token.
 
+    The result is intentionally conservative so it can be used both as a
+    logical workspace key and as part of a filesystem path, without risking
+    directory traversal or accidental collisions caused by whitespace and
+    separators.
+    """
+    import re
 
-def json_from_text(raw: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(raw or "{}")
-    except Exception:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    clean = " ".join((raw or "").strip().split()).lower()
+    if not clean:
+        return "default"
 
-
-def parse_iso_datetime(raw: str | None) -> datetime | None:
-    if not raw:
-        return None
-    text = str(raw).strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except Exception:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
+    # Replace any character that is not a-z / 0-9 / '_' / '-' / CJK with '-'. This
+    # also strips path separators like '/' and '\\', as well as dots, so a
+    # value such as '../../etc/passwd' is normalized to a harmless slug while
+    # still allowing human-friendly Chinese workspace names.
+    slug = re.sub(r"[^a-z0-9_\-\u4e00-\u9fff]+", "-", clean).strip("-")
+    if not slug:
+        return "default"
+    return slug[:64]

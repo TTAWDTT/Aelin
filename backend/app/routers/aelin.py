@@ -6,9 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import User
-from app.schemas import AelinChatRequest, AelinChatResponse
-import app.services.aelin_core as _core
-from app.services.aelin_core import (  # re-export for tests/legacy callers
+from app.schemas import (
     AelinAction,
     AelinChatRequest,
     AelinChatResponse,
@@ -17,6 +15,9 @@ from app.services.aelin_core import (  # re-export for tests/legacy callers
     AelinMemoryLayers,
     AelinToolStep,
     AelinTodoItem,
+)
+import app.services.aelin_core as _core
+from app.services.aelin_core import (  # re-export for tests/legacy callers
     _try_agent_loop_chat,
     _aelin_chat_impl,
 )
@@ -25,8 +26,6 @@ from app.services.aelin_core_support import (
     _build_cached_base_context_bundle,
     _scoped_web_search_service,
     _empty_memory_snapshot,
-    _build_cached_memory_snapshot,
-    _to_citations,
     _get_memory_summary_for_chat,
 )
 from app.routers.aelin_text_helpers import (
@@ -40,15 +39,8 @@ from app.routers.aelin_text_helpers import (
     _pick_expression,
 )
 from app.services.web_search import WebSearchService
-from app.services.aelin_media_pipeline import media_ingest_service as _media_ingest
 from app.services.file_memory_bridge import file_memory_bridge as _file_memory
 from app.services.agent_memory import AgentMemoryService as _AgentMemoryService
-from app.routers.aelin_web_compat import (
-    _build_web_query_pack,
-    _build_retry_web_queries,
-    _extract_search_subject,
-    _decompose_web_context_boundaries,
-)
 
 
 # Re-export the FastAPI router defined in aelin_core so that `app.routers.aelin`
@@ -59,7 +51,6 @@ router = _core.router
 # Backwards-compatible symbols expected by tests and legacy callers.
 _web_search: WebSearchService = _scoped_web_search_service()
 _memory = _AgentMemoryService()
-
 
 def _dispatch_aelin_chat(
     payload: AelinChatRequest,

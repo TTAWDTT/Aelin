@@ -1,2 +1,1 @@
-"""MercuryDesk backend application package."""
-
+"""Aelin backend application package."""

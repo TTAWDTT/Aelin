@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.agent_memory import AgentMemoryService, MemoryNote, serialize_focus_item
+from app.services.agent_memory import AgentMemoryService, MemoryNote
 
 
 def tool_context_get(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
@@ -22,12 +22,6 @@ def tool_context_get(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any
         hub._memory.get_summary(hub.db, hub.user_id, workspace=hub.workspace)
         or ""
     )
-    focus_items = [
-        serialize_focus_item(item)
-        for item in hub._memory.build_focus_items(
-            hub.db, hub.user_id, query=query, limit=limit
-        )
-    ]
     todos = hub._memory.list_todos(
         hub.db,
         hub.user_id,
@@ -38,7 +32,7 @@ def tool_context_get(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any
     return _result_ok(
         workspace=hub.workspace,
         summary=summary,
-        focus_items=focus_items,
+        focus_items=[],
         todos=todos,
     )
 
@@ -107,4 +101,3 @@ def tool_profile(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
         for it in notes
     ]
     return _result_items(items)
-

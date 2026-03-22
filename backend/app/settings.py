@@ -9,35 +9,20 @@ _BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="MERCURYDESK_",
+        env_prefix="AELIN_",
         env_file=(str(_BACKEND_DIR / ".env"), ".env", "backend/.env"),
         extra="ignore",
     )
 
-    database_url: str = "sqlite+pysqlite:///./mercurydesk.db"
+    database_url: str = "sqlite+pysqlite:///./aelin.db"
     secret_key: str = "dev-secret-change-me"
     access_token_expire_minutes: int = 60 * 24
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     media_dir: str = "./media"
-    rsshub_base_url: str = "https://rsshub.app"
     models_catalog_url: str = "https://models.dev/api.json"
     models_catalog_refresh_seconds: int = 60 * 60
     frontend_url: str = "http://127.0.0.1:5173"
     api_public_base_url: str = "http://127.0.0.1:8000"
-    oauth_redirect_base_url: str = "http://127.0.0.1:8000"
-    forward_inbound_domain: str = "inbox.localhost"
-    gmail_client_id: str | None = None
-    gmail_client_secret: str | None = None
-    outlook_client_id: str | None = None
-    outlook_client_secret: str | None = None
-    github_client_id: str | None = None
-    github_client_secret: str | None = None
-
-    # X (Twitter) API v2 Bearer Token for official API access
-    x_bearer_token: str | None = None
-
-    # Sync job concurrency (accounts can be synced in parallel).
-    sync_job_max_workers: int = 12
 
     # Crawler runtime tuning.
     crawler_headless: bool = False
@@ -46,11 +31,7 @@ class Settings(BaseSettings):
     crawler_rsshub_parallelism: int = 12
     crawler_playwright_poll_seconds: int = 10
 
-    # File memory bridge (OpenViking-compatible projection + retrieval fallback).
-    aelin_parallel_memory_draft_enabled: bool = True
-    aelin_parallel_memory_draft_workers: int = 4
-    aelin_parallel_memory_draft_timeout_seconds: float = 2.0
-    aelin_parallel_memory_draft_min_confidence: float = 0.58
+    # File memory bridge (AGENTS.md-based memory only).
     aelin_base_context_cache_ttl_seconds: float = 4.0
     aelin_base_context_cache_max_entries: int = 128
 
@@ -121,24 +102,6 @@ class Settings(BaseSettings):
     backend_log_level: str = "INFO"
 
     # Media ingest (yt-dlp) network/auth tuning.
-    media_ingest_cookie_mode: str = "off"  # off | browser | file
-    media_ingest_cookie_browser: str = "chrome"  # chrome | edge | firefox | safari
-    media_ingest_cookie_browser_profile: str = ""  # e.g. "Default"
-    media_ingest_cookie_file: str = ""  # Netscape cookie file path
-    media_ingest_temp_dir: str = ""  # optional temp workdir root; defaults to OS temp
-    media_ingest_proxy_url: str = ""  # e.g. http://127.0.0.1:7890
-    media_ingest_douyin_auto_login_enabled: bool = True
-    media_ingest_douyin_browser_profile_dir: str = "./browser_data/douyin_media"
-    media_ingest_douyin_login_url: str = "https://www.douyin.com/"
-    media_ingest_douyin_asr_enabled: bool = True
-    media_ingest_douyin_asr_backend: str = "auto"  # auto | faster_whisper | openai
-    media_ingest_douyin_asr_model: str = "whisper-1"
-    media_ingest_douyin_asr_local_model: str = "small"
-    media_ingest_douyin_asr_local_device: str = "auto"  # auto | cpu | cuda
-    media_ingest_douyin_asr_local_compute_type: str = "int8"
-    media_ingest_douyin_asr_local_beam_size: int = 4
-    media_ingest_douyin_asr_max_audio_seconds: int = 120
-    media_ingest_douyin_asr_timeout_seconds: int = 80
     browser_tool_headless: bool = True
     browser_tool_open_external_on_navigate: bool = False
     browser_tool_mode_default: str = "auto"  # auto | managed | cdp
@@ -152,7 +115,12 @@ class Settings(BaseSettings):
     browser_tool_idle_ttl_seconds: int = 900
     browser_tool_profile_dir: str = "./browser_data/agent_browser"
 
-    # Optional Fernet key used to encrypt stored secrets (OAuth tokens, IMAP passwords).
+    # Optional extra DeepAgents skills root dir (for example chrome-cdp-skill).
+    # When set, all subdirectories under this path will be exposed as
+    # `/skills/external/<skill-name>/` to the DeepAgents SkillsMiddleware.
+    deepagents_extra_skills_dir: str = ""
+
+    # Optional Fernet key used to encrypt stored secrets.
     # Generate one via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str | None = None
 

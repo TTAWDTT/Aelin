@@ -31,43 +31,6 @@ def _extract_terms(query: str) -> list[str]:
     return out
 
 
-def _note_candidates_from_user_text(text: str) -> list[str]:
-    src = _clean_text(text)
-    if not src:
-        return []
-
-    patterns = [
-        r"(?:请)?记住[:：]?\s*(.+)$",
-        r"帮我记(?:一下|住)?[:：]?\s*(.+)$",
-        r"remember(?: that)?[:：]?\s*(.+)$",
-        r"我最近在关注[:：]?\s*(.+)$",
-        r"我最近在看[:：]?\s*(.+)$",
-    ]
-    out: list[str] = []
-    for p in patterns:
-        m = re.search(p, src, flags=re.IGNORECASE)
-        if not m:
-            continue
-        note = _truncate(_clean_text(m.group(1)), 280)
-        if note:
-            out.append(note)
-
-    if not out:
-        m = re.search(r"我(关注|喜欢|不喜欢)\s*(.+)$", src)
-        if m:
-            note = _truncate(f"{m.group(1)}: {_clean_text(m.group(2))}", 280)
-            if note:
-                out.append(note)
-    return out
-
-
-def _parse_json_or_none(raw: str) -> Any | None:
-    try:
-        return json.loads(raw)
-    except Exception:
-        return None
-
-
 def _iso_or_empty(value: datetime | None) -> str:
     if value is None:
         return ""
@@ -75,5 +38,4 @@ def _iso_or_empty(value: datetime | None) -> str:
         return value.isoformat()
     except Exception:
         return ""
-
 

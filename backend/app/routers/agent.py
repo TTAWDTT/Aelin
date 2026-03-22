@@ -1,35 +1,21 @@
 from __future__ import annotations
 
-from typing import Iterator, Literal
+from typing import Literal
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app import crud
 from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
-from app.schemas import (
-    AgentConfigOut,
-    AgentConfigUpdate,
-    AgentSummarizeRequest,
-    AgentSummarizeResponse,
-    AgentTestResponse,
-    DraftReplyRequest,
-    DraftReplyResponse,
-    ModelCatalogResponse,
-)
+from app.schemas import AgentConfigOut, AgentConfigUpdate, AgentTestResponse, ModelCatalogResponse
 from app.services.encryption import decrypt_optional
 from app.services.llm import LLMService
 from app.services.model_catalog import get_model_catalog
-from app.services.summarizer import RuleBasedSummarizer
 
 router = APIRouter(prefix="/agent", tags=["agent"])
-
-_summarizer = RuleBasedSummarizer()
 
 # ... (Previous helper functions: _default_config, _config_out, _get_llm_service) ...
 def _default_config() -> AgentConfigOut:
@@ -78,87 +64,10 @@ def _get_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
     return LLMService(config, api_key), "openai"
 
 
-# ... (Rest of the router: catalog, summarize, draft-reply, config, test) ...
+# ... (Rest of the router: catalog, config, test) ...
 @router.get("/catalog", response_model=ModelCatalogResponse)
 def model_catalog(force_refresh: bool = Query(default=False)):
     return get_model_catalog(force_refresh=force_refresh)
-
-
-@router.post("/summarize", response_model=AgentSummarizeResponse)
-def summarize(
-    payload: AgentSummarizeRequest,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    service, provider = _get_llm_service(db, current_user)
-
-    if provider == "rule_based":
-        return AgentSummarizeResponse(summary=_summarizer.summarize(payload.text))
-
-    try:
-        summary = service.summarize(payload.text, stream=False)
-        return AgentSummarizeResponse(summary=str(summary))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/summarize/stream")
-def summarize_stream(
-    payload: AgentSummarizeRequest,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    service, provider = _get_llm_service(db, current_user)
-
-    if provider == "rule_based":
-        # Simulate stream for rule-based
-        def _iter():
-            yield _summarizer.summarize(payload.text)
-        return StreamingResponse(_iter(), media_type="text/event-stream")
-
-    try:
-        generator = service.summarize(payload.text, stream=True)
-        return StreamingResponse(generator, media_type="text/event-stream")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/draft-reply", response_model=DraftReplyResponse)
-def draft_reply(
-    payload: DraftReplyRequest,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    service, provider = _get_llm_service(db, current_user)
-
-    if provider == "rule_based":
-        return DraftReplyResponse(draft=_summarizer.draft_reply(payload.text, tone=payload.tone))
-
-    try:
-        draft = service.draft_reply(payload.text, tone=payload.tone, stream=False)
-        return DraftReplyResponse(draft=str(draft))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/draft-reply/stream")
-def draft_reply_stream(
-    payload: DraftReplyRequest,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    service, provider = _get_llm_service(db, current_user)
-
-    if provider == "rule_based":
-        def _iter():
-            yield _summarizer.draft_reply(payload.text, tone=payload.tone)
-        return StreamingResponse(_iter(), media_type="text/event-stream")
-
-    try:
-        generator = service.draft_reply(payload.text, tone=payload.tone, stream=True)
-        return StreamingResponse(generator, media_type="text/event-stream")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/config", response_model=AgentConfigOut)

@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import get_session, create_session
 from app.models import AttachmentDocument, User
 from app.routers.aelin import _dispatch_aelin_chat
 from app.routers.aelin_text_helpers import _now_ms, _sse_event
@@ -24,7 +24,6 @@ from app.schemas import (
     AelinFileMemoryContentResponse,
 )
 from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
-from app.services.aelin_chat_worker import run_aelin_chat_with_local_session
 from app.services.file_memory_bridge import file_memory_bridge
 
 
@@ -191,12 +190,20 @@ def aelin_chat_stream(
                     str(payload.workspace or "default")[:64],
                     _preview(str(payload.query or "")),
                 )
-                result = run_aelin_chat_with_local_session(
-                    payload,
-                    user_id=int(current_user.id),
-                    event_cb=_push,
-                    cancel_token=cancel_token,
-                )
+                local_db = create_session()
+                try:
+                    result = _dispatch_aelin_chat(
+                        payload,
+                        local_db,
+                        current_user,
+                        event_cb=_push,
+                        cancel_token=cancel_token,
+                    )
+                finally:
+                    try:
+                        local_db.close()
+                    except Exception:
+                        pass
                 _LOG.info(
                     "aelin_stream worker_final req=%s uid=%s answer_len=%s actions=%s traces=%s",
                     req_id,

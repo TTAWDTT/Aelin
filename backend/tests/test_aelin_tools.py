@@ -293,26 +293,12 @@ def test_attachment_search_prefers_explicit_ids():
 
 def test_context_get_reuses_shared_memory_primitives_without_snapshot():
     fake_web = _FakeWebSearch()
-    calls = {"get_summary": 0, "build_focus_items": 0, "list_todos": 0}
+    calls = {"get_summary": 0, "list_todos": 0}
 
     class _Memory:
         def get_summary(self, db, user_id, *, workspace: str = "default"):
             calls["get_summary"] += 1
             return "summary"
-
-        def build_focus_items(self, db, user_id, *, query="", limit=8):
-            calls["build_focus_items"] += 1
-            return [
-                SimpleNamespace(
-                    message_id=11,
-                    source="imap",
-                    sender="alice",
-                    sender_avatar_url=None,
-                    title="mail title",
-                    received_at="2026-03-11 10:00",
-                    score=8.3,
-                )
-            ]
 
         def list_todos(self, db, user_id, *, include_done=True, limit=100, workspace: str = "default"):
             calls["list_todos"] += 1
@@ -330,10 +316,9 @@ def test_context_get_reuses_shared_memory_primitives_without_snapshot():
 
     assert result["ok"] is True
     assert result["summary"] == "summary"
-    assert result["focus_items"][0]["source_label"] == "Email"
+    assert result["focus_items"] == []
     assert result["todos"][0]["title"] == "todo"
     assert calls["get_summary"] == 1
-    assert calls["build_focus_items"] == 1
     assert calls["list_todos"] == 1
 
 

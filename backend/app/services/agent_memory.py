@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 import re
 from typing import Any, Iterable
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Contact, Message
 from app.services.file_memory_bridge import file_memory_bridge
 from app.services.agent_memory_utils import (
     _clean_text,
-    _extract_terms,
     _iso_or_empty,
-    _note_candidates_from_user_text,
-    _parse_json_or_none,
     _truncate,
 )
 
@@ -97,13 +90,13 @@ class AgentMemoryService:
 
     2. UI / 工具视图（仅用于 context_get / profile 等工具以及 /aelin/context）
        - `get_summary` / `list_notes` / `list_todos`
-       - `build_focus_items` / `build_memory_layers_from_items`
+       - `build_memory_layers_from_items`
        - `add_note` 及若干 append_* 帮助函数
 
     这些 helper 只为上下文 / 画像 / 待办视图提供投影，不影响 DeepAgents 的主
     agent loop 行为。未来如果继续瘦身 UI pipeline，可以将它们迁移到专门的
-    LegacyContextViewService 或直接删除；在此之前，它们作为基于 AGENTS.md 与
-    消息表的轻量投影层保留。
+    LegacyContextViewService 或直接删除；在此之前，它们作为基于 AGENTS.md
+    的轻量投影层保留。
     """
     def _read_agents_md_text(self, user_id: int, workspace: str = "default") -> str:
         """
@@ -392,17 +385,6 @@ class AgentMemoryService:
         summary = _truncate(" ".join(lines), 1000)
         return summary.strip()
 
-    def set_summary(self, db: Session, user_id: int, summary: str) -> None:
-        """
-        Legacy shim kept for API compatibility.
-
-        Callers that need to update the summary should instead edit
-        `/memory/AGENTS.md` directly via DeepAgents 文件工具或外部流程。
-        这里不再写入 DB，也不会强行修改 AGENTS.md。
-        """
-        _ = db, user_id, summary
-        return None
-
     def list_notes(
         self,
         db: Session,
@@ -460,17 +442,6 @@ class AgentMemoryService:
             updated_at=datetime.now(timezone.utc),
         )
 
-    def delete_note(self, db: Session, user_id: int, note_id: int) -> bool:
-        """
-        Legacy no-op stub for deleting notes.
-
-        当前 DeepAgents 版本下，长期记忆完全基于 AGENTS.md，删除操作需要
-        重新设计更精细的文本编辑流程，这里先保留一个总是返回 False 的兼容
-        函数，避免旧调用崩溃。
-        """
-        _ = db, user_id, note_id
-        return False
-
     # Layout-based memory is no longer used as part of the core context and has
     # been removed from the public API surface. The corresponding helpers and
     # DB-backed storage are intentionally omitted in favour of file-based
@@ -508,74 +479,14 @@ class AgentMemoryService:
     # layout notes.
 
     def build_focus_items(self, db: Session, user_id: int, *, query: str = "", limit: int = 8) -> list[FocusItem]:
-        n = max(1, min(20, int(limit or 8)))
-        stmt = (
-            select(Message)
-            .where(Message.user_id == user_id)
-            .order_by(Message.received_at.desc(), Message.id.desc())
-            .limit(200)
-        )
-        rows = db.scalars(stmt).all()
-        if not rows:
-            return []
+        """
+        Legacy inbox-backed focus items have been removed.
 
-        contact_ids = {int(m.contact_id) for m in rows if m.contact_id is not None}
-        avatar_by_contact_id: dict[int, str] = {}
-        if contact_ids:
-            avatar_rows = db.execute(
-                select(Contact.id, Contact.avatar_url).where(
-                    Contact.user_id == user_id,
-                    Contact.id.in_(contact_ids),
-                )
-            ).all()
-            for cid, avatar in avatar_rows:
-                if avatar:
-                    avatar_by_contact_id[int(cid)] = str(avatar)
-
-        terms = _extract_terms(query)
-        contact_hits = Counter(m.contact_id for m in rows if m.contact_id is not None)
-        now = datetime.now(timezone.utc)
-        scored: list[FocusItem] = []
-
-        for m in rows:
-            title = _clean_text(m.subject or "") or _clean_text(m.body_preview or "")
-            if not title:
-                continue
-
-            received = m.received_at
-            if received.tzinfo is None:
-                received = received.replace(tzinfo=timezone.utc)
-            age_hours = max(0.0, (now - received).total_seconds() / 3600.0)
-            recency_score = max(0.0, 8.0 - age_hours / 12.0)
-
-            source = (m.source or "").lower()
-            source_bonus = 2.0 if source in _SOCIAL_SOURCES else 0.4
-            contact_bonus = min(2.0, contact_hits.get(m.contact_id, 0) * 0.2)
-            unread_bonus = 0.7 if not m.is_read else 0.0
-
-            text_blob = f"{m.sender} {m.subject} {m.body_preview}".lower()
-            keyword_bonus = 0.0
-            if terms:
-                for t in terms:
-                    if t in text_blob:
-                        keyword_bonus += 1.5
-                keyword_bonus = min(6.0, keyword_bonus)
-
-            score = recency_score + source_bonus + contact_bonus + unread_bonus + keyword_bonus
-            scored.append(
-                FocusItem(
-                    message_id=m.id,
-                    source=source or "unknown",
-                    sender=_truncate(_clean_text(m.sender or ""), 60),
-                    sender_avatar_url=avatar_by_contact_id.get(int(m.contact_id or 0)),
-                    title=_truncate(title, 140),
-                    received_at=received.strftime("%Y-%m-%d %H:%M"),
-                    score=score,
-                )
-            )
-
-        scored.sort(key=lambda x: (x.score, x.received_at), reverse=True)
-        return scored[:n]
+        Aelin 现在的记忆模型只依赖 DeepAgents 的 AGENTS.md / file memory，
+        不再从联系人 / 消息表投影“重点消息”。
+        """
+        _ = db, user_id, query, limit
+        return []
 
     # Advanced inbox search for the legacy `/agent` surface has been removed.
     # New search scenarios should be implemented as explicit tools instead of
@@ -719,8 +630,14 @@ class AgentMemoryService:
             "in_progress": in_progress[:14],
         }
 
-
-    def build_system_memory_prompt(self, db: Session, user_id: int, *, query: str = "") -> str:
+    def build_system_memory_prompt(
+        self,
+        db: Session,
+        user_id: int,
+        *,
+        workspace: str = "default",
+        query: str = "",
+    ) -> str:
         """
         Build a single concise markdown string representing the user's memory.
 
@@ -728,15 +645,15 @@ class AgentMemoryService:
         DeepAgents, and to serve as the `memory_summary` passed through the
         rest of the Aelin pipeline.
 
-        When an AGENTS.md file already exists for the default workspace, it is
+        When an AGENTS.md file already exists for the given workspace, it is
         treated as the primary truth and used directly, with an optional
         “当前问题” section appended for the caller's query. If no AGENTS.md is
         available, an empty skeleton document is created instead of falling
         back to legacy DB-backed summary/notes/todos, so that the DeepAgents
         runtime can remain file-first and DB-independent for memory.
         """
-        # Prefer an existing AGENTS.md snapshot for the default workspace.
-        agents_md = self._read_agents_md_text(user_id=user_id, workspace="default")
+        # Prefer an existing AGENTS.md snapshot for the requested workspace.
+        agents_md = self._read_agents_md_text(user_id=user_id, workspace=workspace or "default")
         query_text = _clean_text(query or "")
         if agents_md:
             base = str(agents_md).strip()
@@ -758,14 +675,3 @@ class AgentMemoryService:
         if not body:
             return "# Aelin Session Memory\n"
         return "# Aelin Session Memory\n\n" + body
-
-    def update_after_turn(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - legacy shim
-        """
-        Legacy no-op shim for older callers.
-
-        DeepAgents 版本的 Aelin 不再通过这个入口写入 DB 记忆；所有长期
-        记忆写入均应通过显式编辑 `/memory/AGENTS.md`（例如经由 DeepAgents
-        的文件工具或 AgentMemoryService 的 append_* 接口）完成。
-        该方法仅为兼容旧测试/调用点而保留，不做任何实质操作。
-        """
-        return None

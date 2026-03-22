@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
-from app.services.agent_memory import AgentMemoryService, serialize_focus_item
+from app.services.agent_memory import AgentMemoryService
 from app.services.aelin_attachment_service import (
     AelinAttachmentService,
     get_aelin_attachment_service,
@@ -62,17 +62,6 @@ def _is_http_url(value: str) -> bool:
         return False
     parsed = urlparse(text)
     return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
-
-
-def _safe_load_json(raw: str) -> dict[str, Any]:
-    text = str(raw or "").strip()
-    if not text:
-        return {}
-    try:
-        parsed = json.loads(text)
-    except Exception:  # noqa: BLE001
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 class AelinToolHub:
@@ -383,46 +372,6 @@ class AelinToolHub:
         )
 
 
-def summarize_tool_results_for_prompt(
-    runs: list[dict[str, Any]], *, max_lines: int = 8
-) -> list[str]:
-    """
-    Build a compact textual summary of recent tool runs for debugging/prompts.
-    """
-    lines: list[str] = []
-    for run in runs[: max(1, int(max_lines))]:
-        name = str(run.get("name") or "tool").strip()
-        status = str(run.get("status") or "completed").strip().lower()
-        result = run.get("result") if isinstance(run.get("result"), dict) else {}
-        error = str(run.get("error") or "").strip()
-
-        note = ""
-        if status != "completed":
-            note = error or "failed"
-        elif name == "web_search":
-            note = (
-                f"total={result.get('total')}, "
-                f"providers={','.join(list(result.get('providers') or [])[:3])}"
-            )
-        elif name == "attachment_search":
-            note = (
-                f"total={result.get('total')}, attachments="
-                f"{','.join([str(x) for x in list(result.get('attachment_ids') or [])[:6]])}"
-            )
-        elif name in {"profile", "context_get", "device", "screen_get"}:
-            if "total" in result:
-                note = f"total={result.get('total')}"
-            elif "summary" in result:
-                note = str(result.get("summary") or "")[:120]
-            else:
-                note = json.dumps(result, ensure_ascii=False)[:140]
-        else:
-            note = json.dumps(result, ensure_ascii=False)[:140]
-
-        lines.append(f"- [{name}/{status}] {note}".strip())
-    return lines
-
-
 __all__ = [
     "AelinToolHub",
     "_safe_int",
@@ -432,5 +381,4 @@ __all__ = [
     "DeviceScreenCaptureError",
     "device_capture_screen",
     "get_google_workspace_cli_service",
-    "summarize_tool_results_for_prompt",
 ]

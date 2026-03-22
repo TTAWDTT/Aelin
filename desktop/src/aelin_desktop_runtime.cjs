@@ -20,10 +20,10 @@ const {
 const { DEFAULT_BEHAVIOR, loadPetBehaviorConfig } = require("./pet-behavior.cjs");
 const { computePetEmotion } = require("./pet-emotion-engine.cjs");
 
-const isDev = process.env.MERCURYDESK_DESKTOP_DEV === "1" || !app.isPackaged;
-const backendPort = Number(process.env.MERCURYDESK_BACKEND_PORT || (isDev ? 8000 : 18080));
-const frontendPort = Number(process.env.MERCURYDESK_DESKTOP_PORT || (isDev ? 5173 : 1420));
-const desktopZoom = Number(process.env.MERCURYDESK_DESKTOP_ZOOM || "1.0");
+const isDev = process.env.AELIN_DESKTOP_DEV === "1" || !app.isPackaged;
+const backendPort = Number(process.env.AELIN_BACKEND_PORT || (isDev ? 8000 : 18080));
+const frontendPort = Number(process.env.AELIN_DESKTOP_PORT || (isDev ? 5173 : 1420));
+const desktopZoom = Number(process.env.AELIN_DESKTOP_ZOOM || "1.0");
 const PET_COMPACT_WINDOW_SIZE = 128;
 const PET_EXPANDED_WINDOW_WIDTH = 236;
 const PET_EXPANDED_WINDOW_MAX_HEIGHT = 420;
@@ -2657,34 +2657,34 @@ function startBackend() {
   const userData = app.getPath("userData");
   const mediaDir = path.join(userData, "media");
   fs.mkdirSync(mediaDir, { recursive: true });
-  const dbFile = path.join(userData, "mercurydesk.db");
+  const dbFile = path.join(userData, "aelin.db");
 
   const env = {
     ...process.env,
     PYTHONUTF8: "1",
     PYTHONIOENCODING: "utf-8",
-    MERCURYDESK_DATABASE_URL: sqliteUrl(dbFile),
-    MERCURYDESK_MEDIA_DIR: mediaDir,
-    MERCURYDESK_CORS_ORIGINS: [
+    AELIN_DATABASE_URL: sqliteUrl(dbFile),
+    AELIN_MEDIA_DIR: mediaDir,
+    AELIN_CORS_ORIGINS: [
       `http://127.0.0.1:${frontendPort}`,
       `http://localhost:${frontendPort}`,
       "http://127.0.0.1:5173",
       "http://localhost:5173",
     ].join(","),
-    MERCURYDESK_BROWSER_TOOL_HEADLESS: process.env.MERCURYDESK_BROWSER_TOOL_HEADLESS || "0",
-    MERCURYDESK_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
-      process.env.MERCURYDESK_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE || "1",
-    MERCURYDESK_BROWSER_TOOL_MODE_DEFAULT: process.env.MERCURYDESK_BROWSER_TOOL_MODE_DEFAULT || "auto",
-    MERCURYDESK_BROWSER_TOOL_CDP_ENABLED: process.env.MERCURYDESK_BROWSER_TOOL_CDP_ENABLED || "1",
-    MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT:
-      process.env.MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
+    AELIN_BROWSER_TOOL_HEADLESS: process.env.AELIN_BROWSER_TOOL_HEADLESS || "0",
+    AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
+      process.env.AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE || "1",
+    AELIN_BROWSER_TOOL_MODE_DEFAULT: process.env.AELIN_BROWSER_TOOL_MODE_DEFAULT || "auto",
+    AELIN_BROWSER_TOOL_CDP_ENABLED: process.env.AELIN_BROWSER_TOOL_CDP_ENABLED || "1",
+    AELIN_BROWSER_TOOL_CDP_ENDPOINT:
+      process.env.AELIN_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
   };
   const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
   if (pluginBaseUrl) {
-    env.MERCURYDESK_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
+    env.AELIN_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
   }
   if (PET_PLUGIN_API_TOKEN) {
-    env.MERCURYDESK_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
+    env.AELIN_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
   }
 
   if (app.isPackaged) {
@@ -2713,7 +2713,7 @@ function startBackend() {
     throw new Error(`Backend directory missing: ${root}`);
   }
 
-  const requestedPython = String(process.env.MERCURYDESK_PYTHON || "");
+  const requestedPython = String(process.env.AELIN_PYTHON || "");
   const pythonCandidates = buildPythonCandidates(requestedPython);
   const failed = [];
 
@@ -2750,7 +2750,7 @@ function startBackend() {
 }
 
 function startFrontendDev() {
-  if (process.env.MERCURYDESK_DESKTOP_SKIP_FRONTEND_DEV === "1") return;
+  if (process.env.AELIN_DESKTOP_SKIP_FRONTEND_DEV === "1") return;
   const cmd = `npm run dev -- --host 127.0.0.1 --port ${frontendPort}`;
   frontendDevProc = spawnViaCmd(cmd, {
     cwd: frontendDir(),

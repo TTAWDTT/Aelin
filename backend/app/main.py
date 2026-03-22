@@ -12,18 +12,13 @@ from sqlalchemy.engine import Engine
 from app.db import get_engine
 from app.models import Base
 from app.routers import (
-    accounts,
     agent,
     aelin,
     aelin_chat,
     aelin_context,
     aelin_device,
-    aelin_media,
     aelin_remote_control,
     auth,
-    contacts,
-    inbound,
-    messages,
 )
 from app.settings import settings
 from app.services.feishu_bot import feishu_bot_service
@@ -58,7 +53,6 @@ def _add_missing_columns(engine: Engine) -> None:
     inspector = sa_inspect(engine)
     migrations: list[tuple[str, str, str]] = [
         # (table, column, DDL type)
-        ("x_api_configs", "auth_cookies", "TEXT"),
         ("agent_configs", "web_search_proxy_url", "TEXT"),
     ]
     for table, column, ddl_type in migrations:
@@ -96,7 +90,7 @@ async def lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     _configure_logging()
-    app = FastAPI(title="MercuryDesk API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Aelin API", version="0.1.0", lifespan=lifespan)
 
     origins = {o.strip() for o in settings.cors_origins.split(",") if o.strip()}
     # Native shells (Capacitor/Electron) and local dev hosts.
@@ -125,17 +119,12 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(auth.legacy_router, prefix="/api/v1")
-    app.include_router(accounts.router, prefix="/api/v1")
-    app.include_router(contacts.router, prefix="/api/v1")
-    app.include_router(messages.router, prefix="/api/v1")
     app.include_router(agent.router, prefix="/api/v1")
     app.include_router(aelin.router, prefix="/api/v1")
     app.include_router(aelin_chat.router, prefix="/api/v1")
     app.include_router(aelin_context.router, prefix="/api/v1")
     app.include_router(aelin_device.router, prefix="/api/v1")
-    app.include_router(aelin_media.router, prefix="/api/v1")
     app.include_router(aelin_remote_control.router, prefix="/api/v1")
-    app.include_router(inbound.router, prefix="/api/v1")
 
     return app
 

@@ -103,7 +103,7 @@ class GoogleWorkspaceCliService:
     def install_hint(self) -> str:
         configured = self._configured_bin_path
         if configured and configured != "gws":
-            return f"请确认已安装 gws，并检查 MERCURYDESK_GOOGLE_WORKSPACE_CLI_BIN 指向: {configured}"
+            return f"请确认已安装 gws，并检查 AELIN_GOOGLE_WORKSPACE_CLI_BIN 指向: {configured}"
         return "当前机器未安装 gws，请先安装或随桌面版一起打包 gws 二进制。"
 
     def runtime_status(self) -> dict[str, Any]:

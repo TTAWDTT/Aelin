@@ -1,97 +1,48 @@
 from __future__ import annotations
 
-import json
-import hashlib
 import logging
-import os
-import platform
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from collections import Counter
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import crud
-from app.db import create_session
-from app.db import get_session
-from app.models import Contact, Message, User
-from app.routers.auth import get_current_user
+from app.models import User
 from app.schemas import (
     AelinAction,
     AelinChatRequest,
     AelinChatResponse,
-    AelinCitation,
-    AelinMemoryLayerItem,
-    AelinMemoryLayers,
     AelinToolStep,
-    AelinTodoItem,
 )
 from app.services.agent_memory import AgentMemoryService
-from app.services import content_tagging
-from app.services.aelin_tools import (
-    AelinToolHub,
-    summarize_tool_results_for_prompt,
-)
+from app.services.aelin_tools import AelinToolHub
 from app.services.deepagents_loop import run_deepagents_loop
 from app.services.aelin_tool_policy import AelinToolPolicy
-from app.services.aelin_chat_dispatch import (
-    dispatch_aelin_chat as _dispatch_aelin_chat_service,
-)
-from app.services.aelin_media_pipeline import (
-    build_media_ingest_answer as _build_media_ingest_answer,
-    media_ingest_service as _media_ingest,
-)
-from app.services.aelin_limits import MAX_IMAGE_DATA_URL_LENGTH
+from app.services.aelin_chat_dispatch import dispatch_aelin_chat as _dispatch_aelin_chat_service
 from app.services.aelin_utils import normalize_positive_ints
 from app.services.aelin_runtime import (
-    json_from_text as _json_from_text,
     normalize_workspace as _normalize_workspace,
     resolve_llm_service as _resolve_llm_service,
 )
-from app.services.aelin_chat_answering import (
-    _domain_from_url,
-    _looks_like_link_dump_answer,
-    _looks_like_non_answer,
-    _rule_based_chat_answer,
-)
-from app.services.aelin_chat_memory import (
-    _save_parallel_draft_entry,
-)
-from app.services.memory_draft import ParallelMemoryDraftResult, build_parallel_memory_draft
-from app.services.media_ingest import MediaIngestError
+# Legacy answer-shaping helpers from `aelin_chat_answering` were removed as
+# part of the DeepAgents refactor. We intentionally avoid importing them
+# here to keep behaviour aligned with the underlying agent graph and to
+# reduce hard-coded post-processing.
 from app.services.file_memory_bridge import file_memory_bridge
-from app.services.summarizer import RuleBasedSummarizer
-from app.services.sync_jobs import enqueue_sync_job
-from app.services.web_search import WebSearchResult, WebSearchService
-from app.services.aelin_context_service import (
-    build_context_bundle as _build_context_bundle_service,
-    build_cached_base_context_bundle as _build_cached_base_context_bundle_service,
-)
 from app.settings import settings
 from app.services.aelin_core_support import (
     _scoped_web_search_service,
-    _build_context_bundle,
-    _build_cached_base_context_bundle,
+    _build_context_bundle as _build_context_bundle_inner,
+    _build_cached_base_context_bundle as _build_cached_base_context_bundle_inner,
     _empty_memory_snapshot,
-    _build_cached_memory_snapshot,
-    _to_citations,
     _get_memory_summary_for_chat,
     _file_memory,
 )
 from app.routers.aelin_text_helpers import (
-    _AELIN_EXPRESSION_IDS,
-    _apply_answer_emoji,
-    _dedupe_citations,
-    _expression_mapping_prompt,
-    _extract_emoji_tag,
-    _extract_expression_tag,
     _now_ms,
     _pick_expression,
 )
@@ -99,55 +50,36 @@ router = APIRouter(prefix="/aelin", tags=["aelin"])
 _log = logging.getLogger(__name__)
 
 _memory = AgentMemoryService()
-_summarizer = RuleBasedSummarizer()
-_web_search = WebSearchService()
 _file_memory = file_memory_bridge
-_memory_draft_executor = ThreadPoolExecutor(
-    max_workers=max(1, min(8, int(getattr(settings, "aelin_parallel_memory_draft_workers", 4) or 4))),
-    thread_name_prefix="aelin-memory-draft",
-)
 
-_MAX_WEB_SUBAGENTS = 5
-_MAX_LOCAL_SUBAGENTS = 5
-_MAX_CONTEXT_BOUNDARIES = 10
-_WEB_SEARCH_MAX_RESULTS = 15
-_WEB_SEARCH_FETCH_TOP_K = 5
-
-_MEDIA_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
-_MEDIA_SUMMARY_HINTS_ZH = (
-    "总结",
-    "摘要",
-    "读",
-    "读取",
-    "理解",
-    "解析",
-    "梳理",
-    "提炼",
-    "看懂",
-    "记住",
-)
-_MEDIA_SUMMARY_HINTS_EN = (
-    "summary",
-    "summarize",
-    "recap",
-    "digest",
-    "analyze",
-    "ingest",
-)
+# Keep image Data URL size checks consistent across chat input normalization
+# and agent-loop message construction. This mirrors the default from the
+# former `aelin_limits` module.
+MAX_IMAGE_DATA_URL_LENGTH = 3_000_000
 
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 
 
-_AELIN_BASE_CONTEXT_CACHE_TTL_SECONDS = max(
-    0.0,
-    float(getattr(settings, "aelin_base_context_cache_ttl_seconds", 4.0) or 4.0),
-)
-_AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES = max(
-    0,
-    int(getattr(settings, "aelin_base_context_cache_max_entries", 128) or 128),
-)
+def _build_context_bundle(
+    db: Session,
+    user_id: int,
+    *,
+    workspace: str,
+    query: str,
+) -> dict[str, Any]:
+    """Thin forwarder to the shared context-bundle service helper."""
+    return _build_context_bundle_inner(db, user_id, workspace=workspace, query=query)
 
+
+def _build_cached_base_context_bundle(
+    db: Session,
+    user_id: int,
+    *,
+    workspace: str,
+) -> dict[str, Any]:
+    """Thin forwarder to the cached base context helper."""
+    return _build_cached_base_context_bundle_inner(db, user_id, workspace=workspace)
 
 def _normalize_images(raw_images: list[Any]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
@@ -179,39 +111,6 @@ def _normalize_history(raw_turns: list[Any]) -> list[dict[str, str]]:
 
 def _normalize_attachment_ids(raw_ids: list[Any]) -> list[int]:
     return normalize_positive_ints(raw_ids, cap=20)
-
-
-def _extract_first_supported_media_url(query: str) -> tuple[str, str] | None:
-    text = str(query or "")
-    if not text:
-        return None
-    for match in _MEDIA_URL_RE.finditer(text):
-        raw_url = str(match.group(0) or "").strip().rstrip(".,;:!?)")
-        if not raw_url:
-            continue
-        try:
-            platform = _media_ingest.detect_platform(raw_url)
-        except Exception:
-            platform = "unsupported"
-        if platform != "unsupported":
-            return raw_url, platform
-    return None
-
-
-def _is_media_summary_intent(query: str, media_url: str) -> bool:
-    text = str(query or "")
-    stripped = text.replace(media_url, " ")
-    stripped = _MEDIA_URL_RE.sub(" ", stripped)
-    stripped = re.sub(r"[\s`~!@#$%^&*()_\-+=\[\]{};:'\",.<>/?，。！？、（）【】《》\|]+", " ", stripped).strip()
-    if not stripped:
-        return True
-
-    lowered = stripped.lower()
-    if any(token in lowered for token in _MEDIA_SUMMARY_HINTS_EN):
-        return True
-    if any(token in stripped for token in _MEDIA_SUMMARY_HINTS_ZH):
-        return True
-    return len(stripped) <= 6
 
 
 def _build_attachment_prefetch_fallback_response(
@@ -343,72 +242,6 @@ def _try_agent_loop_chat(
         count=1,
     )
 
-    # Auto-ingest supported media URLs (YouTube/Bilibili/抖音等) before entering
-    # the DeepAgents loop, preserving the old “drop a link → get summary”
-    # behaviour while keeping the new runtime.
-    media_result: Any | None = None
-    media_summary_intent = False
-    media_hit = _extract_first_supported_media_url(payload.query)
-    if media_hit is not None:
-        media_url, media_platform = media_hit
-        media_summary_intent = _is_media_summary_intent(payload.query, media_url)
-        _emit_prefixed(
-            "media_ingest",
-            status="running",
-            detail=f"{media_platform}:{media_url[:90]}",
-            count=0,
-        )
-        try:
-            media_result = _media_ingest.ingest(
-                user_id=current_user.id,
-                workspace=workspace,
-                url=media_url,
-                service=service,
-                provider=provider,
-                languages=None,
-            )
-            _emit_prefixed(
-                "media_ingest",
-                status="completed",
-                detail=(
-                    f"{media_result.platform}; "
-                    f"source={media_result.source_type}; "
-                    f"conf={media_result.confidence:.2f}"
-                ),
-                count=1,
-            )
-        except MediaIngestError as exc:
-            _emit_prefixed(
-                "media_ingest",
-                status="failed",
-                detail=f"{exc.code}:{exc.message[:140]}",
-                count=0,
-            )
-            media_result = None
-        except Exception as exc:  # pragma: no cover - defensive guardrail
-            _emit_prefixed(
-                "media_ingest",
-                status="failed",
-                detail=str(exc)[:160],
-                count=0,
-            )
-            media_result = None
-
-        # If the user essentially asked “帮我读/总结这个链接”，直接返回摘要，
-        # 不再进入 DeepAgents 回合，以获得更快、更稳定的体验。
-        if media_result is not None and media_summary_intent:
-            answer = _build_media_ingest_answer(media_result)
-            expression = _pick_expression(payload.query, answer)
-            # DeepAgents 记忆收拢后不再依赖 DB 记忆更新，这里仅返回媒体摘要。
-            return AelinChatResponse(
-                answer=answer,
-                expression=expression,
-                citations=[],
-                actions=[],
-                tool_trace=prefixed_traces[:64],
-                memory_summary=memory_summary,
-                generated_at=datetime.now(timezone.utc),
-            )
     attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
 
     history_turns: list[dict[str, str]] = []
@@ -653,6 +486,27 @@ def _try_agent_loop_chat(
     )
 
 
+def _aelin_chat_impl(
+    payload: AelinChatRequest,
+    db: Session,
+    current_user: User,
+    *,
+    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+) -> AelinChatResponse:
+    """
+    Legacy retrieval-era chat implementation (removed).
+
+    DeepAgents agent loop is now the only supported chat path. This stub is
+    preserved solely so that older tests and imports that reference
+    `_aelin_chat_impl` do not crash at import time. Any direct call into this
+    function is considered a bug.
+    """
+    _ = (payload, db, current_user, event_cb)
+    raise RuntimeError(
+        "legacy _aelin_chat_impl is no longer supported; use agent loop only"
+    )
+
+
 def _dispatch_aelin_chat(
     payload: AelinChatRequest,
     db: Session,
@@ -661,6 +515,13 @@ def _dispatch_aelin_chat(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> AelinChatResponse:
+    """
+    Public chat entry used by routers and worker threads.
+
+    This is a thin wrapper around the DeepAgents-based agent loop; if the
+    loop fails to produce a usable answer, it returns a standardized fallback
+    response via `dispatch_aelin_chat`.
+    """
     return _dispatch_aelin_chat_service(
         payload,
         db,
@@ -670,24 +531,4 @@ def _dispatch_aelin_chat(
         try_agent_loop_chat=_try_agent_loop_chat,
         pick_expression=_pick_expression,
         now_ms=_now_ms,
-    )
-
-
-def _aelin_chat_impl(
-    payload: AelinChatRequest,
-    db: Session,
-    current_user: User,
-    *,
-    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
-) -> AelinChatResponse:
-    """
-    Legacy retrieval-era chat implementation.
-
-    This function is intentionally no longer used in the runtime. The
-    DeepAgents-based agent loop is now the only chat path. The symbol is
-    preserved so that older tests and router monkeypatches can still
-    reference it without breaking, but any direct call is considered a bug.
-    """
-    raise RuntimeError(
-        "legacy _aelin_chat_impl is no longer supported; use agent loop only"
     )

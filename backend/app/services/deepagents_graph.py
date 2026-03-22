@@ -16,6 +16,7 @@ from app.services.tools_web import tool_web_search
 from app.services.tools_files import tool_attachment_search
 from app.services.tools_gws import tool_google_workspace
 from app.services.tools_device import tool_device, tool_screen_get
+from app.settings import settings
 
 
 class DeviceToolInput(BaseModel):
@@ -42,6 +43,43 @@ class DeviceToolInput(BaseModel):
         default=None,
         description="Optional route to activate when action == 'open_aelin', "
         "for example '/'.",
+    )
+
+
+class ScreenGetToolInput(BaseModel):
+    """
+    Structured input schema for the `screen_get` tool.
+
+    All fields are optional and have sensible defaults so that the model can
+    either call the tool with an empty object `{}` or with explicit overrides.
+    """
+
+    display_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional display identifier to capture from. When omitted, the primary "
+            "display will be used."
+        ),
+    )
+    max_edge: int | None = Field(
+        default=1280,
+        description=(
+            "Maximum width/height in pixels for the captured image. Must be between "
+            "640 and 4096. Defaults to 1280."
+        ),
+    )
+    format: str | None = Field(
+        default="jpeg",
+        description=(
+            "Image format: 'jpeg' (default) or 'png'. JPEG is usually smaller and "
+            "sufficient for previews; use 'png' when lossless snapshots are needed."
+        ),
+    )
+    quality: int | None = Field(
+        default=72,
+        description=(
+            "JPEG quality between 35 and 95. Ignored for PNG captures. Defaults to 72."
+        ),
     )
 
 
@@ -197,6 +235,93 @@ def build_chat_tools(
             args_schema=DeviceToolInput,
         )
 
+    def _make_screen_get_tool(description: str) -> Tool:
+        """
+        Structured wrapper for the `screen_get` tool.
+
+        DeepAgents expects multi-argument tools to be exposed as StructuredTool
+        instances with a Pydantic schema; otherwise it can raise
+        \"Too many arguments to single-input tool\" errors. This wrapper keeps
+        Aelin's existing tool implementation while providing a stable JSON
+        schema to the agent.
+        """
+
+        def _run_screen_get(
+            display_id: str | None = None,
+            max_edge: int | None = None,
+            format: str | None = None,  # noqa: A002 - match tool arg name
+            quality: int | None = None,
+        ) -> dict[str, Any]:
+            nonlocal usage
+            from time import perf_counter
+
+            args: dict[str, Any] = {}
+            if display_id is not None and str(display_id).strip():
+                args["display_id"] = str(display_id).strip()
+            if max_edge is not None:
+                try:
+                    args["max_edge"] = int(max_edge)
+                except Exception:
+                    pass
+            if format is not None and str(format).strip():
+                args["format"] = str(format).strip()
+            if quality is not None:
+                try:
+                    args["quality"] = int(quality)
+                except Exception:
+                    pass
+
+            decision = policy.evaluate(name="screen_get", args=args, usage=usage)
+            started = perf_counter()
+            if not decision.allowed:
+                latency_ms = int((perf_counter() - started) * 1000)
+                tool_runs.append(
+                    {
+                        "round_index": 1,
+                        "name": "screen_get",
+                        "args": args,
+                        "status": "denied",
+                        "result": {"ok": False, "error": decision.reason},
+                        "error": decision.reason,
+                        "is_write": decision.is_write,
+                        "latency_ms": latency_ms,
+                    }
+                )
+                return {"ok": False, "error": decision.reason}
+
+            try:
+                result = tool_screen_get(tool_hub, args)
+            except Exception as exc:  # noqa: BLE001
+                result = _result_error(f"screen_get_failed:{str(exc)[:160]}")
+
+            latency_ms = int((perf_counter() - started) * 1000)
+            usage.round_calls += 1
+            usage.total_calls += 1
+            if decision.is_write:
+                usage.write_calls += 1
+            status = "completed" if bool(result.get("ok", True)) else "failed"
+            error = "" if status == "completed" else str(result.get("error") or "")[:160]
+            tool_runs.append(
+                {
+                    "round_index": 1,
+                    "name": "screen_get",
+                    "args": args,
+                    "status": status,
+                    "result": result,
+                    "error": error,
+                    "is_write": decision.is_write,
+                    "latency_ms": latency_ms,
+                }
+            )
+            return result
+
+        return StructuredTool.from_function(
+            func=_run_screen_get,
+            name="screen_get",
+            description=description,
+            args_schema=ScreenGetToolInput,
+        )
+
     # DeepAgents 主图只暴露核心能力型工具，不再包含 memory/context/profile 等
     # 旧式记忆/画像入口；这些能力今后由 AGENTS.md + DeepAgents Memory 负责。
     tools: list[Tool] = []
@@ -241,6 +366,8 @@ def build_chat_tools(
         if name in {"web_search", "attachment_search", "google_workspace", "device", "screen_get"}:
             if name == "device":
                 tools.append(_make_device_tool(desc))
+            elif name == "screen_get":
+                tools.append(_make_screen_get_tool(desc))
             else:
                 tools.append(_make_tool(name, desc))
 
@@ -297,24 +424,35 @@ def build_chat_agent(
     skill_files: dict[str, str] = {}
     # DeepAgents SkillsMiddleware 期望 sources 是“技能根目录”，其下每个子目录
     # 才是单个 skill（包含 SKILL.md）。因此我们在虚拟文件系统中统一挂载到
-    # `/skills/aelin/<skill-name>/SKILL.md` 之类的路径，而不是早期版本那样直接
-    # 使用 `/<skill-name>/README.md`。
+    # 一到多个根路径下，例如 `/skills/aelin/<skill-name>/SKILL.md`。
     skill_sources: list[str] = []
-    aelin_skills_root_path = "/skills/aelin/"
-    if skills_root.is_dir():
-        has_any_skill = False
-        for subdir in skills_root.iterdir():
+
+    def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
+        """
+        Mount all markdown-based skills under a given filesystem root into the
+        virtual DeepAgents filesystem at `virtual_root`.
+
+        Each direct subdirectory of `root` is treated as一个 skill 目录；其中的所有
+        `*.md` 文件都会被挂载到
+        `{virtual_root}{normalized-skill-name}/<filename>.md` 下。
+        """
+        nonlocal skill_files, skill_sources
+
+        if not root.is_dir():
+            return
+        has_any = False
+        for subdir in root.iterdir():
             if not subdir.is_dir():
                 continue
             # 物理目录名允许使用下划线，但按照 Agent Skills 规范，skill name /
             # 虚拟目录名只能包含小写字母、数字和连字符，因此这里做一次规范化。
             raw_dir_name = subdir.name
             skill_dir_name = raw_dir_name.replace("_", "-")
-            virtual_dir = f"{aelin_skills_root_path}{skill_dir_name}/"
+            virtual_dir = f"{virtual_root}{skill_dir_name}/"
             md_files = list(subdir.rglob("*.md"))
             if not md_files:
                 continue
-            has_any_skill = True
+            has_any = True
             for file_path in md_files:
                 try:
                     text = file_path.read_text(encoding="utf-8")
@@ -322,10 +460,18 @@ def build_chat_agent(
                     continue
                 virtual_path = f"{virtual_dir}{file_path.name}"
                 skill_files[virtual_path] = text
-        if has_any_skill:
-            # SkillsMiddleware 会在 `/skills/aelin/` 之下查找子目录并解析其中的
-            # `SKILL.md` 文件，因此 sources 只需包含这一层根路径即可。
-            skill_sources.append(aelin_skills_root_path)
+        if has_any and virtual_root not in skill_sources:
+            skill_sources.append(virtual_root)
+
+    # 1) 内建 Aelin skills（file-tools / google-workspace 等）。
+    _mount_skills_from_root(skills_root, "/skills/aelin/")
+
+    # 2) 可选：额外 DeepAgents skills 根目录，例如 chrome-cdp-skill。
+    extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
+    if extra_dir:
+        extra_root = Path(extra_dir)
+        # 将外部技能挂载在单独的虚拟根目录下，避免与 Aelin 内建技能命名冲突。
+        _mount_skills_from_root(extra_root, "/skills/external/")
 
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []

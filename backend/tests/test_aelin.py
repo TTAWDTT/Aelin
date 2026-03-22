@@ -11,7 +11,7 @@ import pytest
 
 import app.routers.aelin as aelin_router
 from app.services.web_search import WebSearchResult
-from tests.aelin_test_utils import _auth_headers, _create_test_client, _sync_and_wait
+from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 
 
@@ -26,13 +26,6 @@ def test_aelin_context_and_chat_endpoints():
     assert anonymous.status_code == 200, anonymous.text
 
     headers = _auth_headers(client)
-    acct = client.post(
-        "/api/v1/accounts",
-        json={"provider": "mock", "identifier": "demo", "access_token": "x"},
-        headers=headers,
-    )
-    assert acct.status_code == 200, acct.text
-    _sync_and_wait(client, headers, int(acct.json()["id"]))
 
     ctx = client.get("/api/v1/aelin/context?workspace=life", headers=headers)
     assert ctx.status_code == 200, ctx.text

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import app.services.aelin_core as aelin_core
+import app.services.aelin_core_support as aelin_core_support
 import app.services.llm as llm_service
 import app.services.aelin_runtime as aelin_runtime
 from app.schemas import AelinChatRequest, AgentConfigOut
@@ -330,7 +331,7 @@ def test_build_context_bundle_reuses_shared_memory_primitives(monkeypatch):
                 "in_progress": [],
             }
 
-    monkeypatch.setattr(aelin_core, "_memory", _FakeMemory())
+    monkeypatch.setattr(aelin_core_support, "_memory", _FakeMemory())
 
     bundle = aelin_core._build_context_bundle(db=None, user_id=1, workspace="default", query="hello")  # type: ignore[arg-type]
 

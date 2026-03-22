@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -40,22 +38,3 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
     assert login.status_code == 200, login.text
     token = login.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
-
-def _sync_and_wait(client: TestClient, headers: dict[str, str], account_id: int) -> None:
-    started = client.post(f"/api/v1/accounts/{account_id}/sync", headers=headers)
-    assert started.status_code in {200, 202}, started.text
-    payload = started.json()
-    if payload.get("status") == "succeeded":
-        return
-    job_id = payload.get("job_id")
-    assert isinstance(job_id, str) and job_id
-    for _ in range(200):
-        resp = client.get(f"/api/v1/accounts/sync-jobs/{job_id}", headers=headers)
-        assert resp.status_code == 200, resp.text
-        job = resp.json()
-        if job.get("status") == "succeeded":
-            return
-        if job.get("status") == "failed":
-            raise AssertionError(f"sync failed: {job.get('error')}")
-        time.sleep(0.05)
-    raise AssertionError("sync timed out")

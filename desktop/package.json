@@ -2,7 +2,7 @@
   "name": "aelin-desktop",
   "private": true,
   "version": "0.1.0",
-  "description": "Aelin Desktop wrapper for MercuryDesk",
+  "description": "Aelin Desktop application",
   "main": "src/main.cjs",
   "scripts": {
     "dev": "node ./scripts/dev-electron.cjs",
