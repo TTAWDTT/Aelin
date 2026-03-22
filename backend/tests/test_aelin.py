@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 import pytest
 
 import app.routers.aelin as aelin_router
+from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopToolRun, AgentLoopTraceStep
 from app.services.web_search import WebSearchResult
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
@@ -319,31 +320,45 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    class _FakeCompletions:
-        def __init__(self):
-            self.calls = 0
-
-        def create(self, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                tool_call = SimpleNamespace(
-                    id="call_ctx_1",
-                    function=SimpleNamespace(name="context_get", arguments='{"query":"最近重点","max_items":3}'),
-                )
-                msg = SimpleNamespace(content="", tool_calls=[tool_call])
-                return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
-            msg = SimpleNamespace(content="这是 loop 的最终回答。", tool_calls=[])
-            return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
-
     class _FakeService:
         def __init__(self):
-            self.config = SimpleNamespace(model="fake-model", temperature=0.0)
-            self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+            self.config = SimpleNamespace(model="gpt-4o-mini", temperature=0.0)
+            self.client = object()
+            self.api_key = "sk-test"
 
         def is_configured(self):
             return True
 
     monkeypatch.setattr(aelin_router._core, "_resolve_llm_service", lambda db, user: (_FakeService(), "openai"))
+    monkeypatch.setattr(
+        aelin_router._core,
+        "run_deepagents_loop",
+        lambda **kwargs: AelinAgentLoopResult(
+            ok=True,
+            answer="这是 loop 的最终回答。",
+            stop_reason="completed",
+            total_calls=1,
+            write_calls=0,
+            tool_runs=[
+                AgentLoopToolRun(
+                    call_index=1,
+                    name="web_search",
+                    args={"action": "search", "query": "最近重点"},
+                    status="completed",
+                    result={"ok": True},
+                    error="",
+                    is_write=False,
+                    latency_ms=12,
+                )
+            ],
+            trace_steps=[
+                AgentLoopTraceStep(stage="agent_loop", status="completed", detail="mocked"),
+            ],
+            actions=[],
+            error="",
+            memory_snapshot="",
+        ),
+    )
 
     resp = client.post(
         "/api/v1/aelin/chat",

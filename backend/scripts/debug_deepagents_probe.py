@@ -51,9 +51,6 @@ def probe_user(db, uid: int) -> None:
         query="你好，简单介绍一下你自己",
         memory_summary="",
         history_turns=[],
-        images=[],
-        attachment_ids=[],
-        cancel_token=None,
     )
 
     print("Result ok:", res.ok, "stop_reason:", res.stop_reason)

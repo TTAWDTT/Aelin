@@ -35,7 +35,6 @@ class AelinAgentLoopResult:
     ok: bool
     answer: str
     stop_reason: str
-    rounds: int
     total_calls: int
     write_calls: int
     tool_runs: list[AgentLoopToolRun]

@@ -361,9 +361,6 @@ def _try_agent_loop_chat(
         query=payload.query,
         memory_summary=memory_summary,
         history_turns=history_turns,
-        images=images,
-        attachment_ids=attachment_ids,
-        cancel_token=cancel_token,
     )
 
     trace_steps: list[AelinToolStep] = [*prefixed_traces]
