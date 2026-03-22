@@ -3,7 +3,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from html import unescape
 import logging
 import re
 from typing import Any
@@ -244,14 +243,16 @@ class WebSearchService:
         return rows
 
     def _search_with_ensemble(self, query: str, *, max_results: int) -> list[WebSearchResult]:
+        from app.services import web_search_providers as providers_mod
+
         providers: list[tuple[str, Any]] = [
-            ("bing_html", self._search_bing_html),
-            ("duckduckgo_lite", self._search_duckduckgo_lite),
-            ("duckduckgo_instant", self._search_duckduckgo_instant),
-            ("google_news_rss", self._search_google_news_rss),
-            ("reddit_json", self._search_reddit_json),
-            ("hn_algolia", self._search_hn_algolia),
-            ("wikipedia", self._search_wikipedia),
+            ("bing_html", providers_mod.search_bing_html),
+            ("duckduckgo_lite", providers_mod.search_duckduckgo_lite),
+            ("duckduckgo_instant", providers_mod.search_duckduckgo_instant),
+            ("google_news_rss", providers_mod.search_google_news_rss),
+            ("reddit_json", providers_mod.search_reddit_json),
+            ("hn_algolia", providers_mod.search_hn_algolia),
+            ("wikipedia", providers_mod.search_wikipedia),
         ]
 
         rows_with_score: list[tuple[float, WebSearchResult]] = []
@@ -259,17 +260,29 @@ class WebSearchService:
         per_provider_limit = max(3, min(15, max_results + 3))
 
         with ThreadPoolExecutor(max_workers=min(len(providers), self.max_parallel_providers)) as pool:
-            futures = {
-                pool.submit(fn, query, max_results=per_provider_limit): (provider_name, idx)
-                for idx, (provider_name, fn) in enumerate(providers)
-            }
+            # Each provider receives a short‑lived HTTP client configured via
+            # the shared _new_http_client helper so proxy/timeout settings are
+            # consistently applied.
+            futures = {}
+            for idx, (provider_name, fn) in enumerate(providers):
+                client = self._new_http_client(
+                    timeout=self.timeout_seconds,
+                    follow_redirects=True,
+                    headers={"User-Agent": _USER_AGENT},
+                )
+                futures[pool.submit(fn, query, max_results=per_provider_limit, client=client)] = (provider_name, idx, client)
             for fut in as_completed(futures):
-                provider_name, provider_index = futures[fut]
+                provider_name, provider_index, client = futures[fut]
                 try:
                     provider_rows = fut.result() or []
                 except Exception as exc:
                     _LOG.debug("web provider %s failed: %s", provider_name, exc)
                     provider_rows = []
+                finally:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
                 for rank_in_provider, row in enumerate(provider_rows, start=1):
                     if not isinstance(row, WebSearchResult):
                         continue

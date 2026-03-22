@@ -43,6 +43,12 @@ from app.services.web_search import WebSearchService
 from app.services.aelin_media_pipeline import media_ingest_service as _media_ingest
 from app.services.file_memory_bridge import file_memory_bridge as _file_memory
 from app.services.agent_memory import AgentMemoryService as _AgentMemoryService
+from app.routers.aelin_web_compat import (
+    _build_web_query_pack,
+    _build_retry_web_queries,
+    _extract_search_subject,
+    _decompose_web_context_boundaries,
+)
 
 
 # Re-export the FastAPI router defined in aelin_core so that `app.routers.aelin`

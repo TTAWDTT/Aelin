@@ -331,39 +331,33 @@ class AelinAttachmentService:
         return True
 
     def _build_chunk_rows(self, blocks: list[ParsedBlock], fallback_text: str) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        chunk_idx = 0
-        for block in blocks:
-            for piece in self._chunk_text(block.content):
-                tokens = self._tokenize(piece)
-                vec = Counter(tokens)
-                rows.append(
-                    {
-                        "chunk_index": chunk_idx,
-                        "text": piece,
-                        "token_count": len(tokens),
-                        "keyword_vector_json": self._safe_json(dict(vec.most_common(64))),
-                        "loc_json": self._safe_json(dict(block.loc or {})),
-                    }
-                )
-                chunk_idx += 1
-
+        # Primary path: build rows from structured blocks via shared helper so
+        # that chunk-building 逻辑集中维护，避免在多个服务中重复实现。
+        rows = normalize_blocks_to_chunks(
+            blocks,
+            chunk_text=self._chunk_text,
+            safe_json=self._safe_json,
+        )
         if rows:
             return rows
 
+        # Fallback: chunk the raw text when no structured blocks are available.
+        fallback_rows: list[dict[str, Any]] = []
+        chunk_idx = 0
         for piece in self._chunk_text(fallback_text):
             tokens = self._tokenize(piece)
-            rows.append(
+            vec = Counter(tokens)
+            fallback_rows.append(
                 {
                     "chunk_index": chunk_idx,
                     "text": piece,
                     "token_count": len(tokens),
-                    "keyword_vector_json": self._safe_json(dict(Counter(tokens).most_common(64))),
-                    "loc_json": "{}",
+                    "keyword_vector_json": self._safe_json(dict(vec.most_common(64))),
+                    "loc_json": self._safe_json({}),
                 }
             )
             chunk_idx += 1
-        return rows
+        return fallback_rows
 
     def _decode_text_file(self, content: bytes) -> str:
         for enc in ("utf-8", "utf-8-sig", "gb18030", "gbk", "latin-1"):
