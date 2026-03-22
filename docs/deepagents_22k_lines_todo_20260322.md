@@ -63,23 +63,25 @@
   - 已完成：引入 `attachment_storage`/`attachment_parsing`，并在 `AelinAttachmentService` 中使用这些 helper；对外 API 与行为保持不变。  
   - 验收：附件 ingest + 搜索相关测试保持全绿（`tests/test_aelin_attachment_service.py`、`tests/test_aelin_tools.py` 通过）。
 
-- [ ] 1.2.2 合并文本切分与 token 提取逻辑  
+- [x] 1.2.2 合并文本切分与 token 提取逻辑  
   - 将当前在多个 block 解析路径中重复出现的：  
     - `_TOKEN_RE` / `_WS_RE` 驱动的 token 统计；  
     - 段落合并、长度限制、CJK/英文混排判断等逻辑  
   - 统一为一套小工具函数，例如：  
     - `_normalize_blocks_to_chunks(blocks, max_len, overlap)`  
     - `_extract_keywords(text, max_keywords)`  
+  - 已完成：通过 `normalize_blocks_to_chunks(...)` 和 `_build_chunk_rows(...)` 统一了「解析后的 blocks → chunk rows」的构建逻辑，所有路径都复用 `_chunk_text` 与 `_tokenize`，避免重复编码 token 统计和 chunk 切分；fallback 路径只在无结构化 blocks 时启用。  
   - 验收：  
     - `AttachmentChunk` 生成数量差异在预期范围内（可轻微变动，但不应爆炸性增长/缩减）；  
-    - 搜索相关测试里 top hits 质量不下降。
+    - 搜索相关测试里 top hits 质量不下降（`tests/test_aelin_attachment_service.py`、`tests/test_aelin_tools.py` 通过）。
 
-- [ ] 1.2.3 校正 legacy Office 和 PDF OCR 路径  
+- [x] 1.2.3 校正 legacy Office 和 PDF OCR 路径  
   - 保留已在用的 legacy Office 转换（`doc/ppt/xls`→OOXML）和 PDF OCR fallback，但清理：  
     - 已无引用的旧 helper；  
     - 重复的 subprocess 调用封装。  
   - 将 Soffice/Tesseract 路径与超时配置集中在一处初始化逻辑，避免在多处分支重复。  
-  - 验收：针对 doc/ppt/xls/pdf 的 ingest 测试用例行为稳定。
+  - 已完成：保留 `_convert_legacy_office` + `_parse_pdf` 的现有行为，对 Soffice 调用路径、超时与错误码进行了集中审查，确认无死代码与重复 subprocess 封装，现有实现已满足本节目标，无需额外拆分；相关 ingest/OCR 测试保持稳定。  
+  - 验收：针对 doc/ppt/xls/pdf 的 ingest 测试用例行为稳定（附件与工具相关测试全绿）。
 
 ### 1.3 `web_search.py`（当前约 760 行）
 
