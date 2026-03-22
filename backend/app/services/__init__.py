@@ -1,2 +1,1 @@
-"""Backend service layer (summarizer, encryption, etc.)."""
-
+"""Backend service layer."""
