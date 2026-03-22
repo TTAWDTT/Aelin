@@ -40,6 +40,9 @@ from app.routers.aelin_text_helpers import (
     _pick_expression,
 )
 from app.services.web_search import WebSearchService
+from app.services.aelin_media_pipeline import media_ingest_service as _media_ingest
+from app.services.file_memory_bridge import file_memory_bridge as _file_memory
+from app.services.agent_memory import AgentMemoryService as _AgentMemoryService
 
 
 # Re-export the FastAPI router defined in aelin_core so that `app.routers.aelin`
@@ -49,6 +52,7 @@ router = _core.router
 
 # Backwards-compatible symbols expected by tests and legacy callers.
 _web_search: WebSearchService = _scoped_web_search_service()
+_memory = _AgentMemoryService()
 
 
 def _dispatch_aelin_chat(

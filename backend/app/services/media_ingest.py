@@ -21,12 +21,9 @@ from app.services.media_ingest_constants import (
     _BRACE_TAG_RE,
     _CHROME_UA,
     _DEFAULT_LANGUAGE_PREFERENCES,
-    _DOUYIN_AUTH_COOKIE_NAMES,
-    _DOUYIN_NOISE_FRAGMENT_RE,
     _HASHTAG_RE,
     _HTML_TAG_RE,
     _MULTISPACE_RE,
-    _PLATFORM_RULES,
     _PROMO_PHRASE_RE,
     _SRT_INDEX_RE,
     _SUBTITLE_EXTENSIONS,
@@ -35,29 +32,13 @@ from app.services.media_ingest_constants import (
     _URL_RE,
     _VIDEO_EXTENSIONS,
 )
+from app.services.media_ingest_providers import detect_platform, build_limitations
+from app.services.media_ingest_douyin import DouyinConfig, resolve_douyin_paths, has_douyin_auth_cookie, sanitize_douyin_body_preview
 from app.services.llm import LLMService
 from app.services.summarizer import RuleBasedSummarizer
 from app.settings import settings
 
 _LOG = logging.getLogger(__name__)
-
-
-def _build_limitations(source_type: str) -> list[str]:
-    """
-    Normalize the standard limitations note list based on the text source type.
-    Kept as a module-level helper to keep MediaIngestService.ingest slimmer
-    without changing any external behaviour.
-    """
-    limitations = ["摘要主要基于字幕/文本，不覆盖纯视觉镜头语义。"]
-    if source_type == "description":
-        limitations.append("当前未提取到字幕，改用描述文本生成，置信度较低。")
-    if source_type == "douyin_api":
-        limitations.append("当前基于抖音页面/API抓取文本生成，非官方字幕逐字稿。")
-    if source_type == "subtitle_asr":
-        limitations.append("当前字幕由 ASR 转写生成，可能存在听写误差。")
-    if source_type == "subtitle_auto":
-        limitations.append("当前使用自动字幕，可能存在识别误差。")
-    return limitations
 
 
 class MediaIngestError(RuntimeError):
@@ -113,54 +94,24 @@ class MediaIngestService:
         self._cookie_browser_profile = str(getattr(settings, "media_ingest_cookie_browser_profile", "") or "").strip()
         self._cookie_file = str(getattr(settings, "media_ingest_cookie_file", "") or "").strip()
         self._proxy_url = str(getattr(settings, "media_ingest_proxy_url", "") or "").strip()
-        self._douyin_auto_login_enabled = bool(
-            getattr(settings, "media_ingest_douyin_auto_login_enabled", True)
-        )
-        raw_douyin_profile = str(
-            getattr(settings, "media_ingest_douyin_browser_profile_dir", "./browser_data/douyin_media")
-            or "./browser_data/douyin_media"
-        ).strip()
-        self._douyin_browser_profile_arg = raw_douyin_profile.replace("\\", "/")
-        self._douyin_browser_profile_dir = self._resolve_runtime_path(raw_douyin_profile)
-        self._douyin_cookie_file = self._douyin_browser_profile_dir / "douyin.cookies.txt"
-        self._douyin_login_url = str(
-            getattr(settings, "media_ingest_douyin_login_url", "https://www.douyin.com/")
-            or "https://www.douyin.com/"
-        ).strip()
-        self._douyin_asr_enabled = bool(
-            getattr(settings, "media_ingest_douyin_asr_enabled", True)
-        )
-        self._douyin_asr_backend = str(
-            getattr(settings, "media_ingest_douyin_asr_backend", "auto") or "auto"
-        ).strip().lower()
-        if self._douyin_asr_backend not in {"auto", "openai", "faster_whisper"}:
-            self._douyin_asr_backend = "auto"
-        self._douyin_asr_model = str(
-            getattr(settings, "media_ingest_douyin_asr_model", "whisper-1") or "whisper-1"
-        ).strip()
-        self._douyin_asr_local_model = str(
-            getattr(settings, "media_ingest_douyin_asr_local_model", "small") or "small"
-        ).strip()
-        self._douyin_asr_local_device = str(
-            getattr(settings, "media_ingest_douyin_asr_local_device", "auto") or "auto"
-        ).strip().lower()
-        if self._douyin_asr_local_device not in {"auto", "cpu", "cuda"}:
-            self._douyin_asr_local_device = "auto"
-        self._douyin_asr_local_compute_type = str(
-            getattr(settings, "media_ingest_douyin_asr_local_compute_type", "int8") or "int8"
-        ).strip()
-        self._douyin_asr_local_beam_size = max(
-            1,
-            min(8, int(getattr(settings, "media_ingest_douyin_asr_local_beam_size", 4) or 4)),
-        )
-        self._douyin_asr_max_audio_seconds = max(
-            30,
-            min(360, int(getattr(settings, "media_ingest_douyin_asr_max_audio_seconds", 120) or 120)),
-        )
-        self._douyin_asr_timeout_seconds = max(
-            20,
-            min(300, int(getattr(settings, "media_ingest_douyin_asr_timeout_seconds", 80) or 80)),
-        )
+        # Douyin-specific configuration is kept in a separate helper to keep
+        # the main constructor focused, but we mirror the old attribute names
+        # so that existing code and tests continue to work.
+        douyin_cfg = DouyinConfig()
+        backend_dir = Path(__file__).resolve().parents[2]
+        self._douyin_browser_profile_dir, self._douyin_cookie_file = resolve_douyin_paths(backend_dir, douyin_cfg)
+        self._douyin_auto_login_enabled = douyin_cfg.auto_login_enabled
+        self._douyin_browser_profile_arg = douyin_cfg.browser_profile_arg
+        self._douyin_login_url = douyin_cfg.login_url
+        self._douyin_asr_enabled = douyin_cfg.asr_enabled
+        self._douyin_asr_backend = douyin_cfg.asr_backend
+        self._douyin_asr_model = douyin_cfg.asr_model
+        self._douyin_asr_local_model = douyin_cfg.asr_local_model
+        self._douyin_asr_local_device = douyin_cfg.asr_local_device
+        self._douyin_asr_local_compute_type = douyin_cfg.asr_local_compute_type
+        self._douyin_asr_local_beam_size = douyin_cfg.asr_local_beam_size
+        self._douyin_asr_max_audio_seconds = douyin_cfg.asr_max_audio_seconds
+        self._douyin_asr_timeout_seconds = douyin_cfg.asr_timeout_seconds
         self._ffmpeg_command = self._resolve_ffmpeg_command()
         self._douyin_asr_openai_available = True
         self._faster_whisper_model: Any | None = None
@@ -228,7 +179,9 @@ class MediaIngestService:
             source_type=source_type,
             content_length=len(extracted_text),
         )
-        limitations = _build_limitations(source_type)
+        limitations = build_limitations(source_type)
+        # limitations helper moved to media_ingest_providers.build_limitations
+        # but we keep the old name for backward compatibility.
 
         (
             insight_title,
@@ -316,16 +269,7 @@ class MediaIngestService:
         )
 
     def detect_platform(self, url: str) -> str:
-        try:
-            host = (urlparse(url).hostname or "").lower()
-        except Exception:
-            return "unsupported"
-        if host.startswith("www."):
-            host = host[4:]
-        for platform, suffixes in _PLATFORM_RULES:
-            if any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes):
-                return platform
-        return "unsupported"
+        return detect_platform(url)
 
     def _resolve_runtime_path(self, raw: str) -> Path:
         path = Path(str(raw or "").strip() or ".").expanduser()
@@ -1022,29 +966,10 @@ class MediaIngestService:
         return ""
 
     def _sanitize_douyin_body_preview(self, text: str) -> str:
-        raw = self._normalize_text(text).replace("\n", " ")
-        if not raw:
-            return ""
-        segments = re.split(r"[。！？!?；;\n]+|\s{2,}", raw)
-        kept: list[str] = []
-        seen: set[str] = set()
-        total_len = 0
-        for segment in segments:
-            denoised = _DOUYIN_NOISE_FRAGMENT_RE.sub(" ", str(segment or ""))
-            cleaned = self._normalize_paragraph(denoised, max_len=140)
-            if not cleaned:
-                continue
-            lowered = cleaned.lower()
-            if lowered in seen:
-                continue
-            if self._is_douyin_noise_fragment(cleaned):
-                continue
-            seen.add(lowered)
-            kept.append(cleaned)
-            total_len += len(cleaned)
-            if total_len >= 760 or len(kept) >= 8:
-                break
-        return "。".join(kept)
+        # Delegate to the shared Douyin text sanitizer to keep this module
+        # focused on orchestration. The helper already mirrors the old
+        # behaviour of removing noise fragments and compacting whitespace.
+        return sanitize_douyin_body_preview(self._normalize_text(text).replace("\n", " "))
 
     def _is_douyin_noise_fragment(self, text: str) -> bool:
         snippet = self._normalize_paragraph(text, max_len=160)
