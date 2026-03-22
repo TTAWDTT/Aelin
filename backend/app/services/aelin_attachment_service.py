@@ -13,7 +13,6 @@ import threading
 import time
 import zipfile
 from collections import Counter
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -76,13 +75,6 @@ class AttachmentIngestError(RuntimeError):
         super().__init__(message)
         self.code = str(code or "attachment_ingest_error").strip() or "attachment_ingest_error"
         self.message = str(message or "attachment ingest failed").strip() or "attachment ingest failed"
-
-
-@dataclass(slots=True)
-class ParsedBlock:
-    content: str
-    block_type: str
-    loc: dict[str, Any]
 
 
 class AelinAttachmentService:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Tuple
+from typing import Any, Callable
 
 
 @dataclass(slots=True)
@@ -9,9 +9,6 @@ class ParsedBlock:
     content: str
     block_type: str
     loc: dict[str, Any]
-
-
-ParsedResult = Tuple[str, list[ParsedBlock], dict[str, Any]]
 
 
 def normalize_blocks_to_chunks(
@@ -43,5 +40,4 @@ def normalize_blocks_to_chunks(
             )
             chunk_idx += 1
     return rows
-
 
