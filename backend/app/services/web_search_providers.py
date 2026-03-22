@@ -6,17 +6,19 @@ from typing import Any, Iterable
 from urllib.parse import quote
 
 import httpx
-
-from app.services.web_search import (
-    WebSearchResult,
-    _USER_AGENT,
+from app.services.web_search_common import (
     _clean,
     _contains_cjk,
     _decode_duckduckgo_redirect,
     _extract_domain,
+    _looks_blocked_page,
     _normalize_url,
     _strip_html,
-    _looks_blocked_page,
+    _USER_AGENT,
+)
+
+from app.services.web_search import (
+    WebSearchResult,
 )
 
 
@@ -328,5 +330,4 @@ def search_hn_algolia(
         if len(rows) >= max_results:
             break
     return rows
-
 
