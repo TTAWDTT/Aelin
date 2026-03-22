@@ -43,13 +43,6 @@
         "to": "frontend-dist"
       },
       {
-        "from": ".pack-resources/pinchtab-runtime",
-        "to": "pinchtab-runtime",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "../backend/dist/aelin-backend",
         "to": "backend-runtime",
         "filter": [

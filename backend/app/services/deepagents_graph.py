@@ -302,20 +302,9 @@ def build_chat_agent(
     skill_sources: list[str] = []
     aelin_skills_root_path = "/skills/aelin/"
     if skills_root.is_dir():
-        # DeepAgents skills 目前只挂载仍然有效的技能目录。与 plane/PinchTab
-        # 强相关的技能（plane_browser / plane_goose / plane_cli_anything 等）
-        # 已在本分支下线，只作为历史文档保存在 docs/archive 中，因此这里显式
-        # 跳过这些目录，即便它们作为空目录仍然存在于仓库中。
-        deprecated_skill_dirs = {
-            "plane_browser",
-            "plane_cli_anything",
-            "plane_goose",
-        }
         has_any_skill = False
         for subdir in skills_root.iterdir():
             if not subdir.is_dir():
-                continue
-            if subdir.name in deprecated_skill_dirs:
                 continue
             # 物理目录名允许使用下划线，但按照 Agent Skills 规范，skill name /
             # 虚拟目录名只能包含小写字母、数字和连字符，因此这里做一次规范化。

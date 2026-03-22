@@ -1146,28 +1146,6 @@ function backendRuntimeDir() {
   return path.join(process.resourcesPath, "backend-runtime");
 }
 
-function pinchtabRuntimeDir() {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, "pinchtab-runtime")
-    : path.join(projectRoot(), "desktop", ".pack-resources", "pinchtab-runtime");
-}
-
-function resolvePinchtabExecutablePath() {
-  const exeName = process.platform === "win32" ? "pinchtab.exe" : "pinchtab";
-  const candidates = [
-    path.join(pinchtabRuntimeDir(), exeName),
-    path.join(backendDir(), "bin", exeName),
-    path.join(backendDir(), "pinchtab_probe_2", exeName),
-    path.join(backendDir(), ".pinchtab", exeName),
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return "";
-}
-
 function frontendDir() {
   return path.join(projectRoot(), "frontend");
 }
@@ -2680,8 +2658,6 @@ function startBackend() {
   const mediaDir = path.join(userData, "media");
   fs.mkdirSync(mediaDir, { recursive: true });
   const dbFile = path.join(userData, "mercurydesk.db");
-  const pinchtabDataDir = path.join(userData, "pinchtab");
-  fs.mkdirSync(pinchtabDataDir, { recursive: true });
 
   const env = {
     ...process.env,
@@ -2702,13 +2678,7 @@ function startBackend() {
     MERCURYDESK_BROWSER_TOOL_CDP_ENABLED: process.env.MERCURYDESK_BROWSER_TOOL_CDP_ENABLED || "1",
     MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT:
       process.env.MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
-    MERCURYDESK_PINCHTAB_DATA_DIR:
-      process.env.MERCURYDESK_PINCHTAB_DATA_DIR || pinchtabDataDir,
   };
-  const pinchtabExecutablePath = process.env.MERCURYDESK_PINCHTAB_EXECUTABLE_PATH || resolvePinchtabExecutablePath();
-  if (pinchtabExecutablePath) {
-    env.MERCURYDESK_PINCHTAB_EXECUTABLE_PATH = pinchtabExecutablePath;
-  }
   const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
   if (pluginBaseUrl) {
     env.MERCURYDESK_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
@@ -2723,9 +2693,6 @@ function startBackend() {
     const exePath = path.join(runtimeRoot, exeName);
     if (!fs.existsSync(exePath)) {
       throw new Error(`Bundled backend unavailable: ${exePath}`);
-    }
-    if (!pinchtabExecutablePath || !fs.existsSync(pinchtabExecutablePath)) {
-      throw new Error(`Bundled PinchTab unavailable: ${pinchtabExecutablePath || pinchtabRuntimeDir()}`);
     }
     backendProc = spawn(exePath, [], {
       cwd: runtimeRoot,
