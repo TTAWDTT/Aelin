@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import User
-from app.routers.aelin import _build_cached_base_context_bundle, _build_context_bundle
 from app.routers.auth import get_current_user
 from app.schemas import AelinContextResponse
+from app.services.aelin_core_support import _build_cached_base_context_bundle, _build_context_bundle
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 

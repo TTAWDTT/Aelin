@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import AttachmentDocument, User
-from app.routers.aelin import _dispatch_aelin_chat, _normalize_search_mode
+from app.routers.aelin import _dispatch_aelin_chat
 from app.routers.aelin_text_helpers import _now_ms, _sse_event
 from app.routers.auth import get_current_user
 from app.schemas import (
@@ -231,7 +231,7 @@ def aelin_chat_stream(
                 "query": payload.query.strip()[:180],
                 "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                 "workspace": payload.workspace,
-                "search_mode": _normalize_search_mode(getattr(payload, "search_mode", "auto")),
+                "search_mode": str(getattr(payload, "search_mode", "auto") or "auto")[:16],
             },
         )
         worker = threading.Thread(target=_worker, daemon=True)

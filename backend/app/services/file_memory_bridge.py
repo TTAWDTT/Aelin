@@ -5,12 +5,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.services.openviking_utils import (
-    _iso,
-    _normalize_workspace,
-    _safe_json,
-    _slug,
-)
+def _iso(dt: datetime | None) -> str:
+    if dt is None:
+        return ""
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
+def _normalize_workspace(value: str) -> str:
+    clean = " ".join((value or "").strip().split())
+    return clean[:64] if clean else "default"
+
+
+def _safe_json(payload: Any) -> str:
+    try:
+        import json
+
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
+    except Exception:
+        return "{}"
+
+
+def _slug(text: str, *, fallback: str = "item", max_len: int = 64) -> str:
+    import re
+
+    raw = re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff]+", "-", (text or "").strip()).strip("-")
+    if not raw:
+        return fallback
+    return raw[:max_len]
 
 
 @dataclass
@@ -37,8 +63,8 @@ class FileMemoryBridge:
     Simplified file-memory bridge for DeepAgents.
 
     This implementation is deliberately minimal: it only reads/writes local
-    markdown files under `../data/aelin_memory` and does not depend on the
-    external `openviking` package or any vector index.
+    markdown files under `../data/aelin_memory` and does not depend on any
+    external vector index or third-party memory system.
     """
 
     def __init__(self) -> None:
@@ -143,4 +169,3 @@ class FileMemoryBridge:
 
 
 file_memory_bridge = FileMemoryBridge()
-
