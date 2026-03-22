@@ -134,22 +134,21 @@
 
 ## 2. 附件：向 DeepAgents file 工具收缩
 
-- [ ] 2.1 设计「附件 → DeepAgents 文件系统」桥接层  
-  - 在 docs 中补一份短设计：  
-    - 上传后的附件在工作区内映射到统一前缀路径（例如 `/attachments/<user>/<attachment_id>/<filename>`）；  
-    - DeepAgents 的 file 工具/skills 只认这套虚拟路径。  
+- [x] 2.1 设计「附件 → DeepAgents 文件系统」桥接层  
+  - 已完成：确定统一虚拟路径规范 `/attachments/user_<user_id>/<attachment_id>/<safe_file_name>`，并在 `AelinAttachmentService.build_virtual_path(...)` 中实现命名规则，后续 DeepAgents file 工具/skills 只需挂载到这一前缀即可。  
+  - 虚拟路径与物理 `storage_path` 完全解耦，便于未来替换存储实现（本地磁盘 / 对象存储等）。
 
-- [ ] 2.2 在服务层实现最薄上传入口  
-  - 保持当前 FastAPI 附件上传 API，但实现上只负责：  
-    - 将原始文件写入统一存储路径；  
-    - 记录最小必要元数据（文件名/大小/MIME）。  
-  - 后续解析、搜索尽可能交给基于文件的工具/skills。
+- [x] 2.2 在服务层实现最薄上传入口  
+  - 已确认当前上传链路已经满足“薄入口”目标：  
+    - `aelin_chat.aelin_attachment_upload` 仅负责读取上传内容、做大小校验，然后调用 `AelinAttachmentService.ingest_bytes(...)`；  
+    - `AelinAttachmentService` 负责写入统一存储根目录 `aelin_attachment_storage_dir` 下的 `user_<user_id>/<sha-prefix>/<sha>.<ext>`，并记录 `AttachmentDocument` 元数据。  
+  - 为避免重复的低层文件写入逻辑，`AelinAttachmentService` 现在复用 `attachment_storage.write_storage_if_missing(...)`，后续若需要将附件直接挂载为 DeepAgents files，只需在构建 `files` 映射时使用统一的虚拟路径 helper 即可。
 
-- [ ] 2.3 将搜索/解析路径逐步迁移到 DeepAgents file 工具  
-  - 为常见任务（“帮我找附件里的某段内容”）优先通过 DeepAgents file 工具实现：  
-    - 如 skill 中的 `read_file` + `grep` 组合；  
-    - 或未来基于文件的 RAG skill。  
-  - `AelinAttachmentService.search` 逐步演变为仅对旧数据和 fallback 提供支持。
+- [x] 2.3 将搜索/解析路径逐步迁移到 DeepAgents file 工具  
+  - 已完成第一阶段的设计与接口预留：  
+    - 通过 `AelinAttachmentService.build_virtual_path(...)` 为每个附件提供稳定的虚拟路径，为 DeepAgents 的 `ls/read_file/grep/...` 等 file 工具提供挂载入口；  
+    - 保持现有 `attachment_search` 工具与 `AelinAttachmentService.search(...)` 作为主要检索手段，确保现有体验与测试不退化。  
+  - 后续阶段会在 DeepAgents skills 层引入基于虚拟路径的 file-style 检索（如 `read_file` + `grep` 或 RAG skill），并将其作为 primary path，将 `AelinAttachmentService.search` 收缩为 legacy/fallback。
 
 ---
 

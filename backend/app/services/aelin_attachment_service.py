@@ -149,6 +149,23 @@ class AelinAttachmentService:
         clean = " ".join(str(raw or "").strip().split())
         return clean[:64]
 
+    def build_virtual_path(self, *, user_id: int, attachment: AttachmentDocument) -> str:
+        """
+        Build a stable virtual path for a given attachment document in the
+        DeepAgents file system.
+
+        This does not touch the physical storage path. It only defines how
+        uploaded attachments are exposed to DeepAgents file/skills tools,
+        using a simple, predictable scheme:
+
+        `/attachments/user_<user_id>/<attachment_id>/<safe_file_name>`
+
+        Callers are free to decide which attachments need to be mounted into
+        the DeepAgents `files` mapping; this helper is purely about naming.
+        """
+        safe_name = self._normalize_name(getattr(attachment, "file_name", "") or "attachment")
+        return f"/attachments/user_{int(user_id)}/{int(getattr(attachment, 'id', 0))}/{safe_name}"
+
     @staticmethod
     def _normalize_name(raw: str) -> str:
         name = str(raw or "").strip().replace("\\", "/").split("/")[-1]
@@ -296,39 +313,6 @@ class AelinAttachmentService:
                 break
             start += step
         return chunks[:500]
-
-    @staticmethod
-    def _write_storage_if_missing(storage_path: Path, content: bytes) -> bool:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_BINARY"):
-            flags |= int(getattr(os, "O_BINARY"))
-        try:
-            fd = os.open(str(storage_path), flags)
-        except FileExistsError:
-            return False
-        handle = None
-        try:
-            handle = os.fdopen(fd, "wb")
-            handle.write(content)
-            handle.close()
-            handle = None
-        except Exception:
-            if handle is not None:
-                try:
-                    handle.close()
-                except Exception:
-                    pass
-            else:
-                try:
-                    os.close(fd)
-                except Exception:
-                    pass
-            try:
-                storage_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-            raise
-        return True
 
     def _build_chunk_rows(self, blocks: list[ParsedBlock], fallback_text: str) -> list[dict[str, Any]]:
         # Primary path: build rows from structured blocks via shared helper so
@@ -1041,7 +1025,7 @@ class AelinAttachmentService:
                         storage_name = f"{file_sha}.{ext}"
                         storage_path = shard_dir / storage_name
                         if not storage_path.exists():
-                            self._write_storage_if_missing(storage_path, content)
+                            write_storage_if_missing(storage_path, content)
                         mutated_existing = True
                         db.query(AttachmentChunk).filter(AttachmentChunk.attachment_id == int(existing.id)).delete(synchronize_session=False)
                         existing.file_name = safe_name
@@ -1162,7 +1146,7 @@ class AelinAttachmentService:
                     )
                 )
 
-            created_storage = self._write_storage_if_missing(storage_path, content)
+            created_storage = write_storage_if_missing(storage_path, content)
             return {
                 "attachment_id": int(row.id),
                 "file_name": safe_name,
