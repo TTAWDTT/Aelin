@@ -4,7 +4,7 @@ from __future__ import annotations
 Lightweight CLI helper to inspect users in the current Aelin DB.
 
 Usage (from backend/):
-    python debug_list_users.py
+    python scripts/debug_list_users.py
 
 This script is intended for local debugging only and is not imported
 anywhere in the runtime code.

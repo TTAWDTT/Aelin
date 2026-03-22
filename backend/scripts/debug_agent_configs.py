@@ -4,7 +4,7 @@ from __future__ import annotations
 Quick inspector for DeepAgents-related agent_configs rows for a few users.
 
 Usage (from backend/):
-    python debug_agent_configs.py
+    python scripts/debug_agent_configs.py
 
 This is a local debugging script only; it is not imported by runtime code.
 """

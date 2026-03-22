@@ -4,7 +4,7 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..", "..");
 const backendDir = path.join(root, "backend");
-const entryFile = path.join(backendDir, "desktop_entry.py");
+const entryFile = path.join(backendDir, "scripts", "desktop_entry.py");
 const requirementsFile = path.join(backendDir, "requirements.txt");
 const distDir = path.join(backendDir, "dist");
 const buildDir = path.join(backendDir, "build", "pyinstaller");
@@ -25,7 +25,7 @@ function run(command, args, cwd = root) {
 }
 
 function resolvePythonLaunchers() {
-  const fromEnv = String(process.env.MERCURYDESK_PYTHON || "").trim();
+  const fromEnv = String(process.env.AELIN_PYTHON || "").trim();
   const launchers = [];
   if (fromEnv) launchers.push({ cmd: fromEnv, args: [] });
   launchers.push({ cmd: "python", args: [] });
@@ -51,7 +51,7 @@ function ensureBuildVenv(launcher) {
     }
   }
 
-  const refreshDeps = String(process.env.MERCURYDESK_REFRESH_BACKEND_VENV || "").trim() === "1";
+  const refreshDeps = String(process.env.AELIN_REFRESH_BACKEND_VENV || "").trim() === "1";
   const pyInstallerReady = run(venvPython, ["-m", "PyInstaller", "--version"], backendDir);
   if (!pyInstallerReady || refreshDeps) {
     console.log("[build-backend] Installing backend build dependencies...");
@@ -79,7 +79,7 @@ function main() {
 
   const launcher = pickPythonLauncher();
   if (!launcher) {
-    console.error("[build-backend] No usable Python launcher found. Set MERCURYDESK_PYTHON or install Python 3.");
+    console.error("[build-backend] No usable Python launcher found. Set AELIN_PYTHON or install Python 3.");
     process.exit(1);
   }
   ensureBuildVenv(launcher);

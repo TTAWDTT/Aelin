@@ -6,7 +6,7 @@ DeepAgents end-to-end verification.
 
 Usage:
     cd backend
-    python debug_run_aelin_for_user.py
+    python scripts/debug_run_aelin_for_user.py
 """
 
 from datetime import timezone

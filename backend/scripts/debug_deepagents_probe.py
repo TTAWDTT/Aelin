@@ -5,7 +5,7 @@ Small debug probe to inspect DeepAgents loop behavior for a given user.
 
 Run with:
     cd backend
-    python debug_deepagents_probe.py
+    python scripts/debug_deepagents_probe.py
 """
 
 from sqlalchemy import text
@@ -56,7 +56,6 @@ def probe_user(db, uid: int) -> None:
         history_turns=[],
         images=[],
         attachment_ids=[],
-        plane_snapshot=None,
         cancel_token=None,
     )
 
