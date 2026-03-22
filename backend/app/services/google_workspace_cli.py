@@ -82,18 +82,6 @@ class GoogleWorkspaceCliService:
         found = shutil.which(configured)
         return found or ""
 
-    def is_available(self) -> bool:
-        return bool(self._resolve_bin_path())
-
-    def configured_bin_path(self) -> str:
-        return self._configured_bin_path
-
-    def resolved_bin_path(self) -> str:
-        return self._resolve_bin_path()
-
-    def config_dir(self) -> str:
-        return self._config_dir
-
     def login_command(self) -> list[str]:
         # Prefer the resolved binary path when available so the hint works even
         # when google_workspace_cli_bin is an absolute path and `gws` is not on PATH.
@@ -125,6 +113,12 @@ class GoogleWorkspaceCliService:
         if self._config_dir:
             env["GWS_CONFIG_DIR"] = self._config_dir
         return env
+
+    def _ok_with_items(self, payload: Any) -> dict[str, Any]:
+        return {"ok": True, "items": _extract_items(payload), "raw": payload}
+
+    def _ok_with_item(self, payload: Any) -> dict[str, Any]:
+        return {"ok": True, "item": payload if isinstance(payload, dict) else {}, "raw": payload}
 
     def _run_json(self, args: list[str], *, timeout_seconds: float | None = None) -> dict[str, Any]:
         bin_path = self._resolve_bin_path()
@@ -208,8 +202,7 @@ class GoogleWorkspaceCliService:
         if not bool(result.get("ok")):
             return result
         payload = result.get("data")
-        items = _extract_items(payload)
-        return {"ok": True, "items": items, "raw": payload}
+        return self._ok_with_items(payload)
 
     def gmail_get_message(self, *, message_id: str, fmt: str = "full") -> dict[str, Any]:
         msg_id = str(message_id or "").strip()
@@ -223,7 +216,7 @@ class GoogleWorkspaceCliService:
         if not bool(result.get("ok")):
             return result
         payload = result.get("data")
-        return {"ok": True, "item": payload if isinstance(payload, dict) else {}, "raw": payload}
+        return self._ok_with_item(payload)
 
     def drive_list_files(self, *, query: str = "", max_results: int = 10) -> dict[str, Any]:
         params: dict[str, Any] = {"pageSize": _safe_int(max_results, 10, low=1, high=50)}
@@ -233,8 +226,7 @@ class GoogleWorkspaceCliService:
         if not bool(result.get("ok")):
             return result
         payload = result.get("data")
-        items = _extract_items(payload)
-        return {"ok": True, "items": items, "raw": payload}
+        return self._ok_with_items(payload)
 
     def calendar_list_events(
         self,
@@ -259,8 +251,7 @@ class GoogleWorkspaceCliService:
         if not bool(result.get("ok")):
             return result
         payload = result.get("data")
-        items = _extract_items(payload)
-        return {"ok": True, "items": items, "raw": payload}
+        return self._ok_with_items(payload)
 
     def _build_gmail_raw_message(
         self,
@@ -310,8 +301,7 @@ class GoogleWorkspaceCliService:
         result = self._run_json(["gmail", "users", "messages", "send", "--json", _compact_json(payload)])
         if not bool(result.get("ok")):
             return result
-        data = result.get("data")
-        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+        return self._ok_with_item(result.get("data"))
 
     def gmail_create_draft(
         self,
@@ -338,8 +328,7 @@ class GoogleWorkspaceCliService:
         result = self._run_json(["gmail", "users", "drafts", "create", "--json", _compact_json(payload)])
         if not bool(result.get("ok")):
             return result
-        data = result.get("data")
-        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+        return self._ok_with_item(result.get("data"))
 
     def calendar_create_event(
         self,
@@ -372,8 +361,7 @@ class GoogleWorkspaceCliService:
         )
         if not bool(result.get("ok")):
             return result
-        data = result.get("data")
-        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+        return self._ok_with_item(result.get("data"))
 
     def docs_create_document(self, *, title: str) -> dict[str, Any]:
         """
@@ -388,8 +376,7 @@ class GoogleWorkspaceCliService:
         result = self._run_json(["docs", "documents", "create", "--json", _compact_json(payload)])
         if not bool(result.get("ok")):
             return result
-        data = result.get("data")
-        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+        return self._ok_with_item(result.get("data"))
 
     def docs_append_text(self, *, document_id: str, text: str) -> dict[str, Any]:
         """
@@ -411,8 +398,7 @@ class GoogleWorkspaceCliService:
         result = self._run_json(["docs", "+write", "--document", doc_id, "--text", text_clean])
         if not bool(result.get("ok")):
             return result
-        data = result.get("data")
-        return {"ok": True, "item": data if isinstance(data, dict) else {}, "raw": data}
+        return self._ok_with_item(result.get("data"))
 
 
 _google_workspace_cli_service: GoogleWorkspaceCliService | None = None
