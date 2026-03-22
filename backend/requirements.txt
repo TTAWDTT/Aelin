@@ -22,7 +22,8 @@ Pillow>=10.4.0
 pytesseract>=0.3.10
 rapidocr-onnxruntime>=1.4.4
 defusedxml>=0.7.1
-# optional semantic file-memory backend
+deepagents>=0.1.0
+langchain-openai>=0.2.0
 
 # test
 pytest>=7.0

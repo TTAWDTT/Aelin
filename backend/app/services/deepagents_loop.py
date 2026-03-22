@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
 from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopTraceStep, AgentLoopToolRun
@@ -15,7 +14,7 @@ from app.services.deepagents_graph import build_chat_agent
 _log = logging.getLogger(__name__)
 
 
-def _build_chat_model(service: LLMService, provider: str) -> ChatAnthropic | None:
+def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
     """
     根据 Aelin 的 AgentConfig 构造 DeepAgents 使用的底层 ChatModel。
 
