@@ -28,14 +28,10 @@ from app.schemas import (
     AelinChatRequest,
     AelinChatResponse,
     AelinCitation,
-    AelinLayoutCard,
     AelinMemoryLayerItem,
     AelinMemoryLayers,
-    AelinPinRecommendationItem,
     AelinToolStep,
     AelinTodoItem,
-    AgentFocusItemOut,
-    AgentMemoryNoteOut,
 )
 from app.services.agent_memory import AgentMemoryService
 from app.services import content_tagging
@@ -515,8 +511,6 @@ def _try_agent_loop_chat(
             return fallback_resp
         return None
 
-    # 如果已经存在一个活跃 plane task，让模型知道可以“续上”它，
-    # 而不是每次都重新开始委派。
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
 
     policy = AelinToolPolicy(

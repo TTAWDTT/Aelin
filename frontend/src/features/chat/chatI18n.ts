@@ -42,33 +42,16 @@ type ChatKeys =
   | 'trace.status.unknown'
   | 'trace.executionPane.title'
   | 'trace.tab.aelin'
-  | 'trace.tab.plane'
   | 'trace.tab.tools'
   | 'trace.executionPane.empty'
   | 'trace.executionPane.headerOpen'
   | 'trace.executionPane.headerClosed'
   | 'trace.executionPane.emptyDetail'
-  | 'trace.plane.empty'
-  | 'trace.plane.title'
-  | 'trace.plane.state.running'
-  | 'trace.plane.state.completed'
-  | 'trace.plane.state.waiting'
-  | 'trace.plane.state.failed'
-  | 'trace.plane.state.unknown'
-  | 'trace.plane.waitingUser'
   | 'trace.tools.empty'
-  | 'trace.plane.tools.heading'
-  | 'trace.plane.tools.showAll'
   | 'trace.tools.round'
   | 'trace.tools.count'
   | 'trace.tools.read'
   | 'trace.tools.write'
-  | 'plane.chip.label'
-  | 'plane.chip.status.running'
-  | 'plane.chip.status.completed'
-  | 'plane.chip.status.waiting'
-  | 'plane.chip.status.failed'
-  | 'plane.chip.status.unknown'
   | 'actions.heading'
   | 'actions.confirm.cta'
   | 'actions.confirm.pending'
@@ -119,33 +102,16 @@ const ZH: Record<ChatKeys, string> = {
   'trace.status.unknown': '未知',
   'trace.executionPane.title': '执行面板',
   'trace.tab.aelin': 'Aelin 链路',
-  'trace.tab.plane': 'Plane 链路',
   'trace.tab.tools': '工具调用',
   'trace.executionPane.empty': '暂无执行信息',
   'trace.executionPane.headerOpen': '执行面板',
   'trace.executionPane.headerClosed': '打开执行面板',
   'trace.executionPane.emptyDetail': '暂无可展示的工具调用或 plane 链路。当 Aelin 使用工具或 plane 处理你的请求时，这里会显示更详细的执行步骤。',
-  'trace.plane.empty': '当前没有可展示的 plane 任务。',
-  'trace.plane.title': '浏览器 plane（{plane}）',
-  'trace.plane.state.running': '正在执行',
-  'trace.plane.state.completed': '已完成',
-  'trace.plane.state.waiting': '等待你的继续操作',
-  'trace.plane.state.failed': '执行失败',
-  'trace.plane.state.unknown': '状态未知',
-  'trace.plane.waitingUser': '浏览器 plane 正在等待你在受控浏览器中完成登录或确认操作。完成后，可以在聊天中告诉我「已登录，继续」。',
   'trace.tools.empty': '本轮暂未调用任何原子工具。',
-  'trace.plane.tools.heading': '本轮与浏览器 plane 相关的调用',
-  'trace.plane.tools.showAll': '查看全部工具调用',
   'trace.tools.round': 'Round {round}',
   'trace.tools.count': '{count} 个调用',
   'trace.tools.read': 'READ',
   'trace.tools.write': 'WRITE',
-  'plane.chip.label': 'Aelin → {plane} · {status}',
-  'plane.chip.status.running': '进行中…',
-  'plane.chip.status.completed': '已完成',
-  'plane.chip.status.waiting': '等待登录/确认',
-  'plane.chip.status.failed': '执行失败',
-  'plane.chip.status.unknown': '状态未知',
   'actions.heading': '建议动作 ({count})',
   'actions.confirm.cta': '确认并继续',
   'actions.confirm.pending': '处理中…',
@@ -198,35 +164,17 @@ const EN: Record<ChatKeys, string> = {
   'trace.status.unknown': 'unknown',
   'trace.executionPane.title': 'Execution panel',
   'trace.tab.aelin': 'Aelin chain',
-  'trace.tab.plane': 'Plane chain',
   'trace.tab.tools': 'Tool calls',
   'trace.executionPane.empty': 'No execution info yet',
   'trace.executionPane.headerOpen': 'Execution panel',
   'trace.executionPane.headerClosed': 'Open execution panel',
   'trace.executionPane.emptyDetail':
-    'No tool calls or plane traces to show yet. When Aelin uses tools or planes to handle your request, detailed steps will appear here.',
-  'trace.plane.empty': 'No plane task to display for this turn.',
-  'trace.plane.title': 'Browser plane ({plane})',
-  'trace.plane.state.running': 'running',
-  'trace.plane.state.completed': 'completed',
-  'trace.plane.state.waiting': 'waiting for your action',
-  'trace.plane.state.failed': 'failed',
-  'trace.plane.state.unknown': 'state unknown',
-  'trace.plane.waitingUser':
-    'The browser plane is waiting for you to complete login or confirmation in the controlled browser window. Once done, tell me in chat so I can continue.',
+    'No tool calls to show yet. When Aelin uses tools to handle your request, detailed steps will appear here.',
   'trace.tools.empty': 'No atomic tools were invoked in this turn.',
-  'trace.plane.tools.heading': 'Tool calls related to browser plane',
-  'trace.plane.tools.showAll': 'Show all tool calls',
   'trace.tools.round': 'Round {round}',
   'trace.tools.count': '{count} call(s)',
   'trace.tools.read': 'READ',
   'trace.tools.write': 'WRITE',
-  'plane.chip.label': 'Aelin → {plane} · {status}',
-  'plane.chip.status.running': 'in progress',
-  'plane.chip.status.completed': 'completed',
-  'plane.chip.status.waiting': 'waiting for login/confirmation',
-  'plane.chip.status.failed': 'failed',
-  'plane.chip.status.unknown': 'unknown',
   'actions.heading': 'Suggested actions ({count})',
   'actions.confirm.cta': 'Confirm and continue',
   'actions.confirm.pending': 'Working…',

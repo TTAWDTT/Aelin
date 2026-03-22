@@ -1,6 +1,6 @@
 import type { AelinToolStep } from '@/shared/api/types'
 import { useChatI18n } from '../chatI18n'
-import { buildToolSummary } from '../traceUtils'
+import { extractToolCalls } from '../traceUtils'
 import { PanelRightOpen } from 'lucide-react'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { ProviderIcon } from './ProviderIcon'
@@ -27,22 +27,19 @@ export function ChatStatusBar({
   if (!isStreaming && !statusText && !hasTrace) return null
 
   const fallback = t('timeline.generating')
-  const summary = hasTrace ? buildToolSummary(trace) : { tools: [], plane: null }
-  const toolNames = Array.from(
-    new Set(summary.tools.map((call) => call.name || '').filter(Boolean))
-  )
-  const joinedTools = toolNames.slice(0, 4).join(' · ') || (summary.plane ? 'plane' : '')
-  const providers = Array.from(
-    new Set(summary.tools.map((call) => call.provider || '').filter(Boolean))
-  ).slice(0, 3)
+  const tools = hasTrace ? extractToolCalls(trace) : []
+  const toolNames = Array.from(new Set(tools.map((call) => call.name || '').filter(Boolean)))
+  const joinedTools = toolNames.slice(0, 4).join(' · ')
+  const providers = Array.from(new Set(tools.map((call) => call.provider || '').filter(Boolean))).slice(0, 3)
 
   let text = statusText || ''
 
   if (!text && isStreaming && joinedTools) {
     text = t('status.tools.invoking', { tools: joinedTools })
   } else if (!text && !isStreaming && hasTrace && joinedTools) {
+    const totalCalls = tools.length || 1
     text = t('status.tools.summary', {
-      count: summary.tools.length || 1,
+      count: totalCalls,
       tools: joinedTools,
     })
   }

@@ -94,7 +94,7 @@ export function ChatView() {
 
   const executionTrace = focusedTrace ?? latestAssistantWithTrace?.toolTrace ?? []
 
-  // 桌面模式下，当本轮已经产生工具/plane trace 且正在流式时，自动展开右侧 ExecutionPane。
+  // 桌面模式下，当本轮已经产生工具 trace 且正在流式时，自动展开右侧 ExecutionPane。
   useEffect(() => {
     if (!compact && isStreaming && executionTrace.length > 0 && !open && !suppressAutoOpen) {
       setOpen(true)

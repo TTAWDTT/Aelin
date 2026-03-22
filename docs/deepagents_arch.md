@@ -54,6 +54,56 @@
 - [ ] 删除 `tool_skill_bodies` 相关逻辑后，DeepAgents 能通过 skill 系统获得必要的工具使用说明。
 - [ ] gws 写工具调用（如 `docs_create`）在正常配置下成功率与当前相当或更高。
 
+### 1.3 DeepAgents 侧最小上下文输入集合（当前实现）
+
+当前 DeepAgents agent loop 在 Aelin 中只依赖一组**极小的上下文输入**，其来源和流向如下：
+
+- 从 HTTP / 前端到 `run_deepagents_loop` 的上下文字段：
+  - `query`：当前轮用户自然语言问题（字符串）。
+  - `history_turns`：最近若干轮 `{"role": "user"|"assistant", "content": "..."}` 结构化对话历史（已在 `_normalize_history` 中截断与清洗）。
+  - `memory_summary`：由 `AgentMemoryService.build_system_memory_prompt(...)` 构造的单一 markdown 字符串视图，本质上是 `/memory/AGENTS.md` 的文本快照（附带可选“当前问题”小节）。
+  - `images`：当前轮随消息上传的图片列表，已在 `_normalize_images` 中裁剪与过滤（最多 4 张、data URL 长度受限）。目前 DeepAgents agent 本身尚未直接消费该字段，仅为后续图像工具预留。
+  - `attachment_ids`：当前轮声明的附件 ID 列表，经 `_normalize_attachment_ids` 过滤为最多 20 个正整数。它只通过 `AelinToolHub(available_attachment_ids=...)` 间接影响 `attachment_search` 工具，不再以任何额外形式注入 agent loop。
+
+- 从 `run_deepagents_loop` 到 DeepAgents agent 的输入：
+  - `messages`：由 `history_turns` 与最新 `query` 组合而成的纯对话消息列表，是 DeepAgents 看到的唯一对话上下文。
+  - `files`：由 `build_chat_agent(...)` 挂载的虚拟文件映射：
+    - `/skills/aelin/<skill-name>/SKILL.md` 等：来自 `backend/deepagents_skills/*/*.md`。
+    - `/memory/AGENTS.md`：包装自 `memory_summary`，是会话 / 长期记忆的唯一文件入口。
+  - `tools`：通过 `build_chat_tools(...)` 从 `AelinToolHub` 中挑选出的少量能力型工具（`web_search` / `attachment_search` / `google_workspace` / `device` / `screen_get`），并受 `AelinToolPolicy` 控制调用次数与写操作。
+  - `skills`：统一传入 `["/skills/aelin/"]`，由 DeepAgents SkillsMiddleware 自行解析各 skill 目录与 `SKILL.md`。
+  - `memory`：统一传入 `["/memory/AGENTS.md"]`，由 DeepAgents MemoryMiddleware 负责加载与管理。
+
+约束与保证：
+- **没有任何 legacy layout / daily brief / notifications / pin 推荐等字段**会被注入到 `run_deepagents_loop` 或 DeepAgents agent 中。
+- 上述五个上下文字段（`query`、`history_turns`、`memory_summary`、`images`、`attachment_ids`）以及 `tools` / `skills` / `memory` 是 DeepAgents 侧的**最小必要输入集合**；未来如需新增上下文类型，必须先在本节与相关 TODO 中显式记录和评审，而不是通过隐式字段或 side-channel 注入。
+
+### 1.4 Context 视图与 `/aelin/context` 的精简形态
+
+在 DeepAgents 版本下，Aelin 的「上下文视图」已经与 agent loop 完全解耦，作为一个纯 UI 辅助接口存在：
+
+- `/api/v1/aelin/context` 当前返回的字段集合为：
+  - `workspace`：当前工作区名。
+  - `summary`：基于 AGENTS.md 的会话摘要投影（`AgentMemoryService.get_summary`）。
+  - `notes` / `notes_count`：从 AGENTS.md 的长期记忆段落投影出的若干 note（`list_notes`），过滤掉 legacy todo/layout 源。
+  - `todos`：从 AGENTS.md 的「待办」段落投影出的未完成待办列表（`list_todos`），仅作为 UI 视图数据源。
+  - `memory_layers`：一个轻量的分层视图，由 `build_memory_layers_from_items` 基于 `summary`/`notes`/`todos` 纯函数构造，用于前端右侧 Memory 视图展示；不再依赖 layout/pin/notifications。
+  - `generated_at`：上下文生成时间戳。
+
+已明确下线的 context 体验：
+
+- 不再在 context pipeline 中构造或返回以下字段：
+  - 布局卡片（layout_cards）及其坐标/尺寸信息；
+  - 自动 pin 推荐（pin_recommendations）；
+  - 日摘要卡片（daily_brief）；
+  - 通知流（notifications / proactive feed glue）。
+- 相关类型仍保留在 `app.schemas` / 前端 `types.ts` 中作为历史占位，但不再由后端填充，后续可以在彻底清理阶段移除。
+
+约束：
+
+- `/aelin/context` 只读且廉价，内部只通过 `AgentMemoryService` 的文件优先接口读取 `/memory/AGENTS.md` 投影，并在必要时使用一个简单的 TTL 缓存（`_build_cached_base_context_bundle`）避免频繁重复解析。
+- DeepAgents agent loop 不会再从 context bundle 中获取任何额外「隐式上下文」，即便未来 context 视图发生演进，也不会影响 agent 核心路径。
+
 > 代码约定：围绕 Agent / 工具 / 记忆 的 service 文件（例如 `aelin_core.py`、
 > `aelin_chat_planning.py`、`agent_memory.py` 等）应尽量保持在 600 行以内，
 > 如需继续扩展，请优先拆分到职责单一的 `*_support.py` / `tools_*.py` 等

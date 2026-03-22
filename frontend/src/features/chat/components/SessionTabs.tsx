@@ -3,8 +3,6 @@ import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import { useChatStore, type ChatSession } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
-import { extractPlaneTaskMeta } from '../traceUtils'
-import { ProviderIcon } from './ProviderIcon'
 
 interface SessionTabsProps {
   className?: string
@@ -37,22 +35,6 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
     viewport.scrollBy({ left: delta, behavior: scrollBehavior })
   }
 
-  const getSessionPlaneInfo = (session: ChatSession) => {
-    const messages = session.messages || []
-    const assistant = [...messages]
-      .reverse()
-      .find((m) => m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
-    if (!assistant || !assistant.toolTrace || assistant.toolTrace.length === 0) {
-      return { planeLabel: '', hasActiveTask: false }
-    }
-    const meta = extractPlaneTaskMeta(assistant.toolTrace)
-    if (!meta) return { planeLabel: '', hasActiveTask: false }
-    const activeStates = new Set(['queued', 'running', 'waiting_user', 'blocked'])
-    const hasActiveTask = activeStates.has(meta.state)
-    const planeLabel = meta.plane || 'plane'
-    return { planeLabel, hasActiveTask }
-  }
-
   const renderSessionItems = (truncateTitle: boolean) => (
     <>
       {sessions.map((session) => (
@@ -60,12 +42,6 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
           key={session.id}
           className="group relative shrink-0"
         >
-          {(() => {
-            const info = getSessionPlaneInfo(session)
-            return info.hasActiveTask ? (
-              <span className="pointer-events-none absolute -right-0.5 -top-0.5 z-20 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-            ) : null
-          })()}
           <button
             type="button"
             ref={session.id === activeSessionId ? activeTabRef : null}
@@ -81,13 +57,6 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
             title={session.title}
           >
             <span className="flex min-w-0 items-center gap-1.5">
-              {(() => {
-                const info = getSessionPlaneInfo(session)
-                if (!info.planeLabel) return null
-                return (
-                  <ProviderIcon provider="plane" size="sm" />
-                )
-              })()}
               <span
                 className={cn(
                   'min-w-0 text-left',

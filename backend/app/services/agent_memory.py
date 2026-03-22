@@ -82,6 +82,29 @@ class MemoryNote:
 
 
 class AgentMemoryService:
+    """
+    File-first memory service used by Aelin in the DeepAgents runtime.
+
+    There are two distinct layers of responsibility:
+
+    1. DeepAgents chat-loop interface（最小职责）
+       - 读写 `/memory/AGENTS.md`（通过 `_read_agents_md_text` / `_write_agents_md_text`）
+       - 将该文件内容封装为单一 `memory_summary` 字符串：
+         `build_system_memory_prompt(db, user_id, query=...)`
+       DeepAgents agent loop 仅依赖这一视图（经由
+       `aelin_core_support._get_memory_summary_for_chat`），不会再直接触碰任何
+       DB 记忆模型。
+
+    2. UI / 工具视图（仅用于 context_get / profile 等工具以及 /aelin/context）
+       - `get_summary` / `list_notes` / `list_todos`
+       - `build_focus_items` / `build_memory_layers_from_items`
+       - `add_note` 及若干 append_* 帮助函数
+
+    这些 helper 只为上下文 / 画像 / 待办视图提供投影，不影响 DeepAgents 的主
+    agent loop 行为。未来如果继续瘦身 UI pipeline，可以将它们迁移到专门的
+    LegacyContextViewService 或直接删除；在此之前，它们作为基于 AGENTS.md 与
+    消息表的轻量投影层保留。
+    """
     def _read_agents_md_text(self, user_id: int, workspace: str = "default") -> str:
         """
         Best-effort read of the DeepAgents-style AGENTS.md memory file.

@@ -304,42 +304,6 @@ class AelinTodoItem(BaseModel):
     updated_at: str
 
 
-class AelinPinRecommendationItem(BaseModel):
-    contact_id: int
-    display_name: str
-    score: float
-    reasons: list[str] = Field(default_factory=list)
-    unread_count: int = 0
-    last_message_at: Optional[datetime] = None
-
-
-class AelinDailyBriefAction(BaseModel):
-    kind: str
-    title: str
-    detail: str = ""
-    contact_id: Optional[int] = None
-    message_id: Optional[int] = None
-    priority: str = "normal"
-
-
-class AelinDailyBrief(BaseModel):
-    generated_at: datetime
-    summary: str
-    top_updates: list[AgentFocusItemOut] = Field(default_factory=list)
-    actions: list[AelinDailyBriefAction] = Field(default_factory=list)
-
-
-class AelinLayoutCard(BaseModel):
-    contact_id: int
-    display_name: str
-    pinned: bool = False
-    order: int = Field(default=0, ge=0)
-    x: float = Field(default=0, ge=0)
-    y: float = Field(default=0, ge=0)
-    width: float = Field(default=312, ge=120, le=2400)
-    height: float = Field(default=316, ge=120, le=2400)
-
-
 class AelinMemoryLayerItem(BaseModel):
     id: str
     layer: str
@@ -355,30 +319,6 @@ class AelinMemoryLayers(BaseModel):
     facts: list[AelinMemoryLayerItem] = Field(default_factory=list)
     preferences: list[AelinMemoryLayerItem] = Field(default_factory=list)
     in_progress: list[AelinMemoryLayerItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinNotificationItem(BaseModel):
-    id: str
-    level: str = "info"
-    title: str
-    detail: str = ""
-    source: str = ""
-    ts: str = ""
-    action_kind: Optional[str] = None
-    action_payload: dict[str, str] = Field(default_factory=dict)
-
-
-class AelinNotificationResponse(BaseModel):
-    total: int = 0
-    items: list[AelinNotificationItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinProactivePollResponse(BaseModel):
-    workspace: str = "default"
-    total: int = 0
-    items: list[AelinNotificationItem] = Field(default_factory=list)
     generated_at: datetime
 
 
@@ -547,36 +487,6 @@ class AelinDeviceScreenCaptureRequest(BaseModel):
     selection_timeout_ms: int = Field(default=45000, ge=5000, le=180000)
 
 
-class AgentCardLayoutItem(BaseModel):
-    contact_id: int
-    display_name: str = Field(min_length=1, max_length=255)
-    pinned: bool = False
-    order: int = Field(default=0, ge=0)
-    x: float = Field(default=0, ge=0)
-    y: float = Field(default=0, ge=0)
-    width: float = Field(default=312, ge=120, le=2400)
-    height: float = Field(default=316, ge=120, le=2400)
-
-
-class AgentCardLayoutUpdate(BaseModel):
-    cards: list[AgentCardLayoutItem] = Field(default_factory=list)
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-
-
-class AgentPinRecommendationItem(BaseModel):
-    contact_id: int
-    display_name: str
-    score: float
-    reasons: list[str] = Field(default_factory=list)
-    unread_count: int = 0
-    last_message_at: Optional[datetime] = None
-
-
-class AgentPinRecommendationResponse(BaseModel):
-    generated_at: datetime
-    items: list[AgentPinRecommendationItem] = Field(default_factory=list)
-
-
 class AgentTodoCreate(BaseModel):
     title: str = Field(min_length=1, max_length=240)
     detail: str = Field(default="", max_length=2000)
@@ -604,22 +514,6 @@ class AgentTodoOut(BaseModel):
     contact_id: Optional[int] = None
     message_id: Optional[int] = None
     updated_at: str
-
-
-class AgentDailyBriefAction(BaseModel):
-    kind: str
-    title: str
-    detail: str = ""
-    contact_id: Optional[int] = None
-    message_id: Optional[int] = None
-    priority: str = "normal"
-
-
-class AgentDailyBriefResponse(BaseModel):
-    generated_at: datetime
-    summary: str
-    top_updates: list[AgentFocusItemOut] = Field(default_factory=list)
-    actions: list[AgentDailyBriefAction] = Field(default_factory=list)
 
 
 class AgentAdvancedSearchRequest(BaseModel):

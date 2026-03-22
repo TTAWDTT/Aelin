@@ -130,11 +130,14 @@ def _to_citations(raw_focus_items: list[dict], max_items: int) -> list[AelinCita
 
 def _get_memory_summary_for_chat(db: Session, user_id: int, *, workspace: str = "default") -> str:
     """
-    Build the concise memory summary string used by the agent loop.
+    Build the concise memory summary string used by the DeepAgents agent loop.
 
-    This delegates to AgentMemoryService.build_system_memory_prompt so that
-    DeepAgents sees the same AGENTS.md-style view of user memory, instead of
-    the legacy raw summary field.
+    说明：
+    - 这是 DeepAgents chat path 获取 memory_summary 的唯一入口；其他
+      代码不得绕过本函数自行拼装 summary，避免出现多套不一致的记忆视图。
+    - 实现上仅委托 `AgentMemoryService.build_system_memory_prompt`，这样
+      DeepAgents 始终看到与 `/memory/AGENTS.md` 一致的文件视图，而不会
+      回落到任何 legacy DB 字段。
     """
     try:
         summary = _memory.build_system_memory_prompt(db, user_id, query="")
@@ -157,4 +160,3 @@ __all__ = [
     "_memory",
     "_web_search",
 ]
-

@@ -1,25 +1,8 @@
 import type { AelinToolStep } from '@/shared/api/types'
 
-export type PlaneTaskState =
-  | 'queued'
-  | 'running'
-  | 'waiting_user'
-  | 'blocked'
-  | 'completed'
-  | 'failed'
-  | 'unknown'
-
-export interface PlaneTaskMeta {
-  plane: string
-  state: PlaneTaskState
-  summary?: string
-  requiresUserInput?: boolean
-}
-
 export type ToolCallKind =
   | 'core'
   | 'llm_tool'
-  | 'plane_tool'
   | 'gws'
   | 'device'
   | 'web'
@@ -40,7 +23,6 @@ export type RunNodeType =
   | 'agent'
   | 'plan'
   | 'tool'
-  | 'plane'
   | 'memory'
   | 'fs'
   | 'error'
@@ -72,14 +54,13 @@ export function formatStageLabel(stage: string | undefined): string {
   const s = String(stage || '').trim()
   if (!s) return 'Step'
   return s
-    .replace(/_/g, ' ')
+    .replace(/[_\.]/g, ' ')
     .replace(/\b\w/g, (m) => m.toUpperCase())
 }
 
 function inferProviderFromToolName(name: string): string {
   const n = String(name || '').toLowerCase()
   if (!n) return 'aelin-core'
-  if (n === 'plane' || n.startsWith('plane_') || n.includes('pinchtab')) return 'plane'
   if (
     n.startsWith('gws') ||
     n.startsWith('gmail') ||
@@ -97,7 +78,6 @@ function inferProviderFromToolName(name: string): string {
 function inferKindFromToolName(name: string): ToolCallKind {
   const n = String(name || '').toLowerCase()
   if (!n) return 'llm_tool'
-  if (n === 'plane' || n.startsWith('plane_') || n.includes('pinchtab')) return 'plane_tool'
   if (
     n === 'google_workspace' ||
     n.startsWith('gws') ||
@@ -124,7 +104,6 @@ function looksLikeWriteCall(name: string, detail: string): boolean {
     if (d.includes('gmail_draft')) return true
     if (d.includes('calendar_create_event')) return true
   }
-  if (n === 'plane' || n.startsWith('plane_') || n.includes('pinchtab')) return true
   return false
 }
 
@@ -151,50 +130,6 @@ function extractLatencyFromDetail(detail: string): number {
   return num
 }
 
-interface PlaneDetailMeta {
-  taskId?: string
-  state?: PlaneTaskState
-  goal?: string
-  requiresUserInput?: boolean
-}
-
-function parsePlaneDetail(detail: string): PlaneDetailMeta {
-  const text = String(detail || '')
-  const meta: PlaneDetailMeta = {}
-
-  const stateIndex = text.indexOf('state=')
-  if (stateIndex >= 0) {
-    const after = text.slice(stateIndex + 'state='.length)
-    const token = after.split(/[;,\s]/, 1)[0]?.trim() || ''
-    const lowered = token.toLowerCase()
-    if (lowered === 'waiting_user') meta.state = 'waiting_user'
-    else if (lowered === 'running') meta.state = 'running'
-    else if (lowered === 'queued') meta.state = 'queued'
-    else if (lowered === 'blocked') meta.state = 'blocked'
-    else if (lowered === 'completed') meta.state = 'completed'
-    else if (lowered === 'failed') meta.state = 'failed'
-  }
-
-  const taskIndex = text.indexOf('task_id=')
-  if (taskIndex >= 0) {
-    const after = text.slice(taskIndex + 'task_id='.length)
-    meta.taskId = after.split(/[;,\s]/, 1)[0]?.trim() || undefined
-  }
-
-  const goalIndex = text.indexOf('goal=')
-  if (goalIndex >= 0) {
-    const after = text.slice(goalIndex + 'goal='.length)
-    meta.goal = after.split('\n', 1)[0]?.trim() || undefined
-  }
-
-  const loweredText = text.toLowerCase()
-  if (loweredText.includes('waiting_user') || loweredText.includes('waiting for user')) {
-    meta.requiresUserInput = true
-  }
-
-  return meta
-}
-
 export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
   if (!trace || trace.length === 0) return []
 
@@ -212,25 +147,8 @@ export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
     let round: number | undefined
     let groupId: string | undefined
 
-    if (stage.startsWith('preflight_')) {
+    if (stage.startsWith('preflight')) {
       type = 'preflight'
-    } else if (
-      stage === 'plane_delegate' ||
-      stage === 'plane_status' ||
-      stage === 'plane_continue' ||
-      stage === 'plane_close' ||
-      stage === 'plane_catalog'
-    ) {
-      type = 'plane'
-      provider = 'plane'
-      const planeMeta = parsePlaneDetail(detail)
-      meta.state = planeMeta.state ?? 'unknown'
-      meta.taskId = planeMeta.taskId
-      meta.goal = planeMeta.goal
-      meta.requiresUserInput = planeMeta.requiresUserInput ?? false
-      groupId = planeMeta.taskId
-      round = extractRoundFromDetail(detail)
-      label = formatStageLabel(stage)
     } else if (stage === 'agent_loop_tool') {
       const head = detail.split(':', 1)[0]?.trim() || ''
       const toolName = head || 'tool'
@@ -247,9 +165,7 @@ export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
       label = toolName
       round = extractRoundFromDetail(detail)
 
-      if (kind === 'plane_tool') {
-        type = 'tool'
-      } else if (toolName.startsWith('memory') || toolName.includes('memory')) {
+      if (toolName.startsWith('memory') || toolName.includes('memory')) {
         type = 'memory'
       } else if (toolName.startsWith('file') || toolName.startsWith('fs_')) {
         type = 'fs'
@@ -294,53 +210,6 @@ export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
   })
 
   return nodes
-}
-
-export function extractPlaneTaskMeta(trace: AelinToolStep[] | undefined): PlaneTaskMeta | null {
-  if (!trace || trace.length === 0) return null
-
-  const planeSteps = trace.filter((step) => {
-    const stage = normalizeStage(step.stage)
-    return (
-      stage === 'plane_delegate' ||
-      stage === 'plane_status' ||
-      stage === 'plane_continue' ||
-      stage === 'plane_close' ||
-      stage === 'plane_catalog'
-    )
-  })
-  if (planeSteps.length === 0) return null
-
-  const last = planeSteps[planeSteps.length - 1]
-  const detail = String(last.detail || '')
-
-  let stateText = ''
-  const stateIndex = detail.indexOf('state=')
-  if (stateIndex >= 0) {
-    const after = detail.slice(stateIndex + 'state='.length)
-    stateText = after.split(';', 1)[0]?.trim() || ''
-  }
-
-  let state: PlaneTaskState = 'unknown'
-  const lowered = stateText.toLowerCase()
-  if (lowered === 'waiting_user') state = 'waiting_user'
-  else if (lowered === 'running') state = 'running'
-  else if (lowered === 'queued') state = 'queued'
-  else if (lowered === 'blocked') state = 'blocked'
-  else if (lowered === 'completed') state = 'completed'
-  else if (lowered === 'failed') state = 'failed'
-
-  const requiresUserInput = detail.includes('waiting_user') || lowered === 'waiting_user'
-
-  // 当前仅有 browser plane，后续可根据 trace 中的更多字段扩展。
-  const plane = 'browser'
-
-  return {
-    plane,
-    state,
-    summary: detail || undefined,
-    requiresUserInput,
-  }
 }
 
 export function extractToolCalls(trace: AelinToolStep[] | undefined): ToolCallMeta[] {
@@ -401,9 +270,7 @@ export function extractToolCalls(trace: AelinToolStep[] | undefined): ToolCallMe
 
 export function buildToolSummary(trace: AelinToolStep[] | undefined): {
   tools: ToolCallMeta[]
-  plane?: PlaneTaskMeta | null
 } {
-  const plane = extractPlaneTaskMeta(trace)
   const tools = extractToolCalls(trace)
-  return { tools, plane }
+  return { tools }
 }

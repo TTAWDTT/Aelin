@@ -5,9 +5,7 @@ import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import {
   buildRunNodes,
-  extractPlaneTaskMeta,
   extractToolCalls,
-  type PlaneTaskMeta,
   type RunNode,
   type ToolCallMeta,
 } from '../traceUtils'
@@ -20,22 +18,17 @@ interface ExecutionPaneProps {
   compact?: boolean
 }
 
-type ExecutionTab = 'aelin' | 'plane' | 'tools'
+type ExecutionTab = 'aelin' | 'tools'
 
 export function ExecutionPane({ trace, isStreaming, compact = false }: ExecutionPaneProps) {
   const { t } = useChatI18n()
   const { open } = useExecutionPaneStore()
   const hasTrace = useMemo(() => trace && trace.length > 0, [trace])
   const runNodes = useMemo<RunNode[]>(() => buildRunNodes(trace), [trace])
-  const planeMeta = useMemo(() => extractPlaneTaskMeta(trace), [trace])
   const toolCalls = useMemo(() => extractToolCalls(trace), [trace])
 
   const agentNodes = useMemo(
     () => runNodes.filter((n) => n.type === 'preflight' || n.type === 'agent' || n.type === 'plan' || n.type === 'error'),
-    [runNodes],
-  )
-  const planeNodes = useMemo(
-    () => runNodes.filter((n) => n.type === 'plane'),
     [runNodes],
   )
 
@@ -43,12 +36,8 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
 
   useEffect(() => {
     if (!hasTrace) return
-    if (planeMeta) {
-      setTab('plane')
-    } else {
-      setTab('aelin')
-    }
-  }, [hasTrace, planeMeta])
+    setTab('aelin')
+  }, [hasTrace])
 
   const label = hasTrace ? t('trace.executionPane.title') : t('trace.executionPane.empty')
   const showTabs = hasTrace
@@ -93,13 +82,6 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
                     onClick={() => setTab('aelin')}
                   />
                   <ExecutionTabButton
-                    id="plane"
-                    active={tab === 'plane'}
-                    label={t('trace.tab.plane')}
-                    disabled={!planeMeta}
-                    onClick={() => planeMeta && setTab('plane')}
-                  />
-                  <ExecutionTabButton
                     id="tools"
                     active={tab === 'tools'}
                     label={t('trace.tab.tools')}
@@ -119,21 +101,6 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
                   )}
                 >
                   <AgentTracePanel nodes={agentNodes} live={isStreaming} />
-                </div>
-                <div
-                  className={cn(
-                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'plane'
-                      ? 'opacity-100 pointer-events-auto translate-y-0'
-                      : 'opacity-0 pointer-events-none translate-y-1',
-                  )}
-                >
-                  <PlaneTraceView
-                    planeMeta={planeMeta}
-                    planeNodes={planeNodes}
-                    toolCalls={toolCalls}
-                    onShowAllTools={() => setTab('tools')}
-                  />
                 </div>
                 <div
                   className={cn(
@@ -181,154 +148,6 @@ function ExecutionTabButton({ id, active, label, disabled, onClick }: ExecutionT
     >
       <span className="block truncate">{label}</span>
     </button>
-  )
-}
-
-function PlaneTraceView({
-  planeMeta,
-  planeNodes,
-  toolCalls,
-  onShowAllTools,
-}: {
-  planeMeta: PlaneTaskMeta | null
-  planeNodes: RunNode[]
-  toolCalls: ToolCallMeta[]
-  onShowAllTools: () => void
-}) {
-  const { t } = useChatI18n()
-  const relatedToolCalls = useMemo(
-    () =>
-      toolCalls
-        .filter((call) => call.kind === 'plane_tool')
-        .slice(-3),
-    [toolCalls],
-  )
-
-  if (!planeMeta && planeNodes.length === 0 && relatedToolCalls.length === 0) {
-    return (
-      <p
-        id="execution-pane-plane"
-        className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]"
-      >
-        {t('trace.plane.empty')}
-      </p>
-    )
-  }
-
-  const stateLabelKey =
-    planeMeta?.state === 'waiting_user'
-      ? 'trace.plane.state.waiting'
-      : planeMeta?.state === 'running'
-        ? 'trace.plane.state.running'
-        : planeMeta?.state === 'completed'
-          ? 'trace.plane.state.completed'
-          : planeMeta?.state === 'failed'
-            ? 'trace.plane.state.failed'
-            : 'trace.plane.state.unknown'
-
-  return (
-    <section id="execution-pane-plane" className="space-y-2">
-      {planeMeta && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <ProviderIcon provider="plane" size="md" />
-              <div className="min-w-0">
-                <div className="text-[12px] font-semibold text-[var(--color-text)]">
-                  {t('trace.plane.title', { plane: planeMeta.plane })}
-                </div>
-                <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-                  {t(stateLabelKey)}
-                </div>
-              </div>
-            </div>
-            <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-[var(--color-accent)]" />
-          </div>
-          {planeMeta.requiresUserInput && (
-            <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-              {t('trace.plane.waitingUser')}
-            </p>
-          )}
-        </div>
-      )}
-
-      {planeNodes.length > 0 && (
-        <div className="relative pl-3">
-          <div className="pointer-events-none absolute left-[7px] top-1 bottom-1 w-px bg-[var(--color-border)]" />
-          <ol className="space-y-1.5 text-[11px]">
-            {planeNodes.map((node, idx) => (
-              <li
-                key={`${node.id}-${idx}`}
-                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
-              >
-                <div className="flex items-start gap-2">
-                  <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] text-[9px]">
-                    {idx + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-[11px] font-semibold text-[var(--color-text)]">
-                        {node.label || 'plane'}
-                      </span>
-                      <span className="text-[11px] text-[var(--color-text-muted)]">
-                        {node.status || '-'}
-                      </span>
-                    </div>
-                    {node.raw.detail && (
-                      <div className="mt-0.5 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                        {node.raw.detail}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
-
-      {relatedToolCalls.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-            <span>{t('trace.plane.tools.heading')}</span>
-            <button
-              type="button"
-              onClick={onShowAllTools}
-              className="text-[10px] text-[var(--color-text)] hover:underline"
-            >
-              {t('trace.plane.tools.showAll')}
-            </button>
-          </div>
-          <ul className="space-y-1.0 text-[11px]">
-            {relatedToolCalls.map((call, idx) => (
-              <li
-                key={`${call.name}-${idx}`}
-                className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
-              >
-                <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[8px] uppercase tracking-wide">
-                  {call.provider.slice(0, 2)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-[10px] font-semibold text-[var(--color-text)]">
-                      {call.name}
-                    </span>
-                    <span className="text-[9px] text-[var(--color-text-muted)]">
-                      {call.status || '-'}
-                    </span>
-                  </div>
-                  {call.detail && (
-                    <div className="mt-0.5 break-words text-[9px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                      {call.detail.length > 120 ? `${call.detail.slice(0, 117)}…` : call.detail}
-                    </div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </section>
   )
 }
 
