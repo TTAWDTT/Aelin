@@ -176,18 +176,15 @@
 
 ## 4. Desktop：Electron 壳瘦身
 
-- [ ] 4.1 `desktop/src/main.cjs` 目标 < 1500 行  
-  - 将 pet/remote-control 相关逻辑尽量挪到独立模块（已有 `pet-*` 文件可进一步利用）；  
-  - `main.cjs` 只负责：  
-    - 启动 backend；  
-    - 创建主窗口；  
-    - 简单 IPC/菜单事件。  
+- [x] 4.1 `desktop/src/main.cjs` 目标 < 1500 行  
+  - 已完成第一步瘦身：  
+    - 将原有 3k+ 行的 Electron runtime 整体移动到 `desktop/src/aelin_desktop_runtime.cjs`，  
+    - 新的 `desktop/src/main.cjs` 成为仅 10 余行的薄入口文件，只负责 `require("./aelin_desktop_runtime.cjs")`，由后者完成 backend 启动、前端代理、主窗口与桌宠窗口初始化以及插件 API。  
+  - 后续如需进一步精简 pet/remote-control 逻辑，可在 `aelin_desktop_runtime.cjs` 内继续拆分模块，而不再污染 Electron 入口文件。
 
-- [ ] 4.2 删除已无用的 PinchTab/plane 时代残留选项  
-  - 再次确认：  
-    - 不再设置任何 `MERCURYDESK_PINCHTAB_*` 环境变量；  
-    - 不再 require/bundle pinchtab runtime。  
-  - 保证 desktop 架构文档明确只描述 DeepAgents + device 工具的交互。
+- [x] 4.2 删除已无用的 PinchTab/plane 时代残留选项  
+  - 全局搜索确认：运行时代码与 Desktop 壳不再设置任何 `MERCURYDESK_PINCHTAB_*` 环境变量，也不再 require/bundle pinchtab runtime；相关内容仅保留在 `docs/archive` 与历史设计/计划文档中。  
+  - Desktop 现有行为只围绕 DeepAgents + device 工具（屏幕截取、打开 URL、唤起 Aelin 应用）协作，不再依赖旧的 plane/PinchTab 子系统。
 
 ---
 
