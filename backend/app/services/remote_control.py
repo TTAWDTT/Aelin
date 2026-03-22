@@ -48,18 +48,6 @@ class RemoteControlExecutionResult:
     response: AelinChatResponse
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def supported_tools() -> list[str]:
-    return list(_SUPPORTED_TOOLS)
-
-
-def supported_device_actions() -> list[str]:
-    return list(_SUPPORTED_DEVICE_ACTIONS)
-
-
 def resolve_remote_control_user(db: Session, *, bind_user_email: str | None = None) -> User:
     raw_email = getattr(settings, "feishu_bot_bind_user_email", "") if bind_user_email is None else bind_user_email
     configured_email = str(raw_email or "").strip().lower()
@@ -118,10 +106,10 @@ def build_remote_control_status() -> dict[str, Any]:
         "source": "remote_control",
         "capabilities": dict(snapshot.get("capabilities") or {}),
         "notes": list(snapshot.get("notes") or []),
-        "supported_tools": supported_tools(),
-        "supported_device_actions": supported_device_actions(),
+        "supported_tools": list(_SUPPORTED_TOOLS),
+        "supported_device_actions": list(_SUPPORTED_DEVICE_ACTIONS),
         "desktop_plugin_reachable": bool(snapshot.get("desktop_plugin_reachable")),
-        "generated_at": _now(),
+        "generated_at": datetime.now(timezone.utc),
     }
 
 

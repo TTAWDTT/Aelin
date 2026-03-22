@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
+
+from app.services.device_center import (
+    activate_desktop_module,
+    DesktopPluginActionError,
+    device_status_snapshot,
+    open_desktop_external_url,
+)
 
 
 def tool_screen_get(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
@@ -46,24 +54,61 @@ def tool_screen_get(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]
 
 
 def tool_device(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Unified device tool implementation extracted from AelinToolHub._tool_device.
+    from app.services.aelin_tools import _result_error, _result_ok
 
-    This keeps the public behaviour identical while continuing to dispatch to
-    the hub's internal helpers so that existing tests which monkeypatch
-    `_tool_device_status` / `_tool_desktop_open_url` / `_tool_desktop_open_aelin`
-    remain valid.
-    """
-
-    from app.services.aelin_tools import _result_error
+    def _is_http_url(value: str) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        parsed = urlparse(text)
+        return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
 
     action = str(args.get("action") or "").strip().lower()
     if action == "status":
-        return hub._tool_device_status(args)
+        snapshot = device_status_snapshot()
+        return _result_ok(
+            platform=str(snapshot.get("platform") or "unknown"),
+            capabilities=dict(snapshot.get("capabilities") or {}),
+            notes=list(snapshot.get("notes") or []),
+            desktop_plugin_reachable=bool(snapshot.get("desktop_plugin_reachable")),
+            desktop_plugin_configured=bool(snapshot.get("desktop_plugin_configured")),
+            summary=(
+                f"platform={str(snapshot.get('platform') or 'unknown')}; "
+                f"plugin_reachable={1 if bool(snapshot.get('desktop_plugin_reachable')) else 0}"
+            ),
+        )
     if action == "open_url":
-        return hub._tool_desktop_open_url(args)
+        url = str(args.get("url") or "").strip()
+        if not url:
+            return _result_error("missing url")
+        if not _is_http_url(url):
+            return _result_error("invalid_url_scheme")
+        try:
+            result = open_desktop_external_url(url)
+        except DesktopPluginActionError as exc:
+            return _result_error(f"desktop_open_url_failed:{exc.detail}")
+        except Exception as exc:
+            return _result_error(f"desktop_open_url_failed:{str(exc)[:160]}")
+        return _result_ok(
+            url=str(result.get("url") or url),
+            opened=bool(result.get("opened")),
+            detail=str(result.get("detail") or ""),
+            summary=f"已尝试打开链接: {str(result.get('url') or url)[:220]}",
+        )
     if action == "open_aelin":
-        return hub._tool_desktop_open_aelin(args)
+        route = str(args.get("route") or "/").strip() or "/"
+        try:
+            result = activate_desktop_module(route)
+        except DesktopPluginActionError as exc:
+            return _result_error(f"desktop_open_aelin_failed:{exc.detail}")
+        except Exception as exc:
+            return _result_error(f"desktop_open_aelin_failed:{str(exc)[:160]}")
+        return _result_ok(
+            route=str(result.get("route") or route),
+            opened=bool(result.get("opened")),
+            detail=str(result.get("detail") or ""),
+            summary=f"Aelin 已切换到 {str(result.get('route') or route)[:120]}",
+        )
     # Help DeepAgents understand exactly which actions are valid so it can
     # correct bad calls instead of repeating them.
     return _result_error(

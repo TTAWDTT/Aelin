@@ -275,7 +275,6 @@ def _try_agent_loop_chat(
         workspace=workspace,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
         available_attachment_ids=attachment_ids,
-        llm_service=service,
     )
     tool_hub_latency_ms = int((time.perf_counter() - tool_hub_started) * 1000)
     _log.info(

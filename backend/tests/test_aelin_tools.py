@@ -77,7 +77,7 @@ class _FakeAttachmentService:
         }
 
 
-def _hub(fake_web: _FakeWebSearch, *, llm_service=None, attachment_service=None, available_attachment_ids=None) -> AelinToolHub:
+def _hub(fake_web: _FakeWebSearch, *, attachment_service=None, available_attachment_ids=None) -> AelinToolHub:
     return AelinToolHub(
         db=None,  # type: ignore[arg-type]
         user_id=1,
@@ -85,7 +85,6 @@ def _hub(fake_web: _FakeWebSearch, *, llm_service=None, attachment_service=None,
         web_search_service=fake_web,  # type: ignore[arg-type]
         attachment_service=attachment_service,  # type: ignore[arg-type]
         available_attachment_ids=available_attachment_ids,
-        llm_service=llm_service,  # type: ignore[arg-type]
     )
 
 
@@ -174,13 +173,13 @@ def test_screen_get_tool_success(monkeypatch):
 
 
 def test_device_tool_supports_supported_device_actions(monkeypatch):
-    from app.services import aelin_tools
+    from app.services import tools_device
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
     monkeypatch.setattr(
-        aelin_tools,
+        tools_device,
         "device_status_snapshot",
         lambda: {
             "platform": "windows",
@@ -191,14 +190,14 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        aelin_tools,
+        tools_device,
         "open_desktop_external_url",
         lambda url: {"url": url, "opened": True, "detail": "ok"},
     )
     monkeypatch.setattr(
-        aelin_tools,
+        tools_device,
         "activate_desktop_module",
-        lambda route: {"route": route, "url": f"http://desktop.local{route}", "opened": True, "detail": "ok"},
+        lambda route: {"route": route, "opened": True, "detail": "ok"},
     )
 
     status = tool_device(hub, {"action": "status"})
@@ -215,14 +214,14 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
 
 
 def test_device_open_url_rejects_non_http_schemes(monkeypatch):
-    from app.services import aelin_tools
+    from app.services import tools_device
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
     opened_urls: list[str] = []
 
     monkeypatch.setattr(
-        aelin_tools,
+        tools_device,
         "open_desktop_external_url",
         lambda url: opened_urls.append(url) or {"url": url, "opened": True, "detail": "ok"},
     )
