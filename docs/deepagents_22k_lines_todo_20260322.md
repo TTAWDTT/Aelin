@@ -52,15 +52,16 @@
 
 ### 1.2 `aelin_attachment_service.py`（当前约 1.3k 行）
 
-- [ ] 1.2.1 拆分「存储/索引」与「解析/OCR」  
+- [x] 1.2.1 拆分「存储/索引」与「解析/OCR」  
   - 新建或重组：  
     - `attachment_storage.py`：文件持久化、chunk 写入、索引管理（`AttachmentChunk`/`AttachmentDocument`）。  
-    - `attachment_parsing.py`：文本/OOXML/PDF 的抽取逻辑（含 legacy Office 转换）。  
-    - `attachment_ocr.py`：Tesseract / RapidOCR / 图片 OCR 管线。  
+    - `attachment_parsing.py`：与块构建相关的解析辅助结构（`ParsedBlock`）与 block→chunk 归一化逻辑。  
+    - `attachment_ocr.py`：预留 OCR 相关拆分位点（后续可将 RapidOCR / Tesseract 管线迁入）。  
   - `AelinAttachmentService` 变成一个 orchestrator，主要负责：  
     - 入参校验 + 调用解析/存储模块；  
     - 维持对外 API（`ingest_bytes`、`search`）不变。  
-  - 验收：附件 ingest + 搜索相关测试保持全绿。
+  - 已完成：引入 `attachment_storage`/`attachment_parsing`，并在 `AelinAttachmentService` 中使用这些 helper；对外 API 与行为保持不变。  
+  - 验收：附件 ingest + 搜索相关测试保持全绿（`tests/test_aelin_attachment_service.py`、`tests/test_aelin_tools.py` 通过）。
 
 - [ ] 1.2.2 合并文本切分与 token 提取逻辑  
   - 将当前在多个 block 解析路径中重复出现的：  
