@@ -21,15 +21,6 @@ class Settings(BaseSettings):
     media_dir: str = "./media"
     models_catalog_url: str = "https://models.dev/api.json"
     models_catalog_refresh_seconds: int = 60 * 60
-    frontend_url: str = "http://127.0.0.1:5173"
-    api_public_base_url: str = "http://127.0.0.1:8000"
-
-    # Crawler runtime tuning.
-    crawler_headless: bool = False
-    crawler_use_persistent_login: bool = True
-    crawler_browser_data_dir: str = "./browser_data"
-    crawler_rsshub_parallelism: int = 12
-    crawler_playwright_poll_seconds: int = 10
 
     # File memory bridge (AGENTS.md-based memory only).
     aelin_base_context_cache_ttl_seconds: float = 4.0
@@ -46,7 +37,6 @@ class Settings(BaseSettings):
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
-    feishu_bot_name: str = "Aelin"
     feishu_bot_bind_user_email: str = ""
     feishu_bot_workspace: str = "default"
     feishu_bot_allowed_open_ids_csv: str = ""
@@ -58,7 +48,6 @@ class Settings(BaseSettings):
     qq_bot_enabled: bool = False
     qq_bot_ws_url: str = "ws://127.0.0.1:6700"
     qq_bot_token: str = ""
-    qq_bot_name: str = "Aelin"
     qq_bot_bind_user_email: str = ""
     qq_bot_workspace: str = "default"
     qq_bot_allowed_user_ids_csv: str = ""
@@ -71,7 +60,6 @@ class Settings(BaseSettings):
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
-    desktop_module_base_url: str = ""
     # Google Workspace CLI (gws) integration.
     # `google_workspace_cli_bin` 可以是 "gws"（放在 PATH 中），也可以是一个绝对路径。
     google_workspace_cli_bin: str = "gws"
@@ -100,20 +88,6 @@ class Settings(BaseSettings):
     # DeepAgents 回路可能会触发多轮工具调用，因此默认超时时间相对更长。
     llm_request_timeout_seconds: float = 180.0
     backend_log_level: str = "INFO"
-
-    # Media ingest (yt-dlp) network/auth tuning.
-    browser_tool_headless: bool = True
-    browser_tool_open_external_on_navigate: bool = False
-    browser_tool_mode_default: str = "auto"  # auto | managed | cdp
-    browser_tool_cdp_enabled: bool = False
-    browser_tool_cdp_endpoint: str = "http://127.0.0.1:9222"
-    browser_tool_cdp_auto_launch: bool = True
-    browser_tool_cdp_launch_timeout_seconds: float = 10.0
-    browser_tool_cdp_browser_path: str = ""
-    browser_tool_cdp_profile_dir: str = ""
-    browser_tool_default_timeout_ms: int = 12_000
-    browser_tool_idle_ttl_seconds: int = 900
-    browser_tool_profile_dir: str = "./browser_data/agent_browser"
 
     # Optional extra DeepAgents skills root dir (for example chrome-cdp-skill).
     # When set, all subdirectories under this path will be exposed as
