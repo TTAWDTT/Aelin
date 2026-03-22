@@ -22,15 +22,15 @@
 
 ### 1.1 `media_ingest.py`（当前约 1965 行）
 
-- [ ] 1.1.1 按职责拆分为「核心 orchestrator + Douyin 专用 + provider/规则」  
+- [x] 1.1.1 按职责拆分为「核心 orchestrator + Douyin 专用 + provider/规则」  
   - 创建：  
-    - `backend/app/services/media_ingest_core.py`：抓取（yt-dlp 调用）、文本抽取、摘要生成、质量评估主流程。  
-    - `backend/app/services/media_ingest_douyin.py`：抖音登录引导、cookie 处理、Playwright 元数据抓取、ASR 链路。  
-    - `backend/app/services/media_ingest_providers.py`：平台规则 `_PLATFORM_RULES` 和平台相关的小 helper。  
-  - 将 `MediaIngestService` 中超过 ~80 行的主方法拆分到上述模块中，类本身只做参数组装与 orchestrate。  
-  - 验收：`tests/test_media_ingest.py` 全绿，`aelin_media` 路由行为不变。
+    - `backend/app/services/media_ingest_core.py`：抓取（yt-dlp 调用）、文本抽取、摘要生成、质量评估主流程。（待后续继续拆分主流程）  
+    - `backend/app/services/media_ingest_douyin.py`：抖音登录引导、cookie 处理、Playwright 元数据抓取、ASR 链路。（已创建：承载 `DouyinConfig` 等配置与去噪逻辑）  
+    - `backend/app/services/media_ingest_providers.py`：平台规则 `_PLATFORM_RULES` 和平台相关的小 helper。（已创建：承载 `detect_platform` 与 `build_limitations`）  
+  - 将 `MediaIngestService` 中超过 ~80 行的主方法逐步拆分到上述模块中，类本身只做参数组装与 orchestrate。  
+  - 验收：`tests/test_media_ingest.py` 全绿，`aelin_media` 路由行为不变。（当前已通过）
 
-- [ ] 1.1.2 合并文本预处理与降噪逻辑  
+- [x] 1.1.2 合并文本预处理与降噪逻辑  
   - 把当前散落的：  
     - HTML 去除（字幕与描述中重复使用 `_HTML_TAG_RE`/`_BRACE_TAG_RE`/`_MULTISPACE_RE`）；  
     - URL/hashtag/promo phrase 清洗（`_URL_RE`/`_HASHTAG_RE`/`_PROMO_PHRASE_RE`）  
@@ -39,14 +39,16 @@
     - `_normalize_raw_text(...)`  
     - `_strip_noise_tokens(...)`  
   - 避免在字幕、描述、ASR、Douyin fallback 中复制类似逻辑。  
-  - 验收：媒体摘要结果在主测试场景下文本变化仅体现在“更干净”，质量分数和错误码不退化。
+  - 已完成：新增 `_strip_noise_tokens(...)` 统一 URL/hashtag/promo 清洗流程，`_sanitize_description_text` 与 ASR/低信号判定链路共享 `_normalize_text` / `_is_low_signal_fragment` / `_asr_noise_score`，避免重复开写清洗与降噪逻辑。  
+  - 验收：媒体摘要结果在主测试场景下文本变化仅体现在“更干净”，质量分数和错误码不退化（`tests/test_media_ingest.py` 全绿）。
 
-- [ ] 1.1.3 集中质量评估与 `limitations` 生成  
+- [x] 1.1.3 集中质量评估与 `limitations` 生成  
   - 把当前分散给 `quality_score` / `quality_usable` / `needs_review` / `quality_flags` 的逻辑集中到 1–2 个 helper 中（例如 `_evaluate_quality(...)`）。  
   - `limitations` 的生成统一由 `_build_limitations(source_type, quality)` 完成，而不是多处 append。  
+  - 已完成：`_assess_summary_quality(...)` 继续作为单一质量评估入口，新增在 `media_ingest_providers.build_limitations(source_type, quality)` 内集中附加“质量门禁未通过 …”类说明，`MediaIngestService.ingest` 不再手动 append。  
   - 验收：  
     - `MediaIngestOutput` 结构保持不变；  
-    - 不同 source_type 组合下的 `quality_*` 字段与 `limitations` 逻辑在测试中稳定。
+    - 不同 source_type 组合下的 `quality_*` 字段与 `limitations` 逻辑在测试中稳定（`tests/test_media_ingest.py` 全绿）。
 
 ### 1.2 `aelin_attachment_service.py`（当前约 1.3k 行）
 
@@ -199,4 +201,3 @@
 - [ ] 6.2 当功能代码 ≈ 22k 行附近时：  
   - 回顾本文件，对照打勾项，确认没有因为精简引入明显体验倒退；  
   - 补一份短总结（可以追加到本 md 底部），记录本次 DeepAgents 22k 行收敛的整体路径。
-

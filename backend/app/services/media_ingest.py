@@ -179,9 +179,6 @@ class MediaIngestService:
             source_type=source_type,
             content_length=len(extracted_text),
         )
-        limitations = build_limitations(source_type)
-        # limitations helper moved to media_ingest_providers.build_limitations
-        # but we keep the old name for backward compatibility.
 
         (
             insight_title,
@@ -212,8 +209,11 @@ class MediaIngestService:
         quality_usable = bool(quality["usable"])
         needs_review = bool(quality["needs_review"])
         quality_flags = [str(item) for item in quality.get("flags", []) if str(item).strip()]
-        if not quality_usable:
-            limitations.append(f"质量门禁未通过：{quality_reason}")
+
+        # Limitations are now derived in a single place together with the
+        # quality gate outcome, so callers do not need to manually append
+        # "质量门禁未通过" 之类的说明。
+        limitations = build_limitations(source_type, quality)
 
         summary_text = self._render_summary_text(
             overview=overview,
@@ -1724,13 +1724,24 @@ class MediaIngestService:
             return ""
         return normalized[:max_len]
 
+    def _strip_noise_tokens(self, text: str) -> str:
+        """
+        Shared helper for basic "noise token" cleanup.
+
+        This centralises URL / hashtag / promo phrase stripping so that
+        description/metadata sanitisation paths do not each open‑code the
+        same sequence of regex substitutions.
+        """
+        without_urls = _URL_RE.sub(" ", text)
+        without_hashtags = _HASHTAG_RE.sub(" ", without_urls)
+        without_promos = _PROMO_PHRASE_RE.sub(" ", without_hashtags)
+        return without_promos
+
     def _sanitize_description_text(self, text: str) -> str:
         normalized = self._normalize_text(text)
         if not normalized:
             return ""
-        without_urls = _URL_RE.sub(" ", normalized)
-        without_hashtags = _HASHTAG_RE.sub(" ", without_urls)
-        without_promos = _PROMO_PHRASE_RE.sub(" ", without_hashtags)
+        without_promos = self._strip_noise_tokens(normalized)
 
         chunks = re.split(r"(?<=[。！？!?\.])\s+|\n+", without_promos)
         out: list[str] = []

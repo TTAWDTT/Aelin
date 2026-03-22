@@ -26,7 +26,7 @@ def detect_platform(url: str) -> str:
     return "unsupported"
 
 
-def build_limitations(source_type: str) -> list[str]:
+def build_limitations(source_type: str, quality: dict[str, Any] | None = None) -> list[str]:
     """
     Normalize the standard limitations note list based on the text source type.
 
@@ -42,5 +42,10 @@ def build_limitations(source_type: str) -> list[str]:
         limitations.append("当前字幕由 ASR 转写生成，可能存在听写误差。")
     if source_type == "subtitle_auto":
         limitations.append("当前使用自动字幕，可能存在识别误差。")
+    if quality is not None:
+        usable = bool(quality.get("usable", True))
+        reason = str(quality.get("reason") or "").strip()
+        if not usable:
+            gate_reason = reason or "质量评分未通过门禁阈值"
+            limitations.append(f"质量门禁未通过：{gate_reason}")
     return limitations
-
