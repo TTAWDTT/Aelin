@@ -166,44 +166,19 @@ function ToolCallsView({ toolCalls }: { toolCalls: ToolCallMeta[] }) {
     )
   }
 
-  const grouped = groupToolCallsByRound(calls)
-
   return (
     <div id="execution-pane-tools" className="space-y-2 text-[11px]">
-      {grouped.map(({ round, items }) => (
-        <section key={`round-${round}`} className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-            <span className="font-medium">
-              {t('trace.tools.round', { round })}
-            </span>
-            <span>
-              {t('trace.tools.count', { count: items.length })}
-            </span>
-          </div>
-          <ul className="space-y-1.5">
-            {items.map((call, idx) => (
-              <ToolCallCard key={`${round}-${call.name}-${idx}-${call.status}`} call={call} />
-            ))}
-          </ul>
-        </section>
-      ))}
+      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+        <span className="font-medium">{t('trace.tab.tools')}</span>
+        <span>{t('trace.tools.count', { count: calls.length })}</span>
+      </div>
+      <ul className="space-y-1.5">
+        {calls.map((call) => (
+          <ToolCallCard key={`${call.index}-${call.name}-${call.status}`} call={call} />
+        ))}
+      </ul>
     </div>
   )
-}
-
-function groupToolCallsByRound(calls: ToolCallMeta[]): Array<{ round: number; items: ToolCallMeta[] }> {
-  const byRound = new Map<number, ToolCallMeta[]>()
-  for (const call of calls) {
-    const round = call.round || 1
-    if (!byRound.has(round)) byRound.set(round, [])
-    byRound.get(round)!.push(call)
-  }
-  return Array.from(byRound.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([round, items]) => ({
-      round,
-      items,
-    }))
 }
 
 function ToolCallCard({ call }: { call: ToolCallMeta }) {

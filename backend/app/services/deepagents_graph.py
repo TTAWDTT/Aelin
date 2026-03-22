@@ -1,86 +1,164 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable
 
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import create_file_data
-from langchain_core.tools import Tool, StructuredTool
+from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
-from app.services.aelin_tools import AelinToolHub, _result_error
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
+from app.services.aelin_tools import AelinToolHub, _result_error
 from app.services.llm import LLMService
-from app.services.tools_web import tool_web_search
+from app.services.tools_device import tool_device, tool_screen_get
 from app.services.tools_files import tool_attachment_search
 from app.services.tools_gws import tool_google_workspace
-from app.services.tools_device import tool_device, tool_screen_get
+from app.services.tools_web import tool_web_search
 from app.settings import settings
 
 
 class DeviceToolInput(BaseModel):
-    """
-    Structured input schema for the unified `device` tool.
-
-    We intentionally keep `action` as a free string here and rely on the
-    underlying `tool_device` implementation to return a clear
-    "unsupported device action" error for unknown actions, instead of
-    failing Pydantic validation before the tool has a chance to respond.
-    """
-
     action: str = Field(
         ...,
-        description="Device action to perform. Allowed values: "
-        "'status', 'open_url', 'open_aelin'. Other values will result in "
-        "an 'unsupported device action' error.",
+        description="Allowed values: 'status', 'open_url', 'open_aelin'.",
     )
-    url: str | None = Field(
-        default=None,
-        description="HTTP or HTTPS URL to open when action == 'open_url'.",
-    )
-    route: str | None = Field(
-        default=None,
-        description="Optional route to activate when action == 'open_aelin', "
-        "for example '/'.",
-    )
+    url: str | None = Field(default=None, description="HTTP(S) URL when action == 'open_url'.")
+    route: str | None = Field(default=None, description="Optional route when action == 'open_aelin'.")
 
 
 class ScreenGetToolInput(BaseModel):
-    """
-    Structured input schema for the `screen_get` tool.
+    display_id: str | None = Field(default=None)
+    max_edge: int | None = Field(default=1280, description="640-4096.")
+    format: str | None = Field(default="jpeg", description="'jpeg' or 'png'.")
+    quality: int | None = Field(default=72, description="35-95 for JPEG.")
 
-    All fields are optional and have sensible defaults so that the model can
-    either call the tool with an empty object `{}` or with explicit overrides.
-    """
 
-    display_id: str | None = Field(
-        default=None,
-        description=(
-            "Optional display identifier to capture from. When omitted, the primary "
-            "display will be used."
-        ),
+class WebSearchToolInput(BaseModel):
+    action: str = Field(default="search_and_fetch")
+    query: str
+    max_results: int | None = Field(default=15)
+    fetch_top_k: int | None = Field(default=3)
+
+
+class AttachmentSearchToolInput(BaseModel):
+    query: str
+    attachment_ids: list[int] | None = Field(default=None)
+    top_k: int | None = Field(default=5)
+    mode: str | None = Field(default="keyword")
+
+
+class GoogleWorkspaceToolInput(BaseModel):
+    action: str
+    calendar_id: str | None = None
+    time_min: str | None = None
+    time_max: str | None = None
+    max_results: int | None = None
+    single_events: bool | None = None
+    event_summary: str | None = None
+    event_description: str | None = None
+    event_start: str | None = None
+    event_end: str | None = None
+    event_attendees: list[str] | None = None
+    query: str | None = None
+    include_spam_trash: bool | None = None
+    message_id: str | None = None
+    format: str | None = None
+    email_to: list[str] | None = None
+    email_cc: list[str] | None = None
+    email_bcc: list[str] | None = None
+    email_subject: str | None = None
+    email_body: str | None = None
+    docs_title: str | None = None
+    docs_content: str | None = None
+
+
+def _tool_description(name: str) -> str:
+    if name == "web_search":
+        return (
+            "Search the public web.\n"
+            "Arguments: action=('search'|'search_and_fetch'), query=<non-empty string>, "
+            "max_results=1..15, fetch_top_k=0..6."
+        )
+    if name == "attachment_search":
+        return (
+            "Search uploaded attachments for relevant chunks.\n"
+            "Arguments: query=<non-empty string>, attachment_ids?<int[]>, top_k=1..20, "
+            "mode=('keyword'|'hybrid')."
+        )
+    if name == "google_workspace":
+        return (
+            "Access Google Workspace via local gws CLI.\n"
+            "Use action to select runtime/auth/gmail/drive/calendar/docs operations."
+        )
+    if name == "device":
+        return (
+            "Desktop actions and status.\n"
+            "Allowed actions: 'status', 'open_url', 'open_aelin'."
+        )
+    if name == "screen_get":
+        return "Capture a desktop screenshot for visual inspection."
+    return name
+
+
+def _invoke_tool(
+    *,
+    name: str,
+    args: dict[str, Any],
+    handler: Callable[[AelinToolHub, dict[str, Any]], dict[str, Any]],
+    tool_hub: AelinToolHub,
+    policy: AelinToolPolicy,
+    usage: ToolPolicyUsage,
+    tool_runs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    from time import perf_counter
+
+    decision = policy.evaluate(name=name, args=args, usage=usage)
+    call_index = len(tool_runs) + 1
+    started = perf_counter()
+
+    if not decision.allowed:
+        latency_ms = int((perf_counter() - started) * 1000)
+        result = {"ok": False, "error": decision.reason}
+        tool_runs.append(
+            {
+                "call_index": call_index,
+                "name": name,
+                "args": args,
+                "status": "denied",
+                "result": result,
+                "error": decision.reason,
+                "is_write": decision.is_write,
+                "latency_ms": latency_ms,
+            }
+        )
+        return result
+
+    try:
+        result = handler(tool_hub, args)
+    except Exception as exc:  # noqa: BLE001
+        result = _result_error(f"{name}_failed:{str(exc)[:160]}")
+
+    latency_ms = int((perf_counter() - started) * 1000)
+    usage.total_calls += 1
+    if decision.is_write:
+        usage.write_calls += 1
+    status = "completed" if bool(result.get("ok", True)) else "failed"
+    error = "" if status == "completed" else str(result.get("error") or "")[:160]
+    tool_runs.append(
+        {
+            "call_index": call_index,
+            "name": name,
+            "args": args,
+            "status": status,
+            "result": result,
+            "error": error,
+            "is_write": decision.is_write,
+            "latency_ms": latency_ms,
+        }
     )
-    max_edge: int | None = Field(
-        default=1280,
-        description=(
-            "Maximum width/height in pixels for the captured image. Must be between "
-            "640 and 4096. Defaults to 1280."
-        ),
-    )
-    format: str | None = Field(
-        default="jpeg",
-        description=(
-            "Image format: 'jpeg' (default) or 'png'. JPEG is usually smaller and "
-            "sufficient for previews; use 'png' when lossless snapshots are needed."
-        ),
-    )
-    quality: int | None = Field(
-        default=72,
-        description=(
-            "JPEG quality between 35 and 95. Ignored for PNG captures. Defaults to 72."
-        ),
-    )
+    return result
 
 
 def build_chat_tools(
@@ -89,172 +167,75 @@ def build_chat_tools(
     policy: AelinToolPolicy,
 ) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
     """
-    Build the set of DeepAgents-native tools and return them together with
-    an empty tool_runs list and a shared ToolPolicyUsage tracker.
+    Build the DeepAgents-facing tool list using explicit tool registration.
 
-    与其在 tool wrapper 里再次调用 ``tool_hub.execute(name, args)``，这里直接
-    绑定到每个领域的能力函数（tools_web/tools_files/tools_gws/...），这样
-    DeepAgents 看到的是“真正的能力工具”，而不是 Aelin ToolHub 的二次壳。
+    This file is intentionally the assembly layer only: it wires Aelin's
+    capability functions into DeepAgents/LangChain tools, applies tool policy,
+    and records tool runs for UI/debugging.
     """
     usage = ToolPolicyUsage()
     tool_runs: list[dict[str, Any]] = []
 
-    def _make_tool(name: str, description: str) -> Tool:
-        def _call_tool(*params: Any, **kwargs: Any) -> dict[str, Any]:
-            nonlocal usage
-            if params and not kwargs and isinstance(params[0], dict):
-                kwargs = params[0]
-            args = dict(kwargs or {})
-            decision = policy.evaluate(name=name, args=args, usage=usage)
-            from time import perf_counter
-
-            started = perf_counter()
-            if not decision.allowed:
-                latency_ms = int((perf_counter() - started) * 1000)
-                tool_runs.append(
-                    {
-                        "round_index": 1,
-                        "name": name,
-                        "args": args,
-                        "status": "denied",
-                        "result": {"ok": False, "error": decision.reason},
-                        "error": decision.reason,
-                        "is_write": decision.is_write,
-                        "latency_ms": latency_ms,
-                    }
-                )
-                return {"ok": False, "error": decision.reason}
-
-            if name == "web_search":
-                result = tool_web_search(tool_hub, args)
-            elif name == "attachment_search":
-                result = tool_attachment_search(tool_hub, args)
-            elif name == "google_workspace":
-                result = tool_google_workspace(tool_hub, args)
-            elif name == "device":
-                result = tool_device(tool_hub, args)
-            elif name == "screen_get":
-                result = tool_screen_get(tool_hub, args)
-            else:
-                # This should not happen because we only register a fixed
-                # allowlist of names below, but keep a defensive fallback so
-                # that DeepAgents 得到清晰的错误而不是爆栈。
-                result = _result_error(f"unsupported_deepagents_tool:{name}")
-            latency_ms = int((perf_counter() - started) * 1000)
-            usage.round_calls += 1
-            usage.total_calls += 1
-            if decision.is_write:
-                usage.write_calls += 1
-            status = "completed" if bool(result.get("ok", True)) else "failed"
-            error = "" if status == "completed" else str(result.get("error") or "")[:160]
-            tool_runs.append(
-                {
-                    "round_index": 1,
-                    "name": name,
-                    "args": args,
-                    "status": status,
-                    "result": result,
-                    "error": error,
-                    "is_write": decision.is_write,
-                    "latency_ms": latency_ms,
-                }
+    def _make_structured_tool(
+        name: str,
+        handler: Callable[[AelinToolHub, dict[str, Any]], dict[str, Any]],
+        args_schema: type[BaseModel],
+        arg_names: list[str],
+    ) -> Tool:
+        def _call_tool(**kwargs: Any) -> dict[str, Any]:
+            args = {
+                key: value
+                for key, value in kwargs.items()
+                if key in arg_names and value is not None
+            }
+            return _invoke_tool(
+                name=name,
+                args=args,
+                handler=handler,
+                tool_hub=tool_hub,
+                policy=policy,
+                usage=usage,
+                tool_runs=tool_runs,
             )
-            return result
 
-        return Tool.from_function(func=_call_tool, name=name, description=description)
+        return StructuredTool.from_function(
+            func=_call_tool,
+            name=name,
+            description=_tool_description(name),
+            args_schema=args_schema,
+        )
 
-    def _make_device_tool(description: str) -> Tool:
-        """
-        Structured wrapper for the unified `device` tool.
-
-        The underlying function accepts a single `DeviceToolInput` payload so
-        that DeepAgents / LangChain treat this as a StructuredTool instead of
-        a single-string tool. This avoids the
-        "Too many arguments to single-input tool device" error and gives the
-        model a clear JSON schema for constructing arguments.
-        """
-
+    def _make_device_tool() -> Tool:
         def _run_device(action: str, url: str | None = None, route: str | None = None) -> dict[str, Any]:
-            nonlocal usage
-            from time import perf_counter
-
             args: dict[str, Any] = {"action": str(action or "").strip()}
             if url is not None and str(url).strip():
                 args["url"] = str(url).strip()
             if route is not None and str(route).strip():
                 args["route"] = str(route).strip()
-
-            decision = policy.evaluate(name="device", args=args, usage=usage)
-            started = perf_counter()
-            if not decision.allowed:
-                latency_ms = int((perf_counter() - started) * 1000)
-                tool_runs.append(
-                    {
-                        "round_index": 1,
-                        "name": "device",
-                        "args": args,
-                        "status": "denied",
-                        "result": {"ok": False, "error": decision.reason},
-                        "error": decision.reason,
-                        "is_write": decision.is_write,
-                        "latency_ms": latency_ms,
-                    }
-                )
-                return {"ok": False, "error": decision.reason}
-
-            try:
-                result = tool_device(tool_hub, args)
-            except Exception as exc:  # noqa: BLE001
-                result = _result_error(f"device_tool_failed:{str(exc)[:160]}")
-
-            latency_ms = int((perf_counter() - started) * 1000)
-            usage.round_calls += 1
-            usage.total_calls += 1
-            if decision.is_write:
-                usage.write_calls += 1
-            status = "completed" if bool(result.get("ok", True)) else "failed"
-            error = "" if status == "completed" else str(result.get("error") or "")[:160]
-            tool_runs.append(
-                {
-                    "round_index": 1,
-                    "name": "device",
-                    "args": args,
-                    "status": status,
-                    "result": result,
-                    "error": error,
-                    "is_write": decision.is_write,
-                    "latency_ms": latency_ms,
-                }
+            return _invoke_tool(
+                name="device",
+                args=args,
+                handler=tool_device,
+                tool_hub=tool_hub,
+                policy=policy,
+                usage=usage,
+                tool_runs=tool_runs,
             )
-            return result
 
         return StructuredTool.from_function(
             func=_run_device,
             name="device",
-            description=description,
+            description=_tool_description("device"),
             args_schema=DeviceToolInput,
         )
 
-    def _make_screen_get_tool(description: str) -> Tool:
-        """
-        Structured wrapper for the `screen_get` tool.
-
-        DeepAgents expects multi-argument tools to be exposed as StructuredTool
-        instances with a Pydantic schema; otherwise it can raise
-        \"Too many arguments to single-input tool\" errors. This wrapper keeps
-        Aelin's existing tool implementation while providing a stable JSON
-        schema to the agent.
-        """
-
+    def _make_screen_get_tool() -> Tool:
         def _run_screen_get(
             display_id: str | None = None,
             max_edge: int | None = None,
-            format: str | None = None,  # noqa: A002 - match tool arg name
+            format: str | None = None,  # noqa: A002 - keep external arg name stable
             quality: int | None = None,
         ) -> dict[str, Any]:
-            nonlocal usage
-            from time import perf_counter
-
             args: dict[str, Any] = {}
             if display_id is not None and str(display_id).strip():
                 args["display_id"] = str(display_id).strip()
@@ -270,107 +251,68 @@ def build_chat_tools(
                     args["quality"] = int(quality)
                 except Exception:
                     pass
-
-            decision = policy.evaluate(name="screen_get", args=args, usage=usage)
-            started = perf_counter()
-            if not decision.allowed:
-                latency_ms = int((perf_counter() - started) * 1000)
-                tool_runs.append(
-                    {
-                        "round_index": 1,
-                        "name": "screen_get",
-                        "args": args,
-                        "status": "denied",
-                        "result": {"ok": False, "error": decision.reason},
-                        "error": decision.reason,
-                        "is_write": decision.is_write,
-                        "latency_ms": latency_ms,
-                    }
-                )
-                return {"ok": False, "error": decision.reason}
-
-            try:
-                result = tool_screen_get(tool_hub, args)
-            except Exception as exc:  # noqa: BLE001
-                result = _result_error(f"screen_get_failed:{str(exc)[:160]}")
-
-            latency_ms = int((perf_counter() - started) * 1000)
-            usage.round_calls += 1
-            usage.total_calls += 1
-            if decision.is_write:
-                usage.write_calls += 1
-            status = "completed" if bool(result.get("ok", True)) else "failed"
-            error = "" if status == "completed" else str(result.get("error") or "")[:160]
-            tool_runs.append(
-                {
-                    "round_index": 1,
-                    "name": "screen_get",
-                    "args": args,
-                    "status": status,
-                    "result": result,
-                    "error": error,
-                    "is_write": decision.is_write,
-                    "latency_ms": latency_ms,
-                }
+            return _invoke_tool(
+                name="screen_get",
+                args=args,
+                handler=tool_screen_get,
+                tool_hub=tool_hub,
+                policy=policy,
+                usage=usage,
+                tool_runs=tool_runs,
             )
-            return result
 
         return StructuredTool.from_function(
             func=_run_screen_get,
             name="screen_get",
-            description=description,
+            description=_tool_description("screen_get"),
             args_schema=ScreenGetToolInput,
         )
 
-    # DeepAgents 主图只暴露核心能力型工具，不再包含 memory/context/profile 等
-    # 旧式记忆/画像入口；这些能力今后由 AGENTS.md + DeepAgents Memory 负责。
-    tools: list[Tool] = []
-    for td in tool_hub.tool_definitions():
-        fn = td.get("function") if isinstance(td, dict) else None
-        if not isinstance(fn, dict):
-            continue
-        name = str(fn.get("name") or "").strip()
-        desc = str(fn.get("description") or "").strip() or name
-
-        if name == "web_search":
-            # 约束 DeepAgents 使用的 web_search 契约，避免缺失 query 等常见错误。
-            desc = (
-                "Web search across the public internet.\n\n"
-                "Required arguments:\n"
-                '- \"action\": \"search\" or \"search_and_fetch\".\n'
-                '- \"query\": non-empty string (Chinese or English). If missing or empty the tool will return '
-                "\"missing query\".\n\n"
-                "Optional arguments:\n"
-                '- \"max_results\": integer in [1, 15], defaults to 15.\n'
-                '- \"fetch_top_k\": integer in [0, 6], must be <= max_results; defaults to 3.\n\n'
-                "Example calls:\n"
-                '{"action": "search_and_fetch", "query": "最近三天的国际要闻", "max_results": 8, "fetch_top_k": 3}\n'
-                '{"action": "search", "query": "DeepAgents architecture design", "max_results": 5}\n\n'
-                "If you receive an error like \"missing query\" or \"unsupported action\", fix the arguments and "
-                "call this tool again instead of repeating the same invalid call."
-            )
-        elif name == "device":
-            # 统一 device 工具的契约，让 DeepAgents 知道允许的 action 以及参数要求。
-            desc = (
-                "Unified device tool for querying desktop status and opening URLs on the user's desktop.\n\n"
-                "Allowed actions: \"status\", \"open_url\", \"open_aelin\".\n"
-                "- \"status\": no extra arguments; returns platform, capabilities and desktop plugin status.\n"
-                "- \"open_url\": requires a `url` string starting with http:// or https:// to open in the desktop browser.\n"
-                "- \"open_aelin\": optionally takes a `route` string (e.g. \"/\") to bring the Aelin desktop app to front.\n\n"
-                "Any other action will return "
-                "\"unsupported device action: allowed actions are 'status', 'open_url', 'open_aelin'\".\n"
-                "If you see errors like \"invalid_url_scheme\" or \"desktop_open_url_failed:...\", fix the URL "
-                "or wait for the desktop plugin to become available before retrying."
-            )
-
-        if name in {"web_search", "attachment_search", "google_workspace", "device", "screen_get"}:
-            if name == "device":
-                tools.append(_make_device_tool(desc))
-            elif name == "screen_get":
-                tools.append(_make_screen_get_tool(desc))
-            else:
-                tools.append(_make_tool(name, desc))
-
+    tools: list[Tool] = [
+        _make_structured_tool(
+            "web_search",
+            tool_web_search,
+            WebSearchToolInput,
+            ["action", "query", "max_results", "fetch_top_k"],
+        ),
+        _make_structured_tool(
+            "attachment_search",
+            tool_attachment_search,
+            AttachmentSearchToolInput,
+            ["query", "attachment_ids", "top_k", "mode"],
+        ),
+        _make_structured_tool(
+            "google_workspace",
+            tool_google_workspace,
+            GoogleWorkspaceToolInput,
+            [
+                "action",
+                "calendar_id",
+                "time_min",
+                "time_max",
+                "max_results",
+                "single_events",
+                "event_summary",
+                "event_description",
+                "event_start",
+                "event_end",
+                "event_attendees",
+                "query",
+                "include_spam_trash",
+                "message_id",
+                "format",
+                "email_to",
+                "email_cc",
+                "email_bcc",
+                "email_subject",
+                "email_body",
+                "docs_title",
+                "docs_content",
+            ],
+        ),
+        _make_device_tool(),
+        _make_screen_get_tool(),
+    ]
     return tools, tool_runs, usage
 
 
@@ -385,11 +327,9 @@ def build_chat_agent(
 ) -> tuple[Any, ToolPolicyUsage, list[dict[str, Any]], dict[str, Any]]:
     """
     Construct a DeepAgents chat agent along with tool usage trackers and
-    file mounts (skills + memory).
-
-    Returns (agent, usage, tool_runs, files_mapping).
+    virtual file mounts for skills + AGENTS.md memory.
     """
-    from app.services.deepagents_loop import _build_chat_model  # reuse model builder
+    from app.services.deepagents_loop import _build_chat_model
 
     chat_model = _build_chat_model(service, provider)
     if chat_model is None:
@@ -398,95 +338,74 @@ def build_chat_agent(
     tools, tool_runs, usage = build_chat_tools(tool_hub=tool_hub, policy=policy)
 
     system_prompt = (
-        "You are Aelin running on DeepAgents. "
-        "You see the conversation history and the latest user query. "
-        "Answer the user directly in the same language as the query.\n\n"
-        "Tool usage guidelines:\n"
-        "- Be deliberate when calling tools; only call a tool when it is clearly helpful to the user.\n"
-        "- Prefer to call a tool once with well-structured arguments instead of many times with incomplete ones.\n\n"
-        "Web search tool (`web_search`):\n"
-        "- Required arguments: `action` (\"search\" or \"search_and_fetch\") and a non-empty `query` string.\n"
-        "- Optional arguments: `max_results` in [1, 15], `fetch_top_k` in [0, 6] and <= `max_results`.\n"
-        "- If you ever see an error like \"missing query\", you MUST include a non-empty `query` field the next time.\n\n"
-        "Device tool (`device` for desktop actions):\n"
-        "- Allowed actions: \"status\", \"open_url\", \"open_aelin\". Do NOT invent new actions.\n"
-        "- Use `status` to understand which desktop capabilities are available.\n"
-        "- For `open_url`, always provide a valid http(s) URL in `url` and avoid dangerous schemes like `file://`.\n"
-        "- Only call `device` when you genuinely need desktop interaction; otherwise prefer pure chat or web tools.\n\n"
-        "Filesystem tools (DeepAgents built-ins such as `ls`, `read_file`, `write_file`, `edit_file`, `grep`, `glob`):\n"
-        "- When the user explicitly asks you to inspect or summarize `/memory/AGENTS.md`, you SHOULD use `ls` and "
-        "`read_file` to open that file instead of guessing its contents.\n"
-        "- Prefer to keep writes minimal; for memory inspection tasks, `read_file` is usually enough.\n"
-        "- Treat `/memory/AGENTS.md` as the authoritative long-term memory summary for this workspace."
+        "You are Aelin running on DeepAgents.\n"
+        "Reply in the same language as the user.\n"
+        "Use tools only when they materially help.\n"
+        "Prefer one correct tool call over repeated partial attempts.\n"
+        "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
+        "Read skills on demand from /skills/... when a matching skill is relevant."
     )
 
     skills_root = skills_root or (Path(__file__).resolve().parent.parent.parent / "deepagents_skills")
     skill_files: dict[str, str] = {}
-    # DeepAgents SkillsMiddleware 期望 sources 是“技能根目录”，其下每个子目录
-    # 才是单个 skill（包含 SKILL.md）。因此我们在虚拟文件系统中统一挂载到
-    # 一到多个根路径下，例如 `/skills/aelin/<skill-name>/SKILL.md`。
     skill_sources: list[str] = []
 
     def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
-        """
-        Mount all markdown-based skills under a given filesystem root into the
-        virtual DeepAgents filesystem at `virtual_root`.
-
-        Each direct subdirectory of `root` is treated as一个 skill 目录；其中的所有
-        `*.md` 文件都会被挂载到
-        `{virtual_root}{normalized-skill-name}/<filename>.md` 下。
-        """
         nonlocal skill_files, skill_sources
 
         if not root.is_dir():
             return
+
         has_any = False
         for subdir in root.iterdir():
             if not subdir.is_dir():
                 continue
-            # 物理目录名允许使用下划线，但按照 Agent Skills 规范，skill name /
-            # 虚拟目录名只能包含小写字母、数字和连字符，因此这里做一次规范化。
-            raw_dir_name = subdir.name
-            skill_dir_name = raw_dir_name.replace("_", "-")
-            virtual_dir = f"{virtual_root}{skill_dir_name}/"
-            md_files = list(subdir.rglob("*.md"))
-            if not md_files:
+            skill_md = subdir / "SKILL.md"
+            if not skill_md.is_file():
                 continue
-            has_any = True
-            for file_path in md_files:
+
+            skill_dir_name = subdir.name.replace("_", "-")
+            virtual_dir = f"{virtual_root}{skill_dir_name}/"
+            mounted_any_file = False
+            for file_path in subdir.rglob("*"):
+                if not file_path.is_file():
+                    continue
                 try:
                     text = file_path.read_text(encoding="utf-8")
                 except Exception:
                     continue
-                virtual_path = f"{virtual_dir}{file_path.name}"
-                skill_files[virtual_path] = text
+                relative_path = file_path.relative_to(subdir).as_posix()
+                skill_files[f"{virtual_dir}{relative_path}"] = text
+                mounted_any_file = True
+
+            if mounted_any_file:
+                has_any = True
+
         if has_any and virtual_root not in skill_sources:
             skill_sources.append(virtual_root)
 
-    # 1) 内建 Aelin skills（file-tools / google-workspace 等）。
     _mount_skills_from_root(skills_root, "/skills/aelin/")
 
-    # 2) 可选：额外 DeepAgents skills 根目录，例如 chrome-cdp-skill。
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
     if extra_dir:
-        extra_root = Path(extra_dir)
-        # 将外部技能挂载在单独的虚拟根目录下，避免与 Aelin 内建技能命名冲突。
-        _mount_skills_from_root(extra_root, "/skills/external/")
+        _mount_skills_from_root(Path(extra_dir), "/skills/external/")
 
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []
     if memory_summary.strip():
         mem_text = memory_summary.strip()
-        if mem_text.lstrip().startswith("#"):
-            mem_body = mem_text
-        else:
-            mem_body_lines = [
-                "# Aelin Session Memory",
-                "",
-                "## User summary",
-                mem_text,
-            ]
-            mem_body = "\n".join(mem_body_lines)
+        mem_body = (
+            mem_text
+            if mem_text.lstrip().startswith("#")
+            else "\n".join(
+                [
+                    "# Aelin Session Memory",
+                    "",
+                    "## User summary",
+                    mem_text,
+                ]
+            )
+        )
         mem_path = "/memory/AGENTS.md"
         memory_files[mem_path] = mem_body
         memory_paths.append(mem_path)
@@ -503,5 +422,4 @@ def build_chat_agent(
         skills=skill_sources or None,
         memory=memory_paths or None,
     )
-
     return agent, usage, tool_runs, files

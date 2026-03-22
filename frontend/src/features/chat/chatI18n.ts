@@ -48,7 +48,6 @@ type ChatKeys =
   | 'trace.executionPane.headerClosed'
   | 'trace.executionPane.emptyDetail'
   | 'trace.tools.empty'
-  | 'trace.tools.round'
   | 'trace.tools.count'
   | 'trace.tools.read'
   | 'trace.tools.write'
@@ -108,7 +107,6 @@ const ZH: Record<ChatKeys, string> = {
   'trace.executionPane.headerClosed': '打开执行面板',
   'trace.executionPane.emptyDetail': '暂无可展示的工具调用。当 Aelin 使用工具处理你的请求时，这里会显示更详细的执行步骤。',
   'trace.tools.empty': '本轮暂未调用任何原子工具。',
-  'trace.tools.round': 'Round {round}',
   'trace.tools.count': '{count} 个调用',
   'trace.tools.read': 'READ',
   'trace.tools.write': 'WRITE',
@@ -171,7 +169,6 @@ const EN: Record<ChatKeys, string> = {
   'trace.executionPane.emptyDetail':
     'No tool calls to show yet. When Aelin uses tools to handle your request, detailed steps will appear here.',
   'trace.tools.empty': 'No atomic tools were invoked in this turn.',
-  'trace.tools.round': 'Round {round}',
   'trace.tools.count': '{count} call(s)',
   'trace.tools.read': 'READ',
   'trace.tools.write': 'WRITE',

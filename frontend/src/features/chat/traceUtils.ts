@@ -8,11 +8,11 @@ export type ToolCallKind =
   | 'web'
 
 export interface ToolCallMeta {
+  index: number
   name: string
   provider: string
   status: string
   detail: string
-  round: number
   isWrite: boolean
   latencyMs: number
   kind: ToolCallKind
@@ -34,7 +34,6 @@ export interface RunNode {
   type: RunNodeType
   label: string
   status: string
-  round?: number
   parentId?: string
   groupId?: string
   provider?: string
@@ -107,17 +106,6 @@ function looksLikeWriteCall(name: string, detail: string): boolean {
   return false
 }
 
-function extractRoundFromDetail(detail: string): number {
-  const text = String(detail || '')
-  const idx = text.indexOf('round=')
-  if (idx < 0) return 1
-  const after = text.slice(idx + 'round='.length)
-  const token = after.split(/[\s;:,]/, 1)[0]
-  const num = Number.parseInt(token || '', 10)
-  if (!Number.isFinite(num) || num <= 0) return 1
-  return num
-}
-
 function extractLatencyFromDetail(detail: string): number {
   const text = String(detail || '').toLowerCase()
   const key = 'latency_ms='
@@ -144,7 +132,6 @@ export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
     let label = formatStageLabel(stage)
     let provider: string | undefined
     const meta: Record<string, unknown> = {}
-    let round: number | undefined
     let groupId: string | undefined
 
     if (stage.startsWith('preflight')) {
@@ -163,8 +150,6 @@ export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
       meta.latencyMs = latencyMs
 
       label = toolName
-      round = extractRoundFromDetail(detail)
-
       if (toolName.startsWith('memory') || toolName.includes('memory')) {
         type = 'memory'
       } else if (toolName.startsWith('file') || toolName.startsWith('fs_')) {
@@ -178,7 +163,6 @@ export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
       meta.kind = 'core'
       meta.isWrite = false
       meta.latencyMs = extractLatencyFromDetail(detail)
-      round = extractRoundFromDetail(detail)
       label = formatStageLabel(stage)
     } else if (
       stage.startsWith('agent_') ||
@@ -199,7 +183,6 @@ export function buildRunNodes(trace: AelinToolStep[] | undefined): RunNode[] {
       type,
       label,
       status,
-      round,
       groupId,
       provider,
       meta: Object.keys(meta).length ? meta : undefined,
@@ -216,7 +199,7 @@ export function extractToolCalls(trace: AelinToolStep[] | undefined): ToolCallMe
   if (!trace || trace.length === 0) return []
 
   const calls: ToolCallMeta[] = []
-  for (const step of trace) {
+  for (const [index, step] of trace.entries()) {
     const stage = normalizeStage(step.stage)
     const status = normalizeStatus(step.status)
     const detail = String(step.detail || '')
@@ -225,11 +208,11 @@ export function extractToolCalls(trace: AelinToolStep[] | undefined): ToolCallMe
       const head = detail.split(':', 1)[0]?.trim() || ''
       const name = head || 'tool'
       calls.push({
+        index,
         name,
         provider: inferProviderFromToolName(name),
         status,
         detail,
-        round: extractRoundFromDetail(detail),
         isWrite: looksLikeWriteCall(name, detail),
         latencyMs: extractLatencyFromDetail(detail),
         kind: inferKindFromToolName(name),
@@ -239,11 +222,11 @@ export function extractToolCalls(trace: AelinToolStep[] | undefined): ToolCallMe
 
     if (stage === 'agent_loop_read_batch') {
       calls.push({
+        index,
         name: 'read_batch',
         provider: 'aelin-core',
         status,
         detail,
-        round: extractRoundFromDetail(detail),
         isWrite: false,
         latencyMs: extractLatencyFromDetail(detail),
         kind: 'core',
@@ -253,11 +236,11 @@ export function extractToolCalls(trace: AelinToolStep[] | undefined): ToolCallMe
 
     if (stage === 'attachment_prefetch') {
       calls.push({
+        index,
         name: 'attachment_search',
         provider: 'aelin-core',
         status,
         detail,
-        round: extractRoundFromDetail(detail),
         isWrite: false,
         latencyMs: extractLatencyFromDetail(detail),
         kind: 'core',

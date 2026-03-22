@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import json
-import re
-import time
 from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
-from app.services.agent_memory import AgentMemoryService
 from app.services.aelin_attachment_service import (
     AelinAttachmentService,
     get_aelin_attachment_service,
@@ -23,12 +19,8 @@ from app.services.device_center import (
     open_desktop_external_url,
 )
 from app.services.google_workspace_cli import get_google_workspace_cli_service
+from app.services.llm import LLMService
 from app.services.web_search import WebSearchService
-from app.services.tools_device import tool_device, tool_screen_get
-from app.services.tools_files import tool_attachment_search
-from app.services.tools_gws import tool_google_workspace
-from app.services.tools_web import tool_web_search
-from app.services.tools_context import tool_context_get, tool_profile
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -66,11 +58,11 @@ def _is_http_url(value: str) -> bool:
 
 class AelinToolHub:
     """
-    Thin registry that binds the current DB/user/workspace context to a small
-    set of capability tools (memory/profile/device/web/attachments/GWS).
+    Thin context binder for the current DB/user/workspace/services.
 
-    DeepAgents 只依赖这里暴露的工具集合，其余复杂逻辑（旧浏览器 runtime、
-    旧式 skill 注入等）已经完全移除。
+    DeepAgents now registers tools explicitly in `deepagents_graph.py`, so this
+    object only carries runtime context and a few shared helpers used by those
+    tools.
     """
 
     def __init__(
@@ -79,7 +71,6 @@ class AelinToolHub:
         db: Session,
         user_id: int,
         workspace: str,
-        memory_service: AgentMemoryService,
         web_search_service: WebSearchService | None = None,
         attachment_service: AelinAttachmentService | None = None,
         available_attachment_ids: list[int] | None = None,
@@ -88,7 +79,6 @@ class AelinToolHub:
         self.db = db
         self.user_id = int(user_id)
         self.workspace = _normalize_workspace(workspace)
-        self._memory = memory_service
         self._web_search = web_search_service or WebSearchService()
         self._attachments = attachment_service or get_aelin_attachment_service()
         self._available_attachment_ids = normalize_positive_ints(
@@ -97,227 +87,6 @@ class AelinToolHub:
         # Optional reference to the current LLM service so tools can delegate
         # sub-tasks in the future if needed.
         self._llm_service = llm_service
-        self._tool_definitions_cache: list[dict[str, Any]] | None = None
-
-    def tool_definitions(self) -> list[dict[str, Any]]:
-        """
-        Return OpenAI-style tool definitions for planner/debug/front-end use.
-
-        DeepAgents 本身只使用 web_search/attachment_search/google_workspace/
-        device/screen_get 这几个能力工具，但为了 UI 展示和结构化 planner，
-        这里同时暴露 context_get/profile。
-        """
-        if self._tool_definitions_cache is not None:
-            return self._tool_definitions_cache
-
-        self._tool_definitions_cache = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "context_get",
-                    "description": "读取当前用户的上下文记忆摘要、重点消息与待办概览。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                            "max_items": {"type": "integer", "minimum": 1, "maximum": 20},
-                        },
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "profile",
-                    "description": "读取或追加用户画像/备注。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {"type": "string", "enum": ["get", "append_note"]},
-                            "note": {"type": "string"},
-                            "max_items": {"type": "integer", "minimum": 1, "maximum": 24},
-                        },
-                        "required": ["action"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "device",
-                    "description": (
-                        "统一的设备工具。"
-                        "使用 action=status 查询设备状态，action=open_url 打开网页，"
-                        "action=open_aelin 唤起 Aelin 桌面页。"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {
-                                "type": "string",
-                                "enum": ["status", "open_url", "open_aelin"],
-                            },
-                            "url": {"type": "string"},
-                            "route": {"type": "string"},
-                        },
-                        "required": ["action"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "执行联网搜索，返回标题、链接、摘要，并可抓取正文片段。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {
-                                "type": "string",
-                                "enum": ["search", "search_and_fetch"],
-                            },
-                            "query": {"type": "string"},
-                            "max_results": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 15,
-                            },
-                            "fetch_top_k": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 6,
-                            },
-                        },
-                        "required": ["action", "query"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "attachment_search",
-                    "description": "在已上传附件中检索与问题最相关的片段，并返回可引用来源信息。若不传 attachment_ids，将默认使用 available_attachment_ids。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string"},
-                            "attachment_ids": {
-                                "type": "array",
-                                "items": {"type": "integer"},
-                                "maxItems": 20,
-                                "description": "可选。默认使用 available_attachment_ids。",
-                            },
-                            "top_k": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 20,
-                            },
-                            "mode": {
-                                "type": "string",
-                                "enum": ["keyword", "hybrid"],
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "screen_get",
-                    "description": "抓取当前屏幕截图，供后续步骤进行视觉分析。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "display_id": {"type": "string"},
-                            "max_edge": {
-                                "type": "integer",
-                                "minimum": 640,
-                                "maximum": 4096,
-                            },
-                            "format": {"type": "string", "enum": ["jpeg", "png"]},
-                            "quality": {
-                                "type": "integer",
-                                "minimum": 35,
-                                "maximum": 95,
-                            },
-                        },
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "google_workspace",
-                    "description": "使用本地 gws CLI 访问 Google Workspace（Gmail / Drive / Calendar / Docs 等）的信息，并在用户明确同意时执行少量写操作（发邮件、创建日历事件、创建文档等）。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "action": {"type": "string"},
-                            "calendar_id": {"type": "string"},
-                            "time_min": {"type": "string"},
-                            "time_max": {"type": "string"},
-                            "max_results": {"type": "integer", "minimum": 1, "maximum": 50},
-                            "single_events": {"type": "boolean"},
-                            "event_summary": {"type": "string"},
-                            "event_description": {"type": "string"},
-                            "event_start": {"type": "string"},
-                            "event_end": {"type": "string"},
-                            "event_attendees": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "maxItems": 16,
-                            },
-                            "query": {"type": "string"},
-                            "include_spam_trash": {"type": "boolean"},
-                            "message_id": {"type": "string"},
-                            "format": {"type": "string"},
-                            "email_to": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "maxItems": 16,
-                            },
-                            "email_cc": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "maxItems": 16,
-                            },
-                            "email_bcc": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "maxItems": 16,
-                            },
-                            "email_subject": {"type": "string"},
-                            "email_body": {"type": "string"},
-                            "docs_title": {"type": "string"},
-                            "docs_content": {"type": "string"},
-                        },
-                        "required": ["action"],
-                    },
-                },
-            },
-        ]
-        return self._tool_definitions_cache
-
-    def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        tool = str(name or "").strip().lower()
-        if tool == "context_get":
-            return tool_context_get(self, args)
-        if tool == "profile":
-            return tool_profile(self, args)
-        if tool == "device":
-            return tool_device(self, args)
-        if tool == "web_search":
-            return tool_web_search(self, args)
-        if tool == "attachment_search":
-            return tool_attachment_search(self, args)
-        if tool == "screen_get":
-            return tool_screen_get(self, args)
-        if tool == "google_workspace":
-            return tool_google_workspace(self, args)
-        return _result_error(f"unsupported tool: {tool}")
 
     # ---- device helpers (used by tools_device) -----------------------------------
 

@@ -11,7 +11,7 @@ def now_ms() -> int:
 
 @dataclass
 class AgentLoopToolRun:
-    round_index: int
+    call_index: int
     name: str
     args: dict[str, Any]
     status: str

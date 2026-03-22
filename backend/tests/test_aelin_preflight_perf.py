@@ -30,20 +30,9 @@ class _FakeToolHub:
 
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
-        self.execute_calls: list[tuple[str, dict]] = []
         self.workspace = str(kwargs.get("workspace") or "default")
         self.user_id = int(kwargs.get("user_id") or 0)
         _FakeToolHub.instances.append(self)
-
-    def tool_definitions(self) -> list[dict]:
-        return [
-            {"type": "function", "function": {"name": "attachment_search", "parameters": {"type": "object"}}},
-            {"type": "function", "function": {"name": "context_get", "parameters": {"type": "object"}}},
-        ]
-
-    def execute(self, name: str, args: dict) -> dict:
-        self.execute_calls.append((str(name), dict(args)))
-        return {"ok": True}
 
 
 class _FakeRunner:
@@ -98,7 +87,6 @@ def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
     assert response is not None
     assert response.answer == "ok"
     assert _FakeToolHub.instances
-    assert all(name != "attachment_search" for name, _ in _FakeToolHub.instances[0].execute_calls)
 
 
 def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(monkeypatch):
@@ -151,8 +139,11 @@ def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
 
-    def _fake_execute(self, name: str, args: dict) -> dict:
-        self.execute_calls.append((str(name), dict(args)))
+    calls: list[dict] = []
+
+    def _fake_attachment_search(hub, args):  # type: ignore[no-untyped-def]
+        calls.append(dict(args))
+        _ = hub
         return {
             "ok": True,
             "total": 1,
@@ -164,7 +155,7 @@ def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback
             ],
         }
 
-    monkeypatch.setattr(_FakeToolHub, "execute", _fake_execute)
+    monkeypatch.setattr(aelin_core, "tool_attachment_search", _fake_attachment_search)
 
     payload = AelinChatRequest(query="请总结附件", workspace="default", attachment_ids=[1])
     response = aelin_core._try_agent_loop_chat(
@@ -177,16 +168,13 @@ def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback
     assert response is not None
     assert "x-following.pdf" in response.answer
     assert _FakeToolHub.instances
-    assert _FakeToolHub.instances[0].execute_calls == [
-        (
-            "attachment_search",
-            {
-                "query": "请总结附件",
-                "attachment_ids": [1],
-                "top_k": 10,
-                "mode": "hybrid",
-            },
-        )
+    assert calls == [
+        {
+            "query": "请总结附件",
+            "attachment_ids": [1],
+            "top_k": 10,
+            "mode": "hybrid",
+        }
     ]
 
 

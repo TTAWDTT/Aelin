@@ -12,7 +12,6 @@ def test_classify_write_tools():
 
 def test_policy_allows_screen_get_when_reads_enabled():
     policy = AelinToolPolicy(
-        max_calls_per_round=2,
         max_tool_calls=4,
         max_write_calls=1,
         allow_write_tools=False,
@@ -20,7 +19,7 @@ def test_policy_allows_screen_get_when_reads_enabled():
     decision = policy.evaluate(
         name="screen_get",
         args={"max_edge": 1280},
-        usage=ToolPolicyUsage(round_calls=0, total_calls=0, write_calls=0),
+        usage=ToolPolicyUsage(total_calls=0, write_calls=0),
     )
     assert decision.allowed is True
     assert decision.is_write is False
@@ -30,7 +29,6 @@ def test_policy_allows_screen_get_when_reads_enabled():
 
 def test_policy_blocks_device_writes_when_writes_disabled():
     policy = AelinToolPolicy(
-        max_calls_per_round=2,
         max_tool_calls=4,
         max_write_calls=1,
         allow_write_tools=False,
@@ -38,7 +36,7 @@ def test_policy_blocks_device_writes_when_writes_disabled():
     decision = policy.evaluate(
         name="device",
         args={"action": "open_url", "url": "https://example.com"},
-        usage=ToolPolicyUsage(round_calls=0, total_calls=0, write_calls=0),
+        usage=ToolPolicyUsage(total_calls=0, write_calls=0),
     )
     assert decision.allowed is False
     assert decision.is_write is True
@@ -52,9 +50,8 @@ def test_classify_device_actions():
 
 
 def test_google_workspace_policy_allows_reads_and_marks_writes():
-    usage = ToolPolicyUsage(round_calls=0, total_calls=0, write_calls=0)
+    usage = ToolPolicyUsage(total_calls=0, write_calls=0)
     policy = AelinToolPolicy(
-        max_calls_per_round=4,
         max_tool_calls=10,
         max_write_calls=3,
         allow_write_tools=True,

@@ -84,7 +84,7 @@ def run_deepagents_loop(
             write_calls=0,
             tool_runs=[],
             trace_steps=[
-                AgentLoopTraceStep(stage="agent_loop_tool", status="completed", detail="context_get"),
+                AgentLoopTraceStep(stage="agent_loop_tool", status="completed", detail="fake_tool_stub"),
                 AgentLoopTraceStep(stage="agent_loop", status="completed", detail="deepagents_fake_model_stub"),
             ],
             actions=[],
@@ -170,7 +170,7 @@ def run_deepagents_loop(
 
         tool_runs: list[AgentLoopToolRun] = [
             AgentLoopToolRun(
-                round_index=int(tr.get("round_index", 1)),
+                call_index=int(tr.get("call_index", 1)),
                 name=str(tr.get("name") or ""),
                 args=dict(tr.get("args") or {}),
                 status=str(tr.get("status") or ""),
@@ -206,7 +206,7 @@ def run_deepagents_loop(
     if not answer.strip():
         tool_runs: list[AgentLoopToolRun] = [
             AgentLoopToolRun(
-                round_index=int(tr.get("round_index", 1)),
+                call_index=int(tr.get("call_index", 1)),
                 name=str(tr.get("name") or ""),
                 args=dict(tr.get("args") or {}),
                 status=str(tr.get("status") or ""),
@@ -235,7 +235,7 @@ def run_deepagents_loop(
 
     tool_runs: list[AgentLoopToolRun] = [
         AgentLoopToolRun(
-            round_index=int(tr.get("round_index", 1)),
+            call_index=int(tr.get("call_index", 1)),
             name=str(tr.get("name") or ""),
             args=dict(tr.get("args") or {}),
             status=str(tr.get("status") or ""),

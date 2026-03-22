@@ -13,7 +13,6 @@ from sqlalchemy import text
 from app.db import create_session
 from app.models import User
 from app.services.aelin_runtime import resolve_llm_service
-from app.services.agent_memory import AgentMemoryService
 from app.services.web_search import WebSearchService
 from app.services.aelin_tools import AelinToolHub
 from app.services.aelin_tool_policy import AelinToolPolicy
@@ -32,19 +31,17 @@ def probe_user(db, uid: int) -> None:
     print("Provider:", provider, "configured:", service.is_configured())
     print("Model:", getattr(service.config, "model", None), "base_url:", getattr(service.config, "base_url", None))
 
-    memory_service = AgentMemoryService()
     web_search_service = WebSearchService()
 
     hub = AelinToolHub(
         db=db,
         user_id=user.id,
         workspace="default",
-        memory_service=memory_service,
         web_search_service=web_search_service,
         available_attachment_ids=[],
         llm_service=service,
     )
-    policy = AelinToolPolicy(max_calls_per_round=2, max_tool_calls=4, max_write_calls=1, allow_write_tools=True)
+    policy = AelinToolPolicy(max_tool_calls=4, max_write_calls=1, allow_write_tools=True)
 
     res = run_deepagents_loop(
         service=service,

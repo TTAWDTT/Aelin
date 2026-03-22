@@ -13,7 +13,6 @@ class ToolPolicyDecision:
 
 @dataclass
 class ToolPolicyUsage:
-    round_calls: int = 0
     total_calls: int = 0
     write_calls: int = 0
 
@@ -23,10 +22,6 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
     tool = str(name or "").strip().lower()
     action = str((args or {}).get("action") or "").strip().lower()
 
-    if tool == "context_get":
-        return False
-    if tool == "profile":
-        return action == "append_note"
     if tool == "device":
         return action in {"open_url", "open_aelin"}
     if tool == "web_search":
@@ -52,12 +47,10 @@ class AelinToolPolicy:
     def __init__(
         self,
         *,
-        max_calls_per_round: int,
         max_tool_calls: int,
         max_write_calls: int,
         allow_write_tools: bool,
     ) -> None:
-        self.max_calls_per_round = max(1, int(max_calls_per_round or 1))
         self.max_tool_calls = max(1, int(max_tool_calls or 1))
         self.max_write_calls = max(0, int(max_write_calls or 0))
         self.allow_write_tools = bool(allow_write_tools)
@@ -65,8 +58,6 @@ class AelinToolPolicy:
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
         if tool not in {
-            "context_get",
-            "profile",
             "device",
             "web_search",
             "attachment_search",
@@ -75,13 +66,6 @@ class AelinToolPolicy:
         }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
-        round_limit_deny = _deny_if_over_limit(
-            current=usage.round_calls,
-            limit=self.max_calls_per_round,
-            reason="round_call_limit",
-        )
-        if round_limit_deny is not None:
-            return round_limit_deny
         total_limit_deny = _deny_if_over_limit(
             current=usage.total_calls,
             limit=self.max_tool_calls,

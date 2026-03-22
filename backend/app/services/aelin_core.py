@@ -18,12 +18,12 @@ from app.schemas import (
     AelinChatResponse,
     AelinToolStep,
 )
-from app.services.agent_memory import AgentMemoryService
 from app.services.aelin_tools import AelinToolHub
 from app.services.deepagents_loop import run_deepagents_loop
 from app.services.aelin_tool_policy import AelinToolPolicy
 from app.services.aelin_chat_dispatch import dispatch_aelin_chat as _dispatch_aelin_chat_service
 from app.services.aelin_utils import normalize_positive_ints
+from app.services.tools_files import tool_attachment_search
 from app.services.aelin_runtime import (
     normalize_workspace as _normalize_workspace,
     resolve_llm_service as _resolve_llm_service,
@@ -49,7 +49,6 @@ from app.routers.aelin_text_helpers import (
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 _log = logging.getLogger(__name__)
 
-_memory = AgentMemoryService()
 _file_memory = file_memory_bridge
 
 # Keep image Data URL size checks consistent across chat input normalization
@@ -274,7 +273,6 @@ def _try_agent_loop_chat(
         db=db,
         user_id=current_user.id,
         workspace=workspace,
-        memory_service=_memory,
         web_search_service=_scoped_web_search_service(getattr(service.config, "web_search_proxy_url", "")),
         available_attachment_ids=attachment_ids,
         llm_service=service,
@@ -303,7 +301,7 @@ def _try_agent_loop_chat(
             "mode": "hybrid",
         }
         prefetch_started = time.perf_counter()
-        attachment_prefetch_result = tool_hub.execute("attachment_search", attachment_prefetch_args)
+        attachment_prefetch_result = tool_attachment_search(tool_hub, attachment_prefetch_args)
         prefetch_latency_ms = int((time.perf_counter() - prefetch_started) * 1000)
         if bool(attachment_prefetch_result.get("ok")):
             _emit_prefixed(
@@ -337,7 +335,6 @@ def _try_agent_loop_chat(
     allow_write_tools = bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
 
     policy = AelinToolPolicy(
-        max_calls_per_round=int(getattr(settings, "aelin_agent_loop_max_calls_per_round", 128) or 128),
         max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 512) or 512),
         max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 128) or 128),
         allow_write_tools=(False if force_disable_writes else allow_write_tools),
