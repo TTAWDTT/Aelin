@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+from app.services.tool_helpers import _result_error, _result_ok, _safe_int
+
+if TYPE_CHECKING:
+    from app.services.aelin_tools import AelinToolHub
 
 
 def tool_attachment_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Attachment search tool implementation extracted from
-    AelinToolHub._tool_attachment_search.
-
-    This helper keeps behaviour identical to the original inlined method and
-    delegates to the hub's configured attachment service and available ids.
-    """
-
-    # Lazy imports to avoid circular dependency and to reuse shared helpers.
-    from app.services.aelin_tools import _result_error, _result_ok, _safe_int
     from app.services.aelin_utils import normalize_positive_ints
 
     query = str(args.get("query") or "").strip()[:500]
@@ -56,4 +51,3 @@ def tool_attachment_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[st
         content=str(result.get("content") or "")[:8000],
         hits=list(result.get("hits") or []),
     )
-

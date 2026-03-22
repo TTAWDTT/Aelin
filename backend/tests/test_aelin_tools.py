@@ -148,13 +148,13 @@ def test_attachment_search_prefers_explicit_ids():
 
 
 def test_screen_get_tool_success(monkeypatch):
-    from app.services import aelin_tools
+    from app.services import tools_device
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
     monkeypatch.setattr(
-        aelin_tools,
+        tools_device,
         "device_capture_screen",
         lambda **kwargs: {
             "data_url": "data:image/jpeg;base64,QUJDRA==",
@@ -244,7 +244,7 @@ def test_device_tool_rejects_unknown_action():
 
 
 def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
-    from app.services import aelin_tools
+    from app.services import tools_gws
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -268,7 +268,7 @@ def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
         def login_command(self):
             return ["gws", "auth", "login"]
 
-    monkeypatch.setattr(aelin_tools, "get_google_workspace_cli_service", lambda: _FakeGWS())
+    monkeypatch.setattr(tools_gws, "get_google_workspace_cli_service", lambda: _FakeGWS())
 
     runtime = tool_google_workspace(hub, {"action": "runtime"})
     assert runtime["ok"] is True
@@ -283,7 +283,7 @@ def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
 
 
 def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch):
-    from app.services import aelin_tools
+    from app.services import tools_gws
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -304,7 +304,7 @@ def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch)
         def calendar_list_events(self, **kwargs):
             return {"ok": True, "items": [{"id": "e1", "summary": "Demo"}], "raw": {"items": []}}
 
-    monkeypatch.setattr(aelin_tools, "get_google_workspace_cli_service", lambda: _FakeGWS())
+    monkeypatch.setattr(tools_gws, "get_google_workspace_cli_service", lambda: _FakeGWS())
 
     gmail_list = tool_google_workspace(
         hub,
@@ -328,7 +328,7 @@ def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch)
 
 
 def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
-    from app.services import aelin_tools
+    from app.services import tools_gws
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -352,7 +352,7 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
         def gmail_create_draft(self, **kwargs):
             return {"ok": False, "error": "gws_failed:gmail_draft"}
 
-    monkeypatch.setattr(aelin_tools, "get_google_workspace_cli_service", lambda: _FakeGWS())
+    monkeypatch.setattr(tools_gws, "get_google_workspace_cli_service", lambda: _FakeGWS())
 
     assert tool_google_workspace(hub, {"action": "gmail_list"})["scope"] == "gmail"
     assert tool_google_workspace(hub, {"action": "drive_list"})["scope"] == "drive"

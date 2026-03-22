@@ -1,22 +1,38 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+from app.services.google_workspace_cli import get_google_workspace_cli_service
+from app.services.tool_helpers import _safe_int
+
+if TYPE_CHECKING:
+    from app.services.aelin_tools import AelinToolHub
 
 
-def tool_google_workspace(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Google Workspace tool implementation extracted from
-    AelinToolHub._tool_google_workspace.
+def _scope_failure(scope: str, result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": False, "scope": scope, **result}
 
-    This helper keeps behaviour identical to the original inlined method and
-    delegates to the shared gws CLI service. It accepts the hub instance for
-    future extensibility but does not currently use it.
-    """
 
-    # Lazy imports to avoid circular dependency at module import time and to
-    # honour monkeypatching of get_google_workspace_cli_service on the
-    # aelin_tools module in tests.
-    from app.services.aelin_tools import _safe_int, get_google_workspace_cli_service
+def _scope_items(scope: str, result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "scope": scope,
+        "items": list(result.get("items") or []),
+        "raw": result.get("raw") or result.get("data") or {},
+    }
+
+
+def _scope_item(scope: str, result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "scope": scope,
+        "item": result.get("item") if isinstance(result.get("item"), dict) else {},
+        "raw": result.get("raw") or result.get("data") or {},
+    }
+
+
+def tool_google_workspace(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch Google Workspace tool actions to the local gws CLI wrapper."""
 
     action = str(args.get("action") or "").strip().lower()
     service = get_google_workspace_cli_service()
@@ -41,55 +57,21 @@ def tool_google_workspace(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str
             max_results=max_results,
             include_spam_trash=include_spam_trash,
         )
-        if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "gmail",
-                **result,
-            }
-        return {
-            "ok": True,
-            "scope": "gmail",
-            "items": list(result.get("items") or []),
-            "raw": result.get("raw") or result.get("data") or {},
-        }
+        return _scope_items("gmail", result) if bool(result.get("ok")) else _scope_failure("gmail", result)
 
     if action == "gmail_get":
         message_id = str(args.get("message_id") or "").strip()
         if not message_id:
-            return {"ok": False, "scope": "gmail", "error": "missing_message_id"}
+            return _scope_failure("gmail", {"error": "missing_message_id"})
         fmt = str(args.get("format") or "full").strip().lower()
         result = service.gmail_get_message(message_id=message_id, fmt=fmt)
-        if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "gmail",
-                **result,
-            }
-        item = result.get("item") if isinstance(result.get("item"), dict) else {}
-        return {
-            "ok": True,
-            "scope": "gmail",
-            "item": item,
-            "raw": result.get("raw") or result.get("data") or {},
-        }
+        return _scope_item("gmail", result) if bool(result.get("ok")) else _scope_failure("gmail", result)
 
     if action == "drive_list":
         query = str(args.get("query") or "").strip()
         max_results = _safe_int(args.get("max_results") or 10, 10, low=1, high=50)
         result = service.drive_list_files(query=query, max_results=max_results)
-        if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "drive",
-                **result,
-            }
-        return {
-            "ok": True,
-            "scope": "drive",
-            "items": list(result.get("items") or []),
-            "raw": result.get("raw") or result.get("data") or {},
-        }
+        return _scope_items("drive", result) if bool(result.get("ok")) else _scope_failure("drive", result)
 
     if action == "calendar_list":
         calendar_id = str(args.get("calendar_id") or "primary").strip() or "primary"
@@ -104,18 +86,7 @@ def tool_google_workspace(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str
             max_results=max_results,
             single_events=single_events,
         )
-        if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "calendar",
-                **result,
-            }
-        return {
-            "ok": True,
-            "scope": "calendar",
-            "items": list(result.get("items") or []),
-            "raw": result.get("raw") or result.get("data") or {},
-        }
+        return _scope_items("calendar", result) if bool(result.get("ok")) else _scope_failure("calendar", result)
 
     if action == "calendar_create_event":
         calendar_id = str(args.get("calendar_id") or "primary").strip() or "primary"
@@ -132,19 +103,7 @@ def tool_google_workspace(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str
             end=event_end,
             attendees=attendees,
         )
-        if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "calendar",
-                **result,
-            }
-        item = result.get("item") if isinstance(result.get("item"), dict) else {}
-        return {
-            "ok": True,
-            "scope": "calendar",
-            "item": item,
-            "raw": result.get("raw") or result.get("data") or {},
-        }
+        return _scope_item("calendar", result) if bool(result.get("ok")) else _scope_failure("calendar", result)
 
     if action == "gmail_send":
         to = list(args.get("email_to") or [])
@@ -159,19 +118,7 @@ def tool_google_workspace(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str
             subject=subject,
             body=body,
         )
-        if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "gmail",
-                **result,
-            }
-        item = result.get("item") if isinstance(result.get("item"), dict) else {}
-        return {
-            "ok": True,
-            "scope": "gmail",
-            "item": item,
-            "raw": result.get("raw") or result.get("data") or {},
-        }
+        return _scope_item("gmail", result) if bool(result.get("ok")) else _scope_failure("gmail", result)
 
     if action == "gmail_draft":
         to = list(args.get("email_to") or [])
@@ -186,30 +133,14 @@ def tool_google_workspace(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str
             subject=subject,
             body=body,
         )
-        if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "gmail",
-                **result,
-            }
-        item = result.get("item") if isinstance(result.get("item"), dict) else {}
-        return {
-            "ok": True,
-            "scope": "gmail",
-            "item": item,
-            "raw": result.get("raw") or result.get("data") or {},
-        }
+        return _scope_item("gmail", result) if bool(result.get("ok")) else _scope_failure("gmail", result)
 
     if action == "docs_create":
         title = str(args.get("docs_title") or "").strip()
         content = str(args.get("docs_content") or "").strip()
         result = service.docs_create_document(title=title or "Aelin 文档")
         if not bool(result.get("ok")):
-            return {
-                "ok": False,
-                "scope": "docs",
-                **result,
-            }
+            return _scope_failure("docs", result)
         item = result.get("item") if isinstance(result.get("item"), dict) else {}
         document_id = str(item.get("documentId") or item.get("document_id") or "").strip()
         web_url = ""
@@ -239,8 +170,4 @@ def tool_google_workspace(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str
                 response["append_error"] = append_error
         return response
 
-    return {
-        "ok": False,
-        "scope": "google_workspace",
-        "error": "unsupported_action",
-    }
+    return _scope_failure("google_workspace", {"error": "unsupported_action"})

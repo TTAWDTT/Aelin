@@ -1,32 +1,22 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
+from app.services.tool_helpers import _result_error, _result_items, _safe_int
 from app.services.web_search import WebSearchResult
+
+if TYPE_CHECKING:
+    from app.services.aelin_tools import AelinToolHub
 
 
 def tool_web_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Web search tool implementation extracted from AelinToolHub._tool_web_search.
-
-    This helper delegates to the hub's configured WebSearchService instance and
-    uses the shared result helpers on the hub module to keep behaviour identical
-    to the inline implementation.
-    """
-    # Lazy import to avoid circular dependency at module import time.
-    from app.services.aelin_tools import _safe_int, _result_items
-
     action = str(args.get("action") or "search_and_fetch").strip().lower()
     if action not in {"search", "search_and_fetch"}:
-        from app.services.aelin_tools import _result_error
-
         # Keep the error short and explicit so DeepAgents can easily recover.
         return _result_error("unsupported action: expected 'search' or 'search_and_fetch'")
 
     query = str(args.get("query") or "").strip()[:400]
     if not query:
-        from app.services.aelin_tools import _result_error
-
         # Explicitly tell the agent that query must be a non-empty string.
         return _result_error("missing query: you must pass a non-empty 'query' field")
 

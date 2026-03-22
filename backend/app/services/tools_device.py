@@ -1,32 +1,23 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from app.services.device_center import (
     activate_desktop_module,
+    capture_device_screen as device_capture_screen,
     DesktopPluginActionError,
+    DeviceScreenCaptureError,
     device_status_snapshot,
     open_desktop_external_url,
 )
+from app.services.tool_helpers import _result_error, _result_ok, _safe_int
+
+if TYPE_CHECKING:
+    from app.services.aelin_tools import AelinToolHub
 
 
-def tool_screen_get(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Screen capture tool implementation extracted from
-    AelinToolHub._tool_screen_get.
-
-    Behaviour is kept identical and shared helpers are reused via lazy imports.
-    """
-
-    from app.services.aelin_tools import (
-        _result_error,
-        _result_ok,
-        _safe_int,
-        DeviceScreenCaptureError,
-        device_capture_screen,
-    )
-
+def tool_screen_get(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
     display_id = str(args.get("display_id") or "").strip()[:64]
     max_edge = _safe_int(args.get("max_edge"), 1280, low=640, high=4096)
     fmt = "png" if str(args.get("format") or "").strip().lower() == "png" else "jpeg"
@@ -53,9 +44,7 @@ def tool_screen_get(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]
     )
 
 
-def tool_device(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
-    from app.services.aelin_tools import _result_error, _result_ok
-
+def tool_device(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
     def _is_http_url(value: str) -> bool:
         text = str(value or "").strip()
         if not text:

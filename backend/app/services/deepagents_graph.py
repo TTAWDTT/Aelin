@@ -10,8 +10,9 @@ from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
 from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
-from app.services.aelin_tools import AelinToolHub, _result_error
+from app.services.aelin_tools import AelinToolHub
 from app.services.llm import LLMService
+from app.services.tool_helpers import _result_error
 from app.services.tools_device import tool_device, tool_screen_get
 from app.services.tools_files import tool_attachment_search
 from app.services.tools_gws import tool_google_workspace
