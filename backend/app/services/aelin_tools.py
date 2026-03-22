@@ -134,8 +134,7 @@ class AelinToolHub:
             return _result_error(f"desktop_open_aelin_failed:{str(exc)[:160]}")
         return _result_ok(
             route=str(result.get("route") or route),
-            url=str(result.get("url") or ""),
-            opened=bool(result.get("opened", result.get("activated"))),
+            opened=bool(result.get("opened")),
             detail=str(result.get("detail") or ""),
             summary=f"Aelin 已切换到 {str(result.get('route') or route)[:120]}",
         )

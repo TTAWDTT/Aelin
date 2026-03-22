@@ -185,7 +185,6 @@ def activate_desktop_module(route: str = "/") -> dict[str, Any]:
 def _normalize_plugin_action_result(raw: dict[str, Any], *, primary_value: str, primary_key: str) -> dict[str, Any]:
     return {
         primary_key: primary_value,
-        "activated": bool(raw.get("activated", True)),
         "opened": bool(raw.get("opened", raw.get("activated", True))),
         "detail": str(raw.get("detail") or "ok")[:200],
     }
