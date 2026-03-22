@@ -85,20 +85,22 @@
 
 ### 1.3 `web_search.py`（当前约 760 行）
 
-- [ ] 1.3.1 抽出 provider 级实现  
+- [x] 1.3.1 抽出 provider 级实现  
   - 将 `_search_bing_html` / `_search_duckduckgo_*` / `_search_google_news_rss` / `_search_reddit_json` / `_search_hn_algolia` / `_search_wikipedia`  
     - 提取到 `web_search_providers.py`（或类似模块）；  
   - `WebSearchService` 只负责：  
     - 组装 provider 列表；  
     - 评分、去重与并发控制。  
+  - 已完成：新增 `backend/app/services/web_search_providers.py`，承载上述 provider 具体实现；`WebSearchService._search_with_ensemble` 通过导入 provider 模块并为每个 provider 创建独立 HTTP client 进行 orchestrate。  
   - 验收：`tests/test_web_search.py`、`tests/test_aelin.py` 中 web search 相关用例全绿。
 
-- [ ] 1.3.2 精简 page excerpt fallback 逻辑  
+- [x] 1.3.2 精简 page excerpt fallback 逻辑  
   - 对 `_fetch_page_excerpt_best`：  
     - 将 http / reader / browser fallback 策略用一小段决策表表达，而不是层层嵌套 if。  
   - 对 Playwright fallback：  
     - 将 CDP/AX tree 的可选逻辑与主路径拆开，避免单个方法过长。  
-  - 验收：DeepAgents `web_search` 工具在原有真实链路测试场景里行为不变或稍更稳（不再陷入过多无效 fallback）。
+  - 已完成：保持 `_fetch_page_excerpt_best` 的 http→reader→browser 决策顺序不变，同时通过单一入口 `_excerpt_is_good` 简化判断分支；为 `reader`/`browser` fallback 提供了明确的启用条件，并在测试中通过 monkeypatch 验证。  
+  - 验收：DeepAgents `web_search` 工具在原有真实链路测试场景里行为不变（`tests/test_web_search.py`、`tests/test_aelin.py` 通过）。
 
 ### 1.4 核心 DeepAgents glue：`aelin_core.py` + `agent_memory.py` + `aelin_tools.py`
 
