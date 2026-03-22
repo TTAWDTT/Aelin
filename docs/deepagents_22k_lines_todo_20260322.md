@@ -104,7 +104,7 @@
 
 ### 1.4 核心 DeepAgents glue：`aelin_core.py` + `agent_memory.py` + `aelin_tools.py`
 
-- [ ] 1.4.1 `aelin_core.py` 保持 < 600 行  
+- [x] 1.4.1 `aelin_core.py` 保持 < 600 行  
   - 把残留的：  
     - SSE 相关 logging 和 trace 组装逻辑；  
     - 与「上下文拼装」紧耦合的辅助函数  
@@ -112,16 +112,18 @@
     - FastAPI router；  
     - preflight（resolve service / memory summary）+ media ingest 入口；  
     - 调 `run_deepagents_loop` 并包装为 `AelinChatResponse`。  
-
-- [ ] 1.4.2 `agent_memory.py`：只保留 AGENTS.md + DeepAgents 记忆  
+  - 已完成：将 SSE logging/trace 组装与上下文缓存逻辑下沉到 `aelin_core_support.py` 等辅助模块，`aelin_core.py` 仅保留路由与调用 DeepAgents 的入口，文件行数已收缩到约 600 行以内。  
+  
+- [x] 1.4.2 `agent_memory.py`：只保留 AGENTS.md + DeepAgents 记忆  
   - 确认所有 DB 记忆与 openviking 残留路径已删除；  
   - 将仍然复杂的「memory snapshot 组装」逻辑拆薄，分成：  
     - AGENTS.md file 视图；  
     - 最近对话摘要；  
     - notes/todos 生成。  
-  - 目标是让单文件行数进一步靠近 600 行以下。
-
-- [ ] 1.4.3 `aelin_tools.py`：保持为最薄 tool hub  
+  - 目标是让单文件行数进一步靠近 600 行以下。  
+  - 已完成：移除所有 DB 记忆与 openviking 残留路径，引入 file-first 的 `AgentMemoryService`，通过 `file_memory_bridge` 读写 `/memory/AGENTS.md`，并在此基础上构建 memory snapshot（AGENTS.md 视图 + 最近对话摘要 + notes/todos 投影）。  
+  
+- [x] 1.4.3 `aelin_tools.py`：保持为最薄 tool hub  
   - 确保所有执行逻辑集中在 `tools_web/tools_files/tools_gws/tools_device` 等模块；  
   - 仅保留：  
     - 工具 metadata 描述（给前端/调试用）；  
