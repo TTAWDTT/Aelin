@@ -190,13 +190,22 @@
 
 ## 5. 文档与测试：归档 & 收尾
 
-- [ ] 5.1 再次归档旧架构文档  
-  - 将与 DB 记忆 / plane / openviking 相关、已经不再对当前代码有指导意义的说明移动到 `docs/archive/legacy-*`。  
-  - 保证 `docs/` 根下的主要文档全部指向 DeepAgents 现状。
+- [x] 5.1 再次归档旧架构文档  
+  - 已将主要描述 plane / PinchTab / 旧 Agent Loop 与 DB 记忆的设计文档整体归档到 `docs/archive/legacy-aelin/`：  
+    - `docs/ability.md` → `docs/archive/legacy-aelin/ability.md`  
+    - `docs/aelin_core_refactor_plan.md` → `docs/archive/legacy-aelin/aelin_core_refactor_plan.md`  
+    - `docs/aelin_tools_refactor_plan.md` → `docs/archive/legacy-aelin/aelin_tools_refactor_plan.md`  
+  - `docs/INDEX.md` 的 Stable 区域继续指向 DeepAgents 现状文档（如 `deepagents_arch.md` 与 `aelin-docs-foundation` 系列），根目录下不再有会误导为“当前架构仍依赖 plane/PinchTab/DB 记忆”的主文档。
 
-- [ ] 5.2 测试精简不必要的集成场景  
-  - 在保持回归覆盖的前提下，优先将 “针对已经删除架构” 的复杂集成测试改为更薄的单元测试，减少维护成本和噪音。  
-  - 确保新的 DeepAgents 路径（记忆 / 工具 / agent loop）有清晰的核心测试。
+- [x] 5.2 测试精简不必要的集成场景  
+  - 已审查 `backend/tests/`：当前所有测试均围绕 DeepAgents 路径、设备工具、媒体 ingest、附件服务与 GWS CLI 等现有能力展开，未发现仍依赖 plane / PinchTab / openviking / DB 记忆运行时的集成测试；  
+  - DeepAgents 相关核心测试包括：  
+    - `test_agent_memory_deepagents.py`（AGENTS.md → 上下文投影），  
+    - `test_aelin.py`（/aelin/chat/context 端到端行为），  
+    - `test_aelin_tools.py`（ToolHub + DeepAgents 工具契约），  
+    - `test_web_search.py`（web_search provider 组合），  
+    - 以及 remote control 与 device 路径的单元/集成测试。  
+  - 在此基础上无须再保留针对已删除架构的重型集成场景，当前测试集已经是“以 DeepAgents 为核心、以 domain service 为单元”的精简形态。
 
 ---
 
