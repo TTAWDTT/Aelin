@@ -18,13 +18,13 @@ from app.schemas import (
     AelinChatResponse,
     AelinToolStep,
 )
-from app.services.aelin_tools import AelinToolHub
-from app.services.deepagents_loop import run_deepagents_loop
-from app.services.aelin_tool_policy import AelinToolPolicy
-from app.services.aelin_chat_dispatch import dispatch_aelin_chat as _dispatch_aelin_chat_service
-from app.services.aelin_utils import normalize_positive_ints
-from app.services.tools_files import tool_attachment_search
-from app.services.aelin_runtime import (
+from app.services.aelin.tool_hub import AelinToolHub
+from app.services.deepagents.deepagents_loop import run_deepagents_loop
+from app.services.aelin.tool_policy import AelinToolPolicy
+from app.services.aelin.chat_dispatch import dispatch_aelin_chat as _dispatch_aelin_chat_service
+from app.services.aelin.utils import normalize_positive_ints
+from app.services.tools.tools_files import tool_attachment_search
+from app.services.aelin.runtime import (
     normalize_workspace as _normalize_workspace,
     resolve_llm_service as _resolve_llm_service,
 )
@@ -32,9 +32,9 @@ from app.services.aelin_runtime import (
 # part of the DeepAgents refactor. We intentionally avoid importing them
 # here to keep behaviour aligned with the underlying agent graph and to
 # reduce hard-coded post-processing.
-from app.services.file_memory_bridge import file_memory_bridge
+from app.services.memory.file_memory_bridge import file_memory_bridge
 from app.settings import settings
-from app.services.aelin_core_support import (
+from app.services.aelin.core_support import (
     _scoped_web_search_service,
     _build_context_bundle as _build_context_bundle_inner,
     _build_cached_base_context_bundle as _build_cached_base_context_bundle_inner,
@@ -525,3 +525,4 @@ def _dispatch_aelin_chat(
         pick_expression=_pick_expression,
         now_ms=_now_ms,
     )
+

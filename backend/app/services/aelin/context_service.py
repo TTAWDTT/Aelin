@@ -12,7 +12,7 @@ from app.schemas import (
     AelinTodoItem,
     AgentMemoryNoteOut,
 )
-from app.services.agent_memory import AgentMemoryService
+from app.services.memory.agent_memory import AgentMemoryService
 
 
 def build_context_bundle(
@@ -121,3 +121,4 @@ def _prune_ttl_cache(
         return
     for key, _ in sorted(cache.items(), key=lambda item: float(item[1][0]))[:overflow]:
         cache.pop(key, None)
+

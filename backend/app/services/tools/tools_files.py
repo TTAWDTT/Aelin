@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from app.services.tool_helpers import _result_error, _result_ok, _safe_int
+from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
 
 if TYPE_CHECKING:
-    from app.services.aelin_tools import AelinToolHub
+    from app.services.aelin.tool_hub import AelinToolHub
 
 
 def tool_attachment_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
-    from app.services.aelin_utils import normalize_positive_ints
+    from app.services.aelin.utils import normalize_positive_ints
 
     query = str(args.get("query") or "").strip()[:500]
     if not query:
@@ -51,3 +51,4 @@ def tool_attachment_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[st
         content=str(result.get("content") or "")[:8000],
         hits=list(result.get("hits") or []),
     )
+

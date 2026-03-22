@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-from app.services.llm import LLMService
+from app.services.foundation.llm import LLMService
 
 
 _MAX_WEB_SUBAGENTS = 5
@@ -400,3 +400,4 @@ def _decompose_web_context_boundaries(
         "reason": reason,
         "boundaries": boundaries,
     }
+

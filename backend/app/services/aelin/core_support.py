@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy.orm import Session
-from app.services.agent_memory import AgentMemoryService
-from app.services.aelin_context_service import (
+from app.services.memory.agent_memory import AgentMemoryService
+from app.services.aelin.context_service import (
     build_context_bundle as _build_context_bundle_service,
     build_cached_base_context_bundle as _build_cached_base_context_bundle_service,
 )
-from app.services.aelin_runtime import normalize_workspace as _normalize_workspace
-from app.services.file_memory_bridge import file_memory_bridge
-from app.services.web_search import WebSearchService
+from app.services.aelin.runtime import normalize_workspace as _normalize_workspace
+from app.services.memory.file_memory_bridge import file_memory_bridge
+from app.services.web.web_search import WebSearchService
 from app.settings import settings
 
 
@@ -54,7 +54,7 @@ def _build_cached_base_context_bundle(db: Session, user_id: int, *, workspace: s
     workspace_norm = _normalize_workspace(workspace)
     # NOTE: the cache itself is owned by aelin_core; this helper only forwards
     # the call to the context service with normalized parameters.
-    from app.services.aelin_core import (  # circular import safe at runtime
+    from app.services.aelin.core import (  # circular import safe at runtime
         _base_context_cache,
         _base_context_cache_lock,
     )
@@ -110,3 +110,4 @@ __all__ = [
     "_memory",
     "_web_search",
 ]
+

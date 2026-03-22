@@ -4,7 +4,7 @@ import base64
 import json
 import subprocess
 
-from app.services.google_workspace_cli import GoogleWorkspaceCliService
+from app.services.foundation.google_workspace_cli import GoogleWorkspaceCliService
 
 
 def test_auth_status_uses_gws_and_parses_json(monkeypatch):
@@ -29,7 +29,7 @@ def test_auth_status_uses_gws_and_parses_json(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("app.services.google_workspace_cli.subprocess.run", fake_run)
+    monkeypatch.setattr("app.services.foundation.google_workspace_cli.subprocess.run", fake_run)
 
     result = service.auth_status()
 
@@ -244,7 +244,7 @@ def test_auth_status_treats_missing_authenticated_as_unauthenticated(monkeypatch
             stderr="",
         )
 
-    monkeypatch.setattr("app.services.google_workspace_cli.subprocess.run", fake_run)
+    monkeypatch.setattr("app.services.foundation.google_workspace_cli.subprocess.run", fake_run)
 
     result = service.auth_status()
 
@@ -263,7 +263,7 @@ def test_run_json_timeout_returns_error(monkeypatch):
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout", 10.0))
 
-    monkeypatch.setattr("app.services.google_workspace_cli.subprocess.run", fake_run)
+    monkeypatch.setattr("app.services.foundation.google_workspace_cli.subprocess.run", fake_run)
 
     result = service._run_json(["auth", "status"])
 
@@ -284,7 +284,7 @@ def test_run_json_invalid_json_reports_error(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("app.services.google_workspace_cli.subprocess.run", fake_run)
+    monkeypatch.setattr("app.services.foundation.google_workspace_cli.subprocess.run", fake_run)
 
     result = service._run_json(["gmail", "users", "messages", "list", "--params", "{}"])
 
@@ -292,3 +292,4 @@ def test_run_json_invalid_json_reports_error(monkeypatch):
     assert result["error"] == "gws_invalid_json"
     # raw payload should be present for debugging
     assert "raw" in result
+

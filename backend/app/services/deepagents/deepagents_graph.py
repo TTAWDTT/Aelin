@@ -9,14 +9,14 @@ from deepagents.backends.utils import create_file_data
 from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
-from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
-from app.services.aelin_tools import AelinToolHub
-from app.services.llm import LLMService
-from app.services.tool_helpers import _result_error
-from app.services.tools_device import tool_device, tool_screen_get
-from app.services.tools_files import tool_attachment_search
-from app.services.tools_gws import tool_google_workspace
-from app.services.tools_web import tool_web_search
+from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage
+from app.services.aelin.tool_hub import AelinToolHub
+from app.services.foundation.llm import LLMService
+from app.services.tools.tool_helpers import _result_error
+from app.services.tools.tools_device import tool_device, tool_screen_get
+from app.services.tools.tools_files import tool_attachment_search
+from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
 
 
@@ -330,7 +330,7 @@ def build_chat_agent(
     Construct a DeepAgents chat agent along with tool usage trackers and
     virtual file mounts for skills + AGENTS.md memory.
     """
-    from app.services.deepagents_loop import _build_chat_model
+    from app.services.deepagents.deepagents_loop import _build_chat_model
 
     chat_model = _build_chat_model(service, provider)
     if chat_model is None:
@@ -424,3 +424,4 @@ def build_chat_agent(
         memory=memory_paths or None,
     )
     return agent, usage, tool_runs, files
+

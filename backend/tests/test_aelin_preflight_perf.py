@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import app.services.aelin_core as aelin_core
-import app.services.aelin_core_support as aelin_core_support
-import app.services.llm as llm_service
-import app.services.aelin_runtime as aelin_runtime
+import app.services.aelin.core as aelin_core
+import app.services.aelin.core_support as aelin_core_support
+import app.services.foundation.llm as llm_service
+import app.services.aelin.runtime as aelin_runtime
 from app.schemas import AelinChatRequest, AgentConfigOut
-from app.services.aelin_loop_types import AelinAgentLoopResult
+from app.services.aelin.loop_types import AelinAgentLoopResult
 
 
 class _FakeConfiguredService:
@@ -326,3 +326,4 @@ def test_build_context_bundle_reuses_shared_memory_primitives(monkeypatch):
     assert calls["list_notes"] == 1
     assert calls["list_todos"] == 1
     assert calls["build_memory_layers_from_items"] == 1
+

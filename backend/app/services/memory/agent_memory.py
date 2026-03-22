@@ -7,8 +7,8 @@ from typing import Any, Iterable
 
 from sqlalchemy.orm import Session
 
-from app.services.file_memory_bridge import file_memory_bridge
-from app.services.agent_memory_utils import (
+from app.services.memory.file_memory_bridge import file_memory_bridge
+from app.services.memory.agent_memory_utils import (
     _clean_text,
     _iso_or_empty,
     _truncate,
@@ -675,3 +675,4 @@ class AgentMemoryService:
         if not body:
             return "# Aelin Session Memory\n"
         return "# Aelin Session Memory\n\n" + body
+

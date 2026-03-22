@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-import app.services.device_center as device_center
+import app.services.device.device_center as device_center
 from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
@@ -200,4 +200,5 @@ def test_desktop_plugin_health_bypasses_proxy_env(monkeypatch):
     assert captured["trust_env"] is False
     assert captured["follow_redirects"] is False
     assert captured["url"] == "http://127.0.0.1:21914/healthz"
+
 

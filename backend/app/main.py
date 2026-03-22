@@ -21,8 +21,8 @@ from app.routers import (
     auth,
 )
 from app.settings import settings
-from app.services.feishu_bot import feishu_bot_service
-from app.services.qq_bot import qq_bot_service
+from app.services.bots.feishu_bot import feishu_bot_service
+from app.services.bots.qq_bot import qq_bot_service
 
 _log = logging.getLogger(__name__)
 
@@ -130,3 +130,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+

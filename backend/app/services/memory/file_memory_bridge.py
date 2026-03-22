@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.services.aelin_runtime import normalize_workspace as _normalize_workspace
+from app.services.aelin.runtime import normalize_workspace as _normalize_workspace
 
 
 def _iso(dt: datetime | None) -> str:
@@ -81,3 +81,4 @@ class FileMemoryBridge:
 
 
 file_memory_bridge = FileMemoryBridge()
+

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from app.services.tool_helpers import _result_error, _result_items, _safe_int
-from app.services.web_search import WebSearchResult
+from app.services.tools.tool_helpers import _result_error, _result_items, _safe_int
+from app.services.web.web_search import WebSearchResult
 
 if TYPE_CHECKING:
-    from app.services.aelin_tools import AelinToolHub
+    from app.services.aelin.tool_hub import AelinToolHub
 
 
 def tool_web_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
@@ -69,3 +69,4 @@ def tool_web_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]
         providers=sorted(providers),
         fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
     )
+

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from app.services.google_workspace_cli import get_google_workspace_cli_service
-from app.services.tool_helpers import _safe_int
+from app.services.foundation.google_workspace_cli import get_google_workspace_cli_service
+from app.services.tools.tool_helpers import _safe_int
 
 if TYPE_CHECKING:
-    from app.services.aelin_tools import AelinToolHub
+    from app.services.aelin.tool_hub import AelinToolHub
 
 
 def _scope_failure(scope: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -171,3 +171,4 @@ def tool_google_workspace(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[st
         return response
 
     return _scope_failure("google_workspace", {"error": "unsupported_action"})
+

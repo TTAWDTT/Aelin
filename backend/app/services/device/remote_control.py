@@ -11,13 +11,13 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.models import User
 from app.schemas import AelinChatRequest, AelinChatResponse, AelinToolStep, RemoteControlExecuteRequest
-from app.services.aelin_chat_dispatch import dispatch_aelin_chat
-from app.services.aelin_core import (
+from app.services.aelin.chat_dispatch import dispatch_aelin_chat
+from app.services.aelin.core import (
     _now_ms,
     _pick_expression,
     _try_agent_loop_chat,
 )
-from app.services.device_center import device_status_snapshot
+from app.services.device.device_center import device_status_snapshot
 from app.settings import settings
 
 _SUPPORTED_TOOLS = [
@@ -152,3 +152,4 @@ def execute_remote_control_request(
     )
     ok, status = _derive_remote_execution_status(response)
     return RemoteControlExecutionResult(ok=ok, status=status, response=response)
+

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AgentConfig, User
 from app.security import get_password_hash, verify_password
-from app.services.encryption import decrypt_optional, encrypt_optional
+from app.services.foundation.encryption import decrypt_optional, encrypt_optional
 
 
 def create_user(db: Session, *, email: str, password: str) -> User:
@@ -89,3 +89,4 @@ def get_agent_api_key(db: Session, *, user_id: int) -> str | None:
     if config is None:
         return None
     return decrypt_optional(config.api_key)
+

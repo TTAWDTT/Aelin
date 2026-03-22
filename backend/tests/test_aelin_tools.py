@@ -3,13 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage
-from app.services.aelin_tools import AelinToolHub
-from app.services.web_search import WebSearchResult
-from app.services.tools_device import tool_device, tool_screen_get
-from app.services.tools_files import tool_attachment_search
-from app.services.tools_gws import tool_google_workspace
-from app.services.tools_web import tool_web_search
+from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage
+from app.services.aelin.tool_hub import AelinToolHub
+from app.services.web.web_search import WebSearchResult
+from app.services.tools.tools_device import tool_device, tool_screen_get
+from app.services.tools.tools_files import tool_attachment_search
+from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_web import tool_web_search
 
 
 class _FakeWebSearch:
@@ -148,7 +148,7 @@ def test_attachment_search_prefers_explicit_ids():
 
 
 def test_screen_get_tool_success(monkeypatch):
-    from app.services import tools_device
+    from app.services.tools import tools_device
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -173,7 +173,7 @@ def test_screen_get_tool_success(monkeypatch):
 
 
 def test_device_tool_supports_supported_device_actions(monkeypatch):
-    from app.services import tools_device
+    from app.services.tools import tools_device
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -214,7 +214,7 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
 
 
 def test_device_open_url_rejects_non_http_schemes(monkeypatch):
-    from app.services import tools_device
+    from app.services.tools import tools_device
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -244,7 +244,7 @@ def test_device_tool_rejects_unknown_action():
 
 
 def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
-    from app.services import tools_gws
+    from app.services.tools import tools_gws
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -283,7 +283,7 @@ def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
 
 
 def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch):
-    from app.services import tools_gws
+    from app.services.tools import tools_gws
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -328,7 +328,7 @@ def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch)
 
 
 def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
-    from app.services import tools_gws
+    from app.services.tools import tools_gws
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -366,7 +366,7 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
 
 
 def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch):
-    from app.services import deepagents_graph as dag
+    from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -405,7 +405,7 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
 
 
 def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
-    from app.services import deepagents_graph as dag
+    from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -429,8 +429,8 @@ def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
 
 
 def test_deepagents_memory_files_include_agents_md(monkeypatch):
-    from app.services import deepagents_graph as dag
-    from app.services import deepagents_loop as dloop
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents import deepagents_loop as dloop
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
@@ -462,8 +462,8 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
 
 
 def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
-    from app.services import deepagents_graph as dag
-    from app.services import deepagents_loop as dloop
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents import deepagents_loop as dloop
 
     skill_root = Path(tmp_path) / "skills"
     chrome_skill = skill_root / "chrome_cdp"
@@ -513,3 +513,4 @@ def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
     assert "/skills/aelin/chrome-cdp/SKILL.md" in files
     assert "/skills/aelin/chrome-cdp/scripts/cdp.mjs" in files
     assert "/skills/aelin/chrome-cdp/references/guide.md" in files
+

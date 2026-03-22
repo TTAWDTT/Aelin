@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.services.aelin_utils import normalize_positive_ints
+from app.services.aelin.utils import normalize_positive_ints
 
 
 class Token(BaseModel):
@@ -411,4 +411,5 @@ class ModelCatalogResponse(BaseModel):
     source_url: str
     fetched_at: datetime
     providers: list[ModelProviderInfo]
+
 

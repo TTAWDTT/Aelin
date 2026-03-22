@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.services.aelin_attachment_service import (
+from app.services.aelin.attachment_service import (
     AelinAttachmentService,
     get_aelin_attachment_service,
 )
-from app.services.aelin_utils import normalize_positive_ints
-from app.services.web_search import WebSearchService
+from app.services.aelin.utils import normalize_positive_ints
+from app.services.web.web_search import WebSearchService
 
 
 def _normalize_workspace(raw: str) -> str:
@@ -44,3 +44,4 @@ class AelinToolHub:
         )
 
 __all__ = ["AelinToolHub"]
+

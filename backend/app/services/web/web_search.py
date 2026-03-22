@@ -9,7 +9,7 @@ import re
 from typing import Any
 
 import httpx
-from app.services.web_search_common import (
+from app.services.web.web_search_common import (
     _clean,
     _looks_blocked_page,
     _normalize_url,
@@ -490,3 +490,4 @@ class WebSearchService:
                 self._browser_ready = False
             _LOG.debug("browser fallback failed: %s", exc)
             return "", ""
+

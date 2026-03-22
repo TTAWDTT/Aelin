@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.models import User
 from app.schemas import AgentConfigOut
-from app.services.encryption import decrypt_optional
-from app.services.llm import LLMService
+from app.services.foundation.encryption import decrypt_optional
+from app.services.foundation.llm import LLMService
 
 
 def default_config() -> AgentConfigOut:
@@ -76,3 +76,4 @@ def normalize_workspace(raw: str) -> str:
     if not slug:
         return "default"
     return slug[:64]
+

@@ -11,9 +11,9 @@ from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import AgentConfigOut, AgentConfigUpdate, AgentTestResponse, ModelCatalogResponse
-from app.services.encryption import decrypt_optional
-from app.services.llm import LLMService
-from app.services.model_catalog import get_model_catalog
+from app.services.foundation.encryption import decrypt_optional
+from app.services.foundation.llm import LLMService
+from app.services.foundation.model_catalog import get_model_catalog
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -132,3 +132,4 @@ def test_agent(
         return AgentTestResponse(ok=True, provider=service.config.provider, message=str(out) or "OK")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+

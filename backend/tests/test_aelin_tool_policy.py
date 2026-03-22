@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.aelin_tool_policy import AelinToolPolicy, ToolPolicyUsage, classify_tool_call
+from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage, classify_tool_call
 
 
 def test_classify_write_tools():
@@ -74,3 +74,4 @@ def test_google_workspace_policy_allows_reads_and_marks_writes():
     )
     assert write_decision.allowed is True
     assert write_decision.is_write is True
+

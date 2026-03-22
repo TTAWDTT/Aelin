@@ -10,8 +10,8 @@ from sqlalchemy.exc import OperationalError
 import pytest
 
 import app.routers.aelin as aelin_router
-from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopToolRun, AgentLoopTraceStep
-from app.services.web_search import WebSearchResult
+from app.services.aelin.loop_types import AelinAgentLoopResult, AgentLoopToolRun, AgentLoopTraceStep
+from app.services.web.web_search import WebSearchResult
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 
@@ -951,3 +951,4 @@ def test_aelin_chat_fallback_route_is_not_force_overridden(monkeypatch):
     )
     assert isinstance(web_step, dict)
     assert web_step.get("status") == "skipped"
+

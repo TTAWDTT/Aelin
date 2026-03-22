@@ -5,11 +5,11 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
-from app.services.aelin_loop_types import AelinAgentLoopResult, AgentLoopTraceStep, AgentLoopToolRun
-from app.services.aelin_tools import AelinToolHub
-from app.services.llm import LLMService
-from app.services.aelin_tool_policy import AelinToolPolicy
-from app.services.deepagents_graph import build_chat_agent
+from app.services.aelin.loop_types import AelinAgentLoopResult, AgentLoopTraceStep, AgentLoopToolRun
+from app.services.aelin.tool_hub import AelinToolHub
+from app.services.foundation.llm import LLMService
+from app.services.aelin.tool_policy import AelinToolPolicy
+from app.services.deepagents.deepagents_graph import build_chat_agent
 
 _log = logging.getLogger(__name__)
 
@@ -224,3 +224,4 @@ def run_deepagents_loop(
         error="",
         memory_snapshot=memory_summary,
     )
+

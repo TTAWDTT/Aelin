@@ -23,8 +23,8 @@ from app.schemas import (
     AelinChatResponse,
     AelinFileMemoryContentResponse,
 )
-from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
-from app.services.file_memory_bridge import file_memory_bridge
+from app.services.aelin.attachment_service import AttachmentIngestError, get_aelin_attachment_service
+from app.services.memory.file_memory_bridge import file_memory_bridge
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -288,3 +288,4 @@ def aelin_chat_stream(
             "Connection": "keep-alive",
         },
     )
+

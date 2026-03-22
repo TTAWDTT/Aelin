@@ -9,7 +9,7 @@ from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import AelinContextResponse
-from app.services.aelin_core_support import _build_cached_base_context_bundle, _build_context_bundle
+from app.services.aelin.core_support import _build_cached_base_context_bundle, _build_context_bundle
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 
@@ -43,3 +43,4 @@ def get_aelin_context(
         memory_layers=bundle["memory_layers"],
         generated_at=datetime.now(timezone.utc),
     )
+

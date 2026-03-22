@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 from urllib.parse import urlparse
 
-from app.services.device_center import (
+from app.services.device.device_center import (
     activate_desktop_module,
     capture_device_screen as device_capture_screen,
     DesktopPluginActionError,
@@ -11,10 +11,10 @@ from app.services.device_center import (
     device_status_snapshot,
     open_desktop_external_url,
 )
-from app.services.tool_helpers import _result_error, _result_ok, _safe_int
+from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
 
 if TYPE_CHECKING:
-    from app.services.aelin_tools import AelinToolHub
+    from app.services.aelin.tool_hub import AelinToolHub
 
 
 def tool_screen_get(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
@@ -103,3 +103,4 @@ def tool_device(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
     return _result_error(
         "unsupported device action: allowed actions are 'status', 'open_url', 'open_aelin'"
     )
+

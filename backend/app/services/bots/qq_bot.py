@@ -15,7 +15,7 @@ import websockets
 
 from app.db import create_session
 from app.schemas import RemoteControlExecuteRequest
-from app.services.remote_control import (
+from app.services.device.remote_control import (
     RemoteCommandSource,
     execute_remote_control_request,
     resolve_remote_control_user,
@@ -389,3 +389,4 @@ class QQBotService:
 
 
 qq_bot_service = QQBotService()
+

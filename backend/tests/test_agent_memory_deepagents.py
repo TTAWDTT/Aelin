@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from app.services.aelin_context_service import build_context_bundle
-from app.services.agent_memory import AgentMemoryService
+from app.services.aelin.context_service import build_context_bundle
+from app.services.memory.agent_memory import AgentMemoryService
 
 
 SAMPLE_AGENTS_MD = """# Aelin Session Memory
@@ -56,4 +56,5 @@ def test_context_bundle_projects_from_agents_md() -> None:
 
     layers = bundle["memory_layers"]
     assert layers.facts or layers.preferences or layers.in_progress
+
 
