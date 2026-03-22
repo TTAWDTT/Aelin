@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 from app.models import AttachmentChunk, AttachmentDocument
 from app.settings import settings
 from app.services.aelin_utils import escape_sql_like, normalize_positive_ints
+from app.services.attachment_storage import write_storage_if_missing
+from app.services.attachment_parsing import ParsedBlock, normalize_blocks_to_chunks
 
 try:
     from defusedxml import ElementTree as _SAFE_ET  # type: ignore
