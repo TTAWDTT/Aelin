@@ -513,4 +513,89 @@ def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
     assert "/skills/aelin/chrome-cdp/SKILL.md" in files
     assert "/skills/aelin/chrome-cdp/scripts/cdp.mjs" in files
     assert "/skills/aelin/chrome-cdp/references/guide.md" in files
+    assert "/runtime/capabilities.json" in files
+    capabilities_content = files["/runtime/capabilities.json"].get("content")
+    assert isinstance(capabilities_content, list)
+    capabilities_text = "\n".join(str(line) for line in capabilities_content)
+    assert '"mounted_skills"' in capabilities_text
+    assert "/skills/aelin/chrome-cdp/" in capabilities_text
+
+
+def test_deepagents_default_skills_root_points_to_backend_skills_dir():
+    from app.services.deepagents import deepagents_graph as dag
+
+    root = dag._backend_root() / "deepagents_skills"
+    assert root.as_posix().endswith("/backend/deepagents_skills")
+
+
+def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents import deepagents_loop as dloop
+
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+    monkeypatch.setattr(dloop, "_build_chat_model", lambda service, provider: object())
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    policy = AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False)
+    dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        tool_hub=hub,
+        policy=policy,
+        memory_summary="",
+        skills_root=None,
+    )
+
+    system_prompt = str(captured.get("system_prompt") or "")
+    assert "/runtime/capabilities.json" in system_prompt
+    assert "Never claim you searched, opened, read, or cited an external source" in system_prompt
+
+
+def test_deepagents_loop_rejects_open_claim_without_device_success(monkeypatch):
+    from app.services.deepagents import deepagents_loop as dloop
+
+    class _FakeAgent:
+        def invoke(self, payload):  # noqa: ANN001
+            _ = payload
+            return {"answer": "我已经为你打开了相关新闻网站，并整理好了结果。"}
+
+    def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
+        _ = kwargs
+        return (
+            _FakeAgent(),
+            ToolPolicyUsage(),
+            [],
+            {
+                "/runtime/capabilities.json": {
+                    "content": [
+                        "{",
+                        '  "tools": ["web_search", "device"]',
+                        "}",
+                    ]
+                }
+            },
+        )
+
+    monkeypatch.setattr(dloop, "build_chat_agent", _fake_build_chat_agent)
+    result = dloop.run_deepagents_loop(
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        tool_hub=SimpleNamespace(),
+        policy=AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        query="请联网查一下",
+        memory_summary="",
+        history_turns=[],
+    )
+
+    assert result.ok is False
+    assert result.stop_reason == "claims_opened_without_device_success"
+    assert any(step.stage == "runtime.capabilities" for step in result.trace_steps)
 

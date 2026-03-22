@@ -168,7 +168,7 @@ class WebSearchService:
         return rows
 
     def _search_with_ensemble(self, query: str, *, max_results: int) -> list[WebSearchResult]:
-        from app.services import web_search_providers as providers_mod
+        from app.services.web import web_search_providers as providers_mod
 
         providers: list[tuple[str, Any]] = [
             ("bing_html", providers_mod.search_bing_html),

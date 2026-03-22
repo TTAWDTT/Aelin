@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -93,6 +94,70 @@ def _extract_answer(response: Any) -> str:
         return ""
 
 
+def _parse_capabilities_file(files_mapping: dict[str, Any]) -> dict[str, Any]:
+    raw = files_mapping.get("/runtime/capabilities.json")
+    if not isinstance(raw, dict):
+        return {}
+    content = raw.get("content")
+    if isinstance(content, list):
+        text = "\n".join(str(line) for line in content)
+    else:
+        text = str(content or "")
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _has_successful_tool(tool_runs: list[AgentLoopToolRun], name: str, *, actions: set[str] | None = None) -> bool:
+    for run in tool_runs:
+        if run.name != name or run.status != "completed":
+            continue
+        if not actions:
+            return True
+        action = str((run.args or {}).get("action") or "").strip().lower()
+        if action in actions:
+            return True
+    return False
+
+
+def _answer_has_unsupported_action_claims(answer: str, tool_runs: list[AgentLoopToolRun]) -> str:
+    text = str(answer or "").lower()
+    if not text:
+        return ""
+
+    if any(
+        token in text
+        for token in (
+            "已为你打开",
+            "为你打开了",
+            "我已打开",
+            "已经打开",
+            "i opened",
+            "opened for you",
+        )
+    ):
+        if not _has_successful_tool(tool_runs, "device", actions={"open_url", "open_aelin"}):
+            return "claims_opened_without_device_success"
+
+    if any(
+        token in text
+        for token in (
+            "根据搜索结果",
+            "我搜索了",
+            "我查了",
+            "我查到",
+            "i searched",
+            "search results",
+        )
+    ):
+        if not _has_successful_tool(tool_runs, "web_search"):
+            return "claims_search_without_web_search_success"
+
+    return ""
+
+
 def _loop_result(
     *,
     ok: bool,
@@ -152,6 +217,12 @@ def run_deepagents_loop(
                 error="llm_not_configured",
                 memory_snapshot="",
             )
+        capabilities = _parse_capabilities_file(files_mapping)
+        capability_detail = (
+            f"tools={len(list(capabilities.get('tools') or []))}; "
+            f"skills={len(list(capabilities.get('mounted_skills') or []))}; "
+            f"memory_files={len(list(capabilities.get('memory_files') or []))}"
+        )
 
         # 构造 DeepAgents 期望的消息格式：带有历史对话和当前用户 query。
         messages: list[dict[str, Any]] = []
@@ -176,6 +247,25 @@ def run_deepagents_loop(
         response = agent.invoke(invoke_payload)
         answer = _extract_answer(response)
         tool_runs = _map_tool_runs(raw_tool_runs)
+        unsupported_claim = _answer_has_unsupported_action_claims(answer, tool_runs)
+        trace_steps = [
+            AgentLoopTraceStep(stage="runtime.capabilities", status="completed", detail=capability_detail),
+        ]
+        if unsupported_claim:
+            return _loop_result(
+                ok=False,
+                answer="",
+                stop_reason=unsupported_claim,
+                total_calls=usage.total_calls,
+                write_calls=usage.write_calls,
+                tool_runs=tool_runs,
+                trace_steps=[
+                    *trace_steps,
+                    AgentLoopTraceStep(stage="agent_loop", status="failed", detail=unsupported_claim),
+                ],
+                error=unsupported_claim,
+                memory_snapshot=memory_summary,
+            )
     except Exception as exc:  # noqa: BLE001
         _log.exception("deepagents_unhandled_error provider=%s", provider)
         return _loop_result(
@@ -205,6 +295,7 @@ def run_deepagents_loop(
             write_calls=0,
             tool_runs=tool_runs,
             trace_steps=[
+                AgentLoopTraceStep(stage="runtime.capabilities", status="completed", detail=capability_detail),
                 AgentLoopTraceStep(stage="agent_loop", status="failed", detail="empty_answer_from_deepagents"),
             ],
             error="empty_answer_from_deepagents",
@@ -219,6 +310,7 @@ def run_deepagents_loop(
         write_calls=usage.write_calls,
         tool_runs=tool_runs,
         trace_steps=[
+            AgentLoopTraceStep(stage="runtime.capabilities", status="completed", detail=capability_detail),
             AgentLoopTraceStep(stage="agent_loop", status="completed", detail="deepagents_core_v0"),
         ],
         error="",

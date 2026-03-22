@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -101,6 +102,10 @@ def _tool_description(name: str) -> str:
     if name == "screen_get":
         return "Capture a desktop screenshot for visual inspection."
     return name
+
+
+def _backend_root() -> Path:
+    return Path(__file__).resolve().parents[3]
 
 
 def _invoke_tool(
@@ -343,16 +348,20 @@ def build_chat_agent(
         "Reply in the same language as the user.\n"
         "Use tools only when they materially help.\n"
         "Prefer one correct tool call over repeated partial attempts.\n"
+        "Consult /runtime/capabilities.json for the exact tools, skills, and memory files mounted in this run.\n"
         "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
-        "Read skills on demand from /skills/... when a matching skill is relevant."
+        "Read skills on demand from /skills/... when a matching skill is relevant.\n"
+        "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
+        "If a required tool or skill is unavailable, say so explicitly instead of implying the action completed."
     )
 
-    skills_root = skills_root or (Path(__file__).resolve().parent.parent.parent / "deepagents_skills")
+    skills_root = skills_root or (_backend_root() / "deepagents_skills")
     skill_files: dict[str, str] = {}
     skill_sources: list[str] = []
+    mounted_skills: list[str] = []
 
     def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
-        nonlocal skill_files, skill_sources
+        nonlocal skill_files, skill_sources, mounted_skills
 
         if not root.is_dir():
             return
@@ -381,6 +390,7 @@ def build_chat_agent(
 
             if mounted_any_file:
                 has_any = True
+                mounted_skills.append(f"{virtual_root}{skill_dir_name}/")
 
         if has_any and virtual_root not in skill_sources:
             skill_sources.append(virtual_root)
@@ -414,6 +424,19 @@ def build_chat_agent(
     files: dict[str, Any] = {}
     for path, text in {**skill_files, **memory_files}.items():
         files[path] = create_file_data(text)
+    files["/runtime/capabilities.json"] = create_file_data(
+        json.dumps(
+            {
+                "tools": [tool.name for tool in tools],
+                "skill_sources": skill_sources,
+                "mounted_skills": mounted_skills,
+                "memory_files": memory_paths,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
     agent = create_deep_agent(
         model=chat_model,
