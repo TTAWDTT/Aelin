@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from app.settings import settings
+
 REGION_CAPTURE_TIMEOUT_BUFFER_S = 8.0  # buffer for Snipping Tool UI + clipboard polling latency
 
 
@@ -24,11 +25,16 @@ class DesktopPluginActionError(RuntimeError):
         self.detail = str(detail or "desktop_plugin_action_error")[:220]
 
 
-def _desktop_plugin_headers() -> dict[str, str]:
-    token = str(getattr(settings, "desktop_plugin_token", "") or "").strip()
-    if not token:
-        return {}
-    return {"x-aelin-token": token}
+def _desktop_plugin_config() -> dict[str, Any]:
+    return {
+        "base_url": str(getattr(settings, "desktop_plugin_base_url", "") or "").strip().rstrip("/"),
+        "timeout_seconds": max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0)),
+        "headers": (
+            {"x-aelin-token": str(getattr(settings, "desktop_plugin_token", "") or "").strip()}
+            if str(getattr(settings, "desktop_plugin_token", "") or "").strip()
+            else {}
+        ),
+    }
 
 
 def _desktop_plugin_error_detail(resp: httpx.Response) -> str:
@@ -46,28 +52,21 @@ def _desktop_plugin_error_detail(resp: httpx.Response) -> str:
     return text[:180]
 
 
-def _desktop_plugin_base_url() -> str:
-    return str(getattr(settings, "desktop_plugin_base_url", "") or "").strip().rstrip("/")
-
-
-def _desktop_plugin_timeout_seconds() -> float:
-    return max(2.0, float(getattr(settings, "desktop_plugin_timeout_seconds", 12.0) or 12.0))
-
-
 def _desktop_plugin_client(*, timeout: float) -> httpx.Client:
     # Local plugin calls must bypass system proxies/VPN env vars.
     return httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False)
 
 
 def _desktop_plugin_post(path: str, payload: dict[str, Any], *, timeout_s: float | None = None) -> dict[str, Any]:
-    base_url = _desktop_plugin_base_url()
+    cfg = _desktop_plugin_config()
+    base_url = str(cfg["base_url"] or "")
     if not base_url:
         raise DesktopPluginActionError(status_code=503, detail="desktop_plugin_unconfigured")
     url = f"{base_url}{path}"
-    timeout_value = max(2.0, float(timeout_s if timeout_s is not None else _desktop_plugin_timeout_seconds()))
+    timeout_value = max(2.0, float(timeout_s if timeout_s is not None else cfg["timeout_seconds"]))
     try:
         with _desktop_plugin_client(timeout=timeout_value) as client:
-            resp = client.post(url, json=payload, headers=_desktop_plugin_headers())
+            resp = client.post(url, json=payload, headers=dict(cfg["headers"] or {}))
     except Exception as exc:
         raise DesktopPluginActionError(
             status_code=503,
@@ -89,12 +88,13 @@ def _desktop_plugin_post(path: str, payload: dict[str, Any], *, timeout_s: float
 
 
 def desktop_plugin_health() -> bool:
-    base_url = _desktop_plugin_base_url()
+    cfg = _desktop_plugin_config()
+    base_url = str(cfg["base_url"] or "")
     if not base_url:
         return False
     try:
-        with _desktop_plugin_client(timeout=min(5.0, _desktop_plugin_timeout_seconds())) as client:
-            resp = client.get(f"{base_url}/healthz", headers=_desktop_plugin_headers())
+        with _desktop_plugin_client(timeout=min(5.0, float(cfg["timeout_seconds"]))) as client:
+            resp = client.get(f"{base_url}/healthz", headers=dict(cfg["headers"] or {}))
     except Exception:
         return False
     return int(resp.status_code) < 400
@@ -109,7 +109,7 @@ def capture_device_screen(
     mode: str = "fullscreen",
     selection_timeout_ms: int = 45_000,
 ) -> dict[str, Any]:
-    timeout_s = _desktop_plugin_timeout_seconds()
+    timeout_s = float(_desktop_plugin_config()["timeout_seconds"])
     mode_clean = str(mode or "fullscreen").strip().lower()
     if mode_clean not in {"fullscreen", "region"}:
         mode_clean = "fullscreen"
@@ -173,24 +173,28 @@ def open_desktop_external_url(url: str) -> dict[str, Any]:
     if not url_clean:
         raise DesktopPluginActionError(status_code=400, detail="missing_url")
     raw = _desktop_plugin_post("/v1/desktop/url/open", {"url": url_clean})
-    return {
-        "url": str(raw.get("url") or url_clean)[:2000],
-        "opened": bool(raw.get("opened", True)),
-        "detail": str(raw.get("detail") or "ok")[:200],
-    }
+    return _normalize_plugin_action_result(raw, primary_value=str(raw.get("url") or url_clean)[:2000], primary_key="url")
 
 
 def activate_desktop_module(route: str = "/") -> dict[str, Any]:
     route_clean = str(route or "/").strip() or "/"
     raw = _desktop_plugin_post("/v1/desktop/app/activate", {"route": route_clean})
+    return _normalize_plugin_action_result(raw, primary_value=str(raw.get("route") or route_clean)[:120], primary_key="route")
+
+
+def _normalize_plugin_action_result(raw: dict[str, Any], *, primary_value: str, primary_key: str) -> dict[str, Any]:
     return {
-        "route": str(raw.get("route") or route_clean)[:120],
+        primary_key: primary_value,
         "activated": bool(raw.get("activated", True)),
+        "opened": bool(raw.get("opened", raw.get("activated", True))),
         "detail": str(raw.get("detail") or "ok")[:200],
     }
-def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
+
+
+def device_status_snapshot() -> dict[str, Any]:
     platform_name = platform.system().strip().lower() or "unknown"
-    desktop_plugin_configured = bool(_desktop_plugin_base_url())
+    cfg = _desktop_plugin_config()
+    desktop_plugin_configured = bool(cfg["base_url"])
     capabilities = {
         "desktop_plugin_configured": desktop_plugin_configured,
         "desktop_open_url": desktop_plugin_configured,
@@ -199,15 +203,10 @@ def device_capabilities() -> tuple[str, dict[str, bool], list[str]]:
     notes: list[str] = []
     if not desktop_plugin_configured:
         notes.append("desktop plugin unconfigured: open_url / activate_module unavailable")
-    return platform_name, capabilities, notes
-
-
-def device_status_snapshot() -> dict[str, Any]:
-    platform_name, capabilities, notes = device_capabilities()
     return {
         "platform": platform_name,
         "capabilities": capabilities,
         "notes": notes,
-        "desktop_plugin_configured": bool(_desktop_plugin_base_url()),
+        "desktop_plugin_configured": desktop_plugin_configured,
         "desktop_plugin_reachable": desktop_plugin_health(),
     }
