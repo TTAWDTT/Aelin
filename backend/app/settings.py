@@ -1,20 +1,67 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
+_PRIMARY_ENV_PREFIX = "AELIN_"
+_LEGACY_ENV_PREFIX = "MERCURYDESK_"
+
+
+def _merge_legacy_env_prefix(
+    env_vars: dict[str, Any] | None,
+    *,
+    primary_prefix: str = _PRIMARY_ENV_PREFIX,
+    legacy_prefix: str = _LEGACY_ENV_PREFIX,
+) -> dict[str, Any]:
+    merged = dict(env_vars or {})
+    primary_prefix_lower = primary_prefix.lower()
+    legacy_prefix_lower = legacy_prefix.lower()
+    for key, value in list(merged.items()):
+        key_str = str(key)
+        key_lower = key_str.lower()
+        if not key_lower.startswith(legacy_prefix_lower):
+            continue
+        suffix = key_lower[len(legacy_prefix_lower) :]
+        primary_key = f"{primary_prefix_lower}{suffix}"
+        merged.setdefault(primary_key, value)
+    return merged
+
+
+def _inject_legacy_env_fallback(source: PydanticBaseSettingsSource) -> PydanticBaseSettingsSource:
+    env_vars = getattr(source, "env_vars", None)
+    if isinstance(env_vars, Mapping):
+        setattr(source, "env_vars", _merge_legacy_env_prefix(dict(env_vars)))
+    return source
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="AELIN_",
+        env_prefix=_PRIMARY_ENV_PREFIX,
         env_file=(str(_BACKEND_DIR / ".env"), ".env", "backend/.env"),
         extra="ignore",
     )
 
-    database_url: str = "sqlite+pysqlite:///./aelin.db"
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            _inject_legacy_env_fallback(env_settings),
+            _inject_legacy_env_fallback(dotenv_settings),
+            file_secret_settings,
+        )
+
+    database_url: str = "sqlite+pysqlite:///./mercurydesk.db"
     secret_key: str = "dev-secret-change-me"
     access_token_expire_minutes: int = 60 * 24
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
