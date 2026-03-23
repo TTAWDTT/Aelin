@@ -131,6 +131,61 @@ def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(
     assert calls[0]["memory_summary"] == "fast-summary"
 
 
+def test_try_agent_loop_chat_forwards_images_and_cancel_token(monkeypatch):
+    _reset_fakes()
+    monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
+    monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "fast-summary")
+    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
+
+    calls: list[dict] = []
+
+    def _fake_run_loop(**kwargs):
+        calls.append(dict(kwargs))
+        return AelinAgentLoopResult(
+            ok=True,
+            answer="ok",
+            stop_reason="completed",
+            total_calls=0,
+            write_calls=0,
+            tool_runs=[],
+            trace_steps=[],
+            actions=[],
+            error="",
+            memory_snapshot="",
+        )
+
+    monkeypatch.setattr(aelin_core, "run_deepagents_loop", _fake_run_loop)
+
+    cancel_token = SimpleNamespace(cancelled=False)
+    payload = AelinChatRequest(
+        query="请描述这张图",
+        workspace="default",
+        images=[
+            {
+                "name": "demo.png",
+                "data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAF7AL5n4VHKwAAAABJRU5ErkJggg==",
+            }
+        ],
+    )
+    response = aelin_core._try_agent_loop_chat(
+        payload,
+        db=None,  # type: ignore[arg-type]
+        current_user=SimpleNamespace(id=1),
+        persist_memory=False,
+        cancel_token=cancel_token,
+    )
+
+    assert response is not None
+    assert calls
+    assert calls[0]["images"] == [
+        {
+            "name": "demo.png",
+            "data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAF7AL5n4VHKwAAAABJRU5ErkJggg==",
+        }
+    ]
+    assert calls[0]["cancel_token"] is cancel_token
+
+
 def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeUnconfiguredService(), "openai"))

@@ -21,6 +21,10 @@ from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
 
 
+class DeepAgentsCancelled(RuntimeError):
+    """Raised when the surrounding request has been cancelled."""
+
+
 class DeviceToolInput(BaseModel):
     action: str = Field(
         ...,
@@ -108,6 +112,10 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _is_cancelled(cancel_token: Any | None) -> bool:
+    return bool(getattr(cancel_token, "cancelled", False))
+
+
 def _invoke_tool(
     *,
     name: str,
@@ -117,8 +125,12 @@ def _invoke_tool(
     policy: AelinToolPolicy,
     usage: ToolPolicyUsage,
     tool_runs: list[dict[str, Any]],
+    cancel_token: Any | None = None,
 ) -> dict[str, Any]:
     from time import perf_counter
+
+    if _is_cancelled(cancel_token):
+        raise DeepAgentsCancelled("cancelled")
 
     decision = policy.evaluate(name=name, args=args, usage=usage)
     call_index = len(tool_runs) + 1
@@ -140,6 +152,9 @@ def _invoke_tool(
             }
         )
         return result
+
+    if _is_cancelled(cancel_token):
+        raise DeepAgentsCancelled("cancelled")
 
     try:
         result = handler(tool_hub, args)
@@ -171,6 +186,7 @@ def build_chat_tools(
     *,
     tool_hub: AelinToolHub,
     policy: AelinToolPolicy,
+    cancel_token: Any | None = None,
 ) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
     """
     Build the DeepAgents-facing tool list using explicit tool registration.
@@ -202,6 +218,7 @@ def build_chat_tools(
                 policy=policy,
                 usage=usage,
                 tool_runs=tool_runs,
+                cancel_token=cancel_token,
             )
 
         return StructuredTool.from_function(
@@ -226,6 +243,7 @@ def build_chat_tools(
                 policy=policy,
                 usage=usage,
                 tool_runs=tool_runs,
+                cancel_token=cancel_token,
             )
 
         return StructuredTool.from_function(
@@ -265,6 +283,7 @@ def build_chat_tools(
                 policy=policy,
                 usage=usage,
                 tool_runs=tool_runs,
+                cancel_token=cancel_token,
             )
 
         return StructuredTool.from_function(
@@ -330,6 +349,7 @@ def build_chat_agent(
     policy: AelinToolPolicy,
     memory_summary: str,
     skills_root: Path | None = None,
+    cancel_token: Any | None = None,
 ) -> tuple[Any, ToolPolicyUsage, list[dict[str, Any]], dict[str, Any]]:
     """
     Construct a DeepAgents chat agent along with tool usage trackers and
@@ -341,7 +361,11 @@ def build_chat_agent(
     if chat_model is None:
         return None, ToolPolicyUsage(), [], {}
 
-    tools, tool_runs, usage = build_chat_tools(tool_hub=tool_hub, policy=policy)
+    tools, tool_runs, usage = build_chat_tools(
+        tool_hub=tool_hub,
+        policy=policy,
+        cancel_token=cancel_token,
+    )
 
     system_prompt = (
         "You are Aelin running on DeepAgents.\n"

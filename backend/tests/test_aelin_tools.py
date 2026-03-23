@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage
 from app.services.aelin.tool_hub import AelinToolHub
 from app.services.web.web_search import WebSearchResult
@@ -598,4 +600,80 @@ def test_deepagents_loop_rejects_open_claim_without_device_success(monkeypatch):
     assert result.ok is False
     assert result.stop_reason == "claims_opened_without_device_success"
     assert any(step.stage == "runtime.capabilities" for step in result.trace_steps)
+
+
+def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
+    from app.services.deepagents import deepagents_loop as dloop
+
+    captured: dict[str, object] = {}
+
+    class _FakeAgent:
+        def invoke(self, payload):  # noqa: ANN001
+            captured["payload"] = payload
+            return {"answer": "看到了图片"}
+
+    def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
+        _ = kwargs
+        return (
+            _FakeAgent(),
+            ToolPolicyUsage(),
+            [],
+            {
+                "/runtime/capabilities.json": {
+                    "content": [
+                        "{",
+                        '  "tools": ["web_search", "device"]',
+                        "}",
+                    ]
+                }
+            },
+        )
+
+    monkeypatch.setattr(dloop, "build_chat_agent", _fake_build_chat_agent)
+    result = dloop.run_deepagents_loop(
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        tool_hub=SimpleNamespace(),
+        policy=AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        query="这张图里有什么？",
+        memory_summary="",
+        history_turns=[],
+        images=[
+            {
+                "name": "demo.png",
+                "data_url": "data:image/png;base64,QUJDRA==",
+            }
+        ],
+    )
+
+    assert result.ok is True
+    payload = dict(captured["payload"])
+    messages = list(payload["messages"])
+    last = dict(messages[-1])
+    assert last["role"] == "user"
+    assert isinstance(last["content"], list)
+    assert last["content"][0] == {"type": "text", "text": "这张图里有什么？"}
+    assert last["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,QUJDRA=="},
+    }
+
+
+def test_deepagents_build_chat_tools_abort_when_cancelled(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    hub = _hub(fake_web)
+    policy = AelinToolPolicy(max_tool_calls=4, max_write_calls=1, allow_write_tools=False)
+    cancel_token = SimpleNamespace(cancelled=True)
+
+    tools, _tool_runs, _usage = dag.build_chat_tools(
+        tool_hub=hub,
+        policy=policy,
+        cancel_token=cancel_token,
+    )
+    web_tool = next(t for t in tools if t.name == "web_search")
+
+    with pytest.raises(dag.DeepAgentsCancelled):
+        web_tool.invoke({"action": "search", "query": "deepagents"})
 

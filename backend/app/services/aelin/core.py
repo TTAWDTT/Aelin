@@ -58,6 +58,10 @@ _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 
 
+def _is_cancelled(cancel_token: Any | None) -> bool:
+    return bool(getattr(cancel_token, "cancelled", False))
+
+
 def _build_context_bundle(
     db: Session,
     user_id: int,
@@ -185,6 +189,9 @@ def _try_agent_loop_chat(
     force_disable_writes: bool = False,
     cancel_token: Any | None = None,
 ) -> AelinChatResponse | None:
+    if _is_cancelled(cancel_token):
+        return None
+
     pre_loop_started = time.perf_counter()
     query_preview = " ".join(str(payload.query or "").split())[:120]
     prefixed_traces: list[AelinToolStep] = []
@@ -264,6 +271,9 @@ def _try_agent_loop_chat(
             count=len(history_turns) + len(images),
         )
     elif not attachment_ids:
+        return None
+
+    if _is_cancelled(cancel_token):
         return None
 
     tool_hub_started = time.perf_counter()
@@ -358,6 +368,8 @@ def _try_agent_loop_chat(
         query=payload.query,
         memory_summary=memory_summary,
         history_turns=history_turns,
+        images=images,
+        cancel_token=cancel_token,
     )
 
     trace_steps: list[AelinToolStep] = [*prefixed_traces]
@@ -436,7 +448,7 @@ def _try_agent_loop_chat(
                 pass
         return None
 
-    if persist_memory and payload.use_memory:
+    if persist_memory and payload.use_memory and not _is_cancelled(cancel_token):
         # Persist DeepAgents-style AGENTS.md snapshot for this workspace so that
         # future runs can treat it as canonical long-term memory.
         try:

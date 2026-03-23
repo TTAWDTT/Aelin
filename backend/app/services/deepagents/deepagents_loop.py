@@ -10,7 +10,7 @@ from app.services.aelin.loop_types import AelinAgentLoopResult, AgentLoopTraceSt
 from app.services.aelin.tool_hub import AelinToolHub
 from app.services.foundation.llm import LLMService
 from app.services.aelin.tool_policy import AelinToolPolicy
-from app.services.deepagents.deepagents_graph import build_chat_agent
+from app.services.deepagents.deepagents_graph import DeepAgentsCancelled, build_chat_agent
 
 _log = logging.getLogger(__name__)
 
@@ -64,6 +64,15 @@ def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[AgentLoopToolRun
         )
         for tr in raw_tool_runs
     ]
+
+
+def _is_cancelled(cancel_token: Any | None) -> bool:
+    return bool(getattr(cancel_token, "cancelled", False))
+
+
+def _assert_not_cancelled(cancel_token: Any | None) -> None:
+    if _is_cancelled(cancel_token):
+        raise DeepAgentsCancelled("cancelled")
 
 
 def _extract_answer(response: Any) -> str:
@@ -193,17 +202,21 @@ def run_deepagents_loop(
     query: str,
     memory_summary: str,
     history_turns: list[dict[str, Any]],
+    images: list[dict[str, Any]] | None = None,
+    cancel_token: Any | None = None,
 ) -> AelinAgentLoopResult:
     """
     Bridge between Aelin core and a DeepAgents-powered agent loop.
     """
     try:
+        _assert_not_cancelled(cancel_token)
         agent, usage, raw_tool_runs, files_mapping = build_chat_agent(
             service=service,
             provider=provider,
             tool_hub=tool_hub,
             policy=policy,
             memory_summary=memory_summary,
+            cancel_token=cancel_token,
         )
         if agent is None:
             return _loop_result(
@@ -238,13 +251,34 @@ def run_deepagents_loop(
         # DeepAgents 主入口通过 chat history 驱动，我们把最新 query 作为最后一条 user 消息。
         latest_query = str(query or "").strip()
         if latest_query:
-            messages.append({"role": "user", "content": latest_query})
+            if images:
+                content_blocks: list[dict[str, Any]] = [{"type": "text", "text": latest_query}]
+                for image in list(images or [])[:4]:
+                    data_url = str((image or {}).get("data_url") or "").strip()
+                    if not data_url:
+                        continue
+                    content_blocks.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
+                        }
+                    )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": content_blocks if len(content_blocks) > 1 else latest_query,
+                    }
+                )
+            else:
+                messages.append({"role": "user", "content": latest_query})
 
         invoke_payload: dict[str, Any] = {"messages": messages}
         if files_mapping:
             invoke_payload["files"] = files_mapping
 
+        _assert_not_cancelled(cancel_token)
         response = agent.invoke(invoke_payload)
+        _assert_not_cancelled(cancel_token)
         answer = _extract_answer(response)
         tool_runs = _map_tool_runs(raw_tool_runs)
         unsupported_claim = _answer_has_unsupported_action_claims(answer, tool_runs)
@@ -266,6 +300,24 @@ def run_deepagents_loop(
                 error=unsupported_claim,
                 memory_snapshot=memory_summary,
             )
+    except DeepAgentsCancelled:
+        return _loop_result(
+            ok=False,
+            answer="",
+            stop_reason="cancelled",
+            total_calls=0,
+            write_calls=0,
+            tool_runs=[],
+            trace_steps=[
+                AgentLoopTraceStep(
+                    stage="agent_loop",
+                    status="cancelled",
+                    detail="cancelled",
+                )
+            ],
+            error="cancelled",
+            memory_snapshot=memory_summary,
+        )
     except Exception as exc:  # noqa: BLE001
         _log.exception("deepagents_unhandled_error provider=%s", provider)
         return _loop_result(
