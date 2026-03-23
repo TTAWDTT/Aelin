@@ -6,11 +6,17 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
-from app.services.aelin.loop_types import AelinAgentLoopResult, AgentLoopTraceStep, AgentLoopToolRun
+from app.services.aelin.loop_types import (
+    AelinAgentLoopResult,
+    AgentLoopTraceStep,
+    AgentLoopToolRun,
+    STOP_REASON_CANCELLED,
+)
 from app.services.aelin.tool_hub import AelinToolHub
 from app.services.foundation.llm import LLMService
 from app.services.aelin.tool_policy import AelinToolPolicy
 from app.services.deepagents.deepagents_graph import DeepAgentsCancelled, build_chat_agent
+from app.services.deepagents.cancel_utils import is_cancelled
 
 _log = logging.getLogger(__name__)
 
@@ -66,13 +72,9 @@ def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[AgentLoopToolRun
     ]
 
 
-def _is_cancelled(cancel_token: Any | None) -> bool:
-    return bool(getattr(cancel_token, "cancelled", False))
-
-
 def _assert_not_cancelled(cancel_token: Any | None) -> None:
-    if _is_cancelled(cancel_token):
-        raise DeepAgentsCancelled("cancelled")
+    if is_cancelled(cancel_token):
+        raise DeepAgentsCancelled(STOP_REASON_CANCELLED)
 
 
 def _extract_answer(response: Any) -> str:
@@ -304,18 +306,14 @@ def run_deepagents_loop(
         return _loop_result(
             ok=False,
             answer="",
-            stop_reason="cancelled",
+            stop_reason=STOP_REASON_CANCELLED,
             total_calls=0,
             write_calls=0,
             tool_runs=[],
             trace_steps=[
-                AgentLoopTraceStep(
-                    stage="agent_loop",
-                    status="cancelled",
-                    detail="cancelled",
-                )
+                AgentLoopTraceStep(stage="agent_loop", status="cancelled", detail=STOP_REASON_CANCELLED)
             ],
-            error="cancelled",
+            error=STOP_REASON_CANCELLED,
             memory_snapshot=memory_summary,
         )
     except Exception as exc:  # noqa: BLE001

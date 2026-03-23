@@ -9,6 +9,11 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+# Common stop_reason values for AelinAgentLoopResult. Keeping them in one place
+# avoids scattered string literals across core and DeepAgents bridge code.
+STOP_REASON_CANCELLED = "cancelled"
+
+
 @dataclass
 class AgentLoopToolRun:
     call_index: int

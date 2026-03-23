@@ -19,6 +19,7 @@ from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
+from app.services.deepagents.cancel_utils import is_cancelled
 
 
 class DeepAgentsCancelled(RuntimeError):
@@ -112,10 +113,6 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _is_cancelled(cancel_token: Any | None) -> bool:
-    return bool(getattr(cancel_token, "cancelled", False))
-
-
 def _invoke_tool(
     *,
     name: str,
@@ -129,7 +126,7 @@ def _invoke_tool(
 ) -> dict[str, Any]:
     from time import perf_counter
 
-    if _is_cancelled(cancel_token):
+    if is_cancelled(cancel_token):
         raise DeepAgentsCancelled("cancelled")
 
     decision = policy.evaluate(name=name, args=args, usage=usage)
@@ -153,7 +150,7 @@ def _invoke_tool(
         )
         return result
 
-    if _is_cancelled(cancel_token):
+    if is_cancelled(cancel_token):
         raise DeepAgentsCancelled("cancelled")
 
     try:

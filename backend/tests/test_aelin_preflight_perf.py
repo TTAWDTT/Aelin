@@ -8,7 +8,7 @@ import app.services.aelin.core_support as aelin_core_support
 import app.services.foundation.llm as llm_service
 import app.services.aelin.runtime as aelin_runtime
 from app.schemas import AelinChatRequest, AgentConfigOut
-from app.services.aelin.loop_types import AelinAgentLoopResult
+from app.services.aelin.loop_types import AelinAgentLoopResult, STOP_REASON_CANCELLED
 
 
 class _FakeConfiguredService:
@@ -247,13 +247,13 @@ def test_try_agent_loop_chat_skips_attachment_fallback_when_cancelled(monkeypatc
         lambda **kwargs: AelinAgentLoopResult(
             ok=False,
             answer="",
-            stop_reason="cancelled",
+            stop_reason=STOP_REASON_CANCELLED,
             total_calls=0,
             write_calls=0,
             tool_runs=[],
             trace_steps=[],
             actions=[],
-            error="cancelled",
+            error=STOP_REASON_CANCELLED,
             memory_snapshot="",
         ),
     )

@@ -44,6 +44,8 @@ from app.services.aelin.core_support import (
 )
 from app.services.aelin.expressions import _pick_expression
 from app.services.aelin.streaming import _now_ms
+from app.services.deepagents.cancel_utils import is_cancelled
+from app.services.aelin.loop_types import STOP_REASON_CANCELLED
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 _log = logging.getLogger(__name__)
 
@@ -56,10 +58,6 @@ MAX_IMAGE_DATA_URL_LENGTH = 3_000_000
 
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
-
-
-def _is_cancelled(cancel_token: Any | None) -> bool:
-    return bool(getattr(cancel_token, "cancelled", False))
 
 
 def _build_context_bundle(
@@ -189,7 +187,7 @@ def _try_agent_loop_chat(
     force_disable_writes: bool = False,
     cancel_token: Any | None = None,
 ) -> AelinChatResponse | None:
-    if _is_cancelled(cancel_token):
+    if is_cancelled(cancel_token):
         return None
 
     pre_loop_started = time.perf_counter()
@@ -273,7 +271,7 @@ def _try_agent_loop_chat(
     elif not attachment_ids:
         return None
 
-    if _is_cancelled(cancel_token):
+    if is_cancelled(cancel_token):
         return None
 
     tool_hub_started = time.perf_counter()
@@ -419,7 +417,17 @@ def _try_agent_loop_chat(
         )
         _emit_trace(tool_trace)
 
-    if _is_cancelled(cancel_token) or str(result.stop_reason or "").strip() == "cancelled":
+    stop_reason = str(result.stop_reason or "").strip()
+    if is_cancelled(cancel_token) or stop_reason == STOP_REASON_CANCELLED:
+        # 统一取消语义：在 trace 中显式标记本轮对话是被取消的，而不是“无结果”。
+        cancel_trace = AelinToolStep(
+            stage="agent_loop",
+            status="cancelled",
+            detail="agent_loop_cancelled",
+            count=0,
+            ts=_now_ms(),
+        )
+        _emit_trace(cancel_trace)
         return None
 
     if not bool(result.ok) or not str(result.answer or "").strip():
@@ -451,7 +459,7 @@ def _try_agent_loop_chat(
                 pass
         return None
 
-    if persist_memory and payload.use_memory and not _is_cancelled(cancel_token):
+    if persist_memory and payload.use_memory and not is_cancelled(cancel_token):
         # Persist DeepAgents-style AGENTS.md snapshot for this workspace so that
         # future runs can treat it as canonical long-term memory.
         try:
