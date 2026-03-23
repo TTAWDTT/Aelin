@@ -1,27 +1,31 @@
 # Aelin (English)
 
-Aelin is a collaboration-first AI assistant system with chat, tool calling, memory, tracking, and desktop runtime.
+Aelin is now an AI workspace built around DeepAgents as the single agent core, with chat, tools, file-based memory, skill mounting, and desktop runtime support.
 
 ## 1. Project Positioning
-- Not a one-shot chatbot, but a long-running personal AI collaboration system.
-- Built around an agent loop with policy-controlled tool execution.
+
+- Aelin is the product shell; DeepAgents is the only agent loop.
+- The runtime is designed around factual tool outcomes instead of a separate legacy planner layer.
 - Supports both web and desktop runtimes.
 
 ## 2. Core Capabilities
-- Chat and multimodal input: text/image input with streaming responses.
-- Tool execution: `context_get`, `diary`, `profile`, `tracking`, `device`, `web_search`, `screen_get`, `browser_state_get`, `browser_use`.
-- Computer-use baseline: manual screenshot input + autonomous `screen_get`; controlled/external browser navigation and state reads.
-- Long-term memory and tracking: OpenViking-compatible file-memory structure plus continuous change tracking.
+
+- Chat with streaming responses.
+- DeepAgents tools: `web_search`, `attachment_search`, `google_workspace`, `device`, `screen_get`.
+- File-based long-term memory mounted from `/memory/AGENTS.md`.
+- Skills mounted from `backend/deepagents_skills/`, with optional external skill roots.
+- Desktop integration through Electron and the local desktop plugin.
 
 ## 3. Repository Layout
-- `backend/`: FastAPI API, SQLAlchemy, agent services, schedulers.
-- `backend/tests/`: Pytest suite.
+
+- `backend/`: FastAPI API, DeepAgents glue, tool implementations, tests.
 - `frontend/`: React 19 + Vite + TypeScript.
 - `desktop/`: Electron runtime and packaging scripts.
-- `docs/`: architecture, plans, and testing docs.
+- `docs/`: architecture notes, guides, and cleanup history.
 - `data/`: local runtime data and file-memory workspace.
 
 ## 4. Quick Start
+
 ```powershell
 # Backend
 cd backend
@@ -33,13 +37,14 @@ cd frontend
 npm install
 npm run dev
 
-# Desktop (optional)
+# Desktop
 cd desktop
 npm install
 npm run dev
 ```
 
 ## 5. Common Development Commands
+
 ```powershell
 # Backend tests
 cd backend
@@ -55,26 +60,31 @@ npm run dist
 ```
 
 ## 6. Configuration and Security
-- Common environment variables:
-  - `MERCURYDESK_SECRET_KEY`
-  - `MERCURYDESK_FERNET_KEY`
-  - `MERCURYDESK_DATABASE_URL`
-  - `MERCURYDESK_CORS_ORIGINS`
-  - `MERCURYDESK_AELIN_AGENT_LOOP_ENABLED`
-  - `MERCURYDESK_AELIN_AGENT_LOOP_MAX_ROUNDS`
-  - `MERCURYDESK_BROWSER_TOOL_CDP_ENABLED`
-  - `MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT`
-  - `MERCURYDESK_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE`
-- Do not commit API keys, OAuth secrets, or local DB artifacts.
+
+- Preferred env prefix: `AELIN_*`
+- Backward-compatible fallback: `MERCURYDESK_*`
+- Common settings:
+  - `AELIN_SECRET_KEY`
+  - `AELIN_FERNET_KEY`
+  - `AELIN_DATABASE_URL`
+  - `AELIN_CORS_ORIGINS`
+  - `AELIN_LLM_REQUEST_TIMEOUT_SECONDS`
+  - `AELIN_DEEPAGENTS_EXTRA_SKILLS_DIR`
+  - `AELIN_DESKTOP_PLUGIN_BASE_URL`
+  - `AELIN_GOOGLE_WORKSPACE_CLI_BIN`
+
+Do not commit API keys, OAuth secrets, or local DB artifacts.
 
 ## 7. Contribution Notes
+
 - Prefer Conventional Commits: `feat(scope): ...`, `fix(scope): ...`, `docs: ...`.
 - Before opening a PR, run at least `pytest -q` and relevant frontend/desktop builds.
 - Collaboration rules: [AGENTS.md](AGENTS.md).
 
 ## 8. References
-- [README.zh-CN.md](README.zh-CN.md)
-- [backend/README.md](backend/README.md)
-- [docs/INDEX.md](docs/INDEX.md)
-- [docs/agent_loop_manual_test_cases.md](docs/agent_loop_manual_test_cases.md)
 
+- [README.zh-CN.md](README.zh-CN.md)
+- [docs/INDEX.md](docs/INDEX.md)
+- [docs/deepagents_arch.md](docs/deepagents_arch.md)
+- [docs/deepagents_skills_guide.md](docs/deepagents_skills_guide.md)
+- [docs/gws.md](docs/gws.md)

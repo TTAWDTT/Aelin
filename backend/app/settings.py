@@ -78,7 +78,6 @@ class Settings(BaseSettings):
     # 当前默认值刻意放宽，以便 DeepAgents 在每轮对话中可以更自由地尝试工具调用。
     # DeepAgents 工具策略：默认给足够大的空间，让复杂任务可以自由使用工具。
     aelin_agent_loop_max_tool_calls: int = 512
-    aelin_agent_loop_max_calls_per_round: int = 128
     aelin_agent_loop_max_write_calls: int = 128
     aelin_agent_loop_allow_write_tools: bool = True
     feishu_bot_enabled: bool = False

@@ -15,7 +15,7 @@
 ## 3. 调用索引语义修正
 
 - [x] 3.1 移除当前伪造的 `round_index=1` 语义
-- [x] 3.2 将 `round_calls` / `max_calls_per_round` 调整为真实且诚实的调用统计语义，或改为 `call_index` / 总调用限制模型
+- [x] 3.2 将伪造的“轮次调用数”语义移除，统一改为 `call_index` / 总调用限制模型
 - [x] 3.3 同步检查前端 Execution Pane 与后端 trace 字段，避免继续展示伪轮次信息
 
 ## 4. DeepAgents 工具注册纯化

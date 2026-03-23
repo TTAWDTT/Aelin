@@ -7,34 +7,31 @@
 
   <img src="desktop/build/icon.png" alt="Aelin Logo" width="120" height="120">
 
-  **A collaboration-first AI assistant with chat, memory, tracking, and computer-use tooling**
+  **A DeepAgents-powered AI workspace with chat, tools, memory, and desktop runtime**
 
-  [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](backend/README.md)
+  [![Backend](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](backend/requirements.txt)
   [![Frontend](https://img.shields.io/badge/Frontend-React%2019-20232A?style=flat-square&logo=react&logoColor=61DAFB)](frontend/package.json)
   [![Desktop](https://img.shields.io/badge/Desktop-Electron-2B2E3A?style=flat-square&logo=electron&logoColor=9FEAF9)](desktop/package.json)
-  [![Database](https://img.shields.io/badge/Database-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](backend/README.md)
-  [![Agent Loop](https://img.shields.io/badge/Agent-Tool%20Calling-6C63FF?style=flat-square)](docs/agent_loop_manual_test_cases.md)
+  [![Memory](https://img.shields.io/badge/Memory-AGENTS.md-2563EB?style=flat-square)](docs/deepagents_arch.md)
 </div>
 
 ---
 
 ## Features
 
-- **Agent Chat + Multimodal** - Text/image chat with streaming responses.
-- **Tool-Driven Agent Loop** - Built-in tools for context, diary, profile, tracking, device, web search, screen read, and browser actions.
-- **Computer Use Baseline** - Manual screenshot input + autonomous `screen_get`; browser state read and controlled/external navigation.
-- **Long-Term Memory** - OpenViking-compatible file-memory structure.
-- **Continuous Tracking** - Target tracking, snapshots, and change records.
-- **Desktop Runtime** - Electron shell for local agent usage.
+- **DeepAgents Chat Core** - Aelin now uses DeepAgents as the single agent loop.
+- **Built-in Tools** - `web_search`, `attachment_search`, `google_workspace`, `device`, `screen_get`.
+- **File-Based Memory** - Long-term memory is mounted from `/memory/AGENTS.md`.
+- **Skills Runtime** - Built-in skills live in `backend/deepagents_skills/`, with optional external skill mounting.
+- **Desktop Runtime** - Electron shell for local usage and device integration.
 
 ## Repository Layout
 
-- `backend/` - FastAPI API, SQLAlchemy models, services, schedulers.
-- `backend/tests/` - Pytest suite.
+- `backend/` - FastAPI API, DeepAgents glue, tools, services, tests.
 - `frontend/` - React 19 + Vite + TypeScript app.
 - `desktop/` - Electron runtime and packaging.
-- `docs/` - Architecture, plans, and test notes.
-- `data/` - Local runtime data and file-memory workspace.
+- `docs/` - architecture notes, guides, and cleanup history.
+- `data/` - local runtime data and file-memory workspace.
 
 ## Quick Start
 
@@ -54,7 +51,7 @@ npm install
 npm run dev
 ```
 
-### 3) Desktop (Optional)
+### 3) Desktop
 
 ```powershell
 cd desktop
@@ -78,20 +75,19 @@ cd desktop
 npm run dist
 ```
 
-## Configuration Highlights
+## Configuration
 
-- Core security/config:
-  - `MERCURYDESK_SECRET_KEY`
-  - `MERCURYDESK_FERNET_KEY`
-  - `MERCURYDESK_DATABASE_URL`
-  - `MERCURYDESK_CORS_ORIGINS`
-- Agent loop:
-  - `MERCURYDESK_AELIN_AGENT_LOOP_ENABLED`
-  - `MERCURYDESK_AELIN_AGENT_LOOP_MAX_ROUNDS`
-- Browser tools:
-  - `MERCURYDESK_BROWSER_TOOL_CDP_ENABLED`
-  - `MERCURYDESK_BROWSER_TOOL_CDP_ENDPOINT`
-  - `MERCURYDESK_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE`
+- Preferred env prefix: `AELIN_*`
+- Backward-compatible fallback: `MERCURYDESK_*`
+- Common keys:
+  - `AELIN_SECRET_KEY`
+  - `AELIN_FERNET_KEY`
+  - `AELIN_DATABASE_URL`
+  - `AELIN_CORS_ORIGINS`
+  - `AELIN_LLM_REQUEST_TIMEOUT_SECONDS`
+  - `AELIN_DEEPAGENTS_EXTRA_SKILLS_DIR`
+  - `AELIN_DESKTOP_PLUGIN_BASE_URL`
+  - `AELIN_GOOGLE_WORKSPACE_CLI_BIN`
 
 Do not commit API keys, OAuth secrets, or local database artifacts.
 
@@ -100,7 +96,7 @@ Do not commit API keys, OAuth secrets, or local database artifacts.
 - Chinese README: [README.zh-CN.md](README.zh-CN.md)
 - English README: [README.en.md](README.en.md)
 - Contributor guide: [AGENTS.md](AGENTS.md)
-- Backend notes: [backend/README.md](backend/README.md)
-- Feishu remote control: [docs/feishu_remote_control_v1.md](docs/feishu_remote_control_v1.md)
 - Docs index: [docs/INDEX.md](docs/INDEX.md)
-- Manual test cases: [docs/agent_loop_manual_test_cases.md](docs/agent_loop_manual_test_cases.md)
+- DeepAgents architecture: [docs/deepagents_arch.md](docs/deepagents_arch.md)
+- DeepAgents skills guide: [docs/deepagents_skills_guide.md](docs/deepagents_skills_guide.md)
+- Google Workspace guide: [docs/gws.md](docs/gws.md)

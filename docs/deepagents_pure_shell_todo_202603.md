@@ -132,7 +132,7 @@
 ### 4.2 裁剪旧 agent loop 配置项
 
 - [x] 清理 `settings.py` 中以 `aelin_agent_loop_...` 为前缀的旧配置：
-  - [x] 保留必要的硬约束（如整体工具次数上限、超时），并直接喂给 DeepAgents graph 或工具策略（例如 `aelin_agent_loop_max_tool_calls` / `aelin_agent_loop_max_calls_per_round` / `aelin_agent_loop_max_write_calls` 现仅用于构造 `AelinToolPolicy`）。
+  - [x] 保留必要的硬约束（如整体工具次数上限、超时），并直接喂给 DeepAgents graph 或工具策略（例如 `aelin_agent_loop_max_tool_calls` / `aelin_agent_loop_max_write_calls` 现仅用于构造 `AelinToolPolicy`）。
   - [x] 标记与 legacy loop 行为强绑定的开关（如 `aelin_agent_loop_shadow_enabled`、`aelin_agent_loop_enabled` 等）仅作为兼容 flag，DeepAgents-only 分支在运行时代码中不再分支判断这些值。
 - [x] 对 remote_control / router 等地方仍使用 `"agent_loop_no_result"` 等标记的逻辑进行瘦身：
   - [x] `_try_agent_loop_chat` 在 DeepAgents 无有效回答时统一发出一条 `AelinToolStep(stage="agent_loop", status="failed", detail="agent_loop_no_result", ...)`，供 remote_control 识别；成功路径只使用 DeepAgents 的 `stop_reason="completed"`。

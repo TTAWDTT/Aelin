@@ -51,7 +51,6 @@
 ## 3. 极大放宽工具调用策略上限
 
 - [x] 在 `backend/app/settings.py` 中放宽 DeepAgents 用到的工具策略配置：
-  - [x] 将 `aelin_agent_loop_max_calls_per_round` 默认值从 `2` 提升到 `32`。
   - [x] 将 `aelin_agent_loop_max_tool_calls` 默认值从 `4` 提升到 `128`。
   - [x] 将 `aelin_agent_loop_max_write_calls` 默认值从 `1` 提升到 `32`。
 

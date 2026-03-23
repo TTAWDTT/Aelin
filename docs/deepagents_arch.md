@@ -165,7 +165,6 @@
   - 任意未在枚举中的 `action` 都会返回 `unsupported plane action` 错误，错误消息中会带上允许的 action 列表。
 
 - 工具调用策略上限（Aelin → DeepAgents）：
-  - `settings.aelin_agent_loop_max_calls_per_round = 32`
   - `settings.aelin_agent_loop_max_tool_calls = 128`
   - `settings.aelin_agent_loop_max_write_calls = 32`
   - `settings.aelin_agent_loop_allow_write_tools = True`
