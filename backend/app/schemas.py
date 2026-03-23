@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.services.aelin_utils import normalize_positive_ints
+from app.services.aelin.utils import normalize_positive_ints
 
 
 class Token(BaseModel):
@@ -31,114 +31,6 @@ class UserOut(BaseModel):
     email: EmailStr
     avatar_url: Optional[str] = None
     created_at: datetime
-
-
-class ConnectedAccountCreate(BaseModel):
-    provider: str = Field(min_length=1, max_length=50)
-    identifier: str = Field(default="", max_length=255)
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-
-    # Optional provider-specific fields (used when provider == "imap").
-    imap_host: Optional[str] = Field(None, min_length=1, max_length=255)
-    imap_port: Optional[int] = Field(None, ge=1, le=65535)
-    imap_use_ssl: Optional[bool] = None
-    imap_username: Optional[str] = Field(None, min_length=1, max_length=255)
-    imap_password: Optional[str] = Field(None, min_length=1, max_length=2048)
-    imap_mailbox: Optional[str] = Field(None, min_length=1, max_length=255)
-
-    # Optional provider-specific fields (used when provider in {"rss", "bilibili", "x"}).
-    feed_url: Optional[str] = Field(None, max_length=2048)
-    feed_homepage_url: Optional[str] = Field(None, max_length=2048)
-    feed_display_name: Optional[str] = Field(None, max_length=255)
-    bilibili_uid: Optional[str] = Field(None, min_length=1, max_length=64)
-    x_username: Optional[str] = Field(None, min_length=1, max_length=64)
-    forward_display_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    forward_source_email: Optional[EmailStr] = None
-
-
-class ConnectedAccountOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    provider: str
-    identifier: str
-    last_synced_at: Optional[datetime] = None
-    created_at: datetime
-
-
-class AccountOAuthStartResponse(BaseModel):
-    provider: str
-    auth_url: str
-
-
-class OAuthCredentialConfigOut(BaseModel):
-    provider: str
-    configured: bool
-    client_id_hint: Optional[str] = None
-
-
-class OAuthCredentialConfigUpdate(BaseModel):
-    client_id: str = Field(min_length=1, max_length=512)
-    client_secret: str = Field(min_length=1, max_length=4096)
-
-
-class ForwardAccountInfo(BaseModel):
-    account_id: int
-    provider: str
-    identifier: str
-    source_email: EmailStr
-    forward_address: str
-    inbound_url: str
-
-
-class ContactOut(BaseModel):
-    id: int
-    display_name: str
-    handle: str
-    avatar_url: Optional[str] = None
-    last_message_at: Optional[datetime] = None
-    unread_count: int = 0
-    latest_subject: Optional[str] = None
-    latest_preview: Optional[str] = None
-    latest_source: Optional[str] = None
-    latest_received_at: Optional[datetime] = None
-
-
-class MessageOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    contact_id: int
-    source: str
-    sender: str
-    subject: str
-    body_preview: str
-    received_at: datetime
-    is_read: bool
-    summary: Optional[str] = None
-
-
-class MessageDetail(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    contact_id: int
-    source: str
-    sender: str
-    subject: str
-    body: str
-    received_at: datetime
-    is_read: bool
-    summary: Optional[str] = None
-
-
-class AgentChatRequest(BaseModel):
-    messages: list[dict[str, str]]
-    context_contact_id: Optional[int] = None
-    tools: list[str] = Field(default_factory=list)
-    use_memory: bool = True
-    stream: bool = True
 
 
 class AgentMemoryNoteCreate(BaseModel):
@@ -312,42 +204,6 @@ class AelinTodoItem(BaseModel):
     updated_at: str
 
 
-class AelinPinRecommendationItem(BaseModel):
-    contact_id: int
-    display_name: str
-    score: float
-    reasons: list[str] = Field(default_factory=list)
-    unread_count: int = 0
-    last_message_at: Optional[datetime] = None
-
-
-class AelinDailyBriefAction(BaseModel):
-    kind: str
-    title: str
-    detail: str = ""
-    contact_id: Optional[int] = None
-    message_id: Optional[int] = None
-    priority: str = "normal"
-
-
-class AelinDailyBrief(BaseModel):
-    generated_at: datetime
-    summary: str
-    top_updates: list[AgentFocusItemOut] = Field(default_factory=list)
-    actions: list[AelinDailyBriefAction] = Field(default_factory=list)
-
-
-class AelinLayoutCard(BaseModel):
-    contact_id: int
-    display_name: str
-    pinned: bool = False
-    order: int = Field(default=0, ge=0)
-    x: float = Field(default=0, ge=0)
-    y: float = Field(default=0, ge=0)
-    width: float = Field(default=312, ge=120, le=2400)
-    height: float = Field(default=316, ge=120, le=2400)
-
-
 class AelinMemoryLayerItem(BaseModel):
     id: str
     layer: str
@@ -366,48 +222,13 @@ class AelinMemoryLayers(BaseModel):
     generated_at: datetime
 
 
-class AelinNotificationItem(BaseModel):
-    id: str
-    level: str = "info"
-    title: str
-    detail: str = ""
-    source: str = ""
-    ts: str = ""
-    action_kind: Optional[str] = None
-    action_payload: dict[str, str] = Field(default_factory=dict)
-
-
-class AelinNotificationResponse(BaseModel):
-    total: int = 0
-    items: list[AelinNotificationItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinProactivePollResponse(BaseModel):
-    workspace: str = "default"
-    total: int = 0
-    items: list[AelinNotificationItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AgentMemorySnapshot(BaseModel):
-    summary: str = ""
-    notes: list[AgentMemoryNoteOut] = Field(default_factory=list)
-    focus_items: list[AgentFocusItemOut] = Field(default_factory=list)
-
-
 class AelinContextResponse(BaseModel):
     workspace: str = "default"
     summary: str = ""
-    focus_items: list[AgentFocusItemOut] = Field(default_factory=list)
     notes: list[AgentMemoryNoteOut] = Field(default_factory=list)
     notes_count: int = 0
     todos: list[AelinTodoItem] = Field(default_factory=list)
-    pin_recommendations: list[AelinPinRecommendationItem] = Field(default_factory=list)
-    daily_brief: Optional[AelinDailyBrief] = None
-    layout_cards: list[AelinLayoutCard] = Field(default_factory=list)
     memory_layers: AelinMemoryLayers
-    notifications: list[AelinNotificationItem] = Field(default_factory=list)
     generated_at: datetime
 
 
@@ -488,52 +309,6 @@ class AelinFileMemoryContentResponse(BaseModel):
     generated_at: datetime
 
 
-class AelinMediaIngestRequest(BaseModel):
-    url: str = Field(min_length=5, max_length=3000)
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-    languages: list[str] = Field(default_factory=lambda: ["zh-Hans", "zh-CN", "zh", "en"], max_length=8)
-    auto_login_guide: bool = True
-    login_wait_seconds: int = Field(default=180, ge=30, le=900)
-    force_relogin: bool = False
-
-
-class AelinMediaIngestResponse(BaseModel):
-    status: str
-    message: str
-    url: str
-    platform: str
-    title: str = ""
-    source_type: str = ""
-    summary: str = ""
-    summary_overview: str = ""
-    information_note: str = ""
-    confidence: float = 0.0
-    quality_score: float = 0.0
-    quality_reason: str = ""
-    quality_usable: bool = False
-    needs_review: bool = True
-    written: bool = False
-    limitations: list[str] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinMediaAuthGuideRequest(BaseModel):
-    wait_seconds: int = Field(default=180, ge=30, le=900)
-    open_url: str = Field(default="", max_length=3000)
-    force_relogin: bool = False
-
-
-class AelinMediaAuthGuideResponse(BaseModel):
-    status: str
-    platform: str
-    message: str
-    login_url: str = ""
-    profile_dir: str = ""
-    wait_seconds: int = 0
-    cookie_count: int = 0
-    generated_at: datetime
-
-
 class AelinDeviceCapabilitiesResponse(BaseModel):
     platform: str = "unknown"
     capabilities: dict[str, bool] = Field(default_factory=dict)
@@ -558,36 +333,6 @@ class AelinDeviceScreenCaptureRequest(BaseModel):
     image_format: str = Field(default="jpeg", min_length=3, max_length=8)
     quality: int = Field(default=72, ge=35, le=95)
     selection_timeout_ms: int = Field(default=45000, ge=5000, le=180000)
-
-
-class AgentCardLayoutItem(BaseModel):
-    contact_id: int
-    display_name: str = Field(min_length=1, max_length=255)
-    pinned: bool = False
-    order: int = Field(default=0, ge=0)
-    x: float = Field(default=0, ge=0)
-    y: float = Field(default=0, ge=0)
-    width: float = Field(default=312, ge=120, le=2400)
-    height: float = Field(default=316, ge=120, le=2400)
-
-
-class AgentCardLayoutUpdate(BaseModel):
-    cards: list[AgentCardLayoutItem] = Field(default_factory=list)
-    workspace: str = Field(default="default", min_length=1, max_length=64)
-
-
-class AgentPinRecommendationItem(BaseModel):
-    contact_id: int
-    display_name: str
-    score: float
-    reasons: list[str] = Field(default_factory=list)
-    unread_count: int = 0
-    last_message_at: Optional[datetime] = None
-
-
-class AgentPinRecommendationResponse(BaseModel):
-    generated_at: datetime
-    items: list[AgentPinRecommendationItem] = Field(default_factory=list)
 
 
 class AgentTodoCreate(BaseModel):
@@ -617,65 +362,6 @@ class AgentTodoOut(BaseModel):
     contact_id: Optional[int] = None
     message_id: Optional[int] = None
     updated_at: str
-
-
-class AgentDailyBriefAction(BaseModel):
-    kind: str
-    title: str
-    detail: str = ""
-    contact_id: Optional[int] = None
-    message_id: Optional[int] = None
-    priority: str = "normal"
-
-
-class AgentDailyBriefResponse(BaseModel):
-    generated_at: datetime
-    summary: str
-    top_updates: list[AgentFocusItemOut] = Field(default_factory=list)
-    actions: list[AgentDailyBriefAction] = Field(default_factory=list)
-
-
-class AgentAdvancedSearchRequest(BaseModel):
-    query: str = Field(default="", max_length=200)
-    source: Optional[str] = Field(default=None, max_length=50)
-    unread_only: bool = False
-    days: int = Field(default=30, ge=1, le=365)
-    limit: int = Field(default=20, ge=1, le=100)
-
-
-class AgentAdvancedSearchItem(BaseModel):
-    message_id: int
-    contact_id: int
-    sender: str
-    subject: str
-    source: str
-    received_at: str
-    preview: str
-    is_read: bool
-    score: float
-    reason: str = ""
-
-
-class AgentAdvancedSearchResponse(BaseModel):
-    total: int
-    items: list[AgentAdvancedSearchItem] = Field(default_factory=list)
-
-
-class AgentSummarizeRequest(BaseModel):
-    text: str
-
-
-class AgentSummarizeResponse(BaseModel):
-    summary: str
-
-
-class DraftReplyRequest(BaseModel):
-    text: str
-    tone: str = "friendly"
-
-
-class DraftReplyResponse(BaseModel):
-    draft: str
 
 
 class AgentConfigOut(BaseModel):
@@ -727,18 +413,3 @@ class ModelCatalogResponse(BaseModel):
     providers: list[ModelProviderInfo]
 
 
-class SyncJobStartResponse(BaseModel):
-    job_id: str
-    status: str
-    account_id: int
-
-
-class SyncJobStatusResponse(BaseModel):
-    job_id: str
-    status: str
-    account_id: int
-    inserted: Optional[int] = None
-    error: Optional[str] = None
-    created_at: datetime
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None

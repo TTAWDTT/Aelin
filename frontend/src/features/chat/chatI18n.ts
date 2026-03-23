@@ -7,6 +7,8 @@ type ChatKeys =
   | 'status.capture.fullscreen'
   | 'status.capture.region'
   | 'status.attach.processing'
+  | 'status.tools.invoking'
+  | 'status.tools.summary'
   | 'error.screenshot'
   | 'error.attach.process'
   | 'error.attach.send'
@@ -38,6 +40,17 @@ type ChatKeys =
   | 'trace.status.skipped'
   | 'trace.status.failed'
   | 'trace.status.unknown'
+  | 'trace.executionPane.title'
+  | 'trace.tab.aelin'
+  | 'trace.tab.tools'
+  | 'trace.executionPane.empty'
+  | 'trace.executionPane.headerOpen'
+  | 'trace.executionPane.headerClosed'
+  | 'trace.executionPane.emptyDetail'
+  | 'trace.tools.empty'
+  | 'trace.tools.count'
+  | 'trace.tools.read'
+  | 'trace.tools.write'
   | 'actions.heading'
   | 'actions.confirm.cta'
   | 'actions.confirm.pending'
@@ -53,6 +66,8 @@ const ZH: Record<ChatKeys, string> = {
   'status.capture.fullscreen': '正在全屏截图…',
   'status.capture.region': '等待框选截图…',
   'status.attach.processing': '附件处理中…',
+  'status.tools.invoking': '正在调用工具… {tools}',
+  'status.tools.summary': '本轮调用了 {count} 个工具（{tools}），详情见执行面板。',
   'error.screenshot': '截图失败，请稍后重试',
   'error.attach.process': '附件处理失败，请稍后重试',
   'error.attach.send': '附件发送失败，请稍后重试',
@@ -84,6 +99,17 @@ const ZH: Record<ChatKeys, string> = {
   'trace.status.skipped': '跳过',
   'trace.status.failed': '失败',
   'trace.status.unknown': '未知',
+  'trace.executionPane.title': '执行面板',
+  'trace.tab.aelin': 'Aelin 链路',
+  'trace.tab.tools': '工具调用',
+  'trace.executionPane.empty': '暂无执行信息',
+  'trace.executionPane.headerOpen': '执行面板',
+  'trace.executionPane.headerClosed': '打开执行面板',
+  'trace.executionPane.emptyDetail': '暂无可展示的工具调用。当 Aelin 使用工具处理你的请求时，这里会显示更详细的执行步骤。',
+  'trace.tools.empty': '本轮暂未调用任何原子工具。',
+  'trace.tools.count': '{count} 个调用',
+  'trace.tools.read': 'READ',
+  'trace.tools.write': 'WRITE',
   'actions.heading': '建议动作 ({count})',
   'actions.confirm.cta': '确认并继续',
   'actions.confirm.pending': '处理中…',
@@ -100,6 +126,8 @@ const EN: Record<ChatKeys, string> = {
   'status.capture.fullscreen': 'Capturing full screen…',
   'status.capture.region': 'Waiting for region selection…',
   'status.attach.processing': 'Processing attachments…',
+  'status.tools.invoking': 'Calling tools… {tools}',
+  'status.tools.summary': 'This turn invoked {count} tool(s) ({tools}). See execution panel for details.',
   'error.screenshot': 'Screenshot failed, please try again later.',
   'error.attach.process': 'Attachment processing failed, please try again later.',
   'error.attach.send': 'Attachment sending failed, please try again later.',
@@ -132,6 +160,18 @@ const EN: Record<ChatKeys, string> = {
   'trace.status.skipped': 'skipped',
   'trace.status.failed': 'failed',
   'trace.status.unknown': 'unknown',
+  'trace.executionPane.title': 'Execution panel',
+  'trace.tab.aelin': 'Aelin chain',
+  'trace.tab.tools': 'Tool calls',
+  'trace.executionPane.empty': 'No execution info yet',
+  'trace.executionPane.headerOpen': 'Execution panel',
+  'trace.executionPane.headerClosed': 'Open execution panel',
+  'trace.executionPane.emptyDetail':
+    'No tool calls to show yet. When Aelin uses tools to handle your request, detailed steps will appear here.',
+  'trace.tools.empty': 'No atomic tools were invoked in this turn.',
+  'trace.tools.count': '{count} call(s)',
+  'trace.tools.read': 'READ',
+  'trace.tools.write': 'WRITE',
   'actions.heading': 'Suggested actions ({count})',
   'actions.confirm.cta': 'Confirm and continue',
   'actions.confirm.pending': 'Working…',

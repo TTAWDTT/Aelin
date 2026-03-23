@@ -24,10 +24,11 @@
   - [x] `action="gmail_get"`：获取单封邮件详情（`scope="gmail"`）
   - [x] `action="drive_list"`：列出 Drive 文件（`scope="drive"`）
   - [x] `action="calendar_list"`：列出日历事件（`scope="calendar"`）
-- [x] 规划写能力 action（可按阶段实施）
-  - [x] 预留 `action="calendar_create_event"`：当前返回 `write_actions_not_implemented`，避免误用
-  - [x] 预留 `action="gmail_send"`：当前返回 `write_actions_not_implemented`
-  - [x] 预留 `action="gmail_draft"`：当前返回 `write_actions_not_implemented`
+  - [x] 规划写能力 action（可按阶段实施）
+  - [x] 实现 `action="calendar_create_event"`：通过 gws 创建日历事件，并在失败时透传错误
+  - [x] 实现 `action="gmail_send"`：通过 gws 发送邮件，并在失败时透传错误
+  - [x] 实现 `action="gmail_draft"`：通过 gws 创建邮件草稿，并在失败时透传错误
+  - [x] 实现 `action="docs_create"`：通过 gws 创建 Docs 文档，并在有正文内容时追加写入文本
   - [x] 所有未知 `action` 返回 `{"ok": false, "error": "unsupported_action"}`
 - [x] 规范每个 action 的参数
   - [x] 读 action：
@@ -66,7 +67,7 @@
     - [x] `action=drive_list`：根据名称或 owner 查找文件，并按时间排序
     - [x] `action=calendar_list`：查询一段时间内的会议事件，并给出时间段冲突提示
   - [x] 写能力示例（需要明确“先解释再执行”）：
-    - [x] 在 Skill 中提示未来可增加 `calendar_create_event`/`gmail_draft`/`gmail_send`，并强调必须先向用户解释再执行
+    - [x] 在 Skill 中提示可以使用 `calendar_create_event` / `gmail_draft` / `gmail_send` / `docs_create`，并强调必须先向用户解释再执行
   - [x] 在 Skill 中强调：工具结果中的 `raw` 只在必要时用，默认使用精简后的 `items`/`item`
 - [x] 接入 Skill 目录
   - [x] 通过 `applies_to_tools: google_workspace` 让 Skill 与工具自动建立关联
@@ -87,12 +88,13 @@
 - [x] 单元测试
   - [x] 为 `GoogleWorkspaceCliService` 中的每个方法编写测试（使用 monkeypatch 替换 `subprocess.run`）
   - [x] 测试安装缺失、超时、JSON 解析失败等边界情况
-  - [x] 测试 `google_workspace` 工具各 action 的正常返回与错误返回
+  - [x] 测试 `google_workspace` 工具各 action 的正常返回与错误返回（包括 calendar_create_event / gmail_send / gmail_draft / docs_create）
 - [ ] 集成测试（本地手动）
   - [ ] 在本机安装并配置 gws（含登录）
   - [ ] 通过 Aelin Chat 输入例如“帮我列一下最近 10 封 Gmail 邮件”，观察是否自动选择 gws 工具
+  - [ ] 通过 Aelin Chat 输入例如“帮我创建一个 Google 文档讲讲 Agent Swarm”，观察是否调用 `docs_create` 并返回文档信息
   - [ ] 验证当未安装/未登录时，Aelin 会用中文提示用户在终端执行何种命令
-  - [ ] 验证当用户完成登录后再次询问，Aelin 能顺利拉取并总结数据
+  - [ ] 验证当用户完成登录后再次询问，Aelin 能顺利拉取并总结数据或创建文档
 
 ## 7. 文档与用户提示
 

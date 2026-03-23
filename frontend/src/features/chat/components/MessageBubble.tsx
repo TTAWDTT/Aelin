@@ -3,7 +3,6 @@ import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
-import { AgentTracePanel } from './AgentTracePanel'
 import { MessageActionsPanel } from './MessageActionsPanel'
 import { MessageCitationsPanel } from './MessageCitationsPanel'
 import {
@@ -22,9 +21,18 @@ interface MessageBubbleProps {
   compact?: boolean
   viewportWidth: number
   onQuickPrompt?: (text: string) => void
+  highlighted?: boolean
 }
 
-export function MessageBubble({ message, isThinking = false, thinkingText, compact = false, viewportWidth, onQuickPrompt }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  isThinking = false,
+  thinkingText,
+  compact = false,
+  viewportWidth,
+  onQuickPrompt,
+  highlighted = false,
+}: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
@@ -119,10 +127,6 @@ export function MessageBubble({ message, isThinking = false, thinkingText, compa
           isBrowserPending={confirmBrowser.isPending}
           onBrowserConfirm={(action) => confirmBrowser.mutate(action)}
         />
-        {/* Tool trace */}
-        {message.toolTrace && message.toolTrace.length > 0 && (
-          <AgentTracePanel trace={message.toolTrace} live={isThinking} />
-        )}
 
         <div className="mt-2 text-[10px] tracking-wide text-[var(--color-text-muted)]">
           {formatMessageTime(message.timestamp)}

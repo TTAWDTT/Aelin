@@ -141,10 +141,3 @@ def _test_media_dir(monkeypatch):
     finally:
         shutil.rmtree(path, ignore_errors=True)
 
-
-@pytest.fixture(autouse=True)
-def _test_default_aelin_flags(monkeypatch):
-    from app.settings import settings
-
-    # Tests should remain deterministic and not depend on runtime hard-fail defaults.
-    monkeypatch.setattr(settings, "aelin_agent_loop_hard_fail", False)

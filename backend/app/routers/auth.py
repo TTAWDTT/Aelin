@@ -16,10 +16,7 @@ from app.schemas import Token, UserCreate, UserOut, UserUpdate
 from app.security import ALGORITHM, create_access_token
 from app.settings import settings
 
-# Primary auth endpoints (no /auth prefix): /api/v1/register, /api/v1/token, /api/v1/me, ...
 router = APIRouter(tags=["auth"])
-# Backward-compatible legacy endpoints under /api/v1/auth/*.
-legacy_router = APIRouter(prefix="/auth", tags=["auth"], deprecated=True)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token", auto_error=False)
 
@@ -36,7 +33,6 @@ def _ensure_local_user(db: Session) -> User:
     )
 
 
-@legacy_router.post("/register", response_model=UserOut)
 @router.post("/register", response_model=UserOut)
 def register(payload: UserCreate, db: Session = Depends(get_session)):
     existing = db.scalar(select(User).where(User.email == payload.email))
@@ -46,7 +42,6 @@ def register(payload: UserCreate, db: Session = Depends(get_session)):
     return user
 
 
-@legacy_router.post("/token", response_model=Token)
 @router.post("/token", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_session)):
     user = crud.authenticate_user(db, email=form_data.username, password=form_data.password)
@@ -61,11 +56,6 @@ def get_current_user(db: Session = Depends(get_session), token: str | None = Dep
     if not token:
         return fallback_user
 
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         sub = payload.get("sub")
@@ -81,20 +71,17 @@ def get_current_user(db: Session = Depends(get_session), token: str | None = Dep
     return user
 
 
-@legacy_router.get("/me", response_model=UserOut)
 @router.get("/me", response_model=UserOut)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
-@legacy_router.patch("/me", response_model=UserOut)
 @router.patch("/me", response_model=UserOut)
 def update_me(
     payload: UserUpdate,
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    # If email is being changed, check for uniqueness
     if payload.email is not None and payload.email != current_user.email:
         existing = db.scalar(select(User).where(User.email == payload.email))
         if existing is not None:
@@ -110,7 +97,6 @@ def update_me(
     return updated_user
 
 
-@legacy_router.post("/me/avatar", response_model=UserOut)
 @router.post("/me/avatar", response_model=UserOut)
 async def upload_my_avatar(
     file: UploadFile = File(...),

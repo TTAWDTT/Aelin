@@ -11,16 +11,7 @@ function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep):
   const existing = [...(prev ?? [])]
   const stage = String(step.stage || '').trim()
   if (!stage) return existing
-
-  const index = existing.findIndex((item) => String(item.stage || '').trim() === stage)
-  if (index === -1) return [...existing, step]
-
-  existing[index] = {
-    ...existing[index],
-    ...step,
-    stage,
-  }
-  return existing
+  return [...existing, { ...step, stage }]
 }
 
 export function formatBytes(size: number): string {
@@ -122,7 +113,15 @@ export function buildChatRequest(params: {
 function updateLatestAssistantToolTrace(sessionId: string, step: AelinToolStep): void {
   const state = useChatStore.getState()
   const targetSession = state.sessions.find((session) => session.id === sessionId)
-  const currentTrace = targetSession?.messages.findLast((message: ChatMessage) => message.role === 'assistant')?.toolTrace
+  if (!targetSession) return
+  let currentTrace: AelinToolStep[] | undefined
+  for (let i = targetSession.messages.length - 1; i >= 0; i -= 1) {
+    const msg = targetSession.messages[i]
+    if (msg.role === 'assistant') {
+      currentTrace = msg.toolTrace
+      break
+    }
+  }
   state.updateLastAssistant(sessionId, {
     toolTrace: mergeToolTrace(currentTrace, step),
   })
@@ -162,7 +161,22 @@ export function buildStreamCallbacks(params: {
       finalize()
     },
     onError: (error: { message: string }) => {
-      params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
+      // 仅在当前助手消息尚无任何内容时，才在对话中插入可见错误提示。
+      // 若已经有部分或完整回答（例如 agent_loop partial_result），
+      // 则将网络/传输异常视为非致命，不再打断用户视线。
+      const state = useChatStore.getState()
+      const session = state.sessions.find((s) => s.id === params.sessionId)
+      const lastAssistant =
+        session?.messages
+          .slice()
+          .reverse()
+          .find((m) => m.role === 'assistant') ?? null
+      const hasAnswer =
+        !!lastAssistant && String(lastAssistant.content || '').trim().length > 0
+
+      if (!hasAnswer) {
+        params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
+      }
       finalize()
     },
   }

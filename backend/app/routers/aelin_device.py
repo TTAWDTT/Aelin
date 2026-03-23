@@ -11,7 +11,7 @@ from app.schemas import (
     AelinDeviceScreenCaptureRequest,
     AelinDeviceScreenCaptureResponse,
 )
-from app.services.device_center import (
+from app.services.device.device_center import (
     capture_device_screen as device_capture_screen,
     DeviceScreenCaptureError,
     device_status_snapshot,
@@ -63,3 +63,4 @@ def get_device_capabilities(
         notes=list(snapshot.get("notes") or []),
         generated_at=datetime.now(timezone.utc),
     )
+

@@ -85,6 +85,8 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     historyCount: Array.isArray(body?.history) ? body.history.length : 0,
     imageCount: Array.isArray(body?.images) ? body.images.length : 0,
   })
+  let hasTraceSteps = false
+
   fetch(`${BASE}/api/v1/aelin/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -149,6 +151,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
         case 'trace':
         case 'tool_step':
           callbacks.onToolStep?.((payload.data?.step ?? payload.step ?? payload.data ?? payload) as AelinToolStep)
+          hasTraceSteps = true
           return
         case 'citations':
           callbacks.onCitations?.((payload.data ?? payload) as AelinCitation[])
@@ -166,7 +169,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
           return
         case 'final': {
           const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
-          if (Array.isArray(result.tool_trace)) {
+          if (Array.isArray(result.tool_trace) && !hasTraceSteps) {
             for (const step of result.tool_trace) {
               callbacks.onToolStep?.(step as AelinToolStep)
             }

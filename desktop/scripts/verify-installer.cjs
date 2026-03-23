@@ -93,16 +93,12 @@ async function main() {
 
   const appExe = path.join(targetDir, `${pkg.build?.productName || "Aelin"}.exe`);
   const backendExe = path.join(targetDir, "resources", "backend-runtime", process.platform === "win32" ? "aelin-backend.exe" : "aelin-backend");
-  const pinchtabExe = path.join(targetDir, "resources", "pinchtab-runtime", process.platform === "win32" ? "pinchtab.exe" : "pinchtab");
 
   if (!fs.existsSync(appExe)) {
     throw new Error(`安装后未找到主程序: ${appExe}`);
   }
   if (!fs.existsSync(backendExe)) {
     throw new Error(`安装后未找到后端运行时: ${backendExe}`);
-  }
-  if (!fs.existsSync(pinchtabExe)) {
-    throw new Error(`安装后未找到 PinchTab 运行时: ${pinchtabExe}`);
   }
 
   const backendPort = 18180;
@@ -127,7 +123,7 @@ async function main() {
     throw new Error(`应用启动后后端健康检查失败: http://127.0.0.1:${backendPort}/healthz`);
   }
 
-  console.log("[verify] OK: installer includes backend runtime + pinchtab runtime and healthz is reachable.");
+  console.log("[verify] OK: installer includes backend runtime and healthz is reachable.");
 }
 
 main().catch((err) => {

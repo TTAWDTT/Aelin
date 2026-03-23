@@ -1,88 +1,88 @@
 from __future__ import annotations
 
-import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
-_PINCHTAB_EXE = "pinchtab.exe" if sys.platform.startswith("win") else "pinchtab"
+_PRIMARY_ENV_PREFIX = "AELIN_"
+_LEGACY_ENV_PREFIX = "MERCURYDESK_"
+
+
+def _merge_legacy_env_prefix(
+    env_vars: dict[str, Any] | None,
+    *,
+    primary_prefix: str = _PRIMARY_ENV_PREFIX,
+    legacy_prefix: str = _LEGACY_ENV_PREFIX,
+) -> dict[str, Any]:
+    merged = dict(env_vars or {})
+    primary_prefix_lower = primary_prefix.lower()
+    legacy_prefix_lower = legacy_prefix.lower()
+    for key, value in list(merged.items()):
+        key_str = str(key)
+        key_lower = key_str.lower()
+        if not key_lower.startswith(legacy_prefix_lower):
+            continue
+        suffix = key_lower[len(legacy_prefix_lower) :]
+        primary_key = f"{primary_prefix_lower}{suffix}"
+        merged.setdefault(primary_key, value)
+    return merged
+
+
+def _inject_legacy_env_fallback(source: PydanticBaseSettingsSource) -> PydanticBaseSettingsSource:
+    env_vars = getattr(source, "env_vars", None)
+    if isinstance(env_vars, Mapping):
+        setattr(source, "env_vars", _merge_legacy_env_prefix(dict(env_vars)))
+    return source
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="MERCURYDESK_",
+        env_prefix=_PRIMARY_ENV_PREFIX,
         env_file=(str(_BACKEND_DIR / ".env"), ".env", "backend/.env"),
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            _inject_legacy_env_fallback(env_settings),
+            _inject_legacy_env_fallback(dotenv_settings),
+            file_secret_settings,
+        )
 
     database_url: str = "sqlite+pysqlite:///./mercurydesk.db"
     secret_key: str = "dev-secret-change-me"
     access_token_expire_minutes: int = 60 * 24
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     media_dir: str = "./media"
-    rsshub_base_url: str = "https://rsshub.app"
     models_catalog_url: str = "https://models.dev/api.json"
     models_catalog_refresh_seconds: int = 60 * 60
-    frontend_url: str = "http://127.0.0.1:5173"
-    api_public_base_url: str = "http://127.0.0.1:8000"
-    oauth_redirect_base_url: str = "http://127.0.0.1:8000"
-    forward_inbound_domain: str = "inbox.localhost"
-    gmail_client_id: str | None = None
-    gmail_client_secret: str | None = None
-    outlook_client_id: str | None = None
-    outlook_client_secret: str | None = None
-    github_client_id: str | None = None
-    github_client_secret: str | None = None
 
-    # X (Twitter) API v2 Bearer Token for official API access
-    x_bearer_token: str | None = None
-
-    # Sync job concurrency (accounts can be synced in parallel).
-    sync_job_max_workers: int = 12
-
-    # Crawler runtime tuning.
-    crawler_headless: bool = False
-    crawler_use_persistent_login: bool = True
-    crawler_browser_data_dir: str = "./browser_data"
-    crawler_rsshub_parallelism: int = 12
-    crawler_playwright_poll_seconds: int = 10
-
-    # File memory bridge (OpenViking-compatible projection + retrieval fallback).
-    openviking_enabled: bool = True
-    openviking_semantic_enabled: bool = True
-    openviking_sync_on_write: bool = True
-    openviking_wait_processed_on_search: bool = False
-    openviking_resync_interval_seconds: float = 120.0
-    openviking_data_dir: str = "../data/aelin_memory"
-    openviking_query_limit: int = 8
-    openviking_local_cache_max_entries: int = 2000
-    aelin_parallel_memory_draft_enabled: bool = True
-    aelin_parallel_memory_draft_workers: int = 4
-    aelin_parallel_memory_draft_timeout_seconds: float = 2.0
-    aelin_parallel_memory_draft_min_confidence: float = 0.58
+    # File memory bridge (AGENTS.md-based memory only).
     aelin_base_context_cache_ttl_seconds: float = 4.0
     aelin_base_context_cache_max_entries: int = 128
-    aelin_agent_loop_enabled: bool = True
-    aelin_agent_loop_shadow_enabled: bool = False
-    aelin_agent_loop_max_rounds: int = 8
-    aelin_agent_loop_max_tool_calls: int = 15
-    aelin_agent_loop_max_calls_per_round: int = 2
-    aelin_agent_loop_max_write_calls: int = 15
-    aelin_agent_loop_max_plane_supervision_calls: int = 6
-    aelin_agent_loop_max_plane_supervision_calls_per_round: int = 1
+
+    # Agent tool policy knobs (DeepAgents-only). Legacy AelinAgentLoop 已经移除，
+    # 这些配置仅用于构造 AelinToolPolicy，限制 DeepAgents 工具调用行为。
+    # 当前默认值刻意放宽，以便 DeepAgents 在每轮对话中可以更自由地尝试工具调用。
+    # DeepAgents 工具策略：默认给足够大的空间，让复杂任务可以自由使用工具。
+    aelin_agent_loop_max_tool_calls: int = 512
+    aelin_agent_loop_max_write_calls: int = 128
     aelin_agent_loop_allow_write_tools: bool = True
-    aelin_agent_loop_hard_fail: bool = True
-    aelin_agent_loop_user_whitelist_csv: str = ""
-    aelin_agent_loop_workspace_whitelist_csv: str = ""
-    # Agent-loop timeouts (per round + overall)。如需调整针对 PinchTab 等长任务的等待窗口，
-    # 建议通过环境变量显式覆盖，而不是在代码里硬编码过大的默认值。
-    aelin_agent_loop_round_timeout_seconds: float = 40.0
-    aelin_agent_loop_total_timeout_seconds: float = 120.0
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
-    feishu_bot_name: str = "Aelin"
     feishu_bot_bind_user_email: str = ""
     feishu_bot_workspace: str = "default"
     feishu_bot_allowed_open_ids_csv: str = ""
@@ -94,7 +94,6 @@ class Settings(BaseSettings):
     qq_bot_enabled: bool = False
     qq_bot_ws_url: str = "ws://127.0.0.1:6700"
     qq_bot_token: str = ""
-    qq_bot_name: str = "Aelin"
     qq_bot_bind_user_email: str = ""
     qq_bot_workspace: str = "default"
     qq_bot_allowed_user_ids_csv: str = ""
@@ -107,13 +106,6 @@ class Settings(BaseSettings):
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
-    desktop_module_base_url: str = ""
-    pinchtab_base_url: str = "http://127.0.0.1:9867"
-    pinchtab_executable_path: str = f"./bin/{_PINCHTAB_EXE}"
-    pinchtab_source_dir: str = "./.pinchtab"
-    pinchtab_data_dir: str = "../data/pinchtab"
-    pinchtab_startup_timeout_seconds: float = 20.0
-    pinchtab_shutdown_timeout_seconds: float = 8.0
     # Google Workspace CLI (gws) integration.
     # `google_workspace_cli_bin` 可以是 "gws"（放在 PATH 中），也可以是一个绝对路径。
     google_workspace_cli_bin: str = "gws"
@@ -139,42 +131,16 @@ class Settings(BaseSettings):
     aelin_attachment_rapidocr_enabled: bool = True
 
     # LLM client runtime tuning.
-    llm_request_timeout_seconds: float = 90.0
+    # DeepAgents 回路可能会触发多轮工具调用，因此默认超时时间相对更长。
+    llm_request_timeout_seconds: float = 180.0
     backend_log_level: str = "INFO"
 
-    # Media ingest (yt-dlp) network/auth tuning.
-    media_ingest_cookie_mode: str = "off"  # off | browser | file
-    media_ingest_cookie_browser: str = "chrome"  # chrome | edge | firefox | safari
-    media_ingest_cookie_browser_profile: str = ""  # e.g. "Default"
-    media_ingest_cookie_file: str = ""  # Netscape cookie file path
-    media_ingest_temp_dir: str = ""  # optional temp workdir root; defaults to OS temp
-    media_ingest_proxy_url: str = ""  # e.g. http://127.0.0.1:7890
-    media_ingest_douyin_auto_login_enabled: bool = True
-    media_ingest_douyin_browser_profile_dir: str = "./browser_data/douyin_media"
-    media_ingest_douyin_login_url: str = "https://www.douyin.com/"
-    media_ingest_douyin_asr_enabled: bool = True
-    media_ingest_douyin_asr_backend: str = "auto"  # auto | faster_whisper | openai
-    media_ingest_douyin_asr_model: str = "whisper-1"
-    media_ingest_douyin_asr_local_model: str = "small"
-    media_ingest_douyin_asr_local_device: str = "auto"  # auto | cpu | cuda
-    media_ingest_douyin_asr_local_compute_type: str = "int8"
-    media_ingest_douyin_asr_local_beam_size: int = 4
-    media_ingest_douyin_asr_max_audio_seconds: int = 120
-    media_ingest_douyin_asr_timeout_seconds: int = 80
-    browser_tool_headless: bool = True
-    browser_tool_open_external_on_navigate: bool = False
-    browser_tool_mode_default: str = "auto"  # auto | managed | cdp
-    browser_tool_cdp_enabled: bool = False
-    browser_tool_cdp_endpoint: str = "http://127.0.0.1:9222"
-    browser_tool_cdp_auto_launch: bool = True
-    browser_tool_cdp_launch_timeout_seconds: float = 10.0
-    browser_tool_cdp_browser_path: str = ""
-    browser_tool_cdp_profile_dir: str = ""
-    browser_tool_default_timeout_ms: int = 12_000
-    browser_tool_idle_ttl_seconds: int = 900
-    browser_tool_profile_dir: str = "./browser_data/agent_browser"
+    # Optional extra DeepAgents skills root dir (for example chrome-cdp-skill).
+    # When set, all subdirectories under this path will be exposed as
+    # `/skills/external/<skill-name>/` to the DeepAgents SkillsMiddleware.
+    deepagents_extra_skills_dir: str = ""
 
-    # Optional Fernet key used to encrypt stored secrets (OAuth tokens, IMAP passwords).
+    # Optional Fernet key used to encrypt stored secrets.
     # Generate one via: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str | None = None
 

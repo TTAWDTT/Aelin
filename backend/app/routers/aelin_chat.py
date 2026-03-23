@@ -12,10 +12,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import get_session, create_session
 from app.models import AttachmentDocument, User
-from app.routers.aelin import _dispatch_aelin_chat, _normalize_search_mode
-from app.routers.aelin_text_helpers import _now_ms, _sse_event
+from app.services.aelin.core import _dispatch_aelin_chat
+from app.services.aelin.streaming import _now_ms, _sse_event
 from app.routers.auth import get_current_user
 from app.schemas import (
     AelinAttachmentUploadResponse,
@@ -23,9 +23,8 @@ from app.schemas import (
     AelinChatResponse,
     AelinFileMemoryContentResponse,
 )
-from app.services.aelin_attachment_service import AttachmentIngestError, get_aelin_attachment_service
-from app.services.aelin_chat_worker import run_aelin_chat_with_local_session
-from app.services.openviking_bridge import file_memory_bridge
+from app.services.aelin.attachment_service import AttachmentIngestError, get_aelin_attachment_service
+from app.services.memory.file_memory_bridge import file_memory_bridge
 
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
@@ -191,12 +190,20 @@ def aelin_chat_stream(
                     str(payload.workspace or "default")[:64],
                     _preview(str(payload.query or "")),
                 )
-                result = run_aelin_chat_with_local_session(
-                    payload,
-                    user_id=int(current_user.id),
-                    event_cb=_push,
-                    cancel_token=cancel_token,
-                )
+                local_db = create_session()
+                try:
+                    result = _dispatch_aelin_chat(
+                        payload,
+                        local_db,
+                        current_user,
+                        event_cb=_push,
+                        cancel_token=cancel_token,
+                    )
+                finally:
+                    try:
+                        local_db.close()
+                    except Exception:
+                        pass
                 _LOG.info(
                     "aelin_stream worker_final req=%s uid=%s answer_len=%s actions=%s traces=%s",
                     req_id,
@@ -231,7 +238,7 @@ def aelin_chat_stream(
                 "query": payload.query.strip()[:180],
                 "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                 "workspace": payload.workspace,
-                "search_mode": _normalize_search_mode(getattr(payload, "search_mode", "auto")),
+                "search_mode": str(getattr(payload, "search_mode", "auto") or "auto")[:16],
             },
         )
         worker = threading.Thread(target=_worker, daemon=True)
@@ -281,3 +288,4 @@ def aelin_chat_stream(
             "Connection": "keep-alive",
         },
     )
+

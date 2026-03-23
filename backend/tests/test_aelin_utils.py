@@ -1,4 +1,4 @@
-from app.services.aelin_utils import escape_sql_like, normalize_positive_ints
+from app.services.aelin.utils import escape_sql_like, normalize_positive_ints
 
 
 def test_normalize_positive_ints_filters_and_caps():
@@ -14,3 +14,4 @@ def test_normalize_positive_ints_cap_zero_and_default():
 def test_escape_sql_like_escapes_wildcards():
     escaped = escape_sql_like(r"a%b_c\z")
     assert escaped == r"a\%b\_c\\z"
+

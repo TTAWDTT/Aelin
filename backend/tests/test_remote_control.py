@@ -5,9 +5,9 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import app.services.feishu_bot as feishu_bot_module
-import app.services.qq_bot as qq_bot_module
-import app.services.remote_control as remote_control
+import app.services.bots.feishu_bot as feishu_bot_module
+import app.services.bots.qq_bot as qq_bot_module
+import app.services.device.remote_control as remote_control
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -404,3 +404,4 @@ def test_qq_bot_group_prefix_gate(monkeypatch):
     assert reply_with_prefix.group_id == 654321
     assert reply_with_prefix.text == "group ok"
     assert executed == ["/aelin status"]
+

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
-import { useChatStore } from '../stores/chatStore'
+import { useChatStore, type ChatSession } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 
@@ -56,7 +56,16 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
             aria-label={t('session.switch', { title: session.title })}
             title={session.title}
           >
-            <span className={cn('min-w-0 text-left', truncateTitle && 'max-w-[120px] truncate')}>{session.title}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={cn(
+                  'min-w-0 text-left',
+                  truncateTitle && 'max-w-[120px] truncate'
+                )}
+              >
+                {session.title}
+              </span>
+            </span>
           </button>
           {sessions.length > 1 && (
             <button

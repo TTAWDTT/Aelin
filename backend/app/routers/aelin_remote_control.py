@@ -13,7 +13,7 @@ from app.schemas import (
     RemoteControlExecuteResponse,
     RemoteControlStatusResponse,
 )
-from app.services.remote_control import (
+from app.services.device.remote_control import (
     RemoteCommandSource,
     build_remote_control_status,
     execute_remote_control_request,
@@ -55,3 +55,4 @@ def execute_remote_control(
         response=result.response,
         generated_at=datetime.now(timezone.utc),
     )
+

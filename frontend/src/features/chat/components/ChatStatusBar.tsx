@@ -1,17 +1,50 @@
+import type { AelinToolStep } from '@/shared/api/types'
 import { useChatI18n } from '../chatI18n'
+import { extractToolCalls } from '../traceUtils'
+import { PanelRightOpen } from 'lucide-react'
+import { useExecutionPaneStore } from '../stores/executionPaneStore'
+import { ProviderIcon } from './ProviderIcon'
 
 interface ChatStatusBarProps {
   isStreaming: boolean
   statusText: string
   compact?: boolean
+  trace?: AelinToolStep[]
+  onOpenExecution?: () => void
 }
 
-export function ChatStatusBar({ isStreaming, statusText, compact = false }: ChatStatusBarProps) {
+export function ChatStatusBar({
+  isStreaming,
+  statusText,
+  compact = false,
+  trace,
+  onOpenExecution,
+}: ChatStatusBarProps) {
   const { t } = useChatI18n()
+  const { open, setOpen, setFocusedMessageId, setSuppressAutoOpen } = useExecutionPaneStore()
 
-  if (!isStreaming && !statusText) return null
+  const hasTrace = !!trace && trace.length > 0
+  if (!isStreaming && !statusText && !hasTrace) return null
 
   const fallback = t('timeline.generating')
+  const tools = hasTrace ? extractToolCalls(trace) : []
+  const toolNames = Array.from(new Set(tools.map((call) => call.name || '').filter(Boolean)))
+  const joinedTools = toolNames.slice(0, 4).join(' · ')
+  const providers = Array.from(new Set(tools.map((call) => call.provider || '').filter(Boolean))).slice(0, 3)
+
+  let text = statusText || ''
+
+  if (!text && isStreaming && joinedTools) {
+    text = t('status.tools.invoking', { tools: joinedTools })
+  } else if (!text && !isStreaming && hasTrace && joinedTools) {
+    const totalCalls = tools.length || 1
+    text = t('status.tools.summary', {
+      count: totalCalls,
+      tools: joinedTools,
+    })
+  }
+
+  const displayText = text || fallback
 
   return (
     <div
@@ -20,9 +53,35 @@ export function ChatStatusBar({ isStreaming, statusText, compact = false }: Chat
       }`}
     >
       <div className="h-1.5 w-1.5 rounded-full bg-[var(--color-text)] animate-pulse" />
-      <span className="min-w-0 flex-1 truncate" title={statusText || fallback}>
-        {statusText || fallback}
+      <span className="min-w-0 flex-1 truncate" title={displayText}>
+        {displayText}
       </span>
+      {hasTrace && onOpenExecution && (
+        <button
+          type="button"
+          onClick={() => {
+            if (open) {
+              setOpen(false)
+              setSuppressAutoOpen(true)
+              setFocusedMessageId(null)
+            } else {
+              setSuppressAutoOpen(false)
+              onOpenExecution()
+            }
+          }}
+          aria-label={t('trace.executionPane.headerOpen')}
+          className="ml-1 aelin-rail-control h-8 w-8"
+        >
+          <PanelRightOpen size={12} />
+        </button>
+      )}
+      {hasTrace && providers.length > 0 && (
+        <div className="flex items-center gap-1 pl-1">
+          {providers.map((p) => (
+            <ProviderIcon key={p} provider={p} size="sm" />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

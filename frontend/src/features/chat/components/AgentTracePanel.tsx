@@ -12,7 +12,7 @@ import {
   Sparkles,
   XCircle,
 } from 'lucide-react'
-import type { AelinToolStep } from '@/shared/api/types'
+import type { RunNode } from '../traceUtils'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 
@@ -28,40 +28,33 @@ const STEP_ICON: Record<string, React.ComponentType<{ size?: number; className?:
   reply_verifier: CheckCircle2,
 }
 
-function compactTrace(trace: AelinToolStep[]): AelinToolStep[] {
-  const out: AelinToolStep[] = []
-  const indexByStage = new Map<string, number>()
-  for (const step of trace) {
-    const stage = String(step.stage || '').trim()
-    if (!stage) continue
-    const idx = indexByStage.get(stage)
+function compactRunNodes(nodes: RunNode[]): RunNode[] {
+  const out: RunNode[] = []
+  const indexByKey = new Map<string, number>()
+  for (const node of nodes) {
+    const key = `${node.type}:${node.label}`
+    const idx = indexByKey.get(key)
     if (idx == null) {
-      indexByStage.set(stage, out.length)
-      out.push(step)
+      indexByKey.set(key, out.length)
+      out.push(node)
       continue
     }
-    out[idx] = step
+    out[idx] = node
   }
   return out
 }
 
-function stageLabel(stage: string): string {
-  return stage
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (m) => m.toUpperCase())
-}
-
 export function AgentTracePanel({
-  trace,
+  nodes,
   live = false,
 }: {
-  trace: AelinToolStep[]
+  nodes: RunNode[]
   live?: boolean
 }) {
   const [open, setOpen] = useState(live)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const wasRunningRef = useRef(false)
-  const items = useMemo(() => compactTrace(trace), [trace])
+  const items = useMemo(() => compactRunNodes(nodes), [nodes])
   const preview = items.slice(-4)
   const runningCount = items.filter((it) => String(it.status || '').toLowerCase() === 'running').length
   const isRunning = live || runningCount > 0
@@ -109,7 +102,7 @@ export function AgentTracePanel({
             const status = String(step.status || '').toLowerCase()
             return (
               <span
-                key={`${step.stage}-${idx}`}
+                key={`${step.id}-${idx}`}
                 className={cn(
                   'rounded-full border px-2 py-1 text-[10px]',
                   status === 'completed' && 'border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text)]',
@@ -118,60 +111,70 @@ export function AgentTracePanel({
                   status === 'skipped' && 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]'
                 )}
               >
-                {stageLabel(step.stage)}
+                {step.label}
               </span>
             )
           })}
         </div>
       )}
 
-      {open && (
-        <div ref={bodyRef} className="mt-2 h-32 overflow-y-auto pr-1">
-          <ol className="space-y-1.5">
-            {items.map((step, idx) => {
-              const status = String(step.status || '').toLowerCase()
-              const Icon = STEP_ICON[step.stage] ?? CircleDashed
-              return (
-                <li key={`${step.stage}-${idx}`} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-                  <div className="flex items-start gap-2">
-                    <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                      <Icon size={12} className="text-[var(--color-text)]" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">{stageLabel(step.stage)}</div>
-                        <span className="text-[10px] text-[var(--color-text-muted)]">
-                          {t(
-                            status === 'running'
-                              ? 'trace.status.running'
-                              : status === 'completed'
-                                ? 'trace.status.completed'
-                                : status === 'skipped'
-                                  ? 'trace.status.skipped'
-                                  : status === 'failed'
-                                    ? 'trace.status.failed'
-                                    : 'trace.status.unknown'
-                          )}
-                        </span>
+      <div
+        ref={bodyRef}
+        className={cn(
+          'mt-2 pr-1 overflow-hidden transition-[max-height,opacity] duration-250 ease-out',
+          open ? 'max-h-[999px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none',
+        )}
+      >
+        <ol className="space-y-1.5">
+          {items.map((step, idx) => {
+            const status = String(step.status || '').toLowerCase()
+            const rawStage = String(step.raw.stage || '').trim()
+            const Icon = STEP_ICON[rawStage] ?? CircleDashed
+            return (
+              <li
+                key={`${step.id}-${idx}`}
+                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    <Icon size={12} className="text-[var(--color-text)]" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">
+                        {step.label}
                       </div>
-                      {step.detail && (
-                        <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                          {step.detail}
-                        </div>
-                      )}
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        {t(
+                          status === 'running'
+                            ? 'trace.status.running'
+                            : status === 'completed'
+                              ? 'trace.status.completed'
+                              : status === 'skipped'
+                                ? 'trace.status.skipped'
+                                : status === 'failed'
+                                  ? 'trace.status.failed'
+                                  : 'trace.status.unknown',
+                        )}
+                      </span>
                     </div>
-                    <span className="pt-0.5">
-                      {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
-                      {status === 'running' && <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />}
-                      {status === 'failed' && <XCircle size={13} className="text-[var(--color-text)]" />}
-                    </span>
+                    {step.raw.detail && (
+                      <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                        {step.raw.detail}
+                      </div>
+                    )}
                   </div>
-                </li>
-              )
-            })}
-          </ol>
-        </div>
-      )}
+                  <span className="pt-0.5">
+                    {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
+                    {status === 'running' && <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />}
+                    {status === 'failed' && <XCircle size={13} className="text-[var(--color-text)]" />}
+                  </span>
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      </div>
     </section>
   )
 }

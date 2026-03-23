@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import AttachmentChunk, AttachmentDocument, Base, User
-from app.services.aelin_attachment_service import AelinAttachmentService, AttachmentIngestError
+from app.services.aelin.attachment_service import AelinAttachmentService, AttachmentIngestError
 from app.settings import settings
 
 
@@ -325,3 +325,4 @@ def test_ocr_text_from_image_bytes_prefers_rapidocr_when_clear(monkeypatch, tmp_
     img.save(buff, format="PNG")
     out = service._ocr_text_from_image_bytes(buff.getvalue())
     assert "门电路逻辑功能验证" in out
+
