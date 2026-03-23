@@ -10,7 +10,12 @@ from sqlalchemy.exc import OperationalError
 import pytest
 
 import app.routers.aelin as aelin_router
-from app.services.aelin.loop_types import AelinAgentLoopResult, AgentLoopToolRun, AgentLoopTraceStep
+from app.services.aelin.loop_types import (
+    AelinAgentLoopResult,
+    AgentLoopToolRun,
+    AgentLoopTraceStep,
+    STOP_REASON_COMPLETED,
+)
 from app.services.web.web_search import WebSearchResult
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
@@ -336,7 +341,7 @@ def test_aelin_chat_agent_loop_executes_tool_and_returns_answer(monkeypatch):
         lambda **kwargs: AelinAgentLoopResult(
             ok=True,
             answer="这是 loop 的最终回答。",
-            stop_reason="completed",
+            stop_reason=STOP_REASON_COMPLETED,
             total_calls=1,
             write_calls=0,
             tool_runs=[

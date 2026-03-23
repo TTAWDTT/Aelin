@@ -11,6 +11,12 @@ from app.services.aelin.loop_types import (
     AgentLoopTraceStep,
     AgentLoopToolRun,
     STOP_REASON_CANCELLED,
+    STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS,
+    STOP_REASON_CLAIMS_SEARCH_WITHOUT_WEB_SEARCH_SUCCESS,
+    STOP_REASON_COMPLETED,
+    STOP_REASON_DEEPAGENTS_UNHANDLED_ERROR,
+    STOP_REASON_EMPTY_ANSWER,
+    STOP_REASON_LLM_NOT_CONFIGURED,
 )
 from app.services.aelin.tool_hub import AelinToolHub
 from app.services.foundation.llm import LLMService
@@ -150,7 +156,7 @@ def _answer_has_unsupported_action_claims(answer: str, tool_runs: list[AgentLoop
         )
     ):
         if not _has_successful_tool(tool_runs, "device", actions={"open_url", "open_aelin"}):
-            return "claims_opened_without_device_success"
+            return STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS
 
     if any(
         token in text
@@ -164,7 +170,7 @@ def _answer_has_unsupported_action_claims(answer: str, tool_runs: list[AgentLoop
         )
     ):
         if not _has_successful_tool(tool_runs, "web_search"):
-            return "claims_search_without_web_search_success"
+            return STOP_REASON_CLAIMS_SEARCH_WITHOUT_WEB_SEARCH_SUCCESS
 
     return ""
 
@@ -224,12 +230,18 @@ def run_deepagents_loop(
             return _loop_result(
                 ok=False,
                 answer="",
-                stop_reason="llm_not_configured",
+                stop_reason=STOP_REASON_LLM_NOT_CONFIGURED,
                 total_calls=0,
                 write_calls=0,
                 tool_runs=[],
-                trace_steps=[AgentLoopTraceStep(stage="agent_loop", status="failed", detail="llm_not_configured")],
-                error="llm_not_configured",
+                trace_steps=[
+                    AgentLoopTraceStep(
+                        stage="agent_loop",
+                        status="failed",
+                        detail=STOP_REASON_LLM_NOT_CONFIGURED,
+                    )
+                ],
+                error=STOP_REASON_LLM_NOT_CONFIGURED,
                 memory_snapshot="",
             )
         capabilities = _parse_capabilities_file(files_mapping)
@@ -321,7 +333,7 @@ def run_deepagents_loop(
         return _loop_result(
             ok=False,
             answer="",
-            stop_reason="deepagents_unhandled_error",
+            stop_reason=STOP_REASON_DEEPAGENTS_UNHANDLED_ERROR,
             total_calls=0,
             write_calls=0,
             tool_runs=[],
@@ -329,7 +341,7 @@ def run_deepagents_loop(
                 AgentLoopTraceStep(
                     stage="agent_loop",
                     status="failed",
-                    detail=f"deepagents_unhandled_error:{str(exc)[:160]}",
+                    detail=f"{STOP_REASON_DEEPAGENTS_UNHANDLED_ERROR}:{str(exc)[:160]}",
                 )
             ],
             error=str(exc)[:200],
@@ -340,7 +352,7 @@ def run_deepagents_loop(
         return _loop_result(
             ok=False,
             answer="",
-            stop_reason="empty_answer",
+            stop_reason=STOP_REASON_EMPTY_ANSWER,
             total_calls=0,
             write_calls=0,
             tool_runs=tool_runs,
@@ -355,7 +367,7 @@ def run_deepagents_loop(
     return _loop_result(
         ok=True,
         answer=answer.strip(),
-        stop_reason="completed",
+        stop_reason=STOP_REASON_COMPLETED,
         total_calls=usage.total_calls,
         write_calls=usage.write_calls,
         tool_runs=tool_runs,

@@ -6,6 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage
+from app.services.aelin.loop_types import (
+    STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS,
+)
 from app.services.aelin.tool_hub import AelinToolHub
 from app.services.web.web_search import WebSearchResult
 from app.services.tools.tools_device import tool_device, tool_screen_get
@@ -598,7 +601,7 @@ def test_deepagents_loop_rejects_open_claim_without_device_success(monkeypatch):
     )
 
     assert result.ok is False
-    assert result.stop_reason == "claims_opened_without_device_success"
+    assert result.stop_reason == STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS
     assert any(step.stage == "runtime.capabilities" for step in result.trace_steps)
 
 

@@ -8,7 +8,12 @@ import app.services.aelin.core_support as aelin_core_support
 import app.services.foundation.llm as llm_service
 import app.services.aelin.runtime as aelin_runtime
 from app.schemas import AelinChatRequest, AgentConfigOut
-from app.services.aelin.loop_types import AelinAgentLoopResult, STOP_REASON_CANCELLED
+from app.services.aelin.loop_types import (
+    AelinAgentLoopResult,
+    STOP_REASON_CANCELLED,
+    STOP_REASON_COMPLETED,
+    STOP_REASON_FINAL_ANSWER,
+)
 
 
 class _FakeConfiguredService:
@@ -64,7 +69,7 @@ def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
     monkeypatch.setattr(aelin_core, "run_deepagents_loop", lambda **kwargs: AelinAgentLoopResult(
         ok=True,
         answer="ok",
-        stop_reason="final_answer",
+        stop_reason=STOP_REASON_FINAL_ANSWER,
         total_calls=0,
         write_calls=0,
         tool_runs=[],
@@ -100,7 +105,7 @@ def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(
         return AelinAgentLoopResult(
             ok=True,
             answer="ok",
-            stop_reason="final_answer",
+            stop_reason=STOP_REASON_FINAL_ANSWER,
             total_calls=0,
             write_calls=0,
             tool_runs=[],
@@ -144,7 +149,7 @@ def test_try_agent_loop_chat_forwards_images_and_cancel_token(monkeypatch):
         return AelinAgentLoopResult(
             ok=True,
             answer="ok",
-            stop_reason="completed",
+            stop_reason=STOP_REASON_COMPLETED,
             total_calls=0,
             write_calls=0,
             tool_runs=[],
@@ -199,7 +204,7 @@ def test_try_agent_loop_chat_preserves_system_history(monkeypatch):
         return AelinAgentLoopResult(
             ok=True,
             answer="ok",
-            stop_reason="completed",
+            stop_reason=STOP_REASON_COMPLETED,
             total_calls=0,
             write_calls=0,
             tool_runs=[],

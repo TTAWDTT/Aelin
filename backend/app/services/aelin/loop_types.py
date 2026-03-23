@@ -12,6 +12,13 @@ def now_ms() -> int:
 # Common stop_reason values for AelinAgentLoopResult. Keeping them in one place
 # avoids scattered string literals across core and DeepAgents bridge code.
 STOP_REASON_CANCELLED = "cancelled"
+STOP_REASON_COMPLETED = "completed"
+STOP_REASON_LLM_NOT_CONFIGURED = "llm_not_configured"
+STOP_REASON_DEEPAGENTS_UNHANDLED_ERROR = "deepagents_unhandled_error"
+STOP_REASON_EMPTY_ANSWER = "empty_answer"
+STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS = "claims_opened_without_device_success"
+STOP_REASON_CLAIMS_SEARCH_WITHOUT_WEB_SEARCH_SUCCESS = "claims_search_without_web_search_success"
+STOP_REASON_FINAL_ANSWER = "final_answer"
 
 
 @dataclass
