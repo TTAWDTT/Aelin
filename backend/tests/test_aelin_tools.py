@@ -659,6 +659,56 @@ def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
     }
 
 
+def test_deepagents_loop_preserves_system_history(monkeypatch):
+    from app.services.deepagents import deepagents_loop as dloop
+
+    captured: dict[str, object] = {}
+
+    class _FakeAgent:
+        def invoke(self, payload):  # noqa: ANN001
+            captured["payload"] = payload
+            return {"answer": "ok"}
+
+    def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
+        _ = kwargs
+        return (
+            _FakeAgent(),
+            ToolPolicyUsage(),
+            [],
+            {
+                "/runtime/capabilities.json": {
+                    "content": [
+                        "{",
+                        '  "tools": ["web_search", "device"]',
+                        "}",
+                    ]
+                }
+            },
+        )
+
+    monkeypatch.setattr(dloop, "build_chat_agent", _fake_build_chat_agent)
+    result = dloop.run_deepagents_loop(
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        tool_hub=SimpleNamespace(),
+        policy=AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        query="继续",
+        memory_summary="",
+        history_turns=[
+            {"role": "system", "content": "你是系统消息"},
+            {"role": "user", "content": "你好"},
+        ],
+    )
+
+    assert result.ok is True
+    payload = dict(captured["payload"])
+    assert payload["messages"] == [
+        {"role": "system", "content": "你是系统消息"},
+        {"role": "user", "content": "你好"},
+        {"role": "user", "content": "继续"},
+    ]
+
+
 def test_deepagents_build_chat_tools_abort_when_cancelled(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 

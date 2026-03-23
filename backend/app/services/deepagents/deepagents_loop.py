@@ -244,7 +244,7 @@ def run_deepagents_loop(
             content = str(turn.get("content") or "").strip()
             if not role or not content:
                 continue
-            if role not in {"user", "assistant"}:
+            if role not in {"user", "assistant", "system"}:
                 continue
             messages.append({"role": role, "content": content})
 

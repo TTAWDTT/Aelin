@@ -102,7 +102,7 @@ def _normalize_history(raw_turns: list[Any]) -> list[dict[str, str]]:
     for item in raw_turns[-12:]:
         role = str(getattr(item, "role", "") or "").strip().lower()
         content = str(getattr(item, "content", "") or "").strip()
-        if role not in {"user", "assistant"}:
+        if role not in {"user", "assistant", "system"}:
             continue
         if not content:
             continue
@@ -418,6 +418,9 @@ def _try_agent_loop_chat(
             ts=_now_ms(),
         )
         _emit_trace(tool_trace)
+
+    if _is_cancelled(cancel_token) or str(result.stop_reason or "").strip() == "cancelled":
+        return None
 
     if not bool(result.ok) or not str(result.answer or "").strip():
         _ensure_attachment_prefetch()
