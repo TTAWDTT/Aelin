@@ -14,6 +14,11 @@ from app.services.aelin.loop_types import (
     STOP_REASON_COMPLETED,
     STOP_REASON_FINAL_ANSWER,
 )
+from tests.aelin_deepagents_test_utils import (
+    _FakeRunner,
+    _FakeToolHub,
+    _reset_fakes,
+)
 
 
 class _FakeConfiguredService:
@@ -28,37 +33,6 @@ class _FakeConfiguredService:
 class _FakeUnconfiguredService(_FakeConfiguredService):
     def is_configured(self) -> bool:
         return False
-
-
-class _FakeToolHub:
-    instances: list["_FakeToolHub"] = []
-
-    def __init__(self, **kwargs) -> None:
-        self.kwargs = kwargs
-        self.workspace = str(kwargs.get("workspace") or "default")
-        self.user_id = int(kwargs.get("user_id") or 0)
-        _FakeToolHub.instances.append(self)
-
-
-class _FakeRunner:
-    calls: list[dict] = []
-
-    def __init__(self, **kwargs) -> None:
-        # Mirror the DeepAgents bridge constructor surface without depending
-        # on the actual implementation, so this fake can be injected via
-        # monkeypatch in tests.
-        self.kwargs = kwargs
-
-    def __call__(self, invoke_payload):
-        # DeepAgents agent is invoked as a callable with {"messages": ...}
-        # and optional "files" mapping; record the payload for assertions.
-        _FakeRunner.calls.append(dict(invoke_payload))
-        return SimpleNamespace(content="ok")
-
-
-def _reset_fakes() -> None:
-    _FakeToolHub.instances.clear()
-    _FakeRunner.calls.clear()
 
 
 def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkeypatch):
