@@ -211,19 +211,27 @@ def _invoke_tool(
     if error:
         summary = f"{name} error: {error}"
     else:
-        scope = ""
+        # Prefer an explicit summary from the tool result when present.
         try:
-            scope = str(result.get("scope") or "")[:80]
+            summary_field = str(result.get("summary") or "").strip()
         except Exception:
-            scope = ""
-        if scope:
-            summary = f"{name} -> {scope}"
+            summary_field = ""
+        if summary_field:
+            summary = f"{name}: {summary_field[:160]}"
         else:
-            total = result.get("total")
-            if isinstance(total, int):
-                summary = f"{name} total={total}"
+            scope = ""
+            try:
+                scope = str(result.get("scope") or "")[:80]
+            except Exception:
+                scope = ""
+            if scope:
+                summary = f"{name} -> {scope}"
             else:
-                summary = f"{name}({len(args)} args)"
+                total = result.get("total")
+                if isinstance(total, int):
+                    summary = f"{name} total={total}"
+                else:
+                    summary = f"{name}({len(args)} args)"
 
     tool_runs.append(
         {

@@ -77,17 +77,17 @@
 
 ## 4. 能力服务与工具层接线确认
 
-- [ ] 4.1 附件服务与 DeepAgents 工具
-  - [ ] 确认附件上传/索引 API 不需要改变，仅需保证 DeepAgents 工具（file search）能获取 `attachment_ids` / 查询条件。
-  - [ ] 在 DeepAgents graph 中确认 file 工具调用路径，确保在新壳下行为不变。
+- [x] 4.1 附件服务与 DeepAgents 工具
+  - [x] 确认附件上传/索引 API 不需要改变，仅需保证 DeepAgents 工具（file search）能获取 `attachment_ids` / 查询条件：`tool_attachment_search` 通过 `attachment_ids` 参数与 `AelinToolHub._available_attachment_ids` 读取当前会话可用附件，行为与旧链路一致。
+  - [x] 在 DeepAgents graph 中确认 file 工具调用路径，确保在新壳下行为不变：`build_chat_tools` 显式注册 `"attachment_search"`，并通过 `_invoke_tool` 记录调用轨迹与摘要。
 
-- [ ] 4.2 web_search / device / GWS 工具接线
-  - [ ] 为 `web_search` / `device` / `screen_get` / `google_workspace` 等工具检查 DeepAgents 事件输出：确保工具调用信息足够丰富，便于前端展示。
-  - [ ] 如有必要，微调工具 wrapper，使其在保持能力不变的前提下，多输出一点结构化数据（例如 URL、选择的 provider、执行结果摘要）。
+- [x] 4.2 web_search / device / GWS 工具接线
+  - [x] 为 `web_search` / `device` / `screen_get` / `google_workspace` 等工具检查 DeepAgents 事件输出：所有工具结果通过 `_invoke_tool` 统一记录为 `tool_runs`，包含 `name/status/is_write/latency_ms` 以及结构化 `result`。
+  - [x] 微调工具 wrapper / 轨迹汇总逻辑，使其在保持能力不变的前提下，多输出结构化摘要字段：`_invoke_tool` 现在优先使用工具返回的 `summary` 字段，其次回退到 `scope` / `total` / 参数数量生成简短摘要，前端 Execution Pane 基于该摘要渲染每次调用。
 
-- [ ] 4.3 skills 与 AGENTS.md 记忆
-  - [ ] 复核 DeepAgents skills 挂载方式，确保新的壳层仍然完全遵循 DeepAgents 官方 skills 规范（含 `SKILL.md`、脚本与引用路径）。
-  - [ ] 确认记忆仍然完全基于 `/memory/AGENTS.md` + DeepAgents MemoryMiddleware，Aelin 侧不再有任何额外的 DB 记忆或上下文拼装逻辑参与 agent 决策。
+- [x] 4.3 skills 与 AGENTS.md 记忆
+  - [x] 复核 DeepAgents skills 挂载方式：`build_chat_agent` 自 `backend/deepagents_skills/` 与 `settings.deepagents_extra_skills_dir` 挂载所有 `SKILL.md` 及其附属文件到 `/skills/aelin/*` 与 `/skills/external/*`，并以虚拟目录列表形式传入 `create_deep_agent(..., skills=skill_sources)`，完全遵循 DeepAgents skills 规范。
+  - [x] 确认记忆仍然完全基于 `/memory/AGENTS.md` + DeepAgents MemoryMiddleware：`build_chat_agent` 将 `memory_summary` 封装为单一 `/memory/AGENTS.md` 文件并传入 `create_deep_agent(..., memory=memory_paths)`，Aelin 不再向 DeepAgents 传入任何额外 DB 记忆结构；外部 `/aelin/context` 等只读接口也仅基于 AGENTS.md 的投影（详见 `deepagents_arch.md`）。
 
 ## 5. 收尾与清理
 
