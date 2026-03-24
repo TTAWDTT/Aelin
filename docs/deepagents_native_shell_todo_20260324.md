@@ -4,18 +4,18 @@
 
 ## 1. DeepAgents 原生壳设计与后端路由
 
-- [ ] 1.1 选定并记录 DeepAgents 推荐的 streaming 协议
-  - [ ] 对照 DeepAgents 官方文档，确认当前推荐的 `agent.stream()` streaming 协议（例如 `version: "v2"`、`type: "updates" | "messages" | "custom"` 等字段）。
-  - [ ] 列出我们计划在后端“原样透出”的事件字段（尽量全部保留），包括：事件类型、节点/工具名称、输入输出、错误、结束标记等。
-  - [ ] 在 docs 中补充一节“DeepAgents 原生 Streaming 协议说明”，作为前后端共同的契约文档。
+- [x] 1.1 选定并记录 DeepAgents 推荐的 streaming 协议
+  - [x] 对照 DeepAgents 官方文档，确认当前推荐的 `agent.stream()` streaming 协议（例如 `version: "v2"`、`type: "updates" | "messages" | "custom"` 等字段）。
+  - [x] 列出我们计划在后端“原样透出”的事件字段（尽量全部保留），包括：事件类型、节点/工具名称、输入输出、错误、结束标记等。
+  - [x] 在 docs 中补充一节“DeepAgents 原生 Streaming 协议说明”，作为前后端共同的契约文档。
 
-- [ ] 1.2 新建 DeepAgents 原生 HTTP/SSE 路由
-  - [ ] 在后端（FastAPI）中新增类似 `/api/v1/deepagents/chat/stream` 的 SSE 路由，内部直接调用 `agent.stream(input, config=...)`。
-  - [ ] 路由层负责：
-    - [ ] 用户认证（解析 token / session）。
-    - [ ] workspace / user_id / provider / model 归一化，组装为 DeepAgents 的 `config` / state。
-    - [ ] 将前端传入的 messages / images / attachment_ids 等映射到 DeepAgents 期望的输入结构。
-  - [ ] SSE 事件写出时，尽量按 DeepAgents streaming chunk 原样发送，只增加必要的 `event:` 包装，不再重写 stop_reason 或 tool_trace。
+- [x] 1.2 新建 DeepAgents 原生 HTTP/SSE 路由
+  - [x] 在后端（FastAPI）中新增类似 `/api/v1/deepagents/chat/stream` 的 SSE 路由，内部直接调用 `agent.stream(input, config=...)`。
+  - [x] 路由层负责：
+    - [x] 用户认证（解析 token / session）。
+    - [x] workspace / user_id / provider / model 归一化，组装为 DeepAgents 的 `config` / state。
+    - [x] 将前端传入的 messages / images / attachment_ids 等映射到 DeepAgents 期望的输入结构。
+  - [x] SSE 事件写出时，尽量按 DeepAgents streaming chunk 原样发送，只增加必要的 `event:` 包装，不再重写 stop_reason 或 tool_trace。
 
 - [ ] 1.3 DeepAgents graph 构造与壳层胶水
   - [ ] 复核并更新 `build_chat_agent()` / `build_chat_graph()`：确保所有工具、记忆、中间件配置都符合 DeepAgents 最新推荐（包括 MemoryMiddleware、StateBackend、SkillsBackend 等）。
