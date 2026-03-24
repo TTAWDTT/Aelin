@@ -80,14 +80,14 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
   }
 
   debugLog('request_start', {
-    url: `${BASE}/api/v1/aelin/chat/stream`,
+    url: `${BASE}/api/v1/deepagents/chat/stream`,
     source: body?.source || 'chat_ui',
     historyCount: Array.isArray(body?.history) ? body.history.length : 0,
     imageCount: Array.isArray(body?.images) ? body.images.length : 0,
   })
   let hasTraceSteps = false
 
-  fetch(`${BASE}/api/v1/aelin/chat/stream`, {
+  fetch(`${BASE}/api/v1/deepagents/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(body),
@@ -167,6 +167,22 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
         case 'ping':
           // Keepalive heartbeat from backend; no UI mutation needed.
           return
+        case 'messages': {
+          // DeepAgents v2 streaming chunks where type === "messages". We only
+          // rely on the textual delta here so that the UI can stream the
+          // answer; richer run-graph rendering will be handled by a separate
+          // layer built on top of the raw chunk stream.
+          const text =
+            typeof payload?.data?.content === 'string'
+              ? payload.data.content
+              : typeof payload?.content === 'string'
+                ? payload.content
+                : ''
+          if (text) {
+            callbacks.onReplyChunk?.(text)
+          }
+          return
+        }
         case 'final': {
           const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
           if (Array.isArray(result.tool_trace) && !hasTraceSteps) {
