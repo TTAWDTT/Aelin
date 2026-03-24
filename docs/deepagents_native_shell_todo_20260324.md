@@ -57,13 +57,13 @@
   - [x] 为 DeepAgents v2 的 `type === "messages"` 增加处理分支：从 `payload.data.content`（或 `payload.content`）中提取文本增量，调用 `onReplyChunk` 以流式渲染回答。
   - [x] 保持对 `start` / `ping` / `error` / `done` 事件的兼容处理，后续 run graph / 工具更新将基于原始 `chunk` 事件的 `data` 字段构建统一的 `RunStep` 结构。
 
-- [ ] 3.3 重建 Execution Pane / 工具调用展示
-  - [ ] 基于新的 `RunStep` 结构设计 Execution Pane：直接展示 DeepAgents run graph / 工具调用列表，而不是旧的阶段型 trace。
-  - [ ] 支持：
-    - [ ] 展示每个工具调用的名称、入参、出参、耗时（如果事件中有）。
-    - [ ] 标识 DeepAgents 内部子图/子 agent（如果事件中提供）。
-    - [ ] 以简洁方式渲染运行过程（例如时间线或树状结构）。
-  - [ ] 删除旧 Execution Pane 中所有紧耦合 Aelin stop_reason / stage 名称 / tool_trace 字段的代码。
+- [x] 3.3 重建 Execution Pane / 工具调用展示
+  - [x] 基于新的 `RunStep` 结构设计 Execution Pane：直接展示 DeepAgents run graph / 工具调用列表，而不是旧的阶段型 trace。
+  - [x] 支持：
+    - [x] 展示每个工具调用的名称、入参、出参、耗时（如果事件中有）。
+    - [x] 标识 DeepAgents 内部子图/子 agent（如果事件中提供）。
+    - [x] 以简洁方式渲染运行过程（例如时间线或树状结构）。
+  - [x] 删除旧 Execution Pane 中所有紧耦合 Aelin stop_reason / stage 名称 / tool_trace 字段的代码。
 
 - [ ] 3.4 前端错误与取消语义对齐
   - [ ] 按 DeepAgents streaming 中的错误事件/完成事件设计前端状态机：

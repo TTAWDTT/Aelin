@@ -1,6 +1,6 @@
-import type { AelinToolStep } from '@/shared/api/types'
+import type { DeepAgentsToolRun } from '@/shared/api/types'
 import { useChatI18n } from '../chatI18n'
-import { extractToolCalls } from '../traceUtils'
+import { extractToolCallsFromToolRuns } from '../traceUtils'
 import { PanelRightOpen } from 'lucide-react'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { ProviderIcon } from './ProviderIcon'
@@ -9,7 +9,7 @@ interface ChatStatusBarProps {
   isStreaming: boolean
   statusText: string
   compact?: boolean
-  trace?: AelinToolStep[]
+  toolRuns?: DeepAgentsToolRun[]
   onOpenExecution?: () => void
 }
 
@@ -17,17 +17,17 @@ export function ChatStatusBar({
   isStreaming,
   statusText,
   compact = false,
-  trace,
+  toolRuns,
   onOpenExecution,
 }: ChatStatusBarProps) {
   const { t } = useChatI18n()
   const { open, setOpen, setFocusedMessageId, setSuppressAutoOpen } = useExecutionPaneStore()
 
-  const hasTrace = !!trace && trace.length > 0
-  if (!isStreaming && !statusText && !hasTrace) return null
+  const hasRuns = !!toolRuns && toolRuns.length > 0
+  if (!isStreaming && !statusText && !hasRuns) return null
 
   const fallback = t('timeline.generating')
-  const tools = hasTrace ? extractToolCalls(trace) : []
+  const tools = hasRuns ? extractToolCallsFromToolRuns(toolRuns) : []
   const toolNames = Array.from(new Set(tools.map((call) => call.name || '').filter(Boolean)))
   const joinedTools = toolNames.slice(0, 4).join(' · ')
   const providers = Array.from(new Set(tools.map((call) => call.provider || '').filter(Boolean))).slice(0, 3)
@@ -36,7 +36,7 @@ export function ChatStatusBar({
 
   if (!text && isStreaming && joinedTools) {
     text = t('status.tools.invoking', { tools: joinedTools })
-  } else if (!text && !isStreaming && hasTrace && joinedTools) {
+  } else if (!text && !isStreaming && hasRuns && joinedTools) {
     const totalCalls = tools.length || 1
     text = t('status.tools.summary', {
       count: totalCalls,
@@ -56,7 +56,7 @@ export function ChatStatusBar({
       <span className="min-w-0 flex-1 truncate" title={displayText}>
         {displayText}
       </span>
-      {hasTrace && onOpenExecution && (
+      {hasRuns && onOpenExecution && (
         <button
           type="button"
           onClick={() => {
@@ -75,7 +75,7 @@ export function ChatStatusBar({
           <PanelRightOpen size={12} />
         </button>
       )}
-      {hasTrace && providers.length > 0 && (
+      {hasRuns && providers.length > 0 && (
         <div className="flex items-center gap-1 pl-1">
           {providers.map((p) => (
             <ProviderIcon key={p} provider={p} size="sm" />

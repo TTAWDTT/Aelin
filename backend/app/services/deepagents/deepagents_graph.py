@@ -205,6 +205,26 @@ def _invoke_tool(
         usage.write_calls += 1
     status = "completed" if bool(result.get("ok", True)) else "failed"
     error = "" if status == "completed" else str(result.get("error") or "")[:160]
+
+    # Provide a compact, human-friendly summary string for UI/trace rendering.
+    summary = ""
+    if error:
+        summary = f"{name} error: {error}"
+    else:
+        scope = ""
+        try:
+            scope = str(result.get("scope") or "")[:80]
+        except Exception:
+            scope = ""
+        if scope:
+            summary = f"{name} -> {scope}"
+        else:
+            total = result.get("total")
+            if isinstance(total, int):
+                summary = f"{name} total={total}"
+            else:
+                summary = f"{name}({len(args)} args)"
+
     tool_runs.append(
         {
             "call_index": call_index,
@@ -215,6 +235,7 @@ def _invoke_tool(
             "error": error,
             "is_write": decision.is_write,
             "latency_ms": latency_ms,
+            "summary": summary,
         }
     )
     return result

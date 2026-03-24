@@ -1,4 +1,10 @@
-import type { AelinChatRequest, AelinCitation, AelinAction, AelinToolStep } from './types'
+import type {
+  AelinChatRequest,
+  AelinCitation,
+  AelinAction,
+  AelinToolStep,
+  DeepAgentsToolRun,
+} from './types'
 
 interface StreamCallbacks {
   onIntent?: (data: { intent_type: string; time_sensitivity?: string }) => void
@@ -7,6 +13,7 @@ interface StreamCallbacks {
   onCitations?: (citations: AelinCitation[]) => void
   onActions?: (actions: AelinAction[]) => void
   onReplyChunk?: (text: string) => void
+  onToolRuns?: (runs: DeepAgentsToolRun[]) => void
   onDone?: (data: { expression: string; memory_summary: string }) => void
   onError?: (error: { message: string; code?: string }) => void
 }
@@ -190,6 +197,12 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
               callbacks.onToolStep?.(step as AelinToolStep)
             }
           }
+
+          const rawToolRuns = payload.tool_runs ?? payload.data?.tool_runs
+          if (Array.isArray(rawToolRuns) && rawToolRuns.length > 0) {
+            callbacks.onToolRuns?.(rawToolRuns as DeepAgentsToolRun[])
+          }
+
           if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
           if (Array.isArray(result.actions)) callbacks.onActions?.(result.actions as AelinAction[])
           if (typeof result.answer === 'string' && result.answer) {

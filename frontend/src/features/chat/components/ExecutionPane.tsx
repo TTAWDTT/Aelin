@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { AelinToolStep } from '@/shared/api/types'
+import type { DeepAgentsToolRun } from '@/shared/api/types'
 import { AgentTracePanel } from './AgentTracePanel'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import {
-  buildRunNodes,
-  extractToolCalls,
+  buildRunNodesFromToolRuns,
+  extractToolCallsFromToolRuns,
   type RunNode,
   type ToolCallMeta,
 } from '../traceUtils'
@@ -13,34 +13,34 @@ import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { ProviderIcon } from './ProviderIcon'
 
 interface ExecutionPaneProps {
-  trace: AelinToolStep[]
+  toolRuns: DeepAgentsToolRun[]
   isStreaming: boolean
   compact?: boolean
 }
 
 type ExecutionTab = 'aelin' | 'tools'
 
-export function ExecutionPane({ trace, isStreaming, compact = false }: ExecutionPaneProps) {
+export function ExecutionPane({ toolRuns, isStreaming, compact = false }: ExecutionPaneProps) {
   const { t } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const hasTrace = useMemo(() => trace && trace.length > 0, [trace])
-  const runNodes = useMemo<RunNode[]>(() => buildRunNodes(trace), [trace])
-  const toolCalls = useMemo(() => extractToolCalls(trace), [trace])
+  const hasRuns = useMemo(() => toolRuns && toolRuns.length > 0, [toolRuns])
+  const runNodes = useMemo<RunNode[]>(() => buildRunNodesFromToolRuns(toolRuns), [toolRuns])
+  const toolCalls = useMemo(() => extractToolCallsFromToolRuns(toolRuns), [toolRuns])
 
   const agentNodes = useMemo(
-    () => runNodes.filter((n) => n.type === 'preflight' || n.type === 'agent' || n.type === 'plan' || n.type === 'error'),
+    () => runNodes,
     [runNodes],
   )
 
   const [tab, setTab] = useState<ExecutionTab>('aelin')
 
   useEffect(() => {
-    if (!hasTrace) return
+    if (!hasRuns) return
     setTab('aelin')
-  }, [hasTrace])
+  }, [hasRuns])
 
-  const label = hasTrace ? t('trace.executionPane.title') : t('trace.executionPane.empty')
-  const showTabs = hasTrace
+  const label = hasRuns ? t('trace.executionPane.title') : t('trace.executionPane.empty')
+  const showTabs = hasRuns
 
   return (
     <aside
@@ -61,13 +61,13 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
     >
       {open && (
         <div className="flex-1 overflow-y-auto px-2 pb-3 pt-1">
-          {!hasTrace && (
+          {!hasRuns && (
             <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
               {t('trace.executionPane.emptyDetail')}
             </p>
           )}
 
-          {hasTrace && (
+          {hasRuns && (
             <div className="flex h-full flex-col">
               {showTabs && (
                 <div

@@ -9,7 +9,7 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
-import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import type { AelinAttachmentUploadResponse, DeepAgentsToolRun } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
@@ -82,27 +82,27 @@ export function ChatView() {
     setFocusedMessageId(null)
   }, [activeSessionId, setFocusedMessageId])
 
-  const latestAssistantWithTrace = [...messages]
+  const latestAssistantWithRuns = [...messages]
     .reverse()
-    .find((m) => m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
+    .find((m) => m.role === 'assistant' && m.toolRuns && m.toolRuns.length)
 
-  const focusedTrace =
+  const focusedRuns: DeepAgentsToolRun[] | null =
     focusedMessageId && messages.length
-      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
-          ?.toolTrace ?? null
+      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant' && m.toolRuns && m.toolRuns.length)
+          ?.toolRuns ?? null
       : null
 
-  const executionTrace = focusedTrace ?? latestAssistantWithTrace?.toolTrace ?? []
+  const executionRuns: DeepAgentsToolRun[] = focusedRuns ?? latestAssistantWithRuns?.toolRuns ?? []
 
   // 桌面模式下，当本轮已经产生工具 trace 且正在流式时，自动展开右侧 ExecutionPane。
   useEffect(() => {
-    if (!compact && isStreaming && executionTrace.length > 0 && !open && !suppressAutoOpen) {
+    if (!compact && isStreaming && executionRuns.length > 0 && !open && !suppressAutoOpen) {
       setOpen(true)
     }
-  }, [compact, isStreaming, executionTrace.length, open, suppressAutoOpen, setOpen])
+  }, [compact, isStreaming, executionRuns.length, open, suppressAutoOpen, setOpen])
 
   const handleOpenExecutionForLatest = () => {
-    openForMessage(latestAssistantWithTrace?.id ?? null)
+    openForMessage(latestAssistantWithRuns?.id ?? null)
   }
 
   const handleOpenExecutionForMessage = (messageId: string | null) => {
@@ -121,7 +121,7 @@ export function ChatView() {
             isStreaming={isStreaming}
             statusText={statusText}
             compact={compact}
-            trace={executionTrace}
+            toolRuns={executionRuns}
             onOpenExecution={handleOpenExecutionForLatest}
           />
           <ChatTimeline
@@ -145,7 +145,7 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane trace={executionTrace} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane toolRuns={executionRuns} isStreaming={isStreaming} compact={compact} />
       </div>
     </PageScaffold>
   )

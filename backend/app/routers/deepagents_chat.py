@@ -163,10 +163,10 @@ def deepagents_chat_stream(
                     max_write_calls=int(
                         getattr(settings, "aelin_agent_loop_max_write_calls", 128) or 128
                     ),
-                    allow_write_tools=allow_write_tools,
+                allow_write_tools=allow_write_tools,
                 )
 
-                agent, _usage, _tool_runs, files_mapping = build_chat_agent(
+                agent, usage, tool_runs, files_mapping = build_chat_agent(
                     service=service,
                     provider=provider,
                     tool_hub=tool_hub,
@@ -247,6 +247,11 @@ def deepagents_chat_stream(
                     "final",
                     {
                         "finished_at": datetime.now(timezone.utc).isoformat(),
+                        "tool_runs": tool_runs,
+                        "usage": {
+                            "total_calls": int(getattr(usage, "total_calls", 0) or 0),
+                            "write_calls": int(getattr(usage, "write_calls", 0) or 0),
+                        },
                     },
                 )
             except Exception as exc:  # noqa: BLE001
@@ -338,4 +343,3 @@ def deepagents_chat_stream(
             "Connection": "keep-alive",
         },
     )
-

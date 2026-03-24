@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Brain,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   CircleDashed,
-  Compass,
   Database,
   Globe2,
-  Search,
   Sparkles,
   XCircle,
 } from 'lucide-react'
@@ -16,16 +13,12 @@ import type { RunNode } from '../traceUtils'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 
-const STEP_ICON: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
-  intent_lens: Brain,
-  plan_critic: Compass,
-  query_decomposer: Search,
-  local_search: Database,
-  file_memory_search: Database,
-  web_search: Globe2,
-  message_hub: CircleDashed,
-  generation: Sparkles,
-  reply_verifier: CheckCircle2,
+const STEP_ICON_BY_KIND: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  web: Globe2,
+  gws: Database,
+  device: CircleDashed,
+  core: Database,
+  llm_tool: Sparkles,
 }
 
 function compactRunNodes(nodes: RunNode[]): RunNode[] {
@@ -128,8 +121,8 @@ export function AgentTracePanel({
         <ol className="space-y-1.5">
           {items.map((step, idx) => {
             const status = String(step.status || '').toLowerCase()
-            const rawStage = String(step.raw.stage || '').trim()
-            const Icon = STEP_ICON[rawStage] ?? CircleDashed
+            const kind = String(step.meta?.kind || '').toLowerCase()
+            const Icon = STEP_ICON_BY_KIND[kind] ?? CircleDashed
             return (
               <li
                 key={`${step.id}-${idx}`}
@@ -158,11 +151,11 @@ export function AgentTracePanel({
                         )}
                       </span>
                     </div>
-                    {step.raw.detail && (
+                    {step.meta?.summary ? (
                       <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                        {step.raw.detail}
+                        {String(step.meta.summary)}
                       </div>
-                    )}
+                    ) : null}
                   </div>
                   <span className="pt-0.5">
                     {status === 'completed' && <CheckCircle2 size={13} className="text-[var(--color-text)]" />}
