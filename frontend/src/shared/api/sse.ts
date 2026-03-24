@@ -139,7 +139,13 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
           : typeof payload === 'string'
             ? payload
             : 'stream error'
-      callbacks.onError?.({ message })
+      const code =
+        typeof payload?.code === 'string'
+          ? payload.code
+          : typeof payload?.error === 'string'
+            ? payload.error
+            : undefined
+      callbacks.onError?.({ message, code })
     }
 
     const dispatch = (sseEvent: string, payload: any) => {

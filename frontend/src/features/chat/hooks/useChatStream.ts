@@ -146,8 +146,9 @@ export function useChatStream() {
     abortRef.current?.()
     abortRef.current = null
     store.setStreaming(false)
-    store.setStatusText('')
-  }, [store])
+    store.setStatusText(t('status.cancelled'))
+    store.setLastErrorCode(null)
+  }, [store, t])
 
   return { send, captureAndSend, uploadAttachments, sendWithAttachments, stop }
 }

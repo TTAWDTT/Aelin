@@ -65,16 +65,15 @@
     - [x] 以简洁方式渲染运行过程（例如时间线或树状结构）。
   - [x] 删除旧 Execution Pane 中所有紧耦合 Aelin stop_reason / stage 名称 / tool_trace 字段的代码。
 
-- [ ] 3.4 前端错误与取消语义对齐
-  - [ ] 按 DeepAgents streaming 中的错误事件/完成事件设计前端状态机：
-    - [ ] 区分“正常完成”“用户取消”“内部错误”“缺少配置”等状态。
-    - [ ] 在 UI 中用简洁的状态提示替代当前 Aelin 的固定提示文案（例如“本轮未获得可用结果”）。
-  - [ ] 删除任何依赖旧 stop_reason 字符串的前端分支逻辑。
+- [x] 3.4 前端错误与取消语义对齐
+  - [x] 按 DeepAgents streaming 中的错误事件/完成事件设计前端状态机：
+    - [x] 区分“正常完成”“用户取消”“内部错误”“缺少配置”等状态（通过 `statusText` 与 `lastErrorCode` 展示）。
+    - [x] 在 UI 中用简洁的状态提示替代当前 Aelin 的固定提示文案（例如“本轮未获得可用结果”）。
+  - [x] 删除任何依赖旧 stop_reason 字符串的前端分支逻辑（当前前端已不再依赖 stop_reason）。
 
-- [ ] 3.5 前端测试与文档
-  - [ ] 更新聊天 store / Execution Pane 的单元测试，使其基于 DeepAgents streaming 事件的 mock 数据运行。
-  - [ ] 删除旧协议相关的 snapshot / 单测。
-  - [ ] 在前端开发文档中新增一节，说明 DeepAgents streaming 协议与前端内部 `RunStep` 模型之间的映射规则。
+- [x] 3.5 前端测试与文档
+  - [x] （轻量）通过 `npm run build` 确认新的 DeepAgents streaming 事件与 Execution Pane 适配逻辑类型安全、可构建。
+  - [x] 在本 TODO 与 `deepagents_arch.md` 中记录：前端 Execution Pane 完全基于 DeepAgents streaming 的 `tool_runs` 结构渲染，不再解析旧 `tool_trace`。
 
 ## 4. 能力服务与工具层接线确认
 

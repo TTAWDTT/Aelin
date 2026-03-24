@@ -30,6 +30,7 @@ interface ChatStore {
   activeSessionId: string | null
   isStreaming: boolean
   statusText: string
+  lastErrorCode: string | null
 
   createSession: (workspace?: string) => string
   switchSession: (id: string) => void
@@ -40,6 +41,7 @@ interface ChatStore {
   appendContent: (sessionId: string, chunk: string) => void
   setStreaming: (v: boolean) => void
   setStatusText: (v: string) => void
+  setLastErrorCode: (code: string | null) => void
   getActiveSession: () => ChatSession | undefined
 }
 
@@ -50,6 +52,7 @@ export const useChatStore = create<ChatStore>()(
       activeSessionId: null,
       isStreaming: false,
       statusText: '',
+      lastErrorCode: null,
 
       createSession: (workspace = 'default') => {
         const id = crypto.randomUUID()
@@ -99,6 +102,7 @@ export const useChatStore = create<ChatStore>()(
 
       setStreaming: (v) => set({ isStreaming: v }),
       setStatusText: (v) => set({ statusText: v }),
+      setLastErrorCode: (code) => set({ lastErrorCode: code }),
       getActiveSession: () => {
         const s = get()
         return s.sessions.find(x => x.id === s.activeSessionId)

@@ -149,6 +149,7 @@ export function buildStreamCallbacks(params: {
     }
     params.store.setStreaming(false)
     params.store.setStatusText('')
+    params.store.setLastErrorCode(null)
   }
 
   return {
@@ -173,7 +174,7 @@ export function buildStreamCallbacks(params: {
       })
       finalize()
     },
-    onError: (error: { message: string }) => {
+    onError: (error: { message: string; code?: string }) => {
       // 仅在当前助手消息尚无任何内容时，才在对话中插入可见错误提示。
       // 若已经有部分或完整回答（例如 agent_loop partial_result），
       // 则将网络/传输异常视为非致命，不再打断用户视线。
@@ -189,6 +190,9 @@ export function buildStreamCallbacks(params: {
 
       if (!hasAnswer) {
         params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
+      }
+      if (error.code) {
+        params.store.setLastErrorCode(String(error.code))
       }
       finalize()
     },

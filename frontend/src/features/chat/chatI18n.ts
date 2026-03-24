@@ -12,6 +12,9 @@ type ChatKeys =
   | 'error.screenshot'
   | 'error.attach.process'
   | 'error.attach.send'
+  | 'error.llm.notConfigured'
+  | 'error.llm.generic'
+  | 'status.cancelled'
   | 'nav.title'
   | 'nav.subtitle'
   | 'empty.greeting'
@@ -71,6 +74,8 @@ const ZH: Record<ChatKeys, string> = {
   'error.screenshot': '截图失败，请稍后重试',
   'error.attach.process': '附件处理失败，请稍后重试',
   'error.attach.send': '附件发送失败，请稍后重试',
+  'error.llm.notConfigured': '当前会话未配置可用模型，请在设置中先完成模型配置。',
+  'error.llm.generic': '本轮对话发生错误，请稍后重试。',
   'nav.title': 'Chat',
   'nav.subtitle': 'Aelin 在线中',
   'empty.greeting': '你好，欢迎回来',
@@ -92,6 +97,7 @@ const ZH: Record<ChatKeys, string> = {
   'composer.send.stop': '停止生成',
   'composer.send.send': '发送消息',
   'timeline.generating': '正在生成…',
+  'status.cancelled': '已停止本轮对话。',
   'trace.title': 'Agent 链路',
   'trace.steps': '{count} 步',
   'trace.status.running': '进行中',
@@ -131,6 +137,8 @@ const EN: Record<ChatKeys, string> = {
   'error.screenshot': 'Screenshot failed, please try again later.',
   'error.attach.process': 'Attachment processing failed, please try again later.',
   'error.attach.send': 'Attachment sending failed, please try again later.',
+  'error.llm.notConfigured': 'No model is configured for this workspace. Please configure a model in Settings first.',
+  'error.llm.generic': 'Something went wrong in this turn. Please try again.',
   'nav.title': 'Chat',
   'nav.subtitle': 'Aelin is online',
   'empty.greeting': 'Hi, welcome back',
@@ -153,6 +161,7 @@ const EN: Record<ChatKeys, string> = {
   'composer.send.stop': 'Stop generation',
   'composer.send.send': 'Send message',
   'timeline.generating': 'Generating…',
+  'status.cancelled': 'This turn has been cancelled.',
   'trace.title': 'Agent trace',
   'trace.steps': '{count} steps',
   'trace.status.running': 'running',
