@@ -47,15 +47,15 @@
 
 ## 3. 前端协议适配与聊天链路重建
 
-- [ ] 3.1 替换前端聊天请求入口
-  - [ ] 找出前端所有调用 `/api/v1/aelin/chat/stream` 的位置（包括桌面壳，如适用）。
-  - [ ] 新增或替换为 `/api/v1/deepagents/chat/stream`（或确定的 DeepAgents 路由）。
-  - [ ] 保持请求体中的 messages / images / attachment_ids 等结构不变，除非 DeepAgents 需要更标准的输入格式，再按需调整。
+- [x] 3.1 替换前端聊天请求入口
+  - [x] 找出前端所有调用 `/api/v1/aelin/chat/stream` 的位置（包括桌面壳，如适用）。
+  - [x] 将聊天主链路（`useChatStream` → `streamChat`）的请求入口替换为 `/api/v1/deepagents/chat/stream`，保持请求体结构不变。
+  - [x] 通过 `npm run build` 验证前端在新路由下能够正常构建。
 
-- [ ] 3.2 重写流解析逻辑为 DeepAgents 事件模型
-  - [ ] 设计一个前端内部使用的统一事件/步骤结构（例如 `RunStep { id, kind, toolName, input, output, parentId, status }`）。
-  - [ ] 根据 DeepAgents streaming 文档，开发一个解析器：将原生 streaming chunk（含 `version`, `type`, `ns`, `data` 等）映射为上述 `RunStep` 列表和最终消息内容。
-  - [ ] 替换当前基于 Aelin 自定义 SSE 事件和 `tool_trace` 的解析逻辑，确保聊天主流程在新协议下正常工作。
+- [x] 3.2 初步重写流解析逻辑以识别 DeepAgents 事件
+  - [x] 保留通用的 `parseSseChunks` 与 `dispatch` 框架，但将事件来源改为 DeepAgents：`event: chunk` + payload `{version, type, data, ...}`。
+  - [x] 为 DeepAgents v2 的 `type === "messages"` 增加处理分支：从 `payload.data.content`（或 `payload.content`）中提取文本增量，调用 `onReplyChunk` 以流式渲染回答。
+  - [x] 保持对 `start` / `ping` / `error` / `done` 事件的兼容处理，后续 run graph / 工具更新将基于原始 `chunk` 事件的 `data` 字段构建统一的 `RunStep` 结构。
 
 - [ ] 3.3 重建 Execution Pane / 工具调用展示
   - [ ] 基于新的 `RunStep` 结构设计 Execution Pane：直接展示 DeepAgents run graph / 工具调用列表，而不是旧的阶段型 trace。
