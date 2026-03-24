@@ -11,8 +11,7 @@ from fastapi import APIRouter
 from sqlalchemy.orm import Session
 
 from app.models import User
-from app.schemas import AelinAction, AelinChatRequest, AelinChatResponse
-from app.services.aelin.chat_dispatch import dispatch_aelin_chat as _dispatch_aelin_chat_service
+from app.schemas import AelinAction, AelinChatRequest, AelinChatResponse, AelinToolStep
 from app.services.aelin.core_support import (
     _build_cached_base_context_bundle as _build_cached_base_context_bundle_inner,
     _build_context_bundle as _build_context_bundle_inner,
@@ -224,7 +223,30 @@ def _try_agent_loop_chat(
     )
 
 
-def _dispatch_aelin_chat(
+def _build_no_result_response(
+    payload: AelinChatRequest,
+) -> AelinChatResponse:
+    answer = "当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
+    return AelinChatResponse(
+        answer=answer,
+        expression=_pick_expression(payload.query, answer),
+        citations=[],
+        actions=[],
+        tool_trace=[
+            AelinToolStep(
+                stage="agent_loop",
+                status="failed",
+                detail="agent_loop_no_result",
+                count=0,
+                ts=_now_ms(),
+            )
+        ],
+        memory_summary="",
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+def run_chat_request(
     payload: AelinChatRequest,
     db: Session,
     current_user: User,
@@ -232,13 +254,13 @@ def _dispatch_aelin_chat(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> AelinChatResponse:
-    return _dispatch_aelin_chat_service(
+    response = _try_agent_loop_chat(
         payload,
         db,
         current_user,
         event_cb=event_cb,
         cancel_token=cancel_token,
-        try_agent_loop_chat=_try_agent_loop_chat,
-        pick_expression=_pick_expression,
-        now_ms=_now_ms,
     )
+    if response is not None:
+        return response
+    return _build_no_result_response(payload)

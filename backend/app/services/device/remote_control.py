@@ -11,10 +11,7 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.models import User
 from app.schemas import AelinChatRequest, AelinChatResponse, AelinToolStep, RemoteControlExecuteRequest
-from app.services.aelin.chat_dispatch import dispatch_aelin_chat
-from app.services.aelin.core import _try_agent_loop_chat
-from app.services.aelin.expressions import _pick_expression
-from app.services.aelin.streaming import _now_ms
+from app.services.aelin.core import run_chat_request
 from app.services.device.device_center import device_status_snapshot
 from app.settings import settings
 
@@ -138,15 +135,12 @@ def execute_remote_control_request(
     cancel_token: Any | None = None,
 ) -> RemoteControlExecutionResult:
     chat_payload = build_remote_chat_request(payload, source=source)
-    response = dispatch_aelin_chat(
+    response = run_chat_request(
         chat_payload,
         db,
         current_user,
         event_cb=event_cb,
         cancel_token=cancel_token,
-        try_agent_loop_chat=_try_agent_loop_chat,
-        pick_expression=_pick_expression,
-        now_ms=_now_ms,
     )
     ok, status = _derive_remote_execution_status(response)
     return RemoteControlExecutionResult(ok=ok, status=status, response=response)

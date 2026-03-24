@@ -23,7 +23,7 @@ def test_remote_control_execute_routes_into_agent_loop_dispatch(monkeypatch):
     headers = _auth_headers(client)
     captured: dict[str, object] = {}
 
-    def _fake_dispatch(payload, db, current_user, **kwargs):
+    def _fake_run_chat_request(payload, db, current_user, **kwargs):
         _ = db, current_user, kwargs
         captured["source"] = payload.source
         captured["query"] = payload.query
@@ -39,7 +39,7 @@ def test_remote_control_execute_routes_into_agent_loop_dispatch(monkeypatch):
             generated_at=datetime.now(timezone.utc),
         )
 
-    monkeypatch.setattr(remote_control, "dispatch_aelin_chat", _fake_dispatch)
+    monkeypatch.setattr(remote_control, "run_chat_request", _fake_run_chat_request)
 
     resp = client.post(
         "/api/v1/aelin/remote-control/execute",
@@ -69,7 +69,7 @@ def test_remote_control_execute_reports_agent_loop_failure(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
-    def _fake_dispatch(payload, db, current_user, **kwargs):
+    def _fake_run_chat_request(payload, db, current_user, **kwargs):
         _ = payload, db, current_user, kwargs
         return AelinChatResponse(
             answer="当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。",
@@ -89,7 +89,7 @@ def test_remote_control_execute_reports_agent_loop_failure(monkeypatch):
             generated_at=datetime.now(timezone.utc),
         )
 
-    monkeypatch.setattr(remote_control, "dispatch_aelin_chat", _fake_dispatch)
+    monkeypatch.setattr(remote_control, "run_chat_request", _fake_run_chat_request)
 
     resp = client.post(
         "/api/v1/aelin/remote-control/execute",

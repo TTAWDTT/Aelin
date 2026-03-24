@@ -69,16 +69,16 @@
 
 ## 4. 删除 `chat_dispatch.py` 与旧聊天 fallback 入口
 
-- [ ] 4.1 清理 `chat_dispatch.py`
-  - [ ] 删除 `dispatch_aelin_chat(...)` 这层旧聊天 fallback 入口
-  - [ ] 确认聊天主链只经由 DeepAgents 路由或直接 DeepAgents service
+- [x] 4.1 清理 `chat_dispatch.py`
+  - [x] 删除 `dispatch_aelin_chat(...)` 这层旧聊天 fallback 入口
+  - [x] 确认聊天主链只经由 DeepAgents 路由或直接 DeepAgents service
 
-- [ ] 4.2 调整调用方
-  - [ ] remote control / 其他入口如果仍调用 `dispatch_aelin_chat`，改为直接走新的 DeepAgents chat service
+- [x] 4.2 调整调用方
+  - [x] remote control / 其他入口如果仍调用 `dispatch_aelin_chat`，改为直接走新的 DeepAgents chat service
 
 验收标准：
-- [ ] `backend/app/services/aelin/chat_dispatch.py` 被删除
-- [ ] 仓库中不再有 `dispatch_aelin_chat` 作为聊天主入口
+- [x] `backend/app/services/aelin/chat_dispatch.py` 被删除
+- [x] 仓库中不再有 `dispatch_aelin_chat` 作为聊天主入口
 
 ---
 

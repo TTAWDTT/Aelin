@@ -16,7 +16,7 @@ from sqlalchemy import text
 from app.db import create_session
 from app.models import User
 from app.schemas import AelinChatRequest
-from app.services.aelin_core import _dispatch_aelin_chat
+from app.services.aelin.core import run_chat_request
 from app.settings import settings
 
 
@@ -41,7 +41,7 @@ def run_for_user(user_id: int, name: str, query: str) -> None:
             step = payload.get("step") or {}
             print("TRACE:", step.get("stage"), step.get("status"), "-", step.get("detail"))
 
-    resp = _dispatch_aelin_chat(payload, db, user, event_cb=_event_cb, cancel_token=None)
+    resp = run_chat_request(payload, db, user, event_cb=_event_cb, cancel_token=None)
     print("ANSWER:", repr(resp.answer))
     print("EXPRESSION:", resp.expression)
     print("TOOL_TRACE_STAGES:", {s.stage for s in resp.tool_trace})
