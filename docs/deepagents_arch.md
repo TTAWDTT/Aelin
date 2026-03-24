@@ -3,6 +3,19 @@
 > 目标：让 Aelin 从「自研 agent loop」彻底切换为「DeepAgents 中心」，自己只做外壳和本地能力；  
 > DeepAgents 负责规划、多轮、tool / plane 调用、skills、trace 与 subagents。
 
+## 当前状态（2026-03-24）
+
+- 聊天主链已经收敛为：
+  - `/api/v1/deepagents/chat/stream` 作为 DeepAgents 原生流式入口；
+  - `app/services/deepagents/deepagents_graph.py` 负责构造 agent / tools / skills / memory；
+  - `app/services/aelin/core.py` 只保留极薄的 chat glue（provider/workspace/memory/tool_hub/policy）。
+- 旧的 `dispatch_aelin_chat`、`AelinAgentLoopResult`、`loop_types.py`、附件 fallback 壳与旧 trace 桥接都已删除。
+- `remote_control` 与 Feishu / QQ bot 入口仍保留，但它们现在只通过 `run_chat_request(...)` / `execute_remote_control_request(...)` 使用 DeepAgents，不再依赖旧聊天壳。
+- 记忆唯一权威来源仍是 `/memory/AGENTS.md`；Aelin 不再向 DeepAgents 注入 DB 记忆结构。
+- 当前仍保留的 Aelin 兼容表面主要是：
+  - `/api/v1/aelin/context` 与附件/设备相关只读或能力型接口；
+  - `ChatResponse` 中的 `expression` / `citations` / `tool_trace` 字段，作为前端兼容字段继续存在，但已不再驱动主链架构设计。
+
 ---
 
 ## 0. 范围与前提

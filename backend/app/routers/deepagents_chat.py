@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
-from app.schemas import AelinChatRequest
+from app.schemas import ChatRequest
 from app.services.aelin.runtime import (
     normalize_workspace as _normalize_workspace,
     resolve_llm_service as _resolve_llm_service,
@@ -40,16 +40,17 @@ _LOG = logging.getLogger(__name__)
 
 @router.post("/chat/stream")
 def deepagents_chat_stream(
-    payload: AelinChatRequest,
+    payload: ChatRequest,
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """
     DeepAgents-native streaming endpoint.
 
-    与旧的 `/aelin/chat/stream` 不同，这里直接将 DeepAgents / LangGraph
-    的 streaming chunk 通过 SSE 透出，不再重新包装为 Aelin 自定义的
-    stop_reason / tool_trace 结构。
+    直接透出 DeepAgents / LangGraph 的 streaming chunk。
+
+    路由层只负责认证、workspace/provider 归一化以及 SSE 包装，
+    不再承担旧聊天壳的 trace/stop-reason 翻译职责。
     """
 
     def _event_iter():
