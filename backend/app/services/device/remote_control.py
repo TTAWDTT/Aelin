@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.models import User
-from app.schemas import ChatRequest, ChatResponse, ChatToolStep, RemoteControlExecuteRequest
-from app.services.aelin.core import run_chat_request
+from app.schemas import ChatRequest, ChatResponse, RemoteControlExecuteRequest
+from app.services.aelin.core import is_no_result_response, run_chat_request
 from app.services.device.device_center import device_status_snapshot
 from app.settings import settings
 
@@ -109,15 +109,7 @@ def build_remote_control_status() -> dict[str, Any]:
 
 def _derive_remote_execution_status(response: ChatResponse) -> tuple[bool, str]:
     answer = str(getattr(response, "answer", "") or "").strip()
-    trace = list(getattr(response, "tool_trace", []) or [])
-    fallback_failed = any(
-        str(getattr(step, "stage", "") or "") == "agent_loop"
-        and str(getattr(step, "status", "") or "") == "failed"
-        and "agent_loop_no_result" in str(getattr(step, "detail", "") or "")
-        for step in trace
-        if isinstance(step, ChatToolStep)
-    )
-    if fallback_failed:
+    if is_no_result_response(response):
         return False, "agent_loop_no_result"
     if not answer:
         return False, "empty_answer"

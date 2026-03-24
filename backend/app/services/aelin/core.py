@@ -39,6 +39,8 @@ _log = logging.getLogger(__name__)
 _file_memory = file_memory_bridge
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
+_NO_RESULT_DETAIL = "agent_loop_no_result"
+_NO_RESULT_ANSWER = "当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
 
 
 def _build_context_bundle(
@@ -226,7 +228,7 @@ def _try_agent_loop_chat(
 def _build_no_result_response(
     payload: ChatRequest,
 ) -> ChatResponse:
-    answer = "当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
+    answer = _NO_RESULT_ANSWER
     return ChatResponse(
         answer=answer,
         expression=_pick_expression(payload.query, answer),
@@ -236,7 +238,7 @@ def _build_no_result_response(
             ChatToolStep(
                 stage="agent_loop",
                 status="failed",
-                detail="agent_loop_no_result",
+                detail=_NO_RESULT_DETAIL,
                 count=0,
                 ts=_now_ms(),
             )
@@ -244,6 +246,20 @@ def _build_no_result_response(
         memory_summary="",
         generated_at=datetime.now(timezone.utc),
     )
+
+
+def is_no_result_response(response: ChatResponse | None) -> bool:
+    if response is None:
+        return False
+    answer = str(getattr(response, "answer", "") or "").strip()
+    if answer == _NO_RESULT_ANSWER:
+        return True
+    for step in list(getattr(response, "tool_trace", []) or []):
+        if str(getattr(step, "stage", "") or "") != "agent_loop":
+            continue
+        if _NO_RESULT_DETAIL in str(getattr(step, "detail", "") or ""):
+            return True
+    return False
 
 
 def run_chat_request(

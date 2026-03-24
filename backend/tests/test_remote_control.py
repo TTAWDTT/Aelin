@@ -11,7 +11,7 @@ import app.services.device.remote_control as remote_control
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from app.schemas import AelinChatResponse
+from app.schemas import ChatResponse
 from app.settings import settings
 from app.models import Base
 from app import crud
@@ -29,7 +29,7 @@ def test_remote_control_execute_routes_into_agent_loop_dispatch(monkeypatch):
         captured["query"] = payload.query
         captured["workspace"] = payload.workspace
         captured["source_metadata"] = payload.source_metadata
-        return AelinChatResponse(
+        return ChatResponse(
             answer="remote ok",
             expression="exp-04",
             citations=[],
@@ -71,20 +71,12 @@ def test_remote_control_execute_reports_agent_loop_failure(monkeypatch):
 
     def _fake_run_chat_request(payload, db, current_user, **kwargs):
         _ = payload, db, current_user, kwargs
-        return AelinChatResponse(
+        return ChatResponse(
             answer="当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。",
             expression="exp-04",
             citations=[],
             actions=[],
-            tool_trace=[
-                {
-                    "stage": "agent_loop",
-                    "status": "failed",
-                    "detail": "agent_loop_no_result",
-                    "count": 0,
-                    "ts": 0,
-                }
-            ],
+            tool_trace=[],
             memory_summary="",
             generated_at=datetime.now(timezone.utc),
         )
@@ -153,7 +145,7 @@ def test_feishu_bot_group_prefix_gate(monkeypatch):
     def _fake_execute(*args, **kwargs):
         payload = kwargs.get("payload")
         executed.append(str(getattr(payload, "text", "") or ""))
-        return AelinChatResponse(
+        return ChatResponse(
             answer="电脑状态正常",
             expression="exp-04",
             citations=[],
@@ -233,7 +225,7 @@ def test_qq_bot_private_message_routes_into_remote_control(monkeypatch):
     def _fake_execute(*args, **kwargs):
         payload = kwargs.get("payload")
         executed.append(str(getattr(payload, "text", "") or ""))
-        return AelinChatResponse(
+        return ChatResponse(
             answer="qq ok",
             expression="exp-04",
             citations=[],
@@ -356,7 +348,7 @@ def test_qq_bot_group_prefix_gate(monkeypatch):
     def _fake_execute(*args, **kwargs):
         payload = kwargs.get("payload")
         executed.append(str(getattr(payload, "text", "") or ""))
-        return AelinChatResponse(
+        return ChatResponse(
             answer="group ok",
             expression="exp-04",
             citations=[],

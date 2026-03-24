@@ -104,17 +104,17 @@
 
 ## 6. 清理 remote control / bot 的旧壳依赖
 
-- [ ] 6.1 检查 remote control
-  - [ ] 检查 `device/remote_control.py` 是否仍依赖 `AelinChatResponse` / `tool_trace` / `dispatch_aelin_chat`
-  - [ ] 改为消费新的 DeepAgents 最终结果
+- [x] 6.1 检查 remote control
+  - [x] 检查 `device/remote_control.py` 是否仍依赖 `AelinChatResponse` / `tool_trace` / `dispatch_aelin_chat`
+  - [x] 改为消费新的 DeepAgents 最终结果
 
-- [ ] 6.2 检查 Feishu / QQ bot
-  - [ ] 确认机器人链路不再依赖旧聊天兼容壳
-  - [ ] 删除对应桥接逻辑
+- [x] 6.2 检查 Feishu / QQ bot
+  - [x] 确认机器人链路不再依赖旧聊天兼容壳
+  - [x] 删除对应桥接逻辑
 
 验收标准：
-- [ ] remote control / bot 入口不再依赖旧聊天壳
-- [ ] DeepAgents 成为所有聊天能力入口的唯一内核
+- [x] remote control / bot 入口不再依赖旧聊天壳
+- [x] DeepAgents 成为所有聊天能力入口的唯一内核
 
 ---
 
