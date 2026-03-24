@@ -57,17 +57,15 @@ class AgentFocusItemOut(BaseModel):
     score: float
 
 
-class AelinChatRequest(BaseModel):
+class ChatRequest(BaseModel):
     query: str = Field(default="", max_length=1200)
     use_memory: bool = True
-    max_citations: int = Field(default=6, ge=1, le=20)
     workspace: str = Field(default="default", min_length=1, max_length=64)
     source: str = Field(default="chat_ui", min_length=1, max_length=32)
     source_metadata: dict[str, str] = Field(default_factory=dict)
-    images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
+    images: list["ImageInput"] = Field(default_factory=list, max_length=4)
     attachment_ids: list[int] = Field(default_factory=list, max_length=20)
-    history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
-    search_mode: str = Field(default="auto", min_length=1, max_length=16)
+    history: list["ChatHistoryTurn"] = Field(default_factory=list, max_length=20)
 
     @field_validator("query", mode="before")
     @classmethod
@@ -131,7 +129,7 @@ class AelinChatRequest(BaseModel):
         return normalize_positive_ints(value, cap=20)
 
     @model_validator(mode="after")
-    def _finalize_query(self) -> "AelinChatRequest":
+    def _finalize_query(self) -> "ChatRequest":
         if self.query:
             return self
         if self.images:
@@ -143,12 +141,12 @@ class AelinChatRequest(BaseModel):
         raise ValueError("query is empty")
 
 
-class AelinChatHistoryTurn(BaseModel):
+class ChatHistoryTurn(BaseModel):
     role: str = Field(min_length=1, max_length=16)
     content: str = Field(min_length=1, max_length=3000)
 
 
-class AelinImageInput(BaseModel):
+class ImageInput(BaseModel):
     data_url: str = Field(min_length=20, max_length=3_000_000)
     name: str = Field(default="", max_length=120)
 
@@ -166,7 +164,7 @@ class AelinAttachmentUploadResponse(BaseModel):
     deduplicated: bool = False
 
 
-class AelinCitation(BaseModel):
+class ChatCitation(BaseModel):
     message_id: int
     source: str
     source_label: str
@@ -177,14 +175,14 @@ class AelinCitation(BaseModel):
     score: float
 
 
-class AelinAction(BaseModel):
+class ChatAction(BaseModel):
     kind: str
     title: str
     detail: str = ""
     payload: dict[str, str] = Field(default_factory=dict)
 
 
-class AelinToolStep(BaseModel):
+class ChatToolStep(BaseModel):
     stage: str
     status: str = "completed"
     detail: str = ""
@@ -232,14 +230,23 @@ class AelinContextResponse(BaseModel):
     generated_at: datetime
 
 
-class AelinChatResponse(BaseModel):
+class ChatResponse(BaseModel):
     answer: str
     expression: str = "exp-04"
-    citations: list[AelinCitation] = Field(default_factory=list)
-    actions: list[AelinAction] = Field(default_factory=list)
-    tool_trace: list[AelinToolStep] = Field(default_factory=list)
+    citations: list[ChatCitation] = Field(default_factory=list)
+    actions: list[ChatAction] = Field(default_factory=list)
+    tool_trace: list[ChatToolStep] = Field(default_factory=list)
     memory_summary: str = ""
     generated_at: datetime
+
+
+AelinChatRequest = ChatRequest
+AelinChatHistoryTurn = ChatHistoryTurn
+AelinImageInput = ImageInput
+AelinCitation = ChatCitation
+AelinAction = ChatAction
+AelinToolStep = ChatToolStep
+AelinChatResponse = ChatResponse
 
 
 class RemoteControlExecuteRequest(BaseModel):
@@ -250,17 +257,16 @@ class RemoteControlExecuteRequest(BaseModel):
     source_open_id: str = Field(default="", max_length=128)
     source_chat_id: str = Field(default="", max_length=128)
     source_message_id: str = Field(default="", max_length=128)
-    history: list["AelinChatHistoryTurn"] = Field(default_factory=list, max_length=20)
-    images: list["AelinImageInput"] = Field(default_factory=list, max_length=4)
+    history: list["ChatHistoryTurn"] = Field(default_factory=list, max_length=20)
+    images: list["ImageInput"] = Field(default_factory=list, max_length=4)
     attachment_ids: list[int] = Field(default_factory=list, max_length=20)
-    search_mode: str = Field(default="auto", min_length=1, max_length=16)
 
 
 class RemoteControlExecuteResponse(BaseModel):
     ok: bool
     status: str = "completed"
     source: str = "remote_control"
-    response: AelinChatResponse
+    response: ChatResponse
     generated_at: datetime
 
 
@@ -369,6 +375,7 @@ class AgentConfigOut(BaseModel):
     base_url: str
     model: str
     temperature: float
+    verify_ssl: bool = True
     has_api_key: bool = False
     web_search_proxy_url: str = ""
 
@@ -378,6 +385,7 @@ class AgentConfigUpdate(BaseModel):
     base_url: Optional[str] = Field(None, min_length=1, max_length=2048)
     model: Optional[str] = Field(None, min_length=1, max_length=255)
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
+    verify_ssl: Optional[bool] = None
     api_key: Optional[str] = Field(None, min_length=1, max_length=4096)
     web_search_proxy_url: Optional[str] = Field(None, max_length=2048)
 

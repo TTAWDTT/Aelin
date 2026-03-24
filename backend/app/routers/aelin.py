@@ -5,7 +5,7 @@ from collections.abc import Callable
 from sqlalchemy.orm import Session
 
 from app.models import User
-from app.schemas import AelinChatRequest, AelinChatResponse
+from app.schemas import ChatRequest, ChatResponse
 import app.services.aelin.core as _core
 from app.services.aelin.core import _try_agent_loop_chat
 from app.services.aelin.core_support import (
@@ -29,12 +29,12 @@ _web_search: WebSearchService = _scoped_web_search_service()
 
 
 def run_chat_request(
-    payload: AelinChatRequest,
+    payload: ChatRequest,
     db: Session,
     current_user: User,
     *,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
-) -> AelinChatResponse:
+) -> ChatResponse:
     return _core.run_chat_request(payload, db, current_user, event_cb=event_cb, cancel_token=cancel_token)
 

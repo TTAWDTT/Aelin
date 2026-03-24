@@ -84,21 +84,21 @@
 
 ## 5. 压缩聊天 schema 到更中性的 DeepAgents 壳
 
-- [ ] 5.1 审查当前 schema
-  - [ ] 审查 `AelinChatRequest`
-  - [ ] 审查 `AelinChatResponse`
-  - [ ] 审查 `AelinToolStep`
+- [x] 5.1 审查当前 schema
+  - [x] 审查 `AelinChatRequest`
+  - [x] 审查 `AelinChatResponse`
+  - [x] 审查 `AelinToolStep`
 
-- [ ] 5.2 删除只服务旧聊天壳的字段
-  - [ ] 删除不再被 DeepAgents 主链使用的响应字段
-  - [ ] 删除只为旧 trace/stop_reason 设计的 schema
+- [x] 5.2 删除只服务旧聊天壳的字段
+  - [x] 删除不再被 DeepAgents 主链使用的响应字段
+  - [x] 删除只为旧 trace/stop_reason 设计的 schema
 
-- [ ] 5.3 统一命名
-  - [ ] 视影响范围将 `AelinChat*` 改成更中性的 `Chat*` 或 DeepAgents shell 命名
+- [x] 5.3 统一命名
+  - [x] 视影响范围将 `AelinChat*` 改成更中性的 `Chat*` 或 DeepAgents shell 命名
 
 验收标准：
-- [ ] 聊天 schema 更贴近 DeepAgents 原生流式协议
-- [ ] 不再保留大量只服务旧壳的字段/类型
+- [x] 聊天 schema 更贴近 DeepAgents 原生流式协议
+- [x] 不再保留大量只服务旧壳的字段/类型
 
 ---
 

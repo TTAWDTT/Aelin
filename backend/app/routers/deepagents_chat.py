@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.db import create_session, get_session
+from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import AelinChatRequest
@@ -29,44 +29,13 @@ from app.services.aelin.core_support import (
     _scoped_web_search_service,
 )
 from app.services.deepagents.deepagents_graph import build_chat_agent
+from app.services.deepagents.input_mapping import build_invoke_payload
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.settings import settings
 
 
 router = APIRouter(prefix="/deepagents", tags=["deepagents"])
 _LOG = logging.getLogger(__name__)
-
-
-def _normalize_history(raw_turns: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """
-    Lightweight history normalizer for DeepAgents-native shell.
-
-    We intentionally keep this independent from the legacy Aelin core helpers
-    so that the DeepAgents 路由不会再隐式依赖旧的 agent loop 实现。
-    """
-    out: list[dict[str, str]] = []
-    for item in raw_turns[-12:]:
-        role = str(item.get("role") or "").strip().lower()
-        content = str(item.get("content") or "").strip()
-        if role not in {"user", "assistant", "system"}:
-            continue
-        if not content:
-            continue
-        out.append({"role": role, "content": content[:3000]})
-    return out
-
-
-def _normalize_images(raw_images: list[Any]) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
-    for item in raw_images[:4]:
-        data_url = str(getattr(item, "data_url", "") or "").strip()
-        name = str(getattr(item, "name", "") or "").strip()[:120]
-        if not data_url.startswith("data:image/"):
-            continue
-        if ";base64," not in data_url:
-            continue
-        out.append({"data_url": data_url, "name": name})
-    return out
 
 
 @router.post("/chat/stream")
@@ -185,48 +154,12 @@ def deepagents_chat_stream(
                     return
 
                 # 构造 DeepAgents 期望的消息格式。
-                history_turns = _normalize_history(getattr(payload, "history", []))
-                images = _normalize_images(getattr(payload, "images", []))
-
-                messages: list[dict[str, Any]] = []
-                for turn in history_turns:
-                    messages.append(
-                        {
-                            "role": turn["role"],
-                            "content": turn["content"],
-                        }
-                    )
-
-                latest_query = str(payload.query or "").strip()
-                if latest_query:
-                    if images:
-                        content_blocks: list[dict[str, Any]] = [
-                            {"type": "text", "text": latest_query}
-                        ]
-                        for image in images:
-                            data_url = str(image.get("data_url") or "").strip()
-                            if not data_url:
-                                continue
-                            content_blocks.append(
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": data_url},
-                                }
-                            )
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": content_blocks
-                                if len(content_blocks) > 1
-                                else latest_query,
-                            }
-                        )
-                    else:
-                        messages.append({"role": "user", "content": latest_query})
-
-                invoke_payload: dict[str, Any] = {"messages": messages}
-                if files_mapping:
-                    invoke_payload["files"] = files_mapping
+                invoke_payload = build_invoke_payload(
+                    query=payload.query,
+                    history_turns=payload.history,
+                    images=payload.images,
+                    files_mapping=files_mapping,
+                )
 
                 # 透传 DeepAgents streaming chunk。
                 for chunk in agent.stream(invoke_payload):
@@ -285,9 +218,6 @@ def deepagents_chat_stream(
                 "query": payload.query.strip()[:180],
                 "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                 "workspace": payload.workspace,
-                "search_mode": str(
-                    getattr(payload, "search_mode", "auto") or "auto"
-                )[:16],
             },
         )
 

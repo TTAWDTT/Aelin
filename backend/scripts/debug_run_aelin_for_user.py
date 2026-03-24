@@ -31,7 +31,6 @@ def run_for_user(user_id: int, name: str, query: str) -> None:
         query=query,
         workspace="default",
         use_memory=True,
-        max_citations=6,
         images=[],
         history=[],
     )

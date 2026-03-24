@@ -4,9 +4,9 @@ export interface UserCreate { email: string; password: string }
 export interface UserUpdate { email?: string; password?: string; avatar_url?: string }
 export interface UserOut { id: number; email: string; avatar_url?: string; created_at: string }
 
-/* ─── Aelin Chat ─── */
-export interface AelinChatRequest {
-  query: string; use_memory?: boolean; max_citations?: number
+/* ─── Chat ─── */
+export interface ChatRequest {
+  query: string; use_memory?: boolean
   source?: string
   source_metadata?: Record<string, string>
   workspace?: string; images?: AelinImageInput[]
@@ -26,15 +26,15 @@ export interface AelinAttachmentUploadResponse {
   summary?: string
   deduplicated?: boolean
 }
-export interface AelinCitation {
+export interface ChatCitation {
   message_id: number; source: string; source_label: string; sender: string
   sender_avatar_url?: string; title: string; received_at: string; score: number
 }
-export interface AelinAction {
+export interface ChatAction {
   kind: string; title: string; detail?: string
   payload?: Record<string, string>
 }
-export interface AelinToolStep {
+export interface ChatToolStep {
   stage: string; status?: string; detail?: string; count?: number; ts?: number
 }
 
@@ -52,12 +52,18 @@ export interface DeepAgentsToolRun {
   latency_ms?: number
   summary?: string
 }
-export interface AelinChatResponse {
+export interface ChatResponse {
   answer: string; expression: string
-  citations: AelinCitation[]; actions: AelinAction[]
-  tool_trace: AelinToolStep[]; memory_summary: string
+  citations: ChatCitation[]; actions: ChatAction[]
+  tool_trace: ChatToolStep[]; memory_summary: string
   generated_at: string
 }
+
+export type AelinChatRequest = ChatRequest
+export type AelinCitation = ChatCitation
+export type AelinAction = ChatAction
+export type AelinToolStep = ChatToolStep
+export type AelinChatResponse = ChatResponse
 
 /* ─── Aelin Context ─── */
 export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }
@@ -166,12 +172,12 @@ export interface AelinDeviceScreenCaptureRequest {
 /* ─── Agent ─── */
 export interface AgentConfigOut {
   provider: string; base_url: string; model: string
-  temperature: number; has_api_key: boolean
+  temperature: number; verify_ssl: boolean; has_api_key: boolean
   web_search_proxy_url: string
 }
 export interface AgentConfigUpdate {
   provider?: string; base_url?: string; model?: string
-  temperature?: number; api_key?: string
+  temperature?: number; verify_ssl?: boolean; api_key?: string
   web_search_proxy_url?: string
 }
 export interface AgentTestResponse { ok: boolean; provider: string; message: string }
