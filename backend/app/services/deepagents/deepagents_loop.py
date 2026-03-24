@@ -2,31 +2,47 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.aelin.loop_types import (
-    AelinAgentLoopResult,
-    AgentLoopTraceStep,
-    AgentLoopToolRun,
-    STOP_REASON_CANCELLED,
-    STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS,
-    STOP_REASON_CLAIMS_SEARCH_WITHOUT_WEB_SEARCH_SUCCESS,
-    STOP_REASON_COMPLETED,
-    STOP_REASON_DEEPAGENTS_UNHANDLED_ERROR,
-    STOP_REASON_EMPTY_ANSWER,
-    STOP_REASON_LLM_NOT_CONFIGURED,
-)
 from app.services.aelin.tool_hub import AelinToolHub
 from app.services.aelin.tool_policy import AelinToolPolicy
 from app.services.deepagents.deepagents_graph import DeepAgentsCancelled, build_chat_agent
 from app.services.deepagents.cancel_utils import is_cancelled
+from app.services.deepagents.input_mapping import build_invoke_payload
 
 _log = logging.getLogger(__name__)
 
 
-def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[AgentLoopToolRun]:
+@dataclass
+class DeepAgentsToolRun:
+    call_index: int
+    name: str
+    args: dict[str, Any]
+    status: str
+    result: dict[str, Any]
+    error: str = ""
+    is_write: bool = False
+    latency_ms: int = 0
+
+
+@dataclass
+class DeepAgentsLoopResult:
+    ok: bool
+    answer: str
+    tool_runs: list[DeepAgentsToolRun] = field(default_factory=list)
+    total_calls: int = 0
+    write_calls: int = 0
+    actions: list[dict[str, str]] = field(default_factory=list)
+    error: str = ""
+    cancelled: bool = False
+    memory_snapshot: str = ""
+    capability_summary: str = ""
+
+
+def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[DeepAgentsToolRun]:
     return [
-        AgentLoopToolRun(
+        DeepAgentsToolRun(
             call_index=int(tr.get("call_index", 1)),
             name=str(tr.get("name") or ""),
             args=dict(tr.get("args") or {}),
@@ -42,13 +58,10 @@ def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[AgentLoopToolRun
 
 def _assert_not_cancelled(cancel_token: Any | None) -> None:
     if is_cancelled(cancel_token):
-        raise DeepAgentsCancelled(STOP_REASON_CANCELLED)
+        raise DeepAgentsCancelled("cancelled")
 
 
 def _extract_answer(response: Any) -> str:
-    """
-    Best-effort extraction of the final text answer from a DeepAgents response.
-    """
     try:
         if hasattr(response, "content"):
             return str(getattr(response, "content", "") or "")
@@ -59,14 +72,13 @@ def _extract_answer(response: Any) -> str:
                 return str(response.get("answer") or "")
             if "output" in response:
                 return str(response.get("output") or "")
-            if "messages" in response:
-                msgs = response.get("messages") or []
-                if isinstance(msgs, list) and msgs:
-                    last = msgs[-1]
-                    if hasattr(last, "content"):
-                        return str(getattr(last, "content", "") or "")
-                    if isinstance(last, dict) and "content" in last:
-                        return str(last.get("content") or "")
+            messages = response.get("messages") or []
+            if isinstance(messages, list) and messages:
+                last = messages[-1]
+                if hasattr(last, "content"):
+                    return str(getattr(last, "content", "") or "")
+                if isinstance(last, dict) and "content" in last:
+                    return str(last.get("content") or "")
         return str(response)
     except Exception as exc:  # noqa: BLE001
         _log.warning("deepagents_parse_response_failed error=%s", str(exc)[:160])
@@ -89,77 +101,30 @@ def _parse_capabilities_file(files_mapping: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _has_successful_tool(tool_runs: list[AgentLoopToolRun], name: str, *, actions: set[str] | None = None) -> bool:
-    for run in tool_runs:
-        if run.name != name or run.status != "completed":
-            continue
-        if not actions:
-            return True
-        action = str((run.args or {}).get("action") or "").strip().lower()
-        if action in actions:
-            return True
-    return False
-
-
-def _answer_has_unsupported_action_claims(answer: str, tool_runs: list[AgentLoopToolRun]) -> str:
-    text = str(answer or "").lower()
-    if not text:
-        return ""
-
-    if any(
-        token in text
-        for token in (
-            "已为你打开",
-            "为你打开了",
-            "我已打开",
-            "已经打开",
-            "i opened",
-            "opened for you",
-        )
-    ):
-        if not _has_successful_tool(tool_runs, "device", actions={"open_url", "open_aelin"}):
-            return STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS
-
-    if any(
-        token in text
-        for token in (
-            "根据搜索结果",
-            "我搜索了",
-            "我查了",
-            "我查到",
-            "i searched",
-            "search results",
-        )
-    ):
-        if not _has_successful_tool(tool_runs, "web_search"):
-            return STOP_REASON_CLAIMS_SEARCH_WITHOUT_WEB_SEARCH_SUCCESS
-
-    return ""
-
-
-def _loop_result(
+def _result(
     *,
     ok: bool,
-    answer: str,
-    stop_reason: str,
-    total_calls: int,
-    write_calls: int,
-    tool_runs: list[AgentLoopToolRun],
-    trace_steps: list[AgentLoopTraceStep],
-    error: str,
-    memory_snapshot: str,
-) -> AelinAgentLoopResult:
-    return AelinAgentLoopResult(
+    answer: str = "",
+    tool_runs: list[DeepAgentsToolRun] | None = None,
+    total_calls: int = 0,
+    write_calls: int = 0,
+    actions: list[dict[str, str]] | None = None,
+    error: str = "",
+    cancelled: bool = False,
+    memory_snapshot: str = "",
+    capability_summary: str = "",
+) -> DeepAgentsLoopResult:
+    return DeepAgentsLoopResult(
         ok=ok,
         answer=answer,
-        stop_reason=stop_reason,
-        total_calls=total_calls,
-        write_calls=write_calls,
-        tool_runs=tool_runs,
-        trace_steps=trace_steps,
-        actions=[],
+        tool_runs=list(tool_runs or []),
+        total_calls=int(total_calls or 0),
+        write_calls=int(write_calls or 0),
+        actions=list(actions or []),
         error=error,
+        cancelled=cancelled,
         memory_snapshot=memory_snapshot,
+        capability_summary=capability_summary,
     )
 
 
@@ -174,10 +139,7 @@ def run_deepagents_loop(
     history_turns: list[dict[str, Any]],
     images: list[dict[str, Any]] | None = None,
     cancel_token: Any | None = None,
-) -> AelinAgentLoopResult:
-    """
-    Bridge between Aelin core and a DeepAgents-powered agent loop.
-    """
+) -> DeepAgentsLoopResult:
     try:
         _assert_not_cancelled(cancel_token)
         agent, usage, raw_tool_runs, files_mapping = build_chat_agent(
@@ -189,155 +151,64 @@ def run_deepagents_loop(
             cancel_token=cancel_token,
         )
         if agent is None:
-            return _loop_result(
+            return _result(
                 ok=False,
-                answer="",
-                stop_reason=STOP_REASON_LLM_NOT_CONFIGURED,
-                total_calls=0,
-                write_calls=0,
-                tool_runs=[],
-                trace_steps=[
-                    AgentLoopTraceStep(
-                        stage="agent_loop",
-                        status="failed",
-                        detail=STOP_REASON_LLM_NOT_CONFIGURED,
-                    )
-                ],
-                error=STOP_REASON_LLM_NOT_CONFIGURED,
+                error="llm_not_configured",
                 memory_snapshot="",
             )
+
         capabilities = _parse_capabilities_file(files_mapping)
-        capability_detail = (
+        capability_summary = (
             f"tools={len(list(capabilities.get('tools') or []))}; "
             f"skills={len(list(capabilities.get('mounted_skills') or []))}; "
             f"memory_files={len(list(capabilities.get('memory_files') or []))}"
         )
 
-        # 构造 DeepAgents 期望的消息格式：带有历史对话和当前用户 query。
-        messages: list[dict[str, Any]] = []
-        for turn in history_turns:
-            role = str(turn.get("role") or "").strip()
-            content = str(turn.get("content") or "").strip()
-            if not role or not content:
-                continue
-            if role not in {"user", "assistant", "system"}:
-                continue
-            messages.append({"role": role, "content": content})
-
-        # DeepAgents 主入口通过 chat history 驱动，我们把最新 query 作为最后一条 user 消息。
-        latest_query = str(query or "").strip()
-        if latest_query:
-            if images:
-                content_blocks: list[dict[str, Any]] = [{"type": "text", "text": latest_query}]
-                for image in list(images or [])[:4]:
-                    data_url = str((image or {}).get("data_url") or "").strip()
-                    if not data_url:
-                        continue
-                    content_blocks.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": data_url},
-                        }
-                    )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": content_blocks if len(content_blocks) > 1 else latest_query,
-                    }
-                )
-            else:
-                messages.append({"role": "user", "content": latest_query})
-
-        invoke_payload: dict[str, Any] = {"messages": messages}
-        if files_mapping:
-            invoke_payload["files"] = files_mapping
+        invoke_payload = build_invoke_payload(
+            query=query,
+            history_turns=history_turns,
+            images=images,
+            files_mapping=files_mapping,
+        )
 
         _assert_not_cancelled(cancel_token)
         response = agent.invoke(invoke_payload)
         _assert_not_cancelled(cancel_token)
-        answer = _extract_answer(response)
+
+        answer = _extract_answer(response).strip()
         tool_runs = _map_tool_runs(raw_tool_runs)
-        unsupported_claim = _answer_has_unsupported_action_claims(answer, tool_runs)
-        trace_steps = [
-            AgentLoopTraceStep(stage="runtime.capabilities", status="completed", detail=capability_detail),
-        ]
-        if unsupported_claim:
-            return _loop_result(
+
+        if not answer:
+            return _result(
                 ok=False,
-                answer="",
-                stop_reason=unsupported_claim,
-                total_calls=usage.total_calls,
-                write_calls=usage.write_calls,
                 tool_runs=tool_runs,
-                trace_steps=[
-                    *trace_steps,
-                    AgentLoopTraceStep(stage="agent_loop", status="failed", detail=unsupported_claim),
-                ],
-                error=unsupported_claim,
+                total_calls=getattr(usage, "total_calls", 0),
+                write_calls=getattr(usage, "write_calls", 0),
+                error="empty_answer_from_deepagents",
                 memory_snapshot=memory_summary,
+                capability_summary=capability_summary,
             )
+
+        return _result(
+            ok=True,
+            answer=answer,
+            tool_runs=tool_runs,
+            total_calls=getattr(usage, "total_calls", 0),
+            write_calls=getattr(usage, "write_calls", 0),
+            memory_snapshot=memory_summary,
+            capability_summary=capability_summary,
+        )
     except DeepAgentsCancelled:
-        return _loop_result(
+        return _result(
             ok=False,
-            answer="",
-            stop_reason=STOP_REASON_CANCELLED,
-            total_calls=0,
-            write_calls=0,
-            tool_runs=[],
-            trace_steps=[
-                AgentLoopTraceStep(stage="agent_loop", status="cancelled", detail=STOP_REASON_CANCELLED)
-            ],
-            error=STOP_REASON_CANCELLED,
+            cancelled=True,
+            error="cancelled",
             memory_snapshot=memory_summary,
         )
     except Exception as exc:  # noqa: BLE001
         _log.exception("deepagents_unhandled_error provider=%s", provider)
-        return _loop_result(
+        return _result(
             ok=False,
-            answer="",
-            stop_reason=STOP_REASON_DEEPAGENTS_UNHANDLED_ERROR,
-            total_calls=0,
-            write_calls=0,
-            tool_runs=[],
-            trace_steps=[
-                AgentLoopTraceStep(
-                    stage="agent_loop",
-                    status="failed",
-                    detail=f"{STOP_REASON_DEEPAGENTS_UNHANDLED_ERROR}:{str(exc)[:160]}",
-                )
-            ],
-            error=str(exc)[:200],
+            error=f"deepagents_unhandled_error:{str(exc)[:160]}",
             memory_snapshot=memory_summary,
         )
-
-    if not answer.strip():
-        return _loop_result(
-            ok=False,
-            answer="",
-            stop_reason=STOP_REASON_EMPTY_ANSWER,
-            total_calls=0,
-            write_calls=0,
-            tool_runs=tool_runs,
-            trace_steps=[
-                AgentLoopTraceStep(stage="runtime.capabilities", status="completed", detail=capability_detail),
-                AgentLoopTraceStep(stage="agent_loop", status="failed", detail="empty_answer_from_deepagents"),
-            ],
-            error="empty_answer_from_deepagents",
-            memory_snapshot=memory_summary,
-        )
-
-    return _loop_result(
-        ok=True,
-        answer=answer.strip(),
-        stop_reason=STOP_REASON_COMPLETED,
-        total_calls=usage.total_calls,
-        write_calls=usage.write_calls,
-        tool_runs=tool_runs,
-        trace_steps=[
-            AgentLoopTraceStep(stage="runtime.capabilities", status="completed", detail=capability_detail),
-            AgentLoopTraceStep(stage="agent_loop", status="completed", detail="deepagents_core_v0"),
-        ],
-        error="",
-        memory_snapshot=memory_summary,
-    )
-

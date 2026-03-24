@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from app.services.aelin.loop_types import AelinAgentLoopResult, STOP_REASON_COMPLETED
+from app.services.deepagents.deepagents_loop import DeepAgentsLoopResult
 
 
 class _FakeToolHub:
@@ -55,32 +55,27 @@ def make_loop_result(
     *,
     ok: bool = True,
     answer: str = "ok",
-    stop_reason: str = STOP_REASON_COMPLETED,
     total_calls: int = 0,
     write_calls: int = 0,
     tool_runs: list[dict[str, Any]] | None = None,
-    trace_steps: list[Any] | None = None,
     actions: list[dict[str, str]] | None = None,
     error: str = "",
     memory_snapshot: str = "",
-) -> AelinAgentLoopResult:
+) -> DeepAgentsLoopResult:
     """
-    Convenience helper for constructing AelinAgentLoopResult values in tests.
+    Convenience helper for constructing DeepAgentsLoopResult values in tests.
 
     This keeps boilerplate consistent across DeepAgents bridge tests while
     allowing individual tests to override only the fields that matter for
     their assertions.
     """
-    return AelinAgentLoopResult(
+    return DeepAgentsLoopResult(
         ok=ok,
         answer=answer,
-        stop_reason=stop_reason,
+        tool_runs=tool_runs or [],
         total_calls=total_calls,
         write_calls=write_calls,
-        tool_runs=tool_runs or [],
-        trace_steps=trace_steps or [],
         actions=actions or [],
         error=error,
         memory_snapshot=memory_snapshot,
     )
-

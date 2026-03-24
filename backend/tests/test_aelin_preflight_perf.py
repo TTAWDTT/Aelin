@@ -8,12 +8,7 @@ import app.services.aelin.core_support as aelin_core_support
 import app.services.foundation.llm as llm_service
 import app.services.aelin.runtime as aelin_runtime
 from app.schemas import AelinChatRequest, AgentConfigOut
-from app.services.aelin.loop_types import (
-    AelinAgentLoopResult,
-    STOP_REASON_CANCELLED,
-    STOP_REASON_COMPLETED,
-    STOP_REASON_FINAL_ANSWER,
-)
+from app.services.deepagents.deepagents_loop import DeepAgentsLoopResult
 from tests.aelin_deepagents_test_utils import (
     _FakeRunner,
     _FakeToolHub,
@@ -40,14 +35,12 @@ def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
     monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
-    monkeypatch.setattr(aelin_core, "run_deepagents_loop", lambda **kwargs: AelinAgentLoopResult(
+    monkeypatch.setattr(aelin_core, "run_deepagents_loop", lambda **kwargs: DeepAgentsLoopResult(
         ok=True,
         answer="ok",
-        stop_reason=STOP_REASON_FINAL_ANSWER,
+        tool_runs=[],
         total_calls=0,
         write_calls=0,
-        tool_runs=[],
-        trace_steps=[],
         actions=[],
         error="",
         memory_snapshot="",
@@ -76,14 +69,12 @@ def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(
 
     def _fake_run_loop(**kwargs):
         calls.append(dict(kwargs))
-        return AelinAgentLoopResult(
+        return DeepAgentsLoopResult(
             ok=True,
             answer="ok",
-            stop_reason=STOP_REASON_FINAL_ANSWER,
+            tool_runs=[],
             total_calls=0,
             write_calls=0,
-            tool_runs=[],
-            trace_steps=[],
             actions=[],
             error="",
             memory_snapshot="",
@@ -120,14 +111,12 @@ def test_try_agent_loop_chat_forwards_images_and_cancel_token(monkeypatch):
 
     def _fake_run_loop(**kwargs):
         calls.append(dict(kwargs))
-        return AelinAgentLoopResult(
+        return DeepAgentsLoopResult(
             ok=True,
             answer="ok",
-            stop_reason=STOP_REASON_COMPLETED,
+            tool_runs=[],
             total_calls=0,
             write_calls=0,
-            tool_runs=[],
-            trace_steps=[],
             actions=[],
             error="",
             memory_snapshot="",
@@ -175,14 +164,12 @@ def test_try_agent_loop_chat_preserves_system_history(monkeypatch):
 
     def _fake_run_loop(**kwargs):
         calls.append(dict(kwargs))
-        return AelinAgentLoopResult(
+        return DeepAgentsLoopResult(
             ok=True,
             answer="ok",
-            stop_reason=STOP_REASON_COMPLETED,
+            tool_runs=[],
             total_calls=0,
             write_calls=0,
-            tool_runs=[],
-            trace_steps=[],
             actions=[],
             error="",
             memory_snapshot="",
@@ -223,25 +210,18 @@ def test_try_agent_loop_chat_skips_attachment_fallback_when_cancelled(monkeypatc
     monkeypatch.setattr(
         aelin_core,
         "run_deepagents_loop",
-        lambda **kwargs: AelinAgentLoopResult(
+        lambda **kwargs: DeepAgentsLoopResult(
             ok=False,
             answer="",
-            stop_reason=STOP_REASON_CANCELLED,
+            cancelled=True,
+            tool_runs=[],
             total_calls=0,
             write_calls=0,
-            tool_runs=[],
-            trace_steps=[],
             actions=[],
-            error=STOP_REASON_CANCELLED,
+            error="cancelled",
             memory_snapshot="",
         ),
     )
-    monkeypatch.setattr(
-        aelin_core,
-        "tool_attachment_search",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("attachment fallback should not run after cancellation")),
-    )
-
     response = aelin_core._try_agent_loop_chat(
         AelinChatRequest(query="请总结附件", workspace="default", attachment_ids=[1]),
         db=None,  # type: ignore[arg-type]
@@ -253,29 +233,10 @@ def test_try_agent_loop_chat_skips_attachment_fallback_when_cancelled(monkeypatc
     assert response is None
 
 
-def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback(monkeypatch):
+def test_try_agent_loop_chat_returns_none_when_llm_is_unavailable(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeUnconfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
-    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
-
-    calls: list[dict] = []
-
-    def _fake_attachment_search(hub, args):  # type: ignore[no-untyped-def]
-        calls.append(dict(args))
-        _ = hub
-        return {
-            "ok": True,
-            "total": 1,
-            "hits": [
-                {
-                    "text": "附件里提到 X 关注列表包含设计师和开发者账号。",
-                    "citation": {"file_name": "x-following.pdf", "page": 1},
-                }
-            ],
-        }
-
-    monkeypatch.setattr(aelin_core, "tool_attachment_search", _fake_attachment_search)
 
     payload = AelinChatRequest(query="请总结附件", workspace="default", attachment_ids=[1])
     response = aelin_core._try_agent_loop_chat(
@@ -285,17 +246,8 @@ def test_try_agent_loop_chat_prefetches_attachments_for_llm_unavailable_fallback
         persist_memory=False,
     )
 
-    assert response is not None
-    assert "x-following.pdf" in response.answer
-    assert _FakeToolHub.instances
-    assert calls == [
-        {
-            "query": "请总结附件",
-            "attachment_ids": [1],
-            "top_k": 10,
-            "mode": "hybrid",
-        }
-    ]
+    assert response is None
+    assert not _FakeToolHub.instances
 
 
 def test_resolve_llm_service_fetches_config_and_decrypts_once(monkeypatch):

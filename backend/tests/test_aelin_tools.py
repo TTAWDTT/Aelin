@@ -6,9 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage
-from app.services.aelin.loop_types import (
-    STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS,
-)
 from app.services.aelin.tool_hub import AelinToolHub
 from app.services.web.web_search import WebSearchResult
 from app.services.tools.tools_device import tool_device, tool_screen_get
@@ -562,7 +559,7 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
     assert "Never claim you searched, opened, read, or cited an external source" in system_prompt
 
 
-def test_deepagents_loop_rejects_open_claim_without_device_success(monkeypatch):
+def test_deepagents_loop_preserves_model_answer_without_legacy_open_claim_guard(monkeypatch):
     from app.services.deepagents import deepagents_loop as dloop
 
     class _FakeAgent:
@@ -598,9 +595,9 @@ def test_deepagents_loop_rejects_open_claim_without_device_success(monkeypatch):
         history_turns=[],
     )
 
-    assert result.ok is False
-    assert result.stop_reason == STOP_REASON_CLAIMS_OPENED_WITHOUT_DEVICE_SUCCESS
-    assert any(step.stage == "runtime.capabilities" for step in result.trace_steps)
+    assert result.ok is True
+    assert "我已经为你打开了相关新闻网站" in result.answer
+    assert "tools=2" in result.capability_summary
 
 
 def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
