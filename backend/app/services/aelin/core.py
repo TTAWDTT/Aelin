@@ -500,27 +500,6 @@ def _try_agent_loop_chat(
     )
 
 
-def _aelin_chat_impl(
-    payload: AelinChatRequest,
-    db: Session,
-    current_user: User,
-    *,
-    event_cb: Callable[[str, dict[str, Any]], None] | None = None,
-) -> AelinChatResponse:
-    """
-    Legacy retrieval-era chat implementation (removed).
-
-    DeepAgents agent loop is now the only supported chat path. This stub is
-    preserved solely so that older tests and imports that reference
-    `_aelin_chat_impl` do not crash at import time. Any direct call into this
-    function is considered a bug.
-    """
-    _ = (payload, db, current_user, event_cb)
-    raise RuntimeError(
-        "legacy _aelin_chat_impl is no longer supported; use agent loop only"
-    )
-
-
 def _dispatch_aelin_chat(
     payload: AelinChatRequest,
     db: Session,

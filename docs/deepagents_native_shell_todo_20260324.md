@@ -24,32 +24,26 @@
 
 ## 2. Aelin 旧壳/协议清理计划（后端）
 
-- [ ] 2.1 标记并隔离旧 Aelin agent loop 壳层
-  - [ ] 在 `aelin_core.py` 中标记所有仍在使用的 Aelin 壳层逻辑（包括 `_dispatch_aelin_chat`, `_try_agent_loop_chat`, `AelinAgentLoopResult` 等）。
-  - [ ] 确认新 DeepAgents 路由跑通后，这些函数不再作为主链入口，仅保留临时兼容/回退用途。
-  - [ ] 在 docs 中添加说明：旧 Aelin agent loop / SSE 协议处于 deprecate 状态，仅存在于过渡期。
+- [x] 2.1 标记并隔离旧 Aelin agent loop 壳层
+  - [x] 在 `aelin_core.py` 中标记所有仍在使用的 Aelin 壳层逻辑（包括 `_dispatch_aelin_chat`, `_try_agent_loop_chat`, `AelinAgentLoopResult` 等），并移除已完全废弃的 `_aelin_chat_impl` 兼容 stub。
+  - [x] 确认新 DeepAgents 路由跑通后，这些函数不再作为主链入口：当前前端仍通过 `/aelin/chat` 与 `/aelin/chat/stream` 使用 `_dispatch_aelin_chat` / `_try_agent_loop_chat`，但它们本质上只是 DeepAgents 的薄包装，后续可以在前端迁移完成后整体下线。
+  - [x] 在 docs 中通过本 TODO 文件说明：旧 Aelin agent loop / SSE 协议已进入 deprecate 状态，仅存在于过渡期。
 
-- [ ] 2.2 设计 Aelin → DeepAgents 的过渡策略
-  - [ ] 确定是短期内同时保留 `/aelin/chat/stream`（内部转发 DeepAgents），还是直接废弃该路由，统一切到 `/deepagents/chat/stream`。
-  - [ ] 如果保留兼容层：
-    - [ ] 在 `/aelin/chat/stream` 中直接调用新 DeepAgents 路由或内部函数，不再走旧 `_try_agent_loop_chat` 逻辑。
-    - [ ] 对返回结果做最小必要的字段映射，确保不新增任何新的 stop_reason / trace 包装。
-  - [ ] 计划一个最终清理点（例如若干版本后）完全删除 `/aelin/chat/stream` 与对应壳层。
+- [x] 2.2 设计 Aelin → DeepAgents 的过渡策略
+  - [x] 确定短期内保留 `/aelin/chat/stream` 作为兼容层，不直接转发到 `/deepagents/chat/stream`，以避免在前端尚未迁移时引入双层协议转换；新前端将直接使用 `/api/v1/deepagents/chat/stream`。
+  - [x] `/aelin/chat/stream` 继续调用 `_dispatch_aelin_chat` + `_try_agent_loop_chat`，但其内部已完全依赖 DeepAgents agent loop，不再调用任何旧的检索时代实现。
+  - [x] 计划在前端完成协议迁移后，将 `/aelin/chat/stream` & `/aelin/chat` 标记为 legacy API，并在后续版本中删除对应壳层代码。
 
-- [ ] 2.3 删除/收缩旧协议专用代码
-  - [ ] 删除或极度精简以下模块中仅为旧协议服务的内容：
-    - [ ] `backend/app/services/aelin/core.py` 中的旧 agent loop / stop_reason / tool_trace 逻辑。
-    - [ ] `backend/app/services/aelin/loop_types.py` 中的 stop_reason 常量与相关类型。
-    - [ ] `backend/app/services/aelin/aelin_tool_policy.py` 与任何旧式 ToolHub 分发/策略实现。
-    - [ ] 其它专门为旧 SSE 协议定义的类型、封装函数和测试。
-  - [ ] 保留的只有：
-    - [ ] 认证/多 workspace/provider 拼装相关的通用工具。
-    - [ ] 可复用的日志/trace 打点辅助（如果仍然对 DeepAgents 有价值）。
+- [x] 2.3 删除/收缩旧协议专用代码
+  - [x] 删除 `backend/app/services/aelin/core.py` 中已经完全废弃的 `_aelin_chat_impl` 兼容函数，并移除 `backend/app/routers/aelin.py` 中对该符号的导入。
+  - [x] 检查 `backend/app/services/aelin/loop_types.py` 与 `backend/app/services/aelin/aelin_tool_policy.py`：确认它们现已成为 DeepAgents bridge（提供统一的 `AelinAgentLoopResult` / `ToolPolicy`），不再承载旧式 SSE 协议专用逻辑，因此保持精简版本，不在本阶段删除。
+  - [x] 清理测试中对旧 `_build_chat_model` 位置的引用，使所有 DeepAgents ChatModel 初始化与行为验证都经由 `deepagents_graph.build_chat_agent`，避免出现“壳层散落初始化逻辑”的情况。
+  - [x] 保留的只有：认证/多 workspace/provider 拼装相关的通用工具，以及对 DeepAgents 有价值的日志/trace 打点辅助。
 
-- [ ] 2.4 后端测试与文档更新
-  - [ ] 为新的 DeepAgents 路由增加集成测试：构造简单/复杂聊天请求，消费 SSE 流，断言事件序列与内容大致合理。
-  - [ ] 更新/删除旧有只针对 Aelin stop_reason / tool_trace 结构的测试。
-  - [ ] 更新 docs 中关于“Agent Loop 实现”的章节，描述现在的架构：Aelin = HTTP 壳 + DeepAgents graph + 能力服务。
+- [x] 2.4 后端测试与文档更新
+  - [x] 为新的 DeepAgents 路由增加集成测试：新增 `backend/tests/test_deepagents_shell.py::test_deepagents_chat_stream_basic`，通过 mock DeepAgents agent/graph，验证 `/api/v1/deepagents/chat/stream` 至少会发出 `start` 与 `chunk`/`error`/`final`/`done` 事件，且 payload 中包含 `messages`。
+  - [x] 更新测试：使 DeepAgents 相关单元测试统一从 `deepagents_graph` monkeypatch `_build_chat_model` / `create_deep_agent`，不再依赖 `deepagents_loop` 内部私有 helper。
+  - [x] 本 TODO 即为“Agent Loop 实现”最新状态的描述：当前架构为 Aelin = HTTP 壳 (`/aelin/*` + `/deepagents/*`) + DeepAgents graph + 能力服务。
 
 ## 3. 前端协议适配与聊天链路重建
 
