@@ -435,12 +435,11 @@ def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
 
 def test_deepagents_memory_files_include_agents_md(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
-    from app.services.deepagents import deepagents_loop as dloop
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
-
-    monkeypatch.setattr(dloop, "_build_chat_model", lambda service, provider: object())
+    # Avoid hitting real ChatOpenAI / network when constructing the agent.
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     monkeypatch.setattr(dag, "create_deep_agent", lambda **kwargs: object())
 
     policy = AelinToolPolicy(
@@ -468,7 +467,6 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
 
 def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
     from app.services.deepagents import deepagents_graph as dag
-    from app.services.deepagents import deepagents_loop as dloop
 
     skill_root = Path(tmp_path) / "skills"
     chrome_skill = skill_root / "chrome_cdp"
@@ -487,7 +485,8 @@ def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
 
-    monkeypatch.setattr(dloop, "_build_chat_model", lambda service, provider: object())
+    # Avoid hitting real ChatOpenAI / network when constructing the agent.
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
 
     captured: dict[str, object] = {}
 
@@ -535,12 +534,11 @@ def test_deepagents_default_skills_root_points_to_backend_skills_dir():
 
 def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
-    from app.services.deepagents import deepagents_loop as dloop
 
     fake_web = _FakeWebSearch()
     hub = _hub(fake_web)
-    monkeypatch.setattr(dloop, "_build_chat_model", lambda service, provider: object())
-
+    # Avoid hitting real ChatOpenAI / network when constructing the agent.
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     captured: dict[str, object] = {}
 
     def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]

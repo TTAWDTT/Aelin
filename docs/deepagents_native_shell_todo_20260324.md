@@ -17,10 +17,10 @@
     - [x] 将前端传入的 messages / images / attachment_ids 等映射到 DeepAgents 期望的输入结构。
   - [x] SSE 事件写出时，尽量按 DeepAgents streaming chunk 原样发送，只增加必要的 `event:` 包装，不再重写 stop_reason 或 tool_trace。
 
-- [ ] 1.3 DeepAgents graph 构造与壳层胶水
-  - [ ] 复核并更新 `build_chat_agent()` / `build_chat_graph()`：确保所有工具、记忆、中间件配置都符合 DeepAgents 最新推荐（包括 MemoryMiddleware、StateBackend、SkillsBackend 等）。
-  - [ ] 将之前散落在 `deepagents_loop.py` / 其它模块中的 DeepAgents 初始化逻辑全部迁移到统一的 graph 构造模块中，后端路由只调用一个入口函数。
-  - [ ] 检查并记录任何需要通过 `config` 传入的额外字段（如 `provider`, `workspace`, `attachment_ids`, `device_enabled`），保证它们在 DeepAgents graph 内部被合规使用。
+- [x] 1.3 DeepAgents graph 构造与壳层胶水
+  - [x] 复核并更新 `build_chat_agent()`：确保所有工具、记忆、中间件配置都符合 DeepAgents 最新推荐（包括 StateBackend 和官方默认 middleware）。目前通过 `create_deep_agent(..., backend=StateBackend, tools=tools, skills=skill_sources, memory=memory_paths)` 统一配置。
+  - [x] 将之前散落在 `deepagents_loop.py` 中的 ChatModel 初始化逻辑（`_build_chat_model`）迁移到 `deepagents_graph.py`，让 graph 构造模块成为唯一的 DeepAgents 初始化入口；`run_deepagents_loop` 与新的 streaming 壳都只通过 `build_chat_agent` 获取 agent 实例。
+  - [x] 检查需要通过 `config` 传入的额外字段（如 `provider`, `workspace`, `attachment_ids`, `device_enabled`）；当前版本暂未在 `create_deep_agent` 层使用 `config`，仅在调用时通过 payload/工具壳传递这些信息，后续如需利用 DeepAgents 的 `config` 槽位，可在 `build_chat_agent` 的调用方统一追加。
 
 ## 2. Aelin 旧壳/协议清理计划（后端）
 

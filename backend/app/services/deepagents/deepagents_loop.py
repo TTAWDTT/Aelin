@@ -4,8 +4,6 @@ import json
 import logging
 from typing import Any
 
-from langchain_openai import ChatOpenAI
-
 from app.services.aelin.loop_types import (
     AelinAgentLoopResult,
     AgentLoopTraceStep,
@@ -19,47 +17,11 @@ from app.services.aelin.loop_types import (
     STOP_REASON_LLM_NOT_CONFIGURED,
 )
 from app.services.aelin.tool_hub import AelinToolHub
-from app.services.foundation.llm import LLMService
 from app.services.aelin.tool_policy import AelinToolPolicy
 from app.services.deepagents.deepagents_graph import DeepAgentsCancelled, build_chat_agent
 from app.services.deepagents.cancel_utils import is_cancelled
 
 _log = logging.getLogger(__name__)
-
-
-def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
-    """
-    根据 Aelin 的 AgentConfig 构造 DeepAgents 使用的底层 ChatModel。
-
-    目前该函数仅由 deepagents_graph.build_chat_agent 复用，用于统一
-    ChatModel 的构造逻辑；run_deepagents_loop 自身不再直接依赖它。
-    """
-    try:
-        model_name = getattr(service.config, "model", "") or "gpt-4o-mini"
-        temperature = float(getattr(service.config, "temperature", 0.0) or 0.0)
-
-        # service.api_key 与 base_url 由 LLMService 统一管理，沿用原有
-        # OpenAI 兼容策略，这样支持 Nvidia / DeepSeek / 自建 proxy 等。
-        api_key = getattr(service, "api_key", None)
-        base_url_raw = getattr(service.config, "base_url", "") or ""
-        base_url = LLMService._normalize_base_url(base_url_raw) if base_url_raw else None
-
-        if not api_key:
-            _log.warning("build_chat_model_missing_api_key provider=%s", provider)
-            return None
-
-        # 默认使用 ChatOpenAI 与任意 OpenAI-Compatible endpoint 通信。
-        return ChatOpenAI(
-            model=model_name,
-            temperature=temperature,
-            api_key=api_key,
-            base_url=base_url,
-            timeout=getattr(service, "timeout_seconds", 90.0),
-            max_retries=1,
-        )
-    except Exception as exc:  # noqa: BLE001
-        _log.warning("build_chat_model_failed provider=%s error=%s", provider, str(exc)[:200])
-        return None
 
 
 def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[AgentLoopToolRun]:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Callable
+
+from langchain_openai import ChatOpenAI
 
 from deepagents import create_deep_agent
 from deepagents.backends.state import StateBackend
@@ -20,6 +23,9 @@ from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
 from app.services.deepagents.cancel_utils import is_cancelled
+
+
+_log = logging.getLogger(__name__)
 
 
 class DeepAgentsCancelled(RuntimeError):
@@ -79,6 +85,41 @@ class GoogleWorkspaceToolInput(BaseModel):
     email_body: str | None = None
     docs_title: str | None = None
     docs_content: str | None = None
+
+
+def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
+    """
+    Centralised helper to construct the ChatModel used by DeepAgents.
+
+    This keeps all DeepAgents-facing model initialisation in the graph
+    assembly module so that both the legacy agent-loop bridge and the new
+    native streaming shell share the exact same behaviour.
+    """
+    try:
+        model_name = getattr(service.config, "model", "") or "gpt-4o-mini"
+        temperature = float(getattr(service.config, "temperature", 0.0) or 0.0)
+
+        # service.api_key 与 base_url 由 LLMService 统一管理，沿用原有
+        # OpenAI-Compatible 策略，这样支持 Nvidia / DeepSeek / 自建 proxy 等。
+        api_key = getattr(service, "api_key", None)
+        base_url_raw = getattr(service.config, "base_url", "") or ""
+        base_url = LLMService._normalize_base_url(base_url_raw) if base_url_raw else None
+
+        if not api_key:
+            _log.warning("build_chat_model_missing_api_key provider=%s", provider)
+            return None
+
+        return ChatOpenAI(
+            model=model_name,
+            temperature=temperature,
+            api_key=api_key,
+            base_url=base_url,
+            timeout=getattr(service, "timeout_seconds", 90.0),
+            max_retries=1,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("build_chat_model_failed provider=%s error=%s", provider, str(exc)[:200])
+        return None
 
 
 def _tool_description(name: str) -> str:
@@ -352,8 +393,6 @@ def build_chat_agent(
     Construct a DeepAgents chat agent along with tool usage trackers and
     virtual file mounts for skills + AGENTS.md memory.
     """
-    from app.services.deepagents.deepagents_loop import _build_chat_model
-
     chat_model = _build_chat_model(service, provider)
     if chat_model is None:
         return None, ToolPolicyUsage(), [], {}
