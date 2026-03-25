@@ -1,10 +1,9 @@
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { MessageActionsPanel } from './MessageActionsPanel'
 import { MessageCitationsPanel } from './MessageCitationsPanel'
+import { MarkdownMessage } from './MarkdownMessage'
 import {
   calculateCompactMaxWidth,
   EXPRESSION_LABELS,
@@ -100,13 +99,7 @@ export function MessageBubble({
         )}
 
         {/* Content */}
-        <div
-          className={cn(
-            'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
-          )}
-          style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || ''}</ReactMarkdown>
-        </div>
+        <MarkdownMessage content={message.content || ''} compact={compact} />
 
         {!isUser && stickerSrc && !isThinking && (
           <div className="mt-2">

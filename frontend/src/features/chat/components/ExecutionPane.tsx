@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   Bot,
   CheckCircle2,
   CircleDashed,
+  GitBranch,
   Hammer,
-  PanelRightOpen,
   Workflow,
   XCircle,
 } from 'lucide-react'
-import type { DeepAgentsExecutionEvent, DeepAgentsRunState } from '@/shared/api/types'
+import type { DeepAgentsRunState } from '@/shared/api/types'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import {
-  executionEventsFromRunState,
+  graphNodesFromRunState,
   subagentSnapshotsFromRunState,
   taskSnapshotsFromRunState,
 } from '../executionEventUtils'
@@ -25,7 +26,7 @@ interface ExecutionPaneProps {
   compact?: boolean
 }
 
-type ExecutionTab = 'timeline' | 'tools' | 'state' | 'agents'
+type ExecutionTab = 'graph' | 'tools' | 'state' | 'agents'
 
 export function ExecutionPane({
   runState,
@@ -34,25 +35,29 @@ export function ExecutionPane({
 }: ExecutionPaneProps) {
   const { t } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const executionEvents = useMemo(
-    () => executionEventsFromRunState(runState),
+  const graphNodes = useMemo(
+    () => graphNodesFromRunState(runState),
     [runState],
   )
-  const hasExecution = executionEvents.length > 0
+  const hasExecution = graphNodes.length > 0 || (runState?.parts.length ?? 0) > 0
   const taskSnapshots = useMemo(
     () => taskSnapshotsFromRunState(runState),
     [runState],
+  )
+  const toolSnapshots = useMemo(
+    () => taskSnapshots.filter((task) => task.kind === 'tool'),
+    [taskSnapshots],
   )
   const subagentSnapshots = useMemo(
     () => subagentSnapshotsFromRunState(runState),
     [runState],
   )
   const hasStateSnapshot = Object.keys(runState?.latestValues ?? {}).length > 0
-  const [tab, setTab] = useState<ExecutionTab>('timeline')
+  const [tab, setTab] = useState<ExecutionTab>('graph')
 
   useEffect(() => {
     if (!hasExecution) return
-    setTab('timeline')
+    setTab('graph')
   }, [hasExecution])
 
   const label = hasExecution ? t('trace.executionPane.title') : t('trace.executionPane.empty')
@@ -88,17 +93,17 @@ export function ExecutionPane({
                 className="mb-1.5 flex gap-1 rounded-lg bg-[var(--color-bg)] p-0.5"
               >
                 <ExecutionTabButton
-                  id="timeline"
-                  active={tab === 'timeline'}
-                  label="Timeline"
-                  onClick={() => setTab('timeline')}
+                  id="graph"
+                  active={tab === 'graph'}
+                  label="Graph"
+                  onClick={() => setTab('graph')}
                 />
                 <ExecutionTabButton
                   id="tools"
                   active={tab === 'tools'}
                   label={t('trace.tab.tools')}
-                  disabled={taskSnapshots.length === 0}
-                  onClick={() => taskSnapshots.length > 0 && setTab('tools')}
+                  disabled={toolSnapshots.length === 0}
+                  onClick={() => toolSnapshots.length > 0 && setTab('tools')}
                 />
                 <ExecutionTabButton
                   id="state"
@@ -120,12 +125,12 @@ export function ExecutionPane({
                 <div
                   className={cn(
                     'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'timeline'
+                    tab === 'graph'
                       ? 'pointer-events-auto translate-y-0 opacity-100'
                       : 'pointer-events-none translate-y-1 opacity-0',
                   )}
                 >
-                  <ExecutionTimeline events={executionEvents} live={isStreaming} />
+                  <RunGraphView runState={runState} isStreaming={isStreaming} />
                 </div>
                 <div
                   className={cn(
@@ -196,13 +201,6 @@ function ExecutionTabButton({ id, active, label, disabled, onClick }: ExecutionT
   )
 }
 
-function iconForEvent(event: DeepAgentsExecutionEvent) {
-  if (event.kind === 'model') return Bot
-  if (event.kind === 'tool') return Hammer
-  if (event.kind === 'state' || event.kind === 'system') return Workflow
-  return PanelRightOpen
-}
-
 function statusIcon(status?: string) {
   const lowered = String(status || '').toLowerCase()
   if (lowered === 'completed' || lowered === 'success') {
@@ -217,61 +215,133 @@ function statusIcon(status?: string) {
   return null
 }
 
-function ExecutionTimeline({ events, live }: { events: DeepAgentsExecutionEvent[]; live: boolean }) {
-  const { t } = useChatI18n()
+function GraphNodeIcon({ kind }: { kind: 'start' | 'tool' | 'model' | 'middleware' | 'final' | 'error' }) {
+  if (kind === 'tool') return <Hammer size={12} className="text-[var(--color-text)]" />
+  if (kind === 'model') return <Bot size={12} className="text-[var(--color-text)]" />
+  if (kind === 'middleware') return <Workflow size={12} className="text-[var(--color-text)]" />
+  if (kind === 'final') return <CheckCircle2 size={12} className="text-[var(--color-text)]" />
+  if (kind === 'error') return <XCircle size={12} className="text-[var(--color-text)]" />
+  return <GitBranch size={12} className="text-[var(--color-text)]" />
+}
 
-  if (!events.length) {
+function RunGraphView({
+  runState,
+  isStreaming,
+}: {
+  runState?: DeepAgentsRunState
+  isStreaming: boolean
+}) {
+  const { t } = useChatI18n()
+  const nodes = useMemo(() => graphNodesFromRunState(runState), [runState])
+
+  if (!nodes.length) {
     return (
-      <p id="execution-pane-timeline" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+      <p id="execution-pane-graph" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
         {t('trace.executionPane.emptyDetail')}
       </p>
     )
   }
 
+  const activeIndex = isStreaming ? Math.max(0, nodes.length - 1) : -1
+
   return (
-    <div id="execution-pane-timeline" className="space-y-2 text-[11px]">
+    <div id="execution-pane-graph" className="space-y-2 text-[11px]">
       <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">Runtime timeline</span>
-        <span>{live ? t('trace.status.running') : `${events.length} events`}</span>
+        <span className="font-medium">Run graph</span>
+        <span>{isStreaming ? 'live' : `${nodes.length} nodes`}</span>
       </div>
+
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          {nodes.map((node, index) => (
+            <div key={node.key} className="flex items-center gap-2">
+              <motion.div
+                initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.18, delay: Math.min(index * 0.04, 0.24) }}
+                className={cn(
+                  'group relative min-w-[132px] rounded-2xl border px-3 py-2',
+                  activeIndex === index
+                    ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-panel-alt)]',
+                )}
+              >
+                {activeIndex === index && (
+                  <motion.span
+                    className="absolute inset-0 rounded-2xl border border-[var(--color-border-strong)]"
+                    initial={{ opacity: 0.16, scale: 0.96 }}
+                    animate={{ opacity: 0.34, scale: 1.02 }}
+                    transition={{ repeat: Infinity, repeatType: 'reverse', duration: 0.9 }}
+                  />
+                )}
+                <div className="relative flex items-center gap-2">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+                    <GraphNodeIcon kind={node.kind} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">
+                      {node.title}
+                    </div>
+                    <div className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
+                      {node.status || 'ready'}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+              {index < nodes.length - 1 && (
+                <div className="flex min-w-[26px] justify-center">
+                  <motion.div
+                    className="h-px w-8 bg-[var(--color-border-strong)]"
+                    initial={{ scaleX: 0.5, opacity: 0.4 }}
+                    animate={{ scaleX: 1, opacity: 0.9 }}
+                    transition={{ duration: 0.24, delay: Math.min(index * 0.05, 0.3) }}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
       <ol className="space-y-1.5">
-        {events.map((event, index) => {
-          const Icon = iconForEvent(event)
-          return (
-            <li
-              key={event.id}
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2"
+        <AnimatePresence initial={false}>
+          {nodes.map((node, index) => (
+            <motion.li
+              key={node.key}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+              className={cn(
+                'rounded-xl border px-2.5 py-2',
+                activeIndex === index
+                  ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-panel)]',
+              )}
             >
               <div className="flex items-start gap-2">
-                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  <Icon size={12} className="text-[var(--color-text)]" />
+                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)]">
+                  <GraphNodeIcon kind={node.kind} />
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-[var(--color-text-muted)]">{index + 1}.</span>
-                    <div className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-text)]">
-                      {event.title}
-                    </div>
-                    {event.status && (
-                      <span className="text-[10px] text-[var(--color-text-muted)]">{event.status}</span>
-                    )}
+                    <span className="truncate text-[11px] font-semibold text-[var(--color-text)]">
+                      {node.title}
+                    </span>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">{node.status}</span>
                   </div>
-                  {event.summary && (
-                    <div className="mt-0.5 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                      {event.summary}
-                    </div>
-                  )}
-                  {event.ns && event.ns.length > 0 && (
-                    <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                      {event.ns.join(' / ')}
+                  {node.summary && (
+                    <div className="mt-1 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                      {node.summary}
                     </div>
                   )}
                 </div>
-                <span className="pt-0.5">{statusIcon(event.status)}</span>
+                <span className="pt-0.5">{statusIcon(node.status)}</span>
               </div>
-            </li>
-          )
-        })}
+            </motion.li>
+          ))}
+        </AnimatePresence>
       </ol>
     </div>
   )
@@ -283,8 +353,9 @@ function TaskRunsView({
   taskSnapshots: ReturnType<typeof taskSnapshotsFromRunState>
 }) {
   const { t } = useChatI18n()
+  const toolSnapshots = taskSnapshots.filter((task) => task.kind === 'tool')
 
-  if (!taskSnapshots.length) {
+  if (!toolSnapshots.length) {
     return (
       <p id="execution-pane-tools" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
         {t('trace.tools.empty')}
@@ -295,14 +366,14 @@ function TaskRunsView({
   return (
     <div id="execution-pane-tools" className="space-y-2 text-[11px]">
       <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">Task runs</span>
-        <span>{t('trace.tools.count', { count: taskSnapshots.length })}</span>
+        <span className="font-medium">Tool calls</span>
+        <span>{t('trace.tools.count', { count: toolSnapshots.length })}</span>
       </div>
       <ul className="space-y-1.5">
-        {taskSnapshots.map((task) => (
+        {toolSnapshots.map((task) => (
           <li key={task.key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
             <div className="flex items-start gap-2">
-              <ProviderIcon provider="core" size="md" />
+              <ProviderIcon provider={task.toolName || 'core'} size="md" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">

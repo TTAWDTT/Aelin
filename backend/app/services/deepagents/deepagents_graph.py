@@ -49,7 +49,11 @@ def _current_date_context() -> str:
     return (
         f"Current date: {local_now.date().isoformat()}.\n"
         f"Current timezone: {_AELIN_TIMEZONE}.\n"
-        f"Current local datetime: {local_now.isoformat(timespec='seconds')}."
+        f"Current local datetime: {local_now.isoformat(timespec='seconds')}.\n"
+        f"Today in {_AELIN_TIMEZONE}: {local_now.strftime('%Y-%m-%d')}.\n"
+        "When the user says today/current/latest/recent/now or uses Chinese words such as 今天、当前、最近、刚刚、最新，"
+        "you must anchor them to the current local datetime above unless a tool result from this run proves otherwise.\n"
+        "Do not drift to another year or another date just because retrieved content mentions one."
     )
 
 
@@ -542,6 +546,8 @@ def build_chat_agent(
         "Use tools only when they materially help.\n"
         "Prefer one correct tool call over repeated partial attempts.\n"
         f"{_current_date_context()}\n"
+        "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
+        "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
         "Consult /runtime/capabilities.json for the exact tools, skills, and memory files mounted in this run.\n"
         "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
         "Read skills on demand from /skills/... when a matching skill is relevant.\n"

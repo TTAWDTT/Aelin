@@ -5,6 +5,9 @@ import type {
   DeepAgentsStreamPart,
 } from '@/shared/api/types'
 
+export type RunTaskKind = 'tool' | 'model' | 'middleware' | 'task'
+export type RunGraphNodeKind = 'start' | 'tool' | 'model' | 'middleware' | 'final' | 'error'
+
 function compactText(value: unknown, max = 180): string {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return ''
@@ -50,6 +53,35 @@ function summarizeUnknown(value: unknown, depth = 0): unknown {
   return out
 }
 
+function humanizeTaskName(value: unknown): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return 'Task'
+  if (raw === 'model') return 'Model'
+  if (raw === 'tools') return 'Tool runtime'
+  if (raw.endsWith('.before_agent')) {
+    return raw
+      .replace(/Middleware\.before_agent$/, '')
+      .replace(/_/g, ' ')
+      .trim() || 'Runtime prep'
+  }
+  if (raw.endsWith('.after_model')) {
+    return raw
+      .replace(/Middleware\.after_model$/, '')
+      .replace(/_/g, ' ')
+      .trim() || 'Post-process'
+  }
+  return raw.replace(/_/g, ' ')
+}
+
+function classifyTaskRecord(data: Record<string, unknown>): RunTaskKind {
+  const toolName = String(data.tool_name ?? '').trim()
+  if (toolName) return 'tool'
+  const name = String(data.name ?? '').trim().toLowerCase()
+  if (name === 'model') return 'model'
+  if (name.includes('middleware')) return 'middleware'
+  return 'task'
+}
+
 function normalizePartPayload(event: string, payload: Record<string, unknown>): Record<string, unknown> {
   const ns = Array.isArray(payload.ns) ? payload.ns.map((item) => String(item)) : undefined
   const data = payload.data
@@ -75,6 +107,10 @@ function normalizePartPayload(event: string, payload: Record<string, unknown>): 
       id: dataRecord.id,
       name: dataRecord.name,
       status: dataRecord.status,
+      tool_name: dataRecord.tool_name,
+      tool_call: summarizeUnknown(dataRecord.tool_call),
+      tool_calls: summarizeUnknown(dataRecord.tool_calls),
+      result_summary: summarizeScalar(dataRecord.result_summary, 220),
       interrupts: Array.isArray(dataRecord.interrupts) ? dataRecord.interrupts.length : 0,
       triggers: Array.isArray(dataRecord.triggers) ? dataRecord.triggers.length : 0,
       error: summarizeScalar(dataRecord.error, 160),
@@ -144,7 +180,8 @@ function detectKind(type: string, payload: Record<string, unknown>): DeepAgentsE
     const toolName = String(payload.tool_name ?? '').trim().toLowerCase()
     if (toolName) return 'tool'
     const name = String(payload.name ?? payload.id ?? '').toLowerCase()
-    return name ? 'task' : 'task'
+    if (name === 'model') return 'model'
+    return 'task'
   }
   return 'system'
 }
@@ -170,7 +207,7 @@ function deriveTitle(type: string, payload: Record<string, unknown>): string {
   if (type === 'tasks') {
     const toolName = compactText(payload.tool_name, 80)
     if (toolName) return `Tool · ${toolName}`
-    return compactText(payload.name ?? payload.id ?? 'Task', 80) || 'Task'
+    return humanizeTaskName(payload.name ?? payload.id ?? 'Task')
   }
   if (type === 'updates') {
     const keys = Object.keys(asRecord(payload))
@@ -294,7 +331,15 @@ export function createExecutionEvent(type: string, payload: unknown, ts = Date.n
 }
 
 export function createExecutionEventFromPart(part: DeepAgentsStreamPart): DeepAgentsExecutionEvent | null {
-  if (part.event === 'ping' || part.event === 'done') return null
+  if (
+    part.event === 'ping' ||
+    part.event === 'done' ||
+    part.event === 'messages' ||
+    part.event === 'updates' ||
+    part.event === 'values'
+  ) {
+    return null
+  }
   const payload =
     part.data != null
       ? { ...asRecord(part.data), ns: part.ns ?? [] }
@@ -314,12 +359,14 @@ export interface RunTaskSnapshot {
   key: string
   id: string
   name: string
+  kind: RunTaskKind
   status: string
   summary: string
   ns: string[]
   updates: number
   lastTs: number
   error?: string
+  toolName?: string
 }
 
 export interface RunSubagentSnapshot {
@@ -329,6 +376,15 @@ export interface RunSubagentSnapshot {
   status: string
   taskCount: number
   lastTs: number
+}
+
+export interface RunGraphNode {
+  key: string
+  kind: RunGraphNodeKind
+  title: string
+  summary: string
+  status: string
+  ts: number
 }
 
 function formatNsLabel(ns: string[] | undefined): string {
@@ -342,7 +398,7 @@ function formatNsLabel(ns: string[] | undefined): string {
 function coerceTaskName(data: Record<string, unknown>): string {
   const toolName = compactText(data.tool_name, 80)
   if (toolName) return `Tool · ${toolName}`
-  return compactText(data.name ?? data.id ?? 'Task', 80) || 'Task'
+  return humanizeTaskName(data.name ?? data.id ?? 'Task')
 }
 
 export function taskSnapshotsFromRunState(
@@ -356,10 +412,14 @@ export function taskSnapshotsFromRunState(
     const ns = part.ns ?? []
     const rawId = compactText(data.id, 80) || ''
     const name = coerceTaskName(data)
+    const kind = classifyTaskRecord(data)
     const key = `${formatNsLabel(ns)}::${rawId || name}`
+    const toolCall = asRecord(data.tool_call)
+    const toolArgs = compactText(stableStringify(toolCall.args), 180)
     const summaryBits = [
       compactText(data.status, 40),
       compactText(data.result_summary, 180),
+      toolArgs ? `args=${toolArgs}` : '',
       rawId ? `id=${rawId}` : '',
       Number(data.interrupts || 0) > 0 ? `interrupts=${Number(data.interrupts)}` : '',
       Number(data.triggers || 0) > 0 ? `triggers=${Number(data.triggers)}` : '',
@@ -369,12 +429,14 @@ export function taskSnapshotsFromRunState(
       key,
       id: rawId || name,
       name,
+      kind,
       status: compactText(data.status, 40) || existing?.status || 'unknown',
       summary: summaryBits.join(' · '),
       ns,
       updates: (existing?.updates ?? 0) + 1,
       lastTs: part.ts,
       error: compactText(data.error, 160) || existing?.error,
+      toolName: compactText(data.tool_name, 80) || existing?.toolName,
     })
   }
 
@@ -404,6 +466,64 @@ export function subagentSnapshotsFromRunState(
   return [...byNs.values()].sort((a, b) => a.lastTs - b.lastTs)
 }
 
+export function graphNodesFromRunState(
+  runState: DeepAgentsRunState | undefined,
+): RunGraphNode[] {
+  const nodes: RunGraphNode[] = []
+  const parts = runState?.parts ?? []
+  const startPart = parts.find((part) => part.event === 'start')
+
+  if (startPart) {
+    nodes.push({
+      key: `start:${startPart.id}`,
+      kind: 'start',
+      title: 'Run started',
+      summary: compactText(asRecord(startPart.data).query, 140),
+      status: 'completed',
+      ts: startPart.ts,
+    })
+  }
+
+  for (const task of taskSnapshotsFromRunState(runState)) {
+    if (!['tool', 'model', 'middleware'].includes(task.kind)) continue
+    nodes.push({
+      key: `task:${task.key}`,
+      kind: task.kind === 'tool' ? 'tool' : task.kind === 'model' ? 'model' : 'middleware',
+      title: task.name,
+      summary: task.summary,
+      status: task.status || 'unknown',
+      ts: task.lastTs,
+    })
+  }
+
+  for (const part of parts) {
+    if (part.event === 'error') {
+      const data = asRecord(part.data)
+      nodes.push({
+        key: `error:${part.id}`,
+        kind: 'error',
+        title: 'Run error',
+        summary: compactText(data.message, 160),
+        status: 'failed',
+        ts: part.ts,
+      })
+    }
+    if (part.event === 'final') {
+      const data = asRecord(part.data)
+      nodes.push({
+        key: `final:${part.id}`,
+        kind: 'final',
+        title: 'Final answer',
+        summary: compactText(data.answer, 180),
+        status: 'completed',
+        ts: part.ts,
+      })
+    }
+  }
+
+  return nodes.sort((a, b) => a.ts - b.ts)
+}
+
 export interface ExecutionToolCall {
   key: string
   name: string
@@ -426,10 +546,10 @@ export function extractToolCalls(
   executionEvents: DeepAgentsExecutionEvent[] | undefined,
 ): ExecutionToolCall[] {
   return (executionEvents || [])
-    .filter((event) => event.type === 'tasks')
+    .filter((event) => event.type === 'tasks' && event.kind === 'tool')
     .map((event, index) => ({
       key: `${event.id}-${index}`,
-      name: event.title.replace(/^Task\s*·\s*/i, '') || event.title,
+      name: event.title.replace(/^Tool\s*·\s*/i, '') || event.title,
       status: String(event.status || 'unknown'),
       summary: String(event.summary || ''),
       provider: inferProvider(event.title),
