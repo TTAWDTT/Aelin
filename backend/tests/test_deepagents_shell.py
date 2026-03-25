@@ -170,16 +170,15 @@ def test_deepagents_chat_stream_basic(monkeypatch):
 
     task_payload = next(payload for name, payload in events if name == "tasks|root")
     assert task_payload["name"] == "tools"
-    assert task_payload["tool_name"] == "web_search"
-    assert task_payload["tool_call"]["id"] == "call-1"
-    assert task_payload["tool_call"]["args"]["query"] == "today shanghai weather"
+    assert task_payload["input"]["tool_call"]["name"] == "web_search"
+    assert task_payload["input"]["tool_call"]["id"] == "call-1"
+    assert task_payload["input"]["tool_call"]["args"]["query"] == "today shanghai weather"
     assert "files" not in task_payload
-    assert "result_summary" in task_payload
+    assert task_payload["result"]["query"] == "today shanghai weather"
 
     values_payload = next(payload for name, payload in events if name == "values|root")
-    assert values_payload["messages_count"] == 1
-    assert values_payload["todos_count"] == 1
-    assert values_payload["answer"] == "hello from deepagents"
+    assert values_payload["messages"][0]["content"] == "hello from deepagents"
+    assert values_payload["todos"][0]["title"] == "todo-1"
     assert "files" not in values_payload
     assert captured["stream_kwargs"] == {
         "stream_mode": ["messages", "updates", "tasks", "values"],
