@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
@@ -12,20 +12,18 @@ import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
+import { hasExecutionData } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
   const session = sessions.find((s) => s.id === activeSessionId)
   const messages = session?.messages ?? []
-  const { send, captureAndSend, uploadAttachments, sendWithAttachments, stop } = useChatStream()
+  const { send, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
   const { t } = useChatI18n()
   const {
-    openForMessage,
-    focusedMessageId,
-    setFocusedMessageId,
     open,
     setOpen,
     suppressAutoOpen,
@@ -78,37 +76,13 @@ export function ChatView() {
     if (sessions.length === 0) createSession()
   }, [sessions.length, createSession])
 
+  const hasExecution = hasExecutionData(stream)
+
   useEffect(() => {
-    // 切换 session 时，让 Execution Pane 自动跟随该会话的最新执行信息。
-    startTransition(() => setFocusedMessageId(null))
-  }, [activeSessionId, setFocusedMessageId])
-
-  const latestAssistantWithExecution = [...messages]
-    .reverse()
-    .find((m) => m.role === 'assistant' && (m.runState?.parts.length ?? 0) > 0)
-
-  const focusedRunState =
-    focusedMessageId && messages.length
-      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant')
-          ?.runState ?? null
-      : null
-
-  const currentRunState = focusedRunState ?? latestAssistantWithExecution?.runState
-
-  // 桌面模式下，当本轮已经产生执行事件且正在流式时，自动展开右侧 ExecutionPane。
-  useEffect(() => {
-    if (!compact && isStreaming && (currentRunState?.parts.length ?? 0) > 0 && !open && !suppressAutoOpen) {
+    if (!compact && isStreaming && hasExecution && !open && !suppressAutoOpen) {
       setOpen(true)
     }
-  }, [compact, currentRunState?.parts.length, isStreaming, open, suppressAutoOpen, setOpen])
-
-  const handleOpenExecutionForLatest = () => {
-    openForMessage(latestAssistantWithExecution?.id ?? null)
-  }
-
-  const handleOpenExecutionForMessage = (messageId: string | null) => {
-    openForMessage(messageId)
-  }
+  }, [compact, hasExecution, isStreaming, open, suppressAutoOpen, setOpen])
 
   return (
     <PageScaffold
@@ -122,8 +96,8 @@ export function ChatView() {
             isStreaming={isStreaming}
             statusText={statusText}
             compact={compact}
-            runState={currentRunState}
-            onOpenExecution={handleOpenExecutionForLatest}
+            stream={stream}
+            onOpenExecution={() => setOpen(true)}
           />
           <ChatTimeline
             scrollRef={scrollRef}
@@ -133,7 +107,6 @@ export function ChatView() {
             compact={compact}
             viewportWidth={viewportWidth}
             onQuickPrompt={handleSend}
-            onOpenExecutionForMessage={handleOpenExecutionForMessage}
           />
           <ComposerBar
             onSend={handleSend}
@@ -146,7 +119,7 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane runState={currentRunState} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane stream={stream} isStreaming={isStreaming} compact={compact} />
       </div>
     </PageScaffold>
   )

@@ -2,7 +2,6 @@ import type { RefObject } from 'react'
 import type { ChatMessage } from '../stores/chatStore'
 import { MessageBubble } from './MessageBubble'
 import { EmptyChatState } from './EmptyChatState'
-import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { useChatI18n } from '../chatI18n'
 
 interface ChatTimelineProps {
@@ -13,7 +12,6 @@ interface ChatTimelineProps {
   compact?: boolean
   viewportWidth: number
   onQuickPrompt: (text: string) => void
-  onOpenExecutionForMessage?: (messageId: string | null) => void
 }
 
 export function ChatTimeline({
@@ -24,11 +22,9 @@ export function ChatTimeline({
   compact = false,
   viewportWidth,
   onQuickPrompt,
-  onOpenExecutionForMessage,
 }: ChatTimelineProps) {
   const isEmpty = messages.length === 0
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
-  const { focusedMessageId } = useExecutionPaneStore()
   const { t } = useChatI18n()
 
   return (
@@ -47,8 +43,6 @@ export function ChatTimeline({
           }`}
         >
           {messages.map((message) => {
-            const isHighlighted = message.id === focusedMessageId
-
             return (
               <div key={message.id} className="flex flex-col gap-1.5">
                 <MessageBubble
@@ -58,7 +52,6 @@ export function ChatTimeline({
                   compact={compact}
                   viewportWidth={viewportWidth}
                   onQuickPrompt={onQuickPrompt}
-                  highlighted={isHighlighted}
                 />
               </div>
             )

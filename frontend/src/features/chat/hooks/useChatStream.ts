@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AelinAttachmentUploadResponse, DeepAgentsStreamPart } from '@/shared/api/types'
+import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import { useChatI18n } from '../chatI18n'
-import { createStreamPart, summarizeStreamPartStatus } from '../executionEventUtils'
+import type { ChatRuntimeStream, ChatStreamState } from '../executionStreamUtils'
 import { useChatStore } from '../stores/chatStore'
 import {
   buildAssistantMessage,
@@ -18,51 +18,29 @@ import {
 } from './chatStreamHelpers'
 import { AelinUseStreamTransport } from './aelinUseStreamTransport'
 
-type StreamState = {
-  messages: Array<Record<string, unknown>>
-  topology?: Record<string, unknown>
-  answer?: string
-  final?: Record<string, unknown>
-}
+export type { ChatRuntimeStream, ChatStreamState }
 
-function appendRunStatePartToStore(sessionId: string, part: DeepAgentsStreamPart) {
-  const state = useChatStore.getState()
-  const session = state.sessions.find((item) => item.id === sessionId)
-  if (!session) return
-
-  let currentRunState = undefined
-  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-    const message = session.messages[index]
-    if (message.role === 'assistant') {
-      currentRunState = message.runState
-      break
-    }
+function statusTextFromAelinEvent(
+  event: string,
+  payload: Record<string, unknown>,
+  t: (key: 'status.tools.invoking', vars?: Record<string, string | number>) => string,
+): string {
+  const data =
+    payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+      ? payload.data as Record<string, unknown>
+      : {}
+  if (event === 'error') {
+    return String(data.message || '')
   }
+  if (event !== 'tasks' && event !== 'updates') return ''
 
-  state.updateLastAssistant(sessionId, {
-    runState: currentRunState
-      ? {
-          ...currentRunState,
-          parts: [...currentRunState.parts, part],
-          runId: currentRunState.runId ?? part.runId,
-          latestValues: part.event === 'values'
-            ? { ...(currentRunState.latestValues ?? {}), ...((part.data as Record<string, unknown>) ?? {}) }
-            : currentRunState.latestValues,
-          final: part.event === 'final'
-            ? ((part.data as Record<string, unknown>) ?? currentRunState.final)
-            : currentRunState.final,
-          topology: part.event === 'topology'
-            ? (part.data as any)
-            : currentRunState.topology,
-        }
-      : {
-          parts: [part],
-          runId: part.runId,
-          latestValues: part.event === 'values' ? ((part.data as Record<string, unknown>) ?? {}) : undefined,
-          final: part.event === 'final' ? ((part.data as Record<string, unknown>) ?? {}) : undefined,
-          topology: part.event === 'topology' ? (part.data as any) : undefined,
-        },
-  })
+  const toolName = String(
+    data.tool_name
+    || (typeof data.name === 'string' && data.name.toLowerCase() === 'tools' ? 'tools' : '')
+    || '',
+  ).trim()
+  if (!toolName) return ''
+  return t('status.tools.invoking', { tools: toolName })
 }
 
 export function useChatStream() {
@@ -85,22 +63,19 @@ export function useChatStream() {
     },
     getSource: () => 'chat_ui',
     onAelinEvent: (event, payload) => {
-      const sessionId =
-        String((payload as any)?.config?.configurable?.thread_id || useChatStore.getState().activeSessionId || '')
-        || useChatStore.getState().activeSessionId
-      if (!sessionId || event === 'done' || event === 'ping' || event === 'start') return
-
-      const part = createStreamPart(event, payload)
-      if (!part) return
-      appendRunStatePartToStore(sessionId, part)
-      const status = summarizeStreamPartStatus(part)
+      if (event === 'done' || event === 'ping' || event === 'start') return
+      const status = statusTextFromAelinEvent(
+        event,
+        (payload as Record<string, unknown>) ?? {},
+        t as any,
+      )
       if (status) {
         useChatStore.getState().setStatusText(status)
       }
     },
   }), [])
 
-  const stream = useStream<StreamState>({
+  const stream = useStream<ChatStreamState>({
     transport,
     threadId: store.activeSessionId,
     messagesKey: 'messages',

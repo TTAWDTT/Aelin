@@ -1,16 +1,18 @@
-import { useMemo } from 'react'
-import type { DeepAgentsRunState } from '@/shared/api/types'
-import { useChatI18n } from '../chatI18n'
-import { summarizeRunStateStatus, toolCallsFromRunState } from '../executionEventUtils'
 import { PanelRightOpen } from 'lucide-react'
+import type { ChatRuntimeStream } from '../executionStreamUtils'
+import {
+  getExecutionSubagents,
+  getExecutionToolCalls,
+  hasExecutionData,
+} from '../executionStreamUtils'
+import { useChatI18n } from '../chatI18n'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
-import { ProviderIcon } from './ProviderIcon'
 
 interface ChatStatusBarProps {
   isStreaming: boolean
   statusText: string
   compact?: boolean
-  runState?: DeepAgentsRunState
+  stream: ChatRuntimeStream
   onOpenExecution?: () => void
 }
 
@@ -18,29 +20,32 @@ export function ChatStatusBar({
   isStreaming,
   statusText,
   compact = false,
-  runState,
+  stream,
   onOpenExecution,
 }: ChatStatusBarProps) {
-  const { t } = useChatI18n()
-  const { open, setOpen, setFocusedMessageId, setSuppressAutoOpen } = useExecutionPaneStore()
-  const tools = useMemo(() => toolCallsFromRunState(runState), [runState])
+  const { t, locale } = useChatI18n()
+  const { open, setOpen, setSuppressAutoOpen } = useExecutionPaneStore()
+  const tools = getExecutionToolCalls(stream)
+  const subagents = getExecutionSubagents(stream)
+  const hasRuns = hasExecutionData(stream)
 
-  const hasRuns = (runState?.parts.length ?? 0) > 0
   if (!isStreaming && !statusText && !hasRuns) return null
 
-  const fallback = t('timeline.generating')
-  const toolNames = Array.from(new Set(tools.map((call) => call.name || '').filter(Boolean)))
+  const toolNames = Array.from(new Set(tools.map((call) => call.name).filter(Boolean)))
   const joinedTools = toolNames.slice(0, 4).join(' · ')
-  const providers = Array.from(new Set(tools.map((call) => call.provider || '').filter(Boolean))).slice(0, 3)
+  const fallback = t('timeline.generating')
 
-  let text = statusText || summarizeRunStateStatus(runState, isStreaming)
-
-  if (!text && isStreaming && joinedTools) {
+  let text = statusText.trim()
+  if (!text && isStreaming && subagents.length > 0) {
+    text =
+      locale === 'zh'
+        ? `正在运行 ${subagents.length} 个子代理…`
+        : `Running ${subagents.length} subagent(s)…`
+  } else if (!text && isStreaming && joinedTools) {
     text = t('status.tools.invoking', { tools: joinedTools })
   } else if (!text && !isStreaming && hasRuns && joinedTools) {
-    const totalCalls = tools.length || 1
     text = t('status.tools.summary', {
-      count: totalCalls,
+      count: tools.length || 1,
       tools: joinedTools,
     })
   }
@@ -53,7 +58,7 @@ export function ChatStatusBar({
         compact ? 'px-0.5 py-1.5 text-[11px]' : 'px-1 py-2 text-xs'
       }`}
     >
-      <div className="h-1.5 w-1.5 rounded-full bg-[var(--color-text)] animate-pulse" />
+      <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-text)]" />
       <span className="min-w-0 flex-1 truncate" title={displayText}>
         {displayText}
       </span>
@@ -64,7 +69,6 @@ export function ChatStatusBar({
             if (open) {
               setOpen(false)
               setSuppressAutoOpen(true)
-              setFocusedMessageId(null)
             } else {
               setSuppressAutoOpen(false)
               onOpenExecution()
@@ -75,13 +79,6 @@ export function ChatStatusBar({
         >
           <PanelRightOpen size={12} />
         </button>
-      )}
-      {hasRuns && providers.length > 0 && (
-        <div className="flex items-center gap-1 pl-1">
-          {providers.map((p) => (
-            <ProviderIcon key={p} provider={p} size="sm" />
-          ))}
-        </div>
       )}
     </div>
   )

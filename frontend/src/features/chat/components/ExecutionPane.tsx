@@ -1,55 +1,107 @@
-import { useEffect, useMemo, useState } from 'react'
-import { motion } from 'framer-motion'
+import { useEffect, useState } from 'react'
 import {
   Bot,
   CheckCircle2,
   CircleDashed,
-  GitBranch,
   Hammer,
+  Sparkles,
   Workflow,
+  Wrench,
   XCircle,
 } from 'lucide-react'
-import type { DeepAgentsRunState } from '@/shared/api/types'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
+import type {
+  ChatRuntimeStream,
+  ExecutionSubagent,
+  ExecutionToolCall,
+  ExecutionTopologyNode,
+} from '../executionStreamUtils'
 import {
-  buildGraphModelFromRunState,
-  taskSnapshotsFromRunState,
-  type RunGraphCluster,
-  type RunGraphModel,
-  type RunGraphNode,
-} from '../executionEventUtils'
+  getExecutionSteps,
+  getExecutionSubagents,
+  getExecutionToolCalls,
+  getExecutionTopology,
+  hasExecutionData,
+} from '../executionStreamUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
-import { ProviderIcon } from './ProviderIcon'
 
 interface ExecutionPaneProps {
-  runState?: DeepAgentsRunState
+  stream: ChatRuntimeStream
   isStreaming: boolean
   compact?: boolean
 }
 
 type ExecutionTab = 'graph' | 'tools' | 'state'
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function compactText(value: unknown, max = 220): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+function stableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value ?? '')
+  }
+}
+
+function truncateBlock(value: string, max = 8000): string {
+  const text = String(value || '').trim()
+  if (text.length <= max) return text
+  return `${text.slice(0, max - 1)}…`
+}
+
+function statusIcon(status?: string) {
+  const lowered = String(status || '').toLowerCase()
+  if (lowered === 'completed' || lowered === 'success') {
+    return <CheckCircle2 size={13} className="text-[var(--color-text)]" />
+  }
+  if (lowered === 'failed' || lowered === 'error') {
+    return <XCircle size={13} className="text-[var(--color-text)]" />
+  }
+  if (lowered === 'running' || lowered === 'pending' || lowered === 'streaming') {
+    return <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />
+  }
+  return <Sparkles size={13} className="text-[var(--color-text-muted)]" />
+}
+
+function nodeIcon(kind: string) {
+  const lowered = String(kind || '').toLowerCase()
+  if (lowered.includes('tool')) return <Hammer size={12} className="text-[var(--color-text)]" />
+  if (lowered.includes('model')) return <Bot size={12} className="text-[var(--color-text)]" />
+  if (lowered.includes('middleware')) return <Workflow size={12} className="text-[var(--color-text)]" />
+  if (lowered.includes('end') || lowered.includes('final')) return <CheckCircle2 size={12} className="text-[var(--color-text)]" />
+  return <Wrench size={12} className="text-[var(--color-text)]" />
+}
+
 export function ExecutionPane({
-  runState,
+  stream,
   isStreaming,
   compact = false,
 }: ExecutionPaneProps) {
-  const { t } = useChatI18n()
+  const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const graphModel = useMemo(() => buildGraphModelFromRunState(runState), [runState])
-  const hasExecution = graphModel.nodes.length > 0 || (runState?.parts.length ?? 0) > 0
-  const taskSnapshots = useMemo(() => taskSnapshotsFromRunState(runState), [runState])
-  const toolSnapshots = useMemo(
-    () => taskSnapshots.filter((task) => task.kind === 'tool'),
-    [taskSnapshots],
-  )
-  const hasStateSnapshot = Object.keys(runState?.latestValues ?? {}).length > 0
+  const topology = getExecutionTopology(stream)
+  const steps = getExecutionSteps(stream)
+  const tools = getExecutionToolCalls(stream)
+  const subagents = getExecutionSubagents(stream)
+  const values = asRecord(stream.values)
+  const todos = Array.isArray(values.todos) ? values.todos : []
+  const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
+  const hasExecution = hasExecutionData(stream)
   const [tab, setTab] = useState<ExecutionTab>('graph')
 
   useEffect(() => {
-    if (!hasExecution) return
-    setTab('graph')
+    if (hasExecution) setTab('graph')
   }, [hasExecution])
 
   const label = hasExecution ? t('trace.executionPane.title') : t('trace.executionPane.empty')
@@ -62,10 +114,10 @@ export function ExecutionPane({
         compact ? 'mt-1 w-full border-t border-[var(--color-border)]' : 'hidden min-w-0 max-w-md lg:flex',
         compact
           ? open
-            ? 'h-64'
+            ? 'h-72'
             : 'h-7'
           : open
-            ? 'w-[360px]'
+            ? 'w-[380px]'
             : 'w-0',
       )}
     >
@@ -94,8 +146,8 @@ export function ExecutionPane({
                   id="tools"
                   active={tab === 'tools'}
                   label={t('trace.tab.tools')}
-                  disabled={toolSnapshots.length === 0}
-                  onClick={() => toolSnapshots.length > 0 && setTab('tools')}
+                  disabled={tools.length === 0}
+                  onClick={() => tools.length > 0 && setTab('tools')}
                 />
                 <ExecutionTabButton
                   id="state"
@@ -107,35 +159,131 @@ export function ExecutionPane({
               </div>
 
               <div className="relative mt-1 flex-1 pr-1">
-                <div
-                  className={cn(
-                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'graph'
-                      ? 'pointer-events-auto translate-y-0 opacity-100'
-                      : 'pointer-events-none translate-y-1 opacity-0',
-                  )}
-                >
-                  <RunGraphView graphModel={graphModel} isStreaming={isStreaming} />
+                <div className={tabClassName(tab === 'graph')}>
+                  <div id="execution-pane-graph" className="space-y-2.5 text-[11px]">
+                    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+                      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                        <span className="font-medium">Topology</span>
+                        <span>{topology.nodes.length} nodes · {topology.edges.length} edges</span>
+                      </div>
+                      <TopologyBoard nodes={topology.nodes} edges={topology.edges} isStreaming={isStreaming} />
+                    </section>
+
+                    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+                      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                        <span className="font-medium">Runtime</span>
+                        <span>{locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}</span>
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        {steps.length === 0 && subagents.length === 0 ? (
+                          <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                            {t('trace.executionPane.emptyDetail')}
+                          </p>
+                        ) : (
+                          <>
+                            {steps.slice(-8).reverse().map((step) => (
+                              <div
+                                key={step.key}
+                                className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-2"
+                              >
+                                <div className="flex items-start gap-2">
+                                  <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+                                    {nodeIcon(step.messageType === 'tool' ? 'tool' : step.node)}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+                                        {step.node}
+                                      </span>
+                                      <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                                        {step.messageType || 'message'}
+                                      </span>
+                                    </div>
+                                    <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                                      {step.namespace}
+                                    </div>
+                                    {step.preview && (
+                                      <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                                        {step.preview}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <span className="pt-0.5">{statusIcon(step.active ? 'running' : 'completed')}</span>
+                                </div>
+                              </div>
+                            ))}
+
+                            {subagents.length > 0 && (
+                              <div className="space-y-2">
+                                <div className="pt-1 text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                                  Subagents
+                                </div>
+                                {subagents.map((subagent) => (
+                                  <SubagentCard key={subagent.key} subagent={subagent} />
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </section>
+                  </div>
                 </div>
-                <div
-                  className={cn(
-                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'tools'
-                      ? 'pointer-events-auto translate-y-0 opacity-100'
-                      : 'pointer-events-none translate-y-1 opacity-0',
-                  )}
-                >
-                  <TaskRunsView taskSnapshots={taskSnapshots} />
+
+                <div className={tabClassName(tab === 'tools')}>
+                  <div id="execution-pane-tools" className="space-y-2 text-[11px]">
+                    {tools.length === 0 ? (
+                      <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                        {t('trace.tools.empty')}
+                      </p>
+                    ) : (
+                      tools.map((tool) => <ToolCard key={tool.key} tool={tool} />)
+                    )}
+                  </div>
                 </div>
-                <div
-                  className={cn(
-                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'state'
-                      ? 'pointer-events-auto translate-y-0 opacity-100'
-                      : 'pointer-events-none translate-y-1 opacity-0',
-                  )}
-                >
-                  <StateSnapshotView runState={runState} />
+
+                <div className={tabClassName(tab === 'state')}>
+                  <div id="execution-pane-state" className="space-y-2 text-[11px]">
+                    {todos.length > 0 && (
+                      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+                        <div className="mb-2 text-[11px] font-medium text-[var(--color-text-muted)]">
+                          Todos
+                        </div>
+                        <div className="space-y-1.5">
+                          {todos.map((item, index) => {
+                            const record = asRecord(item)
+                            const title = String(record.title || record.content || `Todo ${index + 1}`)
+                            const done = Boolean(record.done)
+                            return (
+                              <div
+                                key={`${title}:${index}`}
+                                className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1.5"
+                              >
+                                <span className="pt-0.5">{statusIcon(done ? 'completed' : 'pending')}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="break-words text-[12px] text-[var(--color-text)]">
+                                    {title}
+                                  </div>
+                                  {Boolean(record.detail) && (
+                                    <div className="mt-0.5 break-words text-[11px] text-[var(--color-text-muted)]">
+                                      {compactText(String(record.detail))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </section>
+                    )}
+
+                    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+                      <div className="mb-2 text-[11px] font-medium text-[var(--color-text-muted)]">
+                        Snapshot
+                      </div>
+                      <JsonBlock value={values} />
+                    </section>
+                  </div>
                 </div>
               </div>
             </div>
@@ -143,6 +291,15 @@ export function ExecutionPane({
         </div>
       )}
     </aside>
+  )
+}
+
+function tabClassName(active: boolean) {
+  return cn(
+    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
+    active
+      ? 'pointer-events-auto translate-y-0 opacity-100'
+      : 'pointer-events-none translate-y-1 opacity-0',
   )
 }
 
@@ -176,141 +333,22 @@ function ExecutionTabButton({ id, active, label, disabled, onClick }: ExecutionT
   )
 }
 
-function statusIcon(status?: string) {
-  const lowered = String(status || '').toLowerCase()
-  if (lowered === 'completed' || lowered === 'success') {
-    return <CheckCircle2 size={13} className="text-[var(--color-text)]" />
-  }
-  if (lowered === 'failed' || lowered === 'error') {
-    return <XCircle size={13} className="text-[var(--color-text)]" />
-  }
-  if (lowered === 'running' || lowered === 'pending') {
-    return <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />
-  }
-  return null
-}
-
-function GraphNodeIcon({ node }: { node: RunGraphNode }) {
-  if (node.kind === 'tool') return <Hammer size={12} className="text-[var(--color-text)]" />
-  if (node.kind === 'model') return <Bot size={12} className="text-[var(--color-text)]" />
-  if (node.kind === 'middleware') return <Workflow size={12} className="text-[var(--color-text)]" />
-  if (node.kind === 'final') return <CheckCircle2 size={12} className="text-[var(--color-text)]" />
-  if (node.kind === 'error') return <XCircle size={12} className="text-[var(--color-text)]" />
-  return <GitBranch size={12} className="text-[var(--color-text)]" />
-}
-
-function RunGraphView({
-  graphModel,
+function TopologyBoard({
+  nodes,
+  edges,
   isStreaming,
 }: {
-  graphModel: RunGraphModel
+  nodes: ExecutionTopologyNode[]
+  edges: Array<{ source: string; target: string }>
   isStreaming: boolean
 }) {
-  const { t } = useChatI18n()
-  const rootCluster = graphModel.clusters.find((cluster) => cluster.key === graphModel.rootClusterKey)
-  const branchClusters = graphModel.clusters
-    .filter((cluster) => cluster.key !== graphModel.rootClusterKey)
-    .sort((a, b) => a.startTs - b.startTs)
-  const activeNode = graphModel.nodes.find((node) => node.key === graphModel.activeNodeKey)
-  const focusNode = activeNode ?? graphModel.nodes.find((node) => node.key === graphModel.latestNodeKey)
-
-  if (!graphModel.nodes.length || !rootCluster) {
+  if (nodes.length === 0) {
     return (
-      <p id="execution-pane-graph" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-        {t('trace.executionPane.emptyDetail')}
+      <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+        No topology yet.
       </p>
     )
   }
-
-  return (
-    <div id="execution-pane-graph" className="space-y-2.5 text-[11px]">
-      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
-        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-          <span className="font-medium">Topology</span>
-          <span>{graphModel.nodes.length} nodes · {branchClusters.length} branches</span>
-        </div>
-        <div className="mt-2">
-          <StaticTopologyCanvas
-            graphModel={graphModel}
-            cluster={rootCluster}
-            branchClusters={branchClusters}
-            isStreaming={isStreaming}
-          />
-        </div>
-        {branchClusters.length > 0 && (
-          <div className="mt-3 grid gap-2">
-            {branchClusters.map((cluster) => (
-              <ClusterCard
-                key={cluster.key}
-                graphModel={graphModel}
-                cluster={cluster}
-                isStreaming={isStreaming}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
-        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-          <span className="font-medium">Runtime</span>
-          <span>{isStreaming ? 'live' : 'settled'}</span>
-        </div>
-        {focusNode ? (
-          <div className="mt-2 space-y-2">
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                <GraphNodeIcon node={focusNode} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                    {focusNode.title}
-                  </span>
-                  <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                    {focusNode.status || 'ready'}
-                  </span>
-                </div>
-                {focusNode.summary && (
-                  <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                    {focusNode.summary}
-                  </div>
-                )}
-              </div>
-              <span className="pt-0.5">{statusIcon(focusNode.status)}</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-1.5">
-              <RuntimeStat label="Edges" value={String(graphModel.edges.length)} />
-              <RuntimeStat label="Clusters" value={String(graphModel.clusters.length)} />
-            </div>
-          </div>
-        ) : (
-          <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-            No focused runtime node yet.
-          </p>
-        )}
-      </section>
-    </div>
-  )
-}
-
-function StaticTopologyCanvas({
-  graphModel,
-  cluster,
-  branchClusters,
-  isStreaming,
-}: {
-  graphModel: RunGraphModel
-  cluster: RunGraphCluster
-  branchClusters: RunGraphCluster[]
-  isStreaming: boolean
-}) {
-  const nodes = cluster.nodeKeys
-    .map((key) => graphModel.nodes.find((node) => node.key === key))
-    .filter((node): node is RunGraphNode => node != null)
-  const nodeByKey = new Map(nodes.map((node) => [node.key, node]))
-  const edges = graphModel.edges.filter((edge) => nodeByKey.has(edge.from) && nodeByKey.has(edge.to))
 
   const columns = Array.from(
     nodes.reduce((map, node) => {
@@ -318,507 +356,159 @@ function StaticTopologyCanvas({
       bucket.push(node)
       map.set(node.depth, bucket)
       return map
-    }, new Map<number, RunGraphNode[]>()),
+    }, new Map<number, ExecutionTopologyNode[]>()),
   )
     .sort((a, b) => a[0] - b[0])
-    .map(([depth, columnNodes]) => [
-      depth,
-      [...columnNodes].sort((a, b) => {
-        if (a.ts !== b.ts) return a.ts - b.ts
-        return a.title.localeCompare(b.title)
-      }),
-    ] as const)
+    .map(([, bucket]) => bucket.sort((a, b) => a.name.localeCompare(b.name)))
 
-  const cardWidth = 148
-  const cardHeight = 92
-  const columnGap = 42
-  const rowGap = 24
-  const width = columns.length * cardWidth + Math.max(0, columns.length - 1) * columnGap
-  const height = Math.max(...columns.map(([, columnNodes]) => columnNodes.length), 1) * cardHeight
-    + Math.max(...columns.map(([, columnNodes]) => columnNodes.length - 1), 0) * rowGap
+  const maxRows = Math.max(...columns.map((column) => column.length))
+  const width = Math.max(columns.length, 1) * 220
+  const height = Math.max(maxRows, 1) * 116
+  const positionById = new Map<string, { x: number; y: number }>()
 
-  const positions = new Map<string, { x: number; y: number }>()
-  columns.forEach(([depth, columnNodes]) => {
-    const totalHeight = columnNodes.length * cardHeight + Math.max(0, columnNodes.length - 1) * rowGap
-    const startY = Math.max(0, (height - totalHeight) / 2)
-    columnNodes.forEach((node, index) => {
-      positions.set(node.key, {
-        x: depth * (cardWidth + columnGap),
-        y: startY + index * (cardHeight + rowGap),
+  columns.forEach((column, colIndex) => {
+    column.forEach((node, rowIndex) => {
+      positionById.set(node.id, {
+        x: colIndex * 220 + 100,
+        y: rowIndex * 116 + 54,
       })
     })
   })
 
-  const branchGroups = Array.from(
-    branchClusters.reduce((map, branchCluster) => {
-      const anchorKey = branchCluster.anchorNodeKey
-      if (!anchorKey || !nodeByKey.has(anchorKey)) return map
-      const current = map.get(anchorKey) ?? []
-      current.push(branchCluster)
-      map.set(anchorKey, current)
-      return map
-    }, new Map<string, RunGraphCluster[]>()),
-  )
-
-  const branchPillWidth = 132
-  const branchPillHeight = 34
-  const branchSpacing = 10
-  const branchLaneGap = 28
-  const extraWidth = branchGroups.reduce((maxWidth, [anchorKey, relatedBranches]) => {
-    const anchorPos = positions.get(anchorKey)
-    if (!anchorPos) return maxWidth
-    const laneWidth = branchLaneGap + branchPillWidth
-    return Math.max(maxWidth, anchorPos.x + cardWidth + laneWidth)
-  }, width)
-
-  const extraHeight = branchGroups.reduce((maxHeight, [anchorKey, relatedBranches]) => {
-    const anchorPos = positions.get(anchorKey)
-    if (!anchorPos) return maxHeight
-    const stackHeight = relatedBranches.length * branchPillHeight
-      + Math.max(0, relatedBranches.length - 1) * branchSpacing
-    const laneTop = anchorPos.y + cardHeight + 18
-    return Math.max(maxHeight, laneTop + stackHeight)
-  }, height)
-
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel-alt)] p-2.5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold text-[var(--color-text)]">Main graph</span>
-            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-              {cluster.status || 'ready'}
-            </span>
-          </div>
-          <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
-            {nodes.length} nodes · {edges.length} edges
-          </div>
-        </div>
-        {isStreaming && cluster.key === graphModel.activeClusterKey && (
-          <motion.span
-            className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--color-text)]"
-            initial={{ opacity: 0.35, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1.06 }}
-            transition={{ repeat: Infinity, repeatType: 'reverse', duration: 0.8 }}
-          />
-        )}
-      </div>
-
-      <div className="mt-3 overflow-x-auto pb-1">
-        <div
-          className="relative"
-          style={{ width: `${extraWidth}px`, height: `${extraHeight}px` }}
+    <div className="mt-2 overflow-x-auto pb-1">
+      <div
+        className="relative rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
+        style={{ minWidth: `${Math.max(width + 20, 280)}px` }}
+      >
+        <svg
+          className="absolute left-3 top-3 pointer-events-none"
+          width={width}
+          height={height}
+          viewBox={`0 0 ${width} ${height}`}
+          fill="none"
         >
-          <svg className="absolute inset-0 h-full w-full overflow-visible">
-            {edges.map((edge) => {
-              const from = positions.get(edge.from)
-              const to = positions.get(edge.to)
-              if (!from || !to) return null
-              const x1 = from.x + cardWidth
-              const y1 = from.y + cardHeight / 2
-              const x2 = to.x
-              const y2 = to.y + cardHeight / 2
-              const c1x = x1 + columnGap * 0.45
-              const c2x = x2 - columnGap * 0.45
-              const active = edge.from === graphModel.activeNodeKey || edge.to === graphModel.activeNodeKey
-              return (
-                <path
-                  key={edge.key}
-                  d={`M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`}
-                  fill="none"
-                  stroke="var(--color-border-strong)"
-                  strokeWidth={active ? 2 : 1.4}
-                  strokeDasharray={edge.kind === 'branch' ? '5 4' : undefined}
-                  opacity={active ? 0.95 : 0.68}
-                />
-              )
-            })}
-            {branchGroups.map(([anchorKey, relatedBranches]) => {
-              const anchorPos = positions.get(anchorKey)
-              if (!anchorPos) return null
-              const anchorX = anchorPos.x + cardWidth * 0.72
-              const anchorY = anchorPos.y + cardHeight
-              return relatedBranches.map((branchCluster, index) => {
-                const pillX = anchorPos.x + cardWidth + branchLaneGap
-                const pillY = anchorPos.y + cardHeight + 18 + index * (branchPillHeight + branchSpacing)
-                const midY = pillY + branchPillHeight / 2
-                const active = branchCluster.key === graphModel.activeClusterKey
-                return (
-                  <path
-                    key={`branch-overlay:${branchCluster.key}`}
-                    d={`M ${anchorX} ${anchorY} C ${anchorX} ${anchorY + 10}, ${pillX - 16} ${midY}, ${pillX} ${midY}`}
-                    fill="none"
-                    stroke="var(--color-border-strong)"
-                    strokeWidth={active ? 2 : 1.35}
-                    strokeDasharray="5 4"
-                    opacity={active ? 0.92 : 0.65}
-                  />
-                )
-              })
-            })}
-          </svg>
-
-          {nodes.map((node) => {
-            const position = positions.get(node.key)
-            if (!position) return null
+          {edges.map((edge) => {
+            const from = positionById.get(edge.source)
+            const to = positionById.get(edge.target)
+            if (!from || !to) return null
+            const midX = (from.x + to.x) / 2
             return (
-              <div
-                key={node.key}
-                className="absolute"
-                style={{
-                  width: `${cardWidth}px`,
-                  height: `${cardHeight}px`,
-                  transform: `translate(${position.x}px, ${position.y}px)`,
-                }}
-              >
-                <GraphNodeCard
-                  node={node}
-                  active={node.key === graphModel.activeNodeKey}
-                  latest={node.key === graphModel.latestNodeKey}
-                />
-              </div>
+              <path
+                key={`${edge.source}:${edge.target}`}
+                d={`M ${from.x + 48} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${to.x - 48} ${to.y}`}
+                stroke="var(--color-border)"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
             )
           })}
+        </svg>
 
-          {branchGroups.map(([anchorKey, relatedBranches]) => {
-            const anchorPos = positions.get(anchorKey)
-            if (!anchorPos) return null
-            return relatedBranches.map((branchCluster, index) => {
-              const active = branchCluster.key === graphModel.activeClusterKey
-              const top = anchorPos.y + cardHeight + 18 + index * (branchPillHeight + branchSpacing)
-              const left = anchorPos.x + cardWidth + branchLaneGap
-              return (
+        <div
+          className="relative grid gap-4"
+          style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(180px, 1fr))` }}
+        >
+          {columns.map((column, columnIndex) => (
+            <div key={`column:${columnIndex}`} className="space-y-4">
+              {column.map((node) => (
                 <div
-                  key={`branch-pill:${branchCluster.key}`}
+                  key={node.id}
                   className={cn(
-                    'absolute rounded-xl border px-2 py-1.5',
-                    active
-                      ? 'border-[var(--color-border-strong)] bg-[var(--color-bg)]'
+                    'relative rounded-2xl border px-3 py-2.5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]',
+                    node.active
+                      ? 'border-[var(--color-text)] bg-[var(--color-panel)]'
                       : 'border-[var(--color-border)] bg-[var(--color-panel)]',
                   )}
-                  style={{
-                    width: `${branchPillWidth}px`,
-                    minHeight: `${branchPillHeight}px`,
-                    transform: `translate(${left}px, ${top}px)`,
-                  }}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[10px] font-semibold text-[var(--color-text)]">
-                      {branchCluster.label}
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                      {nodeIcon(node.kind)}
                     </span>
-                    <span className="text-[9px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                      {branchCluster.status || 'ready'}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 truncate text-[9px] text-[var(--color-text-muted)]">
-                    {branchCluster.nodeKeys.length} nodes
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+                        {node.name}
+                      </div>
+                      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                        {node.kind}
+                      </div>
+                    </div>
+                    {statusIcon(node.active ? (isStreaming ? 'running' : 'completed') : 'idle')}
                   </div>
                 </div>
-              )
-            })
-          })}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function ClusterCard({
-  graphModel,
-  cluster,
-  isStreaming,
-}: {
-  graphModel: RunGraphModel
-  cluster: RunGraphCluster
-  isStreaming: boolean
-}) {
-  const nodes = cluster.nodeKeys
-    .map((key) => graphModel.nodes.find((node) => node.key === key))
-    .filter((node): node is RunGraphNode => node != null)
-  const active = cluster.key === graphModel.activeClusterKey
-  const anchorNode = cluster.anchorNodeKey
-    ? graphModel.nodes.find((node) => node.key === cluster.anchorNodeKey)
-    : null
-
-  return (
-    <section
-      className={cn(
-        'rounded-2xl border p-2.5',
-        active
-          ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)]'
-          : 'border-[var(--color-border)] bg-[var(--color-panel-alt)]',
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold text-[var(--color-text)]">
-              {cluster.label}
-            </span>
-            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-              {cluster.status || 'ready'}
-            </span>
-          </div>
-          <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
-            {cluster.pathLabel} · {nodes.length} nodes
-          </div>
-        </div>
-        {active && isStreaming && (
-          <motion.span
-            className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--color-text)]"
-            initial={{ opacity: 0.35, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1.06 }}
-            transition={{ repeat: Infinity, repeatType: "reverse", duration: 0.8 }}
-          />
-        )}
-      </div>
-
-      {anchorNode && (
-        <div className="mt-2 flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
-          <span className="inline-flex h-px w-4 bg-[var(--color-border-strong)]" />
-          <span>forked from</span>
-          <span className="truncate text-[var(--color-text)]">{anchorNode.title}</span>
-        </div>
-      )}
-
-      <div className="mt-2 overflow-x-auto pb-1">
-        <div className="flex min-w-max items-center gap-2">
-          {nodes.map((node, index) => (
-            <div key={node.key} className="flex items-center gap-2">
-              <GraphNodeCard
-                node={node}
-                active={node.key === graphModel.activeNodeKey}
-                latest={node.key === graphModel.latestNodeKey}
-              />
-              {index < nodes.length - 1 && (
-                <div className="flex min-w-[28px] justify-center">
-                  <motion.div
-                    className="h-px w-8 bg-[var(--color-border-strong)]"
-                    initial={{ scaleX: 0.5, opacity: 0.3 }}
-                    animate={{ scaleX: 1, opacity: 0.9 }}
-                    transition={{ duration: 0.25, delay: Math.min(index * 0.04, 0.24) }}
-                  />
-                </div>
-              )}
+              ))}
             </div>
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+function ToolCard({ tool }: { tool: ExecutionToolCall }) {
+  return (
+    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+          <Hammer size={12} className="text-[var(--color-text)]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+              {tool.name}
+            </span>
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              {tool.state}
+            </span>
+          </div>
+          {tool.args && (
+            <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+              args: {tool.args}
+            </div>
+          )}
+          {tool.result && (
+            <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+              result: {tool.result}
+            </div>
+          )}
+        </div>
+        <span className="pt-0.5">{statusIcon(tool.state)}</span>
+      </div>
     </section>
   )
 }
 
-function GraphNodeCard({
-  node,
-  active,
-  latest,
-}: {
-  node: RunGraphNode
-  active: boolean
-  latest: boolean
-}) {
+function SubagentCard({ subagent }: { subagent: ExecutionSubagent }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.18 }}
-      className={cn(
-        'group relative min-w-[144px] rounded-2xl border px-3 py-2.5',
-        active
-          ? 'border-[var(--color-border-strong)] bg-[var(--color-bg)]'
-          : latest
-            ? 'border-[var(--color-border-strong)] bg-[var(--color-bg)]/80'
-            : 'border-[var(--color-border)] bg-[var(--color-panel)]',
-      )}
-    >
-      {active && (
-        <motion.span
-          className="absolute inset-0 rounded-2xl border border-[var(--color-border-strong)]"
-          initial={{ opacity: 0.16, scale: 0.96 }}
-          animate={{ opacity: 0.36, scale: 1.02 }}
-          transition={{ repeat: Infinity, repeatType: 'reverse', duration: 0.9 }}
-        />
-      )}
-      <div className="relative flex items-start gap-2">
-        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-alt)]">
-          {node.kind === 'tool' && node.provider ? (
-            <ProviderIcon provider={node.provider} size="md" className="h-8 w-8 border-0 bg-transparent" />
-          ) : (
-            <GraphNodeIcon node={node} />
-          )}
+    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+          <Workflow size={12} className="text-[var(--color-text)]" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">
-            {node.title}
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+              {subagent.name}
+            </span>
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              {subagent.status}
+            </span>
           </div>
-          <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-            {node.status || 'ready'}
+          <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+            {subagent.type} · depth {subagent.depth} · {subagent.messageCount} messages
           </div>
-          {node.summary && (
-            <div className="mt-1 line-clamp-3 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-              {node.summary}
-            </div>
-          )}
         </div>
-        <span className="pt-0.5">{statusIcon(node.status)}</span>
+        <span className="pt-0.5">{statusIcon(subagent.status)}</span>
       </div>
-    </motion.div>
+    </section>
   )
 }
 
-function TaskRunsView({
-  taskSnapshots,
-}: {
-  taskSnapshots: ReturnType<typeof taskSnapshotsFromRunState>
-}) {
-  const { t } = useChatI18n()
-  const toolSnapshots = taskSnapshots.filter((task) => task.kind === 'tool')
-
-  if (!toolSnapshots.length) {
-    return (
-      <p id="execution-pane-tools" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-        {t('trace.tools.empty')}
-      </p>
-    )
-  }
-
+function JsonBlock({ value }: { value: unknown }) {
+  const text = truncateBlock(stableJson(value))
   return (
-    <div id="execution-pane-tools" className="space-y-2 text-[11px]">
-      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">Tool calls</span>
-        <span>{t('trace.tools.count', { count: toolSnapshots.length })}</span>
-      </div>
-      <ul className="space-y-1.5">
-        {toolSnapshots.map((task) => (
-          <li key={task.key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-            <div className="flex items-start gap-2">
-              <ProviderIcon provider={task.toolName || 'core'} size="md" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                    {task.name}
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">{task.status || '-'}</span>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">{task.updates} updates</span>
-                </div>
-                {task.summary && (
-                  <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                    {task.summary}
-                  </div>
-                )}
-                {task.ns.length > 0 && (
-                  <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                    {task.ns.join(' / ')}
-                  </div>
-                )}
-                {task.error && (
-                  <div className="mt-1 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
-                    {task.error}
-                  </div>
-                )}
-              </div>
-              <span className="pt-0.5">{statusIcon(task.status)}</span>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function StateSnapshotView({ runState }: { runState?: DeepAgentsRunState }) {
-  const snapshot = runState?.latestValues ?? {}
-  const todos = Array.isArray(snapshot.todos) ? snapshot.todos : []
-  const answer = String(snapshot.answer || '').trim()
-  const messagesCount = Number(snapshot.messages_count || 0)
-  const todosCount = Number(snapshot.todos_count || todos.length || 0)
-  const plan = snapshot.plan
-  const planText =
-    typeof plan === 'string'
-      ? plan
-      : plan != null
-        ? JSON.stringify(plan)
-        : ''
-
-  if (!Object.keys(snapshot).length) {
-    return (
-      <p id="execution-pane-state" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-        No state snapshot yet.
-      </p>
-    )
-  }
-
-  return (
-    <div id="execution-pane-state" className="space-y-2 text-[11px]">
-      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">Latest values</span>
-        <span>{runState?.parts.length ?? 0} parts</span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-1.5">
-        <RuntimeStat label="Messages" value={String(messagesCount)} />
-        <RuntimeStat label="Todos" value={String(todosCount)} />
-      </div>
-
-      {runState?.runId && (
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-            Run id
-          </div>
-          <div className="mt-1 text-[11px] leading-relaxed text-[var(--color-text)]">
-            {runState.runId}
-          </div>
-        </section>
-      )}
-
-      {answer && (
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-            Answer snapshot
-          </div>
-          <div className="mt-1 text-[11px] leading-relaxed text-[var(--color-text)]">
-            {answer}
-          </div>
-        </section>
-      )}
-
-      {todos.length > 0 && (
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-            Todos
-          </div>
-          <ul className="mt-1 space-y-1">
-            {todos.slice(0, 6).map((todo, index) => (
-              <li
-                key={`todo-${index}`}
-                className="rounded-md bg-[var(--color-bg-elevated)] px-2 py-1 text-[11px] leading-relaxed text-[var(--color-text)]"
-              >
-                {typeof todo === 'string' ? todo : JSON.stringify(todo)}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {planText && (
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-            Plan
-          </div>
-          <div className="mt-1 text-[11px] leading-relaxed text-[var(--color-text)] [overflow-wrap:anywhere]">
-            {planText}
-          </div>
-        </section>
-      )}
-    </div>
-  )
-}
-
-function RuntimeStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
-      <div className="mt-1 text-[13px] font-semibold text-[var(--color-text)]">{value}</div>
-    </div>
+    <pre className="overflow-x-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+      {text}
+    </pre>
   )
 }

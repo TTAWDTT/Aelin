@@ -20,7 +20,6 @@ interface MessageBubbleProps {
   compact?: boolean
   viewportWidth: number
   onQuickPrompt?: (text: string) => void
-  highlighted?: boolean
 }
 
 export function MessageBubble({
@@ -30,7 +29,6 @@ export function MessageBubble({
   compact = false,
   viewportWidth,
   onQuickPrompt,
-  highlighted = false,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)

@@ -252,7 +252,6 @@ export function streamMessagesToChatMessages(
         expression: previous?.expression,
         citations: previous?.citations,
         actions: previous?.actions,
-        runState: previous?.runState,
       })
   }
 
