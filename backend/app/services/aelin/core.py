@@ -188,7 +188,6 @@ def _try_deepagents_chat(
         answer=answer,
         citations=[],
         actions=_map_actions(result.actions),
-        tool_trace=[],
         memory_summary=agents_memory_text,
         generated_at=datetime.now(timezone.utc),
     )

@@ -182,14 +182,6 @@ class ChatAction(BaseModel):
     payload: dict[str, str] = Field(default_factory=dict)
 
 
-class ChatToolStep(BaseModel):
-    stage: str
-    status: str = "completed"
-    detail: str = ""
-    count: int = 0
-    ts: int = 0
-
-
 class AelinTodoItem(BaseModel):
     id: int
     title: str
@@ -235,7 +227,6 @@ class ChatResponse(BaseModel):
     expression: str = "exp-04"
     citations: list[ChatCitation] = Field(default_factory=list)
     actions: list[ChatAction] = Field(default_factory=list)
-    tool_trace: list[ChatToolStep] = Field(default_factory=list)
     memory_summary: str = ""
     generated_at: datetime
 

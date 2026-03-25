@@ -34,7 +34,6 @@ def test_remote_control_execute_routes_into_deepagents_dispatch(monkeypatch):
             expression="exp-04",
             citations=[],
             actions=[],
-            tool_trace=[],
             memory_summary="",
             generated_at=datetime.now(timezone.utc),
         )
@@ -76,7 +75,6 @@ def test_remote_control_execute_reports_deepagents_failure(monkeypatch):
             expression="exp-04",
             citations=[],
             actions=[],
-            tool_trace=[],
             memory_summary="",
             generated_at=datetime.now(timezone.utc),
         )
@@ -150,7 +148,6 @@ def test_feishu_bot_group_prefix_gate(monkeypatch):
             expression="exp-04",
             citations=[],
             actions=[],
-            tool_trace=[],
             memory_summary="",
             generated_at=datetime.now(timezone.utc),
         )
@@ -230,7 +227,6 @@ def test_qq_bot_private_message_routes_into_remote_control(monkeypatch):
             expression="exp-04",
             citations=[],
             actions=[],
-            tool_trace=[],
             memory_summary="",
             generated_at=datetime.now(timezone.utc),
         )
@@ -353,7 +349,6 @@ def test_qq_bot_group_prefix_gate(monkeypatch):
             expression="exp-04",
             citations=[],
             actions=[],
-            tool_trace=[],
             memory_summary="",
             generated_at=datetime.now(timezone.utc),
         )
