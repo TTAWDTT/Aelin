@@ -78,7 +78,7 @@ def test_deepagents_chat_stream_basic(monkeypatch):
                 "type": "messages",
                 "ns": ["root", "model"],
                 "data": (
-                    SimpleNamespace(content="hello from deepagents"),
+                    SimpleNamespace(id="msg-1", type="ai", content="hello from deepagents"),
                     {"langgraph_node": "model"},
                 ),
             }
@@ -165,6 +165,8 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     assert message_payload["ns"] == ["root", "model"]
     assert message_payload["data"]["content"] == "hello from deepagents"
     assert message_payload["data"]["metadata"]["langgraph_node"] == "model"
+    assert message_payload["data"]["message"]["id"] == "msg-1"
+    assert message_payload["data"]["message"]["type"] == "ai"
 
     task_payload = next(payload for name, payload in events if name == "tasks")
     assert task_payload["data"]["name"] == "tools"

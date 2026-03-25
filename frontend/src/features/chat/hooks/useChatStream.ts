@@ -1,37 +1,255 @@
-import { useCallback } from 'react'
-import { useChatStore } from '../stores/chatStore'
+import { useCallback, useEffect, useMemo } from 'react'
+import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import type { AelinAttachmentUploadResponse, DeepAgentsStreamPart } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import { useChatI18n } from '../chatI18n'
+import { createStreamPart, summarizeStreamPartStatus } from '../executionEventUtils'
+import { useChatStore } from '../stores/chatStore'
 import {
+  buildAssistantMessage,
+  buildHumanStreamMessage,
+  buildSessionHistoryMessages,
+  buildUserMessage,
   formatBytes,
+  streamMessagesToChatMessages,
   trimQueryForApi,
   type PendingImage,
 } from './chatStreamHelpers'
-import { useDeepAgentsStream } from './useDeepAgentsStream'
+import { AelinUseStreamTransport } from './aelinUseStreamTransport'
+
+type StreamState = {
+  messages: Array<Record<string, unknown>>
+  topology?: Record<string, unknown>
+  answer?: string
+  final?: Record<string, unknown>
+}
+
+function appendRunStatePartToStore(sessionId: string, part: DeepAgentsStreamPart) {
+  const state = useChatStore.getState()
+  const session = state.sessions.find((item) => item.id === sessionId)
+  if (!session) return
+
+  let currentRunState = undefined
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const message = session.messages[index]
+    if (message.role === 'assistant') {
+      currentRunState = message.runState
+      break
+    }
+  }
+
+  state.updateLastAssistant(sessionId, {
+    runState: currentRunState
+      ? {
+          ...currentRunState,
+          parts: [...currentRunState.parts, part],
+          runId: currentRunState.runId ?? part.runId,
+          latestValues: part.event === 'values'
+            ? { ...(currentRunState.latestValues ?? {}), ...((part.data as Record<string, unknown>) ?? {}) }
+            : currentRunState.latestValues,
+          final: part.event === 'final'
+            ? ((part.data as Record<string, unknown>) ?? currentRunState.final)
+            : currentRunState.final,
+          topology: part.event === 'topology'
+            ? (part.data as any)
+            : currentRunState.topology,
+        }
+      : {
+          parts: [part],
+          runId: part.runId,
+          latestValues: part.event === 'values' ? ((part.data as Record<string, unknown>) ?? {}) : undefined,
+          final: part.event === 'final' ? ((part.data as Record<string, unknown>) ?? {}) : undefined,
+          topology: part.event === 'topology' ? (part.data as any) : undefined,
+        },
+  })
+}
 
 export function useChatStream() {
   const store = useChatStore()
   const { t } = useChatI18n()
-  const { send, stop } = useDeepAgentsStream()
+  const session = store.sessions.find((item) => item.id === store.activeSessionId)
+
+  const transport = useMemo(() => new AelinUseStreamTransport({
+    apiUrl: `${import.meta.env.VITE_API_BASE || ''}/api/v1/deepagents/chat/stream`,
+    getToken: () => localStorage.getItem('token'),
+    getHistoryMessages: (threadId) => {
+      const state = useChatStore.getState()
+      const target = state.sessions.find((item) => item.id === threadId)
+      return buildSessionHistoryMessages(target)
+    },
+    getWorkspace: (threadId) => {
+      const state = useChatStore.getState()
+      const target = state.sessions.find((item) => item.id === threadId)
+      return target?.workspace || 'default'
+    },
+    getSource: () => 'chat_ui',
+    onAelinEvent: (event, payload) => {
+      const sessionId =
+        String((payload as any)?.config?.configurable?.thread_id || useChatStore.getState().activeSessionId || '')
+        || useChatStore.getState().activeSessionId
+      if (!sessionId || event === 'done' || event === 'ping' || event === 'start') return
+
+      const part = createStreamPart(event, payload)
+      if (!part) return
+      appendRunStatePartToStore(sessionId, part)
+      const status = summarizeStreamPartStatus(part)
+      if (status) {
+        useChatStore.getState().setStatusText(status)
+      }
+    },
+  }), [])
+
+  const stream = useStream<StreamState>({
+    transport,
+    threadId: store.activeSessionId,
+    messagesKey: 'messages',
+    initialValues: {
+      messages: buildSessionHistoryMessages(session) as Array<Record<string, unknown>>,
+    },
+    onCustomEvent: (event, { mutate }) => {
+      const record = event && typeof event === 'object' && !Array.isArray(event)
+        ? event as Record<string, unknown>
+        : {}
+      const kind = String(record.kind || '')
+      if (kind === 'topology') {
+        mutate((prev) => ({
+          ...prev,
+          topology: (record.topology as Record<string, unknown> | undefined),
+        }))
+        return
+      }
+      if (kind === 'values') {
+        const values = record.values && typeof record.values === 'object' && !Array.isArray(record.values)
+          ? record.values as Record<string, unknown>
+          : {}
+        mutate((prev) => ({
+          ...prev,
+          ...values,
+        }))
+        return
+      }
+      if (kind === 'final') {
+        const final = record.final && typeof record.final === 'object' && !Array.isArray(record.final)
+          ? record.final as Record<string, unknown>
+          : {}
+        mutate((prev) => ({
+          ...prev,
+          final,
+          answer: String(final.answer || prev.answer || ''),
+        }))
+      }
+    },
+    onError: (error) => {
+      store.setStatusText(String((error as Error)?.message || 'Stream error'))
+    },
+  })
+
+  useEffect(() => {
+    store.setStreaming(stream.isLoading)
+    if (!stream.isLoading && store.statusText === t('status.thinking')) {
+      store.setStatusText('')
+    }
+  }, [store, stream.isLoading, t])
+
+  useEffect(() => {
+    if (!store.activeSessionId) return
+    if (stream.messages.length === 0) return
+
+    const state = useChatStore.getState()
+    const currentSession = state.sessions.find((item) => item.id === store.activeSessionId)
+    if (!currentSession) return
+
+    const nextMessages = streamMessagesToChatMessages(
+      stream.messages as any,
+      currentSession.messages,
+      stream.isLoading,
+    )
+    if (nextMessages.length === 0) return
+    state.setSessionMessages(currentSession.id, nextMessages)
+  }, [store.activeSessionId, stream.isLoading, stream.messages])
+
+  const send = useCallback(
+    async (text: string, images?: PendingImage[], attachmentIds?: number[]) => {
+      let sessionId = store.activeSessionId
+      if (!sessionId) {
+        sessionId = store.createSession()
+      }
+      const currentState = useChatStore.getState()
+      const currentSession = currentState.sessions.find((item) => item.id === sessionId)
+      const normalizedAttachmentIds = Array.from(new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0))).slice(0, 20)
+      const prompt = trimQueryForApi(String(text || '').trim())
+      const visibleText =
+        prompt
+        || (images?.length
+          ? '请结合这些图片帮我分析。'
+          : normalizedAttachmentIds.length
+            ? '请先分析我上传的附件。'
+            : '')
+      if (!visibleText && !images?.length && normalizedAttachmentIds.length === 0) return
+
+      if ((currentSession?.messages.length ?? 0) === 0) {
+        const seed = visibleText || '新对话'
+        currentState.renameSession(sessionId, seed.length > 20 ? `${seed.slice(0, 20)}…` : seed)
+      }
+
+      currentState.addMessage(sessionId, buildUserMessage(visibleText, images))
+      currentState.addMessage(sessionId, buildAssistantMessage())
+      currentState.setStreaming(true)
+      currentState.setStatusText(t('status.thinking'))
+      currentState.setLastErrorCode(null)
+
+      const humanMessage = buildHumanStreamMessage(prompt, images)
+
+      try {
+        await stream.submit(
+          { messages: [humanMessage] as any },
+          {
+            context: {
+              workspace: currentSession?.workspace || 'default',
+              source: 'chat_ui',
+              attachment_ids: normalizedAttachmentIds,
+            } as any,
+            optimisticValues: (prev) => ({
+              ...(prev || {}),
+              messages: [
+                ...(((prev?.messages as Array<Record<string, unknown>> | undefined) ?? buildSessionHistoryMessages(currentSession)) as Array<Record<string, unknown>>),
+                humanMessage as any,
+              ],
+            }),
+          },
+        )
+      } catch (error) {
+        currentState.setStreaming(false)
+        currentState.setStatusText(String((error as Error)?.message || 'Stream error'))
+      }
+    },
+    [store, stream, t],
+  )
+
+  const stop = useCallback(() => {
+    void stream.stop()
+    store.setStreaming(false)
+    store.setStatusText(t('status.cancelled'))
+    store.setLastErrorCode(null)
+  }, [store, stream, t])
 
   const captureAndSend = useCallback(
     async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
       if (store.isStreaming) return
       store.setStatusText(
-        mode === 'region' ? t('status.capture.region') : t('status.capture.fullscreen')
+        mode === 'region' ? t('status.capture.region') : t('status.capture.fullscreen'),
       )
       try {
         const capture = await aelinApi.deviceScreenCapture({ mode })
         const prompt = String(textHint || '').trim()
-        send(prompt, [{ dataUrl: capture.data_url, name: capture.name || `screen-${Date.now()}.jpg` }])
+        await send(prompt, [{ dataUrl: capture.data_url, name: capture.name || `screen-${Date.now()}.jpg` }])
       } catch (error) {
         store.setStatusText('')
         throw error
       }
     },
-    [send, store, t]
+    [send, store, t],
   )
 
   const uploadAttachments = useCallback(
@@ -43,28 +261,26 @@ export function useChatStream() {
       let sessionId = store.activeSessionId
       if (!sessionId) sessionId = store.createSession() || store.activeSessionId
       const resolvedSessionId = String(sessionId || '')
-      const session = store.sessions.find(s => s.id === sessionId)
-      const workspace = session?.workspace || 'default'
+      const currentSession = useChatStore.getState().sessions.find((item) => item.id === sessionId)
+      const workspace = currentSession?.workspace || 'default'
 
       store.setStatusText(t('status.attach.processing'))
       try {
         const settled = await Promise.allSettled(
-          picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId }))
+          picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId })),
         )
         const uploaded: AelinAttachmentUploadResponse[] = []
         const failedNames: string[] = []
-        settled.forEach((item, index) => {
-          if (item.status === 'fulfilled') {
-            uploaded.push(item.value)
+        settled.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            uploaded.push(result.value)
             return
           }
           failedNames.push(picked[index]?.name || `attachment-${index + 1}`)
         })
         store.setStatusText('')
         if (uploaded.length === 0 && failedNames.length > 0) {
-          throw new Error(
-            t('composer.attach.partialFail', { names: failedNames.join(', ') })
-          )
+          throw new Error(t('composer.attach.partialFail', { names: failedNames.join(', ') }))
         }
         return uploaded
       } catch (error) {
@@ -72,23 +288,37 @@ export function useChatStream() {
         throw error
       }
     },
-    [store, t]
+    [store, t],
   )
 
-  const sendWithAttachments = useCallback(async (attachments: AelinAttachmentUploadResponse[], textHint = '') => {
-    if (store.isStreaming) return
-    const rows = Array.from(attachments || []).slice(0, MAX_PENDING_ATTACHMENTS)
-    if (rows.length === 0) return
-    const attachmentIds = rows.map((item) => Number(item.attachment_id)).filter((id) => Number.isFinite(id) && id > 0)
-    if (attachmentIds.length === 0) return
-    const attachmentBlock = `附件清单:\n${rows.map((item) => {
-      const parsed = Number(item.chunk_count || 0)
-      const parsedNote = parsed > 0 ? `已解析 ${parsed} chunks` : '已接入'
-      return `- ${item.file_name || 'attachment'} (${formatBytes(Number(item.size_bytes || 0))}) [${parsedNote}]`
-    }).join('\n')}`
-    const finalPrompt = trimQueryForApi([String(textHint || '').trim(), attachmentBlock].filter(Boolean).join('\n\n').trim())
-    send(finalPrompt || '我上传了附件，请先基于附件内容回答。', undefined, attachmentIds)
-  }, [send, store])
+  const sendWithAttachments = useCallback(
+    async (attachments: AelinAttachmentUploadResponse[], textHint = '') => {
+      if (store.isStreaming) return
+      const rows = Array.from(attachments || []).slice(0, MAX_PENDING_ATTACHMENTS)
+      if (rows.length === 0) return
+      const attachmentIds = rows
+        .map((item) => Number(item.attachment_id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+      if (attachmentIds.length === 0) return
+      const attachmentBlock = `附件清单:\n${rows.map((item) => {
+        const parsed = Number(item.chunk_count || 0)
+        const parsedNote = parsed > 0 ? `已解析 ${parsed} chunks` : '已接入'
+        return `- ${item.file_name || 'attachment'} (${formatBytes(Number(item.size_bytes || 0))}) [${parsedNote}]`
+      }).join('\n')}`
+      const finalPrompt = trimQueryForApi(
+        [String(textHint || '').trim(), attachmentBlock].filter(Boolean).join('\n\n').trim(),
+      )
+      await send(finalPrompt || '我上传了附件，请先基于附件内容回答。', undefined, attachmentIds)
+    },
+    [send, store],
+  )
 
-  return { send, captureAndSend, uploadAttachments, sendWithAttachments, stop }
+  return {
+    send,
+    captureAndSend,
+    uploadAttachments,
+    sendWithAttachments,
+    stop,
+    stream,
+  }
 }

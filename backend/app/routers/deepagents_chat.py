@@ -134,6 +134,84 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _normalize_message_type(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered.endswith("messagechunk"):
+        lowered = lowered[: -len("messagechunk")]
+    if lowered.endswith("message"):
+        lowered = lowered[: -len("message")]
+    if lowered == "human":
+        return "human"
+    if lowered == "user":
+        return "human"
+    if lowered == "ai":
+        return "ai"
+    if lowered == "assistant":
+        return "ai"
+    if lowered in {"system", "tool", "function", "remove"}:
+        return lowered
+    return lowered
+
+
+def _serialize_langgraph_message(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        payload = {str(k): _json_safe(v) for k, v in value.items()}
+        message_type = _normalize_message_type(payload.get("type"))
+        if message_type:
+            payload["type"] = message_type
+        return payload
+
+    message_type = _normalize_message_type(getattr(value, "type", None))
+    payload: dict[str, Any] = {}
+    if message_type:
+        payload["type"] = message_type
+
+    message_id = getattr(value, "id", None)
+    if message_id:
+        payload["id"] = str(message_id)
+
+    name = getattr(value, "name", None)
+    if name:
+        payload["name"] = str(name)
+
+    content = getattr(value, "content", None)
+    if content is not None:
+        payload["content"] = _json_safe(content)
+
+    additional_kwargs = getattr(value, "additional_kwargs", None)
+    if additional_kwargs:
+        payload["additional_kwargs"] = _json_safe(additional_kwargs)
+
+    response_metadata = getattr(value, "response_metadata", None)
+    if response_metadata:
+        payload["response_metadata"] = _json_safe(response_metadata)
+
+    usage_metadata = getattr(value, "usage_metadata", None)
+    if usage_metadata:
+        payload["usage_metadata"] = _json_safe(usage_metadata)
+
+    tool_calls = getattr(value, "tool_calls", None)
+    if tool_calls:
+        payload["tool_calls"] = _json_safe(tool_calls)
+
+    invalid_tool_calls = getattr(value, "invalid_tool_calls", None)
+    if invalid_tool_calls:
+        payload["invalid_tool_calls"] = _json_safe(invalid_tool_calls)
+
+    tool_call_id = getattr(value, "tool_call_id", None)
+    if tool_call_id:
+        payload["tool_call_id"] = str(tool_call_id)
+
+    status = getattr(value, "status", None)
+    if status:
+        payload["status"] = str(status)
+
+    return payload
+
+
 def _message_chunk_parts(data: Any) -> tuple[Any, dict[str, Any]]:
     if isinstance(data, (tuple, list)) and len(data) == 2:
         message, metadata = data
@@ -317,7 +395,7 @@ def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
             {
                 "content": message_to_text(message),
                 "metadata": _json_safe(metadata),
-                "message": _json_safe(message),
+                "message": _serialize_langgraph_message(message),
             },
             ns,
         )

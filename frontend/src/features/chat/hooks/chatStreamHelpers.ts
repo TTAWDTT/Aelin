@@ -1,14 +1,42 @@
-import type { MutableRefObject } from 'react'
-import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
-import type { ChatRequest, DeepAgentsStreamPart, DeepAgentsStreamUpdate } from '@/shared/api/types'
-import { appendRunStatePart, summarizeStreamPartStatus } from '../executionEventUtils'
+import type { BaseMessage } from '@langchain/core/messages'
+import type { ChatRequest } from '@/shared/api/types'
+import type { ChatMessage, ChatSession } from '../stores/chatStore'
 
 const MAX_QUERY_CHARS = 1200
 
 export type PendingImage = { dataUrl: string; name: string }
-export type ChatStoreState = ReturnType<typeof useChatStore.getState>
 
-function normalizeAssistantMarkdown(text: string): string {
+type StreamMessageLike = {
+  id?: string
+  type?: string
+  content?: unknown
+  tool_calls?: unknown[]
+  tool_call_id?: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function normalizeMessageType(value: unknown): 'user' | 'assistant' | 'tool' | 'system' | '' {
+  const type = String(value || '').trim().toLowerCase()
+  if (type === 'human' || type === 'user') return 'user'
+  if (type === 'ai' || type === 'assistant') return 'assistant'
+  if (type === 'tool') return 'tool'
+  if (type === 'system') return 'system'
+  return ''
+}
+
+function getMessageId(message: unknown): string {
+  const record = asRecord(message)
+  const direct = record.id
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+  return crypto.randomUUID()
+}
+
+export function normalizeAssistantMarkdown(text: string): string {
   const normalized = String(text || '').replace(/\r\n/g, '\n')
   return normalized.replace(/^(#{1,6})(\S)/gm, '$1 $2')
 }
@@ -26,19 +54,70 @@ export function trimQueryForApi(text: string): string {
   return `${normalized.slice(0, MAX_QUERY_CHARS - 1)}…`
 }
 
-export function normalizeAttachmentIds(attachmentIds?: number[]): number[] {
-  return Array.from(new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0))).slice(0, 20)
+export function extractTextContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  return content
+    .map((item) => {
+      const record = asRecord(item)
+      if (record.type === 'text') return String(record.text || '')
+      return ''
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim()
 }
 
-export function buildHistory(session?: ChatSession): Array<{ role: ChatMessage['role']; content: string }> {
-  return (session?.messages ?? [])
-    .slice(-20)
-    .filter((message) => {
-      const role = String(message.role || '').trim()
-      const content = String(message.content || '').trim()
-      return (role === 'user' || role === 'assistant') && content.length > 0
+export function extractImageInputs(content: unknown): PendingImage[] {
+  if (!Array.isArray(content)) return []
+
+  return content
+    .map((item) => {
+      const record = asRecord(item)
+      if (record.type !== 'image_url') return null
+      const imageUrl = record.image_url
+      if (typeof imageUrl === 'string' && imageUrl.startsWith('data:image/')) {
+        return { dataUrl: imageUrl, name: '' }
+      }
+      const imageRecord = asRecord(imageUrl)
+      const url = String(imageRecord.url || '').trim()
+      if (!url.startsWith('data:image/')) return null
+      return {
+        dataUrl: url,
+        name: String(imageRecord.name || ''),
+      }
     })
-    .map((message) => ({ role: message.role, content: String(message.content || '').trim() }))
+    .filter((item): item is PendingImage => item != null)
+}
+
+export function buildHumanStreamMessage(text: string, images?: PendingImage[]): StreamMessageLike {
+  const trimmed = trimQueryForApi(text)
+  if (!images?.length) {
+    return {
+      id: crypto.randomUUID(),
+      type: 'human',
+      content: trimmed,
+    }
+  }
+
+  const blocks: Array<Record<string, unknown>> = []
+  if (trimmed) {
+    blocks.push({ type: 'text', text: trimmed })
+  }
+  for (const image of images) {
+    if (!String(image.dataUrl || '').startsWith('data:image/')) continue
+    blocks.push({
+      type: 'image_url',
+      image_url: { url: image.dataUrl },
+    })
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    type: 'human',
+    content: blocks.length > 1 ? blocks : trimmed,
+  }
 }
 
 export function buildUserMessage(text: string, images?: PendingImage[]): ChatMessage {
@@ -60,148 +139,134 @@ export function buildAssistantMessage(): ChatMessage {
   }
 }
 
-export function resolveSessionForSend(store: ChatStoreState): { sessionId: string; session?: ChatSession } {
-  let sessionId = store.activeSessionId
-  if (!sessionId) {
-    sessionId = store.createSession()
+export function chatMessageToStreamMessage(message: ChatMessage): StreamMessageLike | null {
+  if (message.role === 'user') {
+    return buildHumanStreamMessage(message.content, message.images)
   }
-  return {
-    sessionId,
-    session: store.sessions.find((item) => item.id === sessionId),
+  if (message.role === 'assistant') {
+    return {
+      id: message.id,
+      type: 'ai',
+      content: normalizeAssistantMarkdown(message.content || ''),
+    }
   }
+  return null
 }
 
-export function maybeRenameFreshSession(
-  store: ChatStoreState,
-  sessionId: string,
-  session: ChatSession | undefined,
-  text: string,
-  images: PendingImage[] | undefined,
-  attachmentIds: number[],
-): void {
-  if ((session?.messages.length ?? 0) !== 0) return
-
-  const seed =
-    String(text || '').trim() || (images?.length || attachmentIds.length ? '附件分析' : '新对话')
-  const title = seed.length > 20 ? `${seed.slice(0, 20)}…` : seed
-  store.renameSession(sessionId, title)
+export function buildSessionHistoryMessages(session?: ChatSession): StreamMessageLike[] {
+  return (session?.messages ?? [])
+    .map(chatMessageToStreamMessage)
+    .filter((item): item is StreamMessageLike => item != null)
+    .filter((item) => {
+      const text = extractTextContent(item.content)
+      return Boolean(text || (Array.isArray(item.content) && item.content.length > 0))
+    })
 }
 
-export function buildChatRequest(params: {
-  text: string
-  session: ChatSession | undefined
-  history: Array<{ role: ChatMessage['role']; content: string }>
-  images?: PendingImage[]
+export function buildChatRequestFromStream(params: {
+  historyMessages: StreamMessageLike[]
+  inputMessages: StreamMessageLike[]
+  workspace: string
   attachmentIds: number[]
+  source?: string
 }): ChatRequest {
-  const normalizedQuery = trimQueryForApi(String(params.text || '').trim())
+  const fullMessages = [...params.historyMessages, ...params.inputMessages]
+  const lastUserIndex = [...fullMessages]
+    .map((message, index) => ({ message, index }))
+    .reverse()
+    .find(({ message }) => normalizeMessageType(message.type) === 'user')
+    ?.index
+
+  const latestUser = typeof lastUserIndex === 'number' ? fullMessages[lastUserIndex] : undefined
+  const historyMessages = typeof lastUserIndex === 'number'
+    ? fullMessages.slice(0, lastUserIndex)
+    : fullMessages
+
+  const history = historyMessages
+    .map((message) => {
+      const role = normalizeMessageType(message.type)
+      if (!role || role === 'tool') return null
+      const content = extractTextContent(message.content)
+      if (!content) return null
+      return {
+        role: role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'system',
+        content,
+      }
+    })
+    .filter((item): item is { role: 'user' | 'assistant' | 'system'; content: string } => item != null)
+
+  const query = trimQueryForApi(extractTextContent(latestUser?.content))
+  const images = extractImageInputs(latestUser?.content).map((image) => ({
+    data_url: image.dataUrl,
+    name: image.name,
+  }))
+
   return {
     query:
-      normalizedQuery ||
-      (params.images?.length || params.attachmentIds.length
-        ? '请先分析我上传的附件，然后给我结论和建议。'
-        : ''),
-    source: 'chat_ui',
-    workspace: params.session?.workspace || 'default',
-    history: params.history,
-    images: params.images?.map((image) => ({ data_url: image.dataUrl, name: image.name })),
+      query ||
+      (images.length > 0
+        ? '请结合这些图片给我一个简短说明。'
+        : params.attachmentIds.length > 0
+          ? '请先基于我上传的附件内容给出结论和建议。'
+          : ''),
+    source: params.source || 'chat_ui',
+    workspace: params.workspace || 'default',
+    history,
+    images,
     attachment_ids: params.attachmentIds,
   }
 }
 
-function appendRunState(sessionId: string, part: DeepAgentsStreamPart): void {
-  const state = useChatStore.getState()
-  const targetSession = state.sessions.find((session) => session.id === sessionId)
-  if (!targetSession) return
-  let currentRunState: ChatMessage['runState']
-  for (let i = targetSession.messages.length - 1; i >= 0; i -= 1) {
-    const msg = targetSession.messages[i]
-    if (msg.role === 'assistant') {
-      currentRunState = msg.runState
-      break
+export function streamMessagesToChatMessages(
+  streamMessages: BaseMessage[],
+  previousMessages: ChatMessage[],
+  isStreaming: boolean,
+): ChatMessage[] {
+  const previousById = new Map(previousMessages.map((message) => [message.id, message]))
+  const next: ChatMessage[] = []
+
+  for (const message of streamMessages) {
+      const raw = message as unknown as StreamMessageLike
+      const role = normalizeMessageType(
+        typeof (message as any)?.getType === 'function' ? (message as any).getType() : raw.type,
+      )
+      if (role !== 'user' && role !== 'assistant') continue
+
+      const id = getMessageId(raw)
+      const previous = previousById.get(id)
+      const content = normalizeAssistantMarkdown(extractTextContent((message as any).content ?? raw.content))
+      const images = role === 'user'
+        ? extractImageInputs((message as any).content ?? raw.content)
+        : undefined
+
+      if (role === 'assistant' && !content.trim() && !(raw.tool_calls?.length)) {
+        continue
+      }
+
+      next.push({
+        id,
+        role,
+        content,
+        images: images?.length ? images : previous?.images,
+        timestamp: previous?.timestamp ?? Date.now(),
+        expression: previous?.expression,
+        citations: previous?.citations,
+        actions: previous?.actions,
+        runState: previous?.runState,
+      })
+  }
+
+  if (isStreaming) {
+    const previousPlaceholder = previousMessages.at(-1)
+    const hasAssistant = next.some((message) => message.role === 'assistant')
+    if (
+      previousPlaceholder?.role === 'assistant'
+      && !previousPlaceholder.content
+      && !hasAssistant
+    ) {
+      return [...next, previousPlaceholder]
     }
   }
-  state.updateLastAssistant(sessionId, {
-    runState: appendRunStatePart(currentRunState, part),
-  })
-}
 
-export function buildStreamCallbacks(params: {
-  store: ChatStoreState
-  sessionId: string
-  abortRef: MutableRefObject<(() => void) | null>
-  getCancel: () => () => void
-}) {
-  let lastFinalAnswer = ''
-
-  const finalize = () => {
-    if (params.abortRef.current === params.getCancel()) {
-      params.abortRef.current = null
-    }
-    params.store.setStreaming(false)
-    params.store.setStatusText('')
-    params.store.setLastErrorCode(null)
-  }
-
-  return {
-    onUpdate: (update: DeepAgentsStreamUpdate) => {
-      const part: DeepAgentsStreamPart | undefined = update.part
-      if (part) {
-        const partStatus = summarizeStreamPartStatus(part)
-        if (partStatus) {
-          params.store.setStatusText(partStatus)
-        }
-        appendRunState(params.sessionId, part)
-      }
-
-      if (Array.isArray(update.citations)) {
-        params.store.updateLastAssistant(params.sessionId, { citations: update.citations })
-      }
-
-      if (Array.isArray(update.actions)) {
-        params.store.updateLastAssistant(params.sessionId, { actions: update.actions })
-      }
-
-      if (typeof update.textDelta === 'string' && update.textDelta) {
-        params.store.appendContent(params.sessionId, update.textDelta)
-      }
-
-      if (typeof update.finalAnswer === 'string' && update.finalAnswer.trim()) {
-        lastFinalAnswer = normalizeAssistantMarkdown(update.finalAnswer)
-        params.store.updateLastAssistant(params.sessionId, { content: lastFinalAnswer })
-      }
-
-      if (update.error) {
-        const error = update.error
-        // 仅在当前助手消息尚无任何内容时，才在对话中插入可见错误提示。
-        // 若已经有部分或完整回答（例如 agent_loop partial_result），
-        // 则将网络/传输异常视为非致命，不再打断用户视线。
-        const state = useChatStore.getState()
-        const session = state.sessions.find((s) => s.id === params.sessionId)
-        const lastAssistant =
-          session?.messages
-            .slice()
-            .reverse()
-            .find((m) => m.role === 'assistant') ?? null
-        const hasAnswer =
-          !!lastAssistant && String(lastAssistant.content || '').trim().length > 0
-
-        if (!hasAnswer) {
-          params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
-        }
-        if (error.code) {
-          params.store.setLastErrorCode(String(error.code))
-        }
-        finalize()
-        return
-      }
-
-      if (update.done) {
-        if (lastFinalAnswer) {
-          params.store.updateLastAssistant(params.sessionId, { content: lastFinalAnswer })
-        }
-        finalize()
-      }
-    },
-  }
+  return next
 }
