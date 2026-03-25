@@ -13,14 +13,13 @@ import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import type {
   ChatRuntimeStream,
+  ExecutionTurn,
   ExecutionSubagent,
   ExecutionToolCall,
   ExecutionTopologyNode,
 } from '../executionStreamUtils'
 import {
-  getExecutionSteps,
-  getExecutionSubagents,
-  getExecutionToolCalls,
+  getExecutionTurns,
   getExecutionTopology,
   hasExecutionData,
 } from '../executionStreamUtils'
@@ -91,9 +90,8 @@ export function ExecutionPane({
   const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
   const topology = getExecutionTopology(stream)
-  const steps = getExecutionSteps(stream)
-  const tools = getExecutionToolCalls(stream)
-  const subagents = getExecutionSubagents(stream)
+  const turns = getExecutionTurns(stream)
+  const tools = turns.flatMap((turn) => turn.toolCalls)
   const values = asRecord(stream.values)
   const todos = Array.isArray(values.todos) ? values.todos : []
   const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
@@ -175,55 +173,14 @@ export function ExecutionPane({
                         <span>{locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}</span>
                       </div>
                       <div className="mt-2 space-y-2">
-                        {steps.length === 0 && subagents.length === 0 ? (
+                        {turns.length === 0 ? (
                           <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
                             {t('trace.executionPane.emptyDetail')}
                           </p>
                         ) : (
-                          <>
-                            {steps.slice(-8).reverse().map((step) => (
-                              <div
-                                key={step.key}
-                                className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-2"
-                              >
-                                <div className="flex items-start gap-2">
-                                  <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
-                                    {nodeIcon(step.messageType === 'tool' ? 'tool' : step.node)}
-                                  </span>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                                        {step.node}
-                                      </span>
-                                      <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                                        {step.messageType || 'message'}
-                                      </span>
-                                    </div>
-                                    <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                                      {step.namespace}
-                                    </div>
-                                    {step.preview && (
-                                      <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                                        {step.preview}
-                                      </div>
-                                    )}
-                                  </div>
-                                  <span className="pt-0.5">{statusIcon(step.active ? 'running' : 'completed')}</span>
-                                </div>
-                              </div>
-                            ))}
-
-                            {subagents.length > 0 && (
-                              <div className="space-y-2">
-                                <div className="pt-1 text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                                  Subagents
-                                </div>
-                                {subagents.map((subagent) => (
-                                  <SubagentCard key={subagent.key} subagent={subagent} />
-                                ))}
-                              </div>
-                            )}
-                          </>
+                          turns.slice(-6).reverse().map((turn) => (
+                            <TurnCard key={turn.key} turn={turn} />
+                          ))
                         )}
                       </div>
                     </section>
@@ -237,7 +194,17 @@ export function ExecutionPane({
                         {t('trace.tools.empty')}
                       </p>
                     ) : (
-                      tools.map((tool) => <ToolCard key={tool.key} tool={tool} />)
+                      turns
+                        .filter((turn) => turn.toolCalls.length > 0)
+                        .map((turn) => (
+                          <section key={`tools:${turn.key}`} className="space-y-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+                            <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                              <span className="font-medium">{turn.node}</span>
+                              <span>{turn.toolCalls.length} calls</span>
+                            </div>
+                            {turn.toolCalls.map((tool) => <ToolCard key={tool.key} tool={tool} />)}
+                          </section>
+                        ))
                     )}
                   </div>
                 </div>
@@ -330,6 +297,61 @@ function ExecutionTabButton({ id, active, label, disabled, onClick }: ExecutionT
     >
       <span className="block truncate">{label}</span>
     </button>
+  )
+}
+
+function TurnCard({ turn }: { turn: ExecutionTurn }) {
+  return (
+    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+          {nodeIcon(turn.node)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+              {turn.node}
+            </span>
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              {turn.status}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+            {turn.namespace}
+          </div>
+          {turn.preview && (
+            <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+              {turn.preview}
+            </div>
+          )}
+        </div>
+        <span className="pt-0.5">{statusIcon(turn.status)}</span>
+      </div>
+
+      {(turn.toolCalls.length > 0 || turn.subagents.length > 0) && (
+        <div className="mt-2 space-y-2 border-t border-[var(--color-border)] pt-2">
+          {turn.toolCalls.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                Tools
+              </div>
+              {turn.toolCalls.map((tool) => <ToolCard key={tool.key} tool={tool} compact />)}
+            </div>
+          )}
+
+          {turn.subagents.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                Subagents
+              </div>
+              {turn.subagents.map((subagent) => (
+                <SubagentCard key={subagent.key} subagent={subagent} compact />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -445,9 +467,12 @@ function TopologyBoard({
   )
 }
 
-function ToolCard({ tool }: { tool: ExecutionToolCall }) {
+function ToolCard({ tool, compact = false }: { tool: ExecutionToolCall; compact?: boolean }) {
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+    <section className={cn(
+      'rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)]',
+      compact ? 'p-2' : 'p-2.5',
+    )}>
       <div className="flex items-start gap-2">
         <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
           <Hammer size={12} className="text-[var(--color-text)]" />
@@ -478,9 +503,12 @@ function ToolCard({ tool }: { tool: ExecutionToolCall }) {
   )
 }
 
-function SubagentCard({ subagent }: { subagent: ExecutionSubagent }) {
+function SubagentCard({ subagent, compact = false }: { subagent: ExecutionSubagent; compact?: boolean }) {
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
+    <section className={cn(
+      'rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
+      compact ? 'p-2' : 'p-2.5',
+    )}>
       <div className="flex items-start gap-2">
         <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
           <Workflow size={12} className="text-[var(--color-text)]" />

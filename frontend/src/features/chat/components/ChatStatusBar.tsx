@@ -4,6 +4,7 @@ import {
   getExecutionSubagents,
   getExecutionToolCalls,
   hasExecutionData,
+  summarizeExecutionStatus,
 } from '../executionStreamUtils'
 import { useChatI18n } from '../chatI18n'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
@@ -35,7 +36,7 @@ export function ChatStatusBar({
   const joinedTools = toolNames.slice(0, 4).join(' · ')
   const fallback = t('timeline.generating')
 
-  let text = statusText.trim()
+  let text = statusText.trim() || summarizeExecutionStatus(stream, '')
   if (!text && isStreaming && subagents.length > 0) {
     text =
       locale === 'zh'
