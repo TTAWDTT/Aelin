@@ -23,11 +23,15 @@ from app.services.aelin.runtime import (
 from app.services.aelin.streaming import _now_ms, _sse_event
 from app.services.aelin.utils import normalize_positive_ints
 from app.services.aelin.core_support import (
-    _get_memory_summary_for_chat,
+    _get_agents_memory_text_for_chat,
     _scoped_web_search_service,
 )
 from app.services.deepagents.deepagents_graph import build_chat_agent
-from app.services.deepagents.input_mapping import build_invoke_payload
+from app.services.deepagents.input_mapping import (
+    build_invoke_payload,
+    normalize_history_turns,
+    normalize_image_inputs,
+)
 from app.services.deepagents.output_utils import extract_answer, message_to_text
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.tool_runtime import (
@@ -203,11 +207,13 @@ def deepagents_chat_stream(
                     )
                     return
 
-                memory_summary = _get_memory_summary_for_chat(
+                agents_memory_text = _get_agents_memory_text_for_chat(
                     db,
                     current_user.id,
                     workspace=workspace,
                 )
+                history_turns = normalize_history_turns(getattr(payload, "history", []))
+                images = normalize_image_inputs(getattr(payload, "images", []))
 
                 attachment_ids = normalize_positive_ints(
                     getattr(payload, "attachment_ids", []),
@@ -242,7 +248,7 @@ def deepagents_chat_stream(
                     provider=provider,
                     context=tool_context,
                     limiter=limiter,
-                    memory_summary=memory_summary,
+                    memory_text=agents_memory_text,
                     cancel_token=cancel_token,
                 )
                 if agent is None:
@@ -258,8 +264,8 @@ def deepagents_chat_stream(
                 # 构造 DeepAgents 期望的消息格式。
                 invoke_payload = build_invoke_payload(
                     query=payload.query,
-                    history_turns=payload.history,
-                    images=payload.images,
+                    history_turns=history_turns,
+                    images=images,
                     files_mapping=files_mapping,
                 )
 

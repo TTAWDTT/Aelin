@@ -453,7 +453,7 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
         provider="openai",
         context=context,
         limiter=limiter,
-        memory_summary="User profile: likes agents.\nRecent change: migrated to DeepAgents shell.",
+        memory_text="# Aelin Session Memory\n\n## 长期记忆\n- likes agents.\n- migrated to DeepAgents shell.",
         skills_root=None,
     )
 
@@ -462,7 +462,7 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     assert isinstance(files, dict)
     assert "/memory/AGENTS.md" in files
     content = files["/memory/AGENTS.md"].get("content")
-    assert isinstance(content, list) and "User profile: likes agents." in "\n".join(str(line) for line in content)
+    assert isinstance(content, list) and "likes agents." in "\n".join(str(line) for line in content)
 
 
 def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
@@ -507,7 +507,7 @@ def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
         provider="openai",
         context=context,
         limiter=limiter,
-        memory_summary="",
+        memory_text="",
         skills_root=skill_root,
     )
 
@@ -553,7 +553,7 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
         provider="openai",
         context=context,
         limiter=limiter,
-        memory_summary="",
+        memory_text="",
         skills_root=None,
     )
 
@@ -594,7 +594,7 @@ def test_deepagents_loop_preserves_model_answer_without_legacy_open_claim_guard(
         context=SimpleNamespace(),
         limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
         query="请联网查一下",
-        memory_summary="",
+        memory_text="",
         history_turns=[],
     )
 
@@ -637,7 +637,7 @@ def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
         context=SimpleNamespace(),
         limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
         query="这张图里有什么？",
-        memory_summary="",
+        memory_text="",
         history_turns=[],
         images=[
             {
@@ -694,7 +694,7 @@ def test_deepagents_loop_preserves_system_history(monkeypatch):
         context=SimpleNamespace(),
         limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
         query="继续",
-        memory_summary="",
+        memory_text="",
         history_turns=[
             {"role": "system", "content": "你是系统消息"},
             {"role": "user", "content": "你好"},

@@ -418,7 +418,7 @@ def build_chat_agent(
     provider: str,
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
-    memory_summary: str,
+    memory_text: str,
     skills_root: Path | None = None,
     cancel_token: Any | None = None,
 ) -> tuple[Any, ToolPolicyUsage, list[dict[str, Any]], dict[str, Any]]:
@@ -496,22 +496,9 @@ def build_chat_agent(
 
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []
-    if memory_summary.strip():
-        mem_text = memory_summary.strip()
-        mem_body = (
-            mem_text
-            if mem_text.lstrip().startswith("#")
-            else "\n".join(
-                [
-                    "# Aelin Session Memory",
-                    "",
-                    "## User summary",
-                    mem_text,
-                ]
-            )
-        )
+    if memory_text.strip():
         mem_path = "/memory/AGENTS.md"
-        memory_files[mem_path] = mem_body
+        memory_files[mem_path] = memory_text.strip()
         memory_paths.append(mem_path)
 
     files: dict[str, Any] = {}

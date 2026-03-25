@@ -15,7 +15,7 @@ def _field(item: Any, key: str) -> Any:
     return getattr(item, key, None)
 
 
-def build_history_messages(history_turns: Sequence[Any] | None) -> list[dict[str, str]]:
+def normalize_history_turns(history_turns: Sequence[Any] | None) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     for turn in list(history_turns or [])[-MAX_HISTORY_TURNS:]:
         role = str(_field(turn, "role") or "").strip().lower()
@@ -28,7 +28,7 @@ def build_history_messages(history_turns: Sequence[Any] | None) -> list[dict[str
     return messages
 
 
-def build_image_inputs(images: Sequence[Any] | None) -> list[dict[str, str]]:
+def normalize_image_inputs(images: Sequence[Any] | None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for image in list(images or [])[:MAX_IMAGES]:
         data_url = str(_field(image, "data_url") or "").strip()
@@ -51,14 +51,14 @@ def build_chat_messages(
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
         {"role": turn["role"], "content": turn["content"]}
-        for turn in build_history_messages(history_turns)
+        for turn in normalize_history_turns(history_turns)
     ]
 
     latest_query = str(query or "").strip()
     if not latest_query:
         return messages
 
-    image_inputs = build_image_inputs(images)
+    image_inputs = normalize_image_inputs(images)
     if not image_inputs:
         messages.append({"role": "user", "content": latest_query})
         return messages

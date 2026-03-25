@@ -15,7 +15,7 @@ from app.schemas import ChatAction, ChatRequest, ChatResponse, ChatToolStep
 from app.services.aelin.core_support import (
     _build_cached_base_context_bundle as _build_cached_base_context_bundle_inner,
     _build_context_bundle as _build_context_bundle_inner,
-    _get_memory_summary_for_chat,
+    _get_agents_memory_text_for_chat,
     _scoped_web_search_service,
 )
 from app.services.aelin.expressions import _pick_expression
@@ -27,15 +27,16 @@ from app.services.aelin.streaming import _now_ms
 from app.services.aelin.utils import normalize_positive_ints
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.deepagents_loop import run_deepagents_loop
-from app.services.deepagents.input_mapping import build_history_messages, build_image_inputs
+from app.services.deepagents.input_mapping import (
+    normalize_history_turns,
+    normalize_image_inputs,
+)
 from app.services.deepagents.tool_runtime import ToolCallLimiter, build_tool_runtime_context
-from app.services.memory.file_memory_bridge import file_memory_bridge
 from app.settings import settings
 
 router = APIRouter(prefix="/aelin", tags=["aelin"])
 _log = logging.getLogger(__name__)
 
-_file_memory = file_memory_bridge
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 _NO_RESULT_DETAIL = "agent_loop_no_result"
@@ -95,7 +96,6 @@ def _try_agent_loop_chat(
     current_user: User,
     *,
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
-    persist_memory: bool = True,
     force_disable_writes: bool = False,
     cancel_token: Any | None = None,
 ) -> ChatResponse | None:
@@ -123,18 +123,23 @@ def _try_agent_loop_chat(
         return None
 
     summary_started = time.perf_counter()
-    memory_summary = _get_memory_summary_for_chat(db, current_user.id, workspace=workspace)
+    agents_memory_text = _get_agents_memory_text_for_chat(
+        db,
+        current_user.id,
+        workspace=workspace,
+    )
     _log.info(
-        "agent_loop preflight phase=memory_summary user_id=%s source=%s workspace=%s latency_ms=%s",
+        "agent_loop preflight phase=memory_file user_id=%s source=%s workspace=%s bytes=%s latency_ms=%s",
         int(current_user.id),
         source,
         workspace,
+        len(agents_memory_text.encode("utf-8")) if agents_memory_text else 0,
         int((time.perf_counter() - summary_started) * 1000),
     )
 
     normalize_started = time.perf_counter()
-    history_turns = build_history_messages(payload.history)
-    images = build_image_inputs(payload.images)
+    history_turns = normalize_history_turns(payload.history)
+    images = normalize_image_inputs(payload.images)
     attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
     _log.info(
         "agent_loop preflight phase=normalize_inputs user_id=%s source=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
@@ -190,7 +195,7 @@ def _try_agent_loop_chat(
         context=tool_context,
         limiter=limiter,
         query=payload.query,
-        memory_summary=memory_summary,
+        memory_text=agents_memory_text,
         history_turns=history_turns,
         images=images,
         cancel_token=cancel_token,
@@ -202,24 +207,12 @@ def _try_agent_loop_chat(
     if not result.ok or not answer:
         return None
 
-    if persist_memory and payload.use_memory:
-        try:
-            snapshot = str(result.memory_snapshot or memory_summary).strip()
-            if snapshot:
-                _file_memory.write_agents_memory(
-                    user_id=int(current_user.id),
-                    workspace=workspace,
-                    content=snapshot,
-                )
-        except Exception:
-            pass
-
     return ChatResponse(
         answer=answer,
         citations=[],
         actions=_map_actions(result.actions),
         tool_trace=[],
-        memory_summary=memory_summary,
+        memory_summary=agents_memory_text,
         generated_at=datetime.now(timezone.utc),
     )
 

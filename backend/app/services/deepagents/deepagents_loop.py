@@ -10,6 +10,7 @@ from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.input_mapping import build_invoke_payload
 from app.services.deepagents.output_utils import extract_answer
 from app.services.deepagents.tool_runtime import ToolCallLimiter, ToolRuntimeContext
+from app.services.foundation.llm import LLMService
 
 _log = logging.getLogger(__name__)
 
@@ -36,7 +37,6 @@ class DeepAgentsLoopResult:
     actions: list[dict[str, str]] = field(default_factory=list)
     error: str = ""
     cancelled: bool = False
-    memory_snapshot: str = ""
     capability_summary: str = ""
 
 
@@ -87,7 +87,6 @@ def _result(
     actions: list[dict[str, str]] | None = None,
     error: str = "",
     cancelled: bool = False,
-    memory_snapshot: str = "",
     capability_summary: str = "",
 ) -> DeepAgentsLoopResult:
     return DeepAgentsLoopResult(
@@ -99,7 +98,6 @@ def _result(
         actions=list(actions or []),
         error=error,
         cancelled=cancelled,
-        memory_snapshot=memory_snapshot,
         capability_summary=capability_summary,
     )
 
@@ -111,7 +109,7 @@ def run_deepagents_loop(
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
     query: str,
-    memory_summary: str,
+    memory_text: str,
     history_turns: list[dict[str, Any]],
     images: list[dict[str, Any]] | None = None,
     cancel_token: Any | None = None,
@@ -123,14 +121,13 @@ def run_deepagents_loop(
             provider=provider,
             context=context,
             limiter=limiter,
-            memory_summary=memory_summary,
+            memory_text=memory_text,
             cancel_token=cancel_token,
         )
         if agent is None:
             return _result(
                 ok=False,
                 error="llm_not_configured",
-                memory_snapshot="",
             )
 
         capabilities = _parse_capabilities_file(files_mapping)
@@ -161,7 +158,6 @@ def run_deepagents_loop(
                 total_calls=getattr(usage, "total_calls", 0),
                 write_calls=getattr(usage, "write_calls", 0),
                 error="empty_answer_from_deepagents",
-                memory_snapshot=memory_summary,
                 capability_summary=capability_summary,
             )
 
@@ -171,7 +167,6 @@ def run_deepagents_loop(
             tool_runs=tool_runs,
             total_calls=getattr(usage, "total_calls", 0),
             write_calls=getattr(usage, "write_calls", 0),
-            memory_snapshot=memory_summary,
             capability_summary=capability_summary,
         )
     except DeepAgentsCancelled:
@@ -179,12 +174,10 @@ def run_deepagents_loop(
             ok=False,
             cancelled=True,
             error="cancelled",
-            memory_snapshot=memory_summary,
         )
     except Exception as exc:  # noqa: BLE001
         _log.exception("deepagents_unhandled_error provider=%s", provider)
         return _result(
             ok=False,
             error=f"deepagents_unhandled_error:{str(exc)[:160]}",
-            memory_snapshot=memory_summary,
         )

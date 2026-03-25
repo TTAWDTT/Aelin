@@ -48,7 +48,7 @@ def test_deepagents_chat_stream_basic(monkeypatch):
         "_resolve_llm_service",
         lambda db, user: (SimpleNamespace(is_configured=lambda: True, config=SimpleNamespace(web_search_proxy_url="")), "openai"),
     )
-    monkeypatch.setattr(dchat, "_get_memory_summary_for_chat", lambda db, user_id, workspace: "")
+    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
     monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
 
     captured: dict[str, object] = {}
@@ -141,7 +141,7 @@ def test_deepagents_chat_stream_accepts_pydantic_history(monkeypatch):
         "_resolve_llm_service",
         lambda db, user: (SimpleNamespace(is_configured=lambda: True, config=SimpleNamespace(web_search_proxy_url="")), "openai"),
     )
-    monkeypatch.setattr(dchat, "_get_memory_summary_for_chat", lambda db, user_id, workspace: "")
+    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
     monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
 
     captured: dict[str, object] = {}

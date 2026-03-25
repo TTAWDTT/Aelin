@@ -60,7 +60,6 @@ def make_loop_result(
     tool_runs: list[dict[str, Any]] | None = None,
     actions: list[dict[str, str]] | None = None,
     error: str = "",
-    memory_snapshot: str = "",
 ) -> DeepAgentsLoopResult:
     """
     Convenience helper for constructing DeepAgentsLoopResult values in tests.
@@ -77,5 +76,4 @@ def make_loop_result(
         write_calls=write_calls,
         actions=actions or [],
         error=error,
-        memory_snapshot=memory_snapshot,
     )

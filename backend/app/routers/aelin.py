@@ -11,8 +11,7 @@ from app.services.aelin.core import _try_agent_loop_chat
 from app.services.aelin.core_support import (
     _build_context_bundle,
     _build_cached_base_context_bundle,
-    _empty_memory_snapshot,
-    _get_memory_summary_for_chat,
+    _get_agents_memory_text_for_chat,
     _scoped_web_search_service,
 )
 from app.services.aelin.expressions import (

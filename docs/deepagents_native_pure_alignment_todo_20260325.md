@@ -39,12 +39,12 @@
 
 ## 4. 记忆与输入映射去桥接
 
-- [ ] 4.1 审查并精简当前 memory 装配链路
-- [ ] 4.2 删除 “Aelin memory summary -> `/memory/AGENTS.md`” 的桥接思路
-- [ ] 4.3 让 DeepAgents memory 成为唯一聊天记忆来源
-- [ ] 4.4 审查并精简 `backend/app/services/deepagents/input_mapping.py`
-- [ ] 4.5 让 history / images / attachments 的输入装配更贴近 DeepAgents 原生约定
-- [ ] 4.6 删除不再需要的旧上下文拼装逻辑与残留测试
+- [x] 4.1 审查并精简当前 memory 装配链路
+- [x] 4.2 删除 “Aelin memory summary -> `/memory/AGENTS.md`” 的桥接思路
+- [x] 4.3 让 DeepAgents memory 成为唯一聊天记忆来源
+- [x] 4.4 审查并精简 `backend/app/services/deepagents/input_mapping.py`
+- [x] 4.5 让 history / images / attachments 的输入装配更贴近 DeepAgents 原生约定
+- [x] 4.6 删除不再需要的旧上下文拼装逻辑与残留测试
 
 ## 5. 最终删旧层与收尾
 

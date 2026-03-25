@@ -86,11 +86,10 @@ class AgentMemoryService:
 
     1. DeepAgents chat-loop interface（最小职责）
        - 读写 `/memory/AGENTS.md`（通过 `_read_agents_md_text` / `_write_agents_md_text`）
-       - 将该文件内容封装为单一 `memory_summary` 字符串：
-         `build_system_memory_prompt(db, user_id, query=...)`
-       DeepAgents agent loop 仅依赖这一视图（经由
-       `aelin_core_support._get_memory_summary_for_chat`），不会再直接触碰任何
-       DB 记忆模型。
+       - 直接返回该文件文本：
+         `get_agents_memory_text(...)`
+       DeepAgents agent loop 仅依赖这一文件视图，不会再直接触碰任何
+       DB 记忆模型，也不会再经过“summary -> AGENTS.md”的桥接。
 
     2. UI / 工具视图（仅用于 context_get / profile 等工具以及 /aelin/context）
        - `get_summary` / `list_notes` / `list_todos`
@@ -102,7 +101,7 @@ class AgentMemoryService:
     LegacyContextViewService 或直接删除；在此之前，它们作为基于 AGENTS.md
     的轻量投影层保留。
     """
-    # === DeepAgents chat-loop helpers (AGENTS.md IO + system prompt) ===
+    # === DeepAgents chat-loop helpers (AGENTS.md IO) ===
 
     def _read_agents_md_text(self, user_id: int, workspace: str = "default") -> str:
         """
@@ -188,51 +187,23 @@ class AgentMemoryService:
         section_block = section_block + line + "\n"
         return base[:idx] + section_block + base[end_idx:]
 
-    def build_system_memory_prompt(
+    def get_agents_memory_text(
         self,
         db: Session,
         user_id: int,
         *,
         workspace: str = "default",
-        query: str = "",
     ) -> str:
         """
-        Build a single concise markdown string representing the user's memory.
+        Return the raw AGENTS.md text for the requested workspace.
 
-        This is designed to be mounted as a virtual AGENTS.md-style file for
-        DeepAgents, and to serve as the `memory_summary` passed through the
-        rest of the Aelin pipeline.
-
-        When an AGENTS.md file already exists for the given workspace, it is
-        treated as the primary truth and used directly, with an optional
-        “当前问题” section appended for the caller's query. If no AGENTS.md is
-        available, an empty skeleton document is created instead of falling
-        back to legacy DB-backed summary/notes/todos, so that the DeepAgents
-        runtime can remain file-first and DB-independent for memory.
+        DeepAgents mounts this text directly as `/memory/AGENTS.md`; no
+        query-specific sections or synthetic wrappers are added here.
         """
-        # Prefer an existing AGENTS.md snapshot for the requested workspace.
-        agents_md = self._read_agents_md_text(user_id=user_id, workspace=workspace or "default")
-        query_text = _clean_text(query or "")
-        if agents_md:
-            base = str(agents_md).strip()
-            if not base:
-                return ""
-            if query_text:
-                extra = "## 当前问题\n" + _truncate(query_text, 240)
-                sep = "\n\n" if not base.endswith("\n") else "\n"
-                return base + sep + extra
-            return base
-
-        # Fallback: synthesize a minimal, empty AGENTS.md skeleton. We do not
-        # attempt to reconstruct historical memory from the DB here, so that
-        # the runtime only depends on file-backed memory.
-        parts: list[str] = []
-        if query_text:
-            parts.append("## 当前问题\n" + _truncate(query_text, 240))
-        body = "\n\n".join(parts).strip()
-        if not body:
-            return "# Aelin Session Memory\n"
-        return "# Aelin Session Memory\n\n" + body
+        _ = db
+        return str(
+            self._read_agents_md_text(user_id=user_id, workspace=workspace or "default") or ""
+        ).strip()
 
     def append_fact_to_memory(self, *, user_id: int, workspace: str, content: str) -> None:
         clean = _truncate(_clean_text(content), 280)
@@ -685,7 +656,7 @@ class AgentMemoryService:
         }
 
     # DeepAgents chat-loop entrypoint is implemented above as
-    # `build_system_memory_prompt`. All methods below this point are used for
+    # `get_agents_memory_text`. All methods below this point are used for
     # UI/context projections only and are intentionally decoupled from the
     # agent loop's core behaviour.
 
