@@ -5,6 +5,78 @@ import type {
 
 export type RunTaskKind = 'tool' | 'model' | 'middleware' | 'task'
 export type RunGraphNodeKind = 'start' | 'tool' | 'model' | 'middleware' | 'final' | 'error'
+export type RunGraphEdgeKind = 'flow' | 'branch'
+
+export interface RunTaskSnapshot {
+  key: string
+  id: string
+  name: string
+  kind: RunTaskKind
+  status: string
+  summary: string
+  ns: string[]
+  updates: number
+  lastTs: number
+  error?: string
+  toolName?: string
+}
+
+export interface RunGraphNode {
+  key: string
+  kind: RunGraphNodeKind
+  title: string
+  summary: string
+  status: string
+  ts: number
+  clusterKey: string
+  depth: number
+  toolName?: string
+  provider?: string
+}
+
+export interface RunGraphEdge {
+  key: string
+  from: string
+  to: string
+  kind: RunGraphEdgeKind
+  status: string
+}
+
+export interface RunGraphCluster {
+  key: string
+  label: string
+  pathLabel: string
+  ns: string[]
+  parentKey?: string
+  depth: number
+  status: string
+  startTs: number
+  lastTs: number
+  nodeKeys: string[]
+  anchorNodeKey?: string
+}
+
+export interface RunGraphModel {
+  nodes: RunGraphNode[]
+  edges: RunGraphEdge[]
+  clusters: RunGraphCluster[]
+  rootClusterKey: string
+  activeNodeKey?: string
+  latestNodeKey?: string
+  activeClusterKey?: string
+}
+
+export interface ExecutionToolCall {
+  key: string
+  name: string
+  status: string
+  summary: string
+  provider: string
+  latencyMs: number
+  isWrite: boolean
+}
+
+const ROOT_CLUSTER_KEY = 'cluster:root'
 
 function compactText(value: unknown, max = 180): string {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -69,6 +141,17 @@ function humanizeTaskName(value: unknown): string {
       .trim() || 'Post-process'
   }
   return raw.replace(/_/g, ' ')
+}
+
+function humanizeNamespaceSegment(value: string): string {
+  const clean = String(value || '')
+    .replace(/^__pregel.*$/, '')
+    .replace(/^subgraph:/i, '')
+    .replace(/^subagent:/i, '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+  if (!clean) return 'Branch'
+  return clean
 }
 
 function classifyTaskRecord(data: Record<string, unknown>): RunTaskKind {
@@ -174,6 +257,62 @@ function streamPartId(event: string, payload: Record<string, unknown>, ts: numbe
   return `${event}:${nsRaw}:${ts}:${Math.random().toString(36).slice(2, 8)}`
 }
 
+function normalizeNs(ns: string[] | undefined): string[] {
+  return (ns ?? [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((item) => !item.startsWith('__pregel'))
+}
+
+function formatNsLabel(ns: string[] | undefined): string {
+  const clean = normalizeNs(ns)
+  return clean.length ? clean.join(' / ') : 'root'
+}
+
+function clusterKeyFromNs(ns: string[]): string {
+  return ns.length ? `cluster:${ns.join('/')}` : ROOT_CLUSTER_KEY
+}
+
+function mergeStatuses(current: string, next: string): string {
+  const rank = (value: string): number => {
+    const lowered = String(value || '').toLowerCase()
+    if (lowered === 'failed' || lowered === 'error') return 4
+    if (lowered === 'running' || lowered === 'pending') return 3
+    if (lowered === 'completed' || lowered === 'success') return 2
+    if (lowered) return 1
+    return 0
+  }
+  return rank(next) >= rank(current) ? (next || current) : current
+}
+
+function inferProvider(name: string): string {
+  const lowered = String(name || '').toLowerCase()
+  if (lowered.startsWith('gws') || lowered.startsWith('google') || lowered.startsWith('gmail')) return 'google'
+  if (lowered.startsWith('device') || lowered.startsWith('screen')) return 'device'
+  if (lowered.startsWith('web')) return 'web'
+  return 'core'
+}
+
+function coerceTaskName(data: Record<string, unknown>): string {
+  const toolName = compactText(data.tool_name, 80)
+  if (toolName) return `Tool · ${toolName}`
+  return humanizeTaskName(data.name ?? data.id ?? 'Task')
+}
+
+function summarizeTaskData(data: Record<string, unknown>): string {
+  const rawId = compactText(data.id, 40)
+  const toolCall = asRecord(data.tool_call)
+  const toolArgs = compactText(stableStringify(toolCall.args), 180)
+  return [
+    compactText(data.status, 40),
+    compactText(data.result_summary, 180),
+    toolArgs ? `args=${toolArgs}` : '',
+    rawId ? `id=${rawId}` : '',
+    Number(data.interrupts || 0) > 0 ? `interrupts=${Number(data.interrupts)}` : '',
+    Number(data.triggers || 0) > 0 ? `triggers=${Number(data.triggers)}` : '',
+  ].filter(Boolean).join(' · ')
+}
+
 export function createStreamPart(event: string, payload: unknown): DeepAgentsStreamPart | null {
   const record = asRecord(payload)
   if (!event || !Object.keys(record).length) return null
@@ -213,66 +352,6 @@ export function appendRunStatePart(
   return next
 }
 
-export interface RunTaskSnapshot {
-  key: string
-  id: string
-  name: string
-  kind: RunTaskKind
-  status: string
-  summary: string
-  ns: string[]
-  updates: number
-  lastTs: number
-  error?: string
-  toolName?: string
-}
-
-export interface RunSubagentSnapshot {
-  key: string
-  label: string
-  ns: string[]
-  status: string
-  taskCount: number
-  lastTs: number
-}
-
-export interface RunGraphNode {
-  key: string
-  kind: RunGraphNodeKind
-  title: string
-  summary: string
-  status: string
-  ts: number
-}
-
-function formatNsLabel(ns: string[] | undefined): string {
-  const clean = (ns ?? [])
-    .map((item) => String(item || '').trim())
-    .filter(Boolean)
-    .filter((item) => !item.startsWith('__pregel'))
-  return clean.length ? clean.join(' / ') : 'root'
-}
-
-function coerceTaskName(data: Record<string, unknown>): string {
-  const toolName = compactText(data.tool_name, 80)
-  if (toolName) return `Tool · ${toolName}`
-  return humanizeTaskName(data.name ?? data.id ?? 'Task')
-}
-
-function summarizeTaskData(data: Record<string, unknown>): string {
-  const rawId = compactText(data.id, 40)
-  const toolCall = asRecord(data.tool_call)
-  const toolArgs = compactText(stableStringify(toolCall.args), 180)
-  return [
-    compactText(data.status, 40),
-    compactText(data.result_summary, 180),
-    toolArgs ? `args=${toolArgs}` : '',
-    rawId ? `id=${rawId}` : '',
-    Number(data.interrupts || 0) > 0 ? `interrupts=${Number(data.interrupts)}` : '',
-    Number(data.triggers || 0) > 0 ? `triggers=${Number(data.triggers)}` : '',
-  ].filter(Boolean).join(' · ')
-}
-
 export function taskSnapshotsFromRunState(
   runState: DeepAgentsRunState | undefined,
 ): RunTaskSnapshot[] {
@@ -281,7 +360,7 @@ export function taskSnapshotsFromRunState(
   for (const part of runState?.parts ?? []) {
     if (part.event !== 'tasks') continue
     const data = asRecord(part.data)
-    const ns = part.ns ?? []
+    const ns = normalizeNs(part.ns)
     const rawId = compactText(data.id, 80) || ''
     const name = coerceTaskName(data)
     const kind = classifyTaskRecord(data)
@@ -305,103 +384,220 @@ export function taskSnapshotsFromRunState(
   return [...byKey.values()].sort((a, b) => a.lastTs - b.lastTs)
 }
 
-export function subagentSnapshotsFromRunState(
-  runState: DeepAgentsRunState | undefined,
-): RunSubagentSnapshot[] {
-  const taskSnapshots = taskSnapshotsFromRunState(runState)
-  const byNs = new Map<string, RunSubagentSnapshot>()
-
-  for (const task of taskSnapshots) {
-    if (!task.ns.length) continue
-    const label = formatNsLabel(task.ns)
-    const existing = byNs.get(label)
-    byNs.set(label, {
-      key: label,
-      label,
-      ns: task.ns,
-      status: task.status || existing?.status || 'unknown',
-      taskCount: (existing?.taskCount ?? 0) + 1,
-      lastTs: Math.max(existing?.lastTs ?? 0, task.lastTs),
-    })
+function buildGraphNodeFromTask(task: RunTaskSnapshot): RunGraphNode {
+  const clusterKey = clusterKeyFromNs(task.ns)
+  const depth = task.ns.length
+  return {
+    key: `node:${task.key}`,
+    kind: task.kind === 'tool'
+      ? 'tool'
+      : task.kind === 'model'
+        ? 'model'
+        : task.kind === 'middleware'
+          ? 'middleware'
+          : 'model',
+    title: task.name,
+    summary: task.summary,
+    status: task.status || 'unknown',
+    ts: task.lastTs,
+    clusterKey,
+    depth,
+    toolName: task.toolName,
+    provider: inferProvider(task.toolName || task.name),
   }
-
-  return [...byNs.values()].sort((a, b) => a.lastTs - b.lastTs)
 }
 
-export function graphNodesFromRunState(
-  runState: DeepAgentsRunState | undefined,
-): RunGraphNode[] {
-  const nodes: RunGraphNode[] = []
-  const parts = runState?.parts ?? []
-  const startPart = parts.find((part) => part.event === 'start')
+function createRootCluster(): RunGraphCluster {
+  return {
+    key: ROOT_CLUSTER_KEY,
+    label: 'Main run',
+    pathLabel: 'root',
+    ns: [],
+    depth: 0,
+    status: 'ready',
+    startTs: 0,
+    lastTs: 0,
+    nodeKeys: [],
+  }
+}
 
+export function buildGraphModelFromRunState(
+  runState: DeepAgentsRunState | undefined,
+): RunGraphModel {
+  const nodes: RunGraphNode[] = []
+  const edges: RunGraphEdge[] = []
+  const clusters = new Map<string, RunGraphCluster>()
+  const nodeMap = new Map<string, RunGraphNode>()
+  const parts = runState?.parts ?? []
+  const taskSnapshots = taskSnapshotsFromRunState(runState)
+
+  clusters.set(ROOT_CLUSTER_KEY, createRootCluster())
+
+  const ensureCluster = (ns: string[]) => {
+    if (!ns.length) return ROOT_CLUSTER_KEY
+    for (let depth = 1; depth <= ns.length; depth += 1) {
+      const path = ns.slice(0, depth)
+      const key = clusterKeyFromNs(path)
+      if (clusters.has(key)) continue
+      const parentPath = path.slice(0, -1)
+      clusters.set(key, {
+        key,
+        label: humanizeNamespaceSegment(path[path.length - 1]),
+        pathLabel: formatNsLabel(path),
+        ns: path,
+        parentKey: parentPath.length ? clusterKeyFromNs(parentPath) : ROOT_CLUSTER_KEY,
+        depth: path.length,
+        status: 'ready',
+        startTs: 0,
+        lastTs: 0,
+        nodeKeys: [],
+      })
+    }
+    return clusterKeyFromNs(ns)
+  }
+
+  const attachNodeToCluster = (clusterKey: string, node: RunGraphNode) => {
+    const cluster = clusters.get(clusterKey)
+    if (!cluster) return
+    cluster.nodeKeys.push(node.key)
+    cluster.startTs = cluster.startTs === 0 ? node.ts : Math.min(cluster.startTs, node.ts)
+    cluster.lastTs = Math.max(cluster.lastTs, node.ts)
+    cluster.status = mergeStatuses(cluster.status, node.status)
+  }
+
+  const pushNode = (node: RunGraphNode) => {
+    nodes.push(node)
+    nodeMap.set(node.key, node)
+    attachNodeToCluster(node.clusterKey, node)
+  }
+
+  const startPart = parts.find((part) => part.event === 'start')
   if (startPart) {
-    nodes.push({
+    pushNode({
       key: `start:${startPart.id}`,
       kind: 'start',
       title: 'Run started',
       summary: compactText(asRecord(startPart.data).query, 140),
       status: 'completed',
       ts: startPart.ts,
+      clusterKey: ROOT_CLUSTER_KEY,
+      depth: 0,
+      provider: 'core',
     })
   }
 
-  for (const task of taskSnapshotsFromRunState(runState)) {
-    if (!['tool', 'model', 'middleware'].includes(task.kind)) continue
-    nodes.push({
-      key: `task:${task.key}`,
-      kind: task.kind === 'tool' ? 'tool' : task.kind === 'model' ? 'model' : 'middleware',
-      title: task.name,
-      summary: task.summary,
-      status: task.status || 'unknown',
-      ts: task.lastTs,
+  for (const task of taskSnapshots) {
+    const clusterKey = ensureCluster(task.ns)
+    pushNode({
+      ...buildGraphNodeFromTask(task),
+      clusterKey,
     })
   }
 
   for (const part of parts) {
     if (part.event === 'error') {
       const data = asRecord(part.data)
-      nodes.push({
+      pushNode({
         key: `error:${part.id}`,
         kind: 'error',
         title: 'Run error',
         summary: compactText(data.message, 160),
         status: 'failed',
         ts: part.ts,
+        clusterKey: ROOT_CLUSTER_KEY,
+        depth: 0,
+        provider: 'core',
       })
     }
     if (part.event === 'final') {
       const data = asRecord(part.data)
-      nodes.push({
+      pushNode({
         key: `final:${part.id}`,
         kind: 'final',
         title: 'Final answer',
         summary: compactText(data.answer, 180),
         status: 'completed',
         ts: part.ts,
+        clusterKey: ROOT_CLUSTER_KEY,
+        depth: 0,
+        provider: 'core',
       })
     }
   }
 
-  return nodes.sort((a, b) => a.ts - b.ts)
-}
+  const sortedClusters = [...clusters.values()].sort((a, b) => {
+    if (a.depth !== b.depth) return a.depth - b.depth
+    return a.startTs - b.startTs
+  })
 
-export interface ExecutionToolCall {
-  key: string
-  name: string
-  status: string
-  summary: string
-  provider: string
-  latencyMs: number
-  isWrite: boolean
-}
+  for (const cluster of sortedClusters) {
+    const clusterNodes = cluster.nodeKeys
+      .map((key) => nodeMap.get(key))
+      .filter((node): node is RunGraphNode => node != null)
+      .sort((a, b) => a.ts - b.ts)
+    cluster.nodeKeys = clusterNodes.map((node) => node.key)
+    cluster.status = clusterNodes.reduce((status, node) => mergeStatuses(status, node.status), cluster.status)
 
-function inferProvider(name: string): string {
-  const lowered = String(name || '').toLowerCase()
-  if (lowered.startsWith('gws') || lowered.startsWith('google') || lowered.startsWith('gmail')) return 'google'
-  if (lowered.startsWith('device') || lowered.startsWith('screen')) return 'device'
-  if (lowered.startsWith('web')) return 'web'
-  return 'core'
+    for (let index = 0; index < clusterNodes.length - 1; index += 1) {
+      const from = clusterNodes[index]
+      const to = clusterNodes[index + 1]
+      edges.push({
+        key: `edge:${from.key}:${to.key}`,
+        from: from.key,
+        to: to.key,
+        kind: 'flow',
+        status: mergeStatuses(from.status, to.status),
+      })
+    }
+  }
+
+  for (const cluster of sortedClusters) {
+    if (cluster.key === ROOT_CLUSTER_KEY || cluster.nodeKeys.length === 0) continue
+    const firstNode = nodeMap.get(cluster.nodeKeys[0])
+    const parentCluster = clusters.get(cluster.parentKey || ROOT_CLUSTER_KEY)
+    const parentNodes = (parentCluster?.nodeKeys ?? [])
+      .map((key) => nodeMap.get(key))
+      .filter((node): node is RunGraphNode => node != null)
+      .sort((a, b) => a.ts - b.ts)
+
+    const anchor =
+      [...parentNodes].reverse().find((node) => node.ts <= (firstNode?.ts ?? Number.MAX_SAFE_INTEGER))
+      ?? parentNodes.at(-1)
+
+    if (firstNode && anchor) {
+      cluster.anchorNodeKey = anchor.key
+      edges.push({
+        key: `branch:${cluster.key}:${anchor.key}:${firstNode.key}`,
+        from: anchor.key,
+        to: firstNode.key,
+        kind: 'branch',
+        status: mergeStatuses(anchor.status, firstNode.status),
+      })
+    }
+  }
+
+  const activeNode = [...nodes]
+    .sort((a, b) => a.ts - b.ts)
+    .reverse()
+    .find((node) => {
+      const lowered = String(node.status || '').toLowerCase()
+      return lowered === 'running' || lowered === 'pending'
+    })
+  const latestNode = [...nodes].sort((a, b) => a.ts - b.ts).at(-1)
+
+  return {
+    nodes: [...nodes].sort((a, b) => a.ts - b.ts),
+    edges: [...edges].sort((a, b) => {
+      const fromA = nodeMap.get(a.from)?.ts ?? 0
+      const fromB = nodeMap.get(b.from)?.ts ?? 0
+      return fromA - fromB
+    }),
+    clusters: sortedClusters.filter((cluster) => cluster.nodeKeys.length > 0),
+    rootClusterKey: ROOT_CLUSTER_KEY,
+    activeNodeKey: activeNode?.key,
+    latestNodeKey: latestNode?.key,
+    activeClusterKey: activeNode?.clusterKey,
+  }
 }
 
 export function toolCallsFromRunState(

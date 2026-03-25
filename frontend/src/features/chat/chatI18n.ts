@@ -40,7 +40,6 @@ type ChatKeys =
   | 'trace.tab.tools'
   | 'trace.executionPane.empty'
   | 'trace.executionPane.headerOpen'
-  | 'trace.executionPane.headerClosed'
   | 'trace.executionPane.emptyDetail'
   | 'trace.tools.empty'
   | 'trace.tools.count'
@@ -92,7 +91,6 @@ const ZH: Record<ChatKeys, string> = {
   'trace.tab.tools': '工具调用',
   'trace.executionPane.empty': '暂无执行信息',
   'trace.executionPane.headerOpen': '执行面板',
-  'trace.executionPane.headerClosed': '打开执行面板',
   'trace.executionPane.emptyDetail': '暂无可展示的执行信息。当本轮运行产生工具、状态或子代理数据时，这里会直接展示。',
   'trace.tools.empty': '本轮暂未调用任何原子工具。',
   'trace.tools.count': '{count} 个调用',
@@ -146,7 +144,6 @@ const EN: Record<ChatKeys, string> = {
   'trace.tab.tools': 'Tool calls',
   'trace.executionPane.empty': 'No execution info yet',
   'trace.executionPane.headerOpen': 'Execution panel',
-  'trace.executionPane.headerClosed': 'Open execution panel',
   'trace.executionPane.emptyDetail':
     'No execution data to show yet. Tool calls, state snapshots, and subagent activity will appear here when available.',
   'trace.tools.empty': 'No atomic tools were invoked in this turn.',

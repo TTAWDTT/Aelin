@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import {
   Bot,
   CheckCircle2,
@@ -13,9 +13,11 @@ import type { DeepAgentsRunState } from '@/shared/api/types'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import {
-  graphNodesFromRunState,
-  subagentSnapshotsFromRunState,
+  buildGraphModelFromRunState,
   taskSnapshotsFromRunState,
+  type RunGraphCluster,
+  type RunGraphModel,
+  type RunGraphNode,
 } from '../executionEventUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { ProviderIcon } from './ProviderIcon'
@@ -26,7 +28,7 @@ interface ExecutionPaneProps {
   compact?: boolean
 }
 
-type ExecutionTab = 'graph' | 'tools' | 'state' | 'agents'
+type ExecutionTab = 'graph' | 'tools' | 'state'
 
 export function ExecutionPane({
   runState,
@@ -35,22 +37,12 @@ export function ExecutionPane({
 }: ExecutionPaneProps) {
   const { t } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const graphNodes = useMemo(
-    () => graphNodesFromRunState(runState),
-    [runState],
-  )
-  const hasExecution = graphNodes.length > 0 || (runState?.parts.length ?? 0) > 0
-  const taskSnapshots = useMemo(
-    () => taskSnapshotsFromRunState(runState),
-    [runState],
-  )
+  const graphModel = useMemo(() => buildGraphModelFromRunState(runState), [runState])
+  const hasExecution = graphModel.nodes.length > 0 || (runState?.parts.length ?? 0) > 0
+  const taskSnapshots = useMemo(() => taskSnapshotsFromRunState(runState), [runState])
   const toolSnapshots = useMemo(
     () => taskSnapshots.filter((task) => task.kind === 'tool'),
     [taskSnapshots],
-  )
-  const subagentSnapshots = useMemo(
-    () => subagentSnapshotsFromRunState(runState),
-    [runState],
   )
   const hasStateSnapshot = Object.keys(runState?.latestValues ?? {}).length > 0
   const [tab, setTab] = useState<ExecutionTab>('graph')
@@ -67,13 +59,13 @@ export function ExecutionPane({
       aria-label={label}
       className={cn(
         'flex shrink-0 flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] transition-[width,height] duration-200',
-        compact ? 'mt-1 w-full border-t border-[var(--color-border)]' : 'hidden min-w-0 max-w-sm lg:flex',
+        compact ? 'mt-1 w-full border-t border-[var(--color-border)]' : 'hidden min-w-0 max-w-md lg:flex',
         compact
           ? open
-            ? 'h-56'
+            ? 'h-64'
             : 'h-7'
           : open
-            ? 'w-[320px]'
+            ? 'w-[360px]'
             : 'w-0',
       )}
     >
@@ -112,13 +104,6 @@ export function ExecutionPane({
                   disabled={!hasStateSnapshot}
                   onClick={() => hasStateSnapshot && setTab('state')}
                 />
-                <ExecutionTabButton
-                  id="agents"
-                  active={tab === 'agents'}
-                  label="Agents"
-                  disabled={subagentSnapshots.length === 0}
-                  onClick={() => subagentSnapshots.length > 0 && setTab('agents')}
-                />
               </div>
 
               <div className="relative mt-1 flex-1 pr-1">
@@ -130,7 +115,7 @@ export function ExecutionPane({
                       : 'pointer-events-none translate-y-1 opacity-0',
                   )}
                 >
-                  <RunGraphView runState={runState} isStreaming={isStreaming} />
+                  <RunGraphView graphModel={graphModel} isStreaming={isStreaming} />
                 </div>
                 <div
                   className={cn(
@@ -151,16 +136,6 @@ export function ExecutionPane({
                   )}
                 >
                   <StateSnapshotView runState={runState} />
-                </div>
-                <div
-                  className={cn(
-                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'agents'
-                      ? 'pointer-events-auto translate-y-0 opacity-100'
-                      : 'pointer-events-none translate-y-1 opacity-0',
-                  )}
-                >
-                  <SubagentView subagents={subagentSnapshots} />
                 </div>
               </div>
             </div>
@@ -215,26 +190,31 @@ function statusIcon(status?: string) {
   return null
 }
 
-function GraphNodeIcon({ kind }: { kind: 'start' | 'tool' | 'model' | 'middleware' | 'final' | 'error' }) {
-  if (kind === 'tool') return <Hammer size={12} className="text-[var(--color-text)]" />
-  if (kind === 'model') return <Bot size={12} className="text-[var(--color-text)]" />
-  if (kind === 'middleware') return <Workflow size={12} className="text-[var(--color-text)]" />
-  if (kind === 'final') return <CheckCircle2 size={12} className="text-[var(--color-text)]" />
-  if (kind === 'error') return <XCircle size={12} className="text-[var(--color-text)]" />
+function GraphNodeIcon({ node }: { node: RunGraphNode }) {
+  if (node.kind === 'tool') return <Hammer size={12} className="text-[var(--color-text)]" />
+  if (node.kind === 'model') return <Bot size={12} className="text-[var(--color-text)]" />
+  if (node.kind === 'middleware') return <Workflow size={12} className="text-[var(--color-text)]" />
+  if (node.kind === 'final') return <CheckCircle2 size={12} className="text-[var(--color-text)]" />
+  if (node.kind === 'error') return <XCircle size={12} className="text-[var(--color-text)]" />
   return <GitBranch size={12} className="text-[var(--color-text)]" />
 }
 
 function RunGraphView({
-  runState,
+  graphModel,
   isStreaming,
 }: {
-  runState?: DeepAgentsRunState
+  graphModel: RunGraphModel
   isStreaming: boolean
 }) {
   const { t } = useChatI18n()
-  const nodes = useMemo(() => graphNodesFromRunState(runState), [runState])
+  const rootCluster = graphModel.clusters.find((cluster) => cluster.key === graphModel.rootClusterKey)
+  const branchClusters = graphModel.clusters
+    .filter((cluster) => cluster.key !== graphModel.rootClusterKey)
+    .sort((a, b) => a.startTs - b.startTs)
+  const activeNode = graphModel.nodes.find((node) => node.key === graphModel.activeNodeKey)
+  const focusNode = activeNode ?? graphModel.nodes.find((node) => node.key === graphModel.latestNodeKey)
 
-  if (!nodes.length) {
+  if (!graphModel.nodes.length || !rootCluster) {
     return (
       <p id="execution-pane-graph" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
         {t('trace.executionPane.emptyDetail')}
@@ -242,59 +222,153 @@ function RunGraphView({
     )
   }
 
-  const activeIndex = isStreaming ? Math.max(0, nodes.length - 1) : -1
+  return (
+    <div id="execution-pane-graph" className="space-y-2.5 text-[11px]">
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+          <span className="font-medium">Topology</span>
+          <span>{graphModel.nodes.length} nodes · {branchClusters.length} branches</span>
+        </div>
+        <div className="mt-2">
+          <ClusterCard graphModel={graphModel} cluster={rootCluster} isStreaming={isStreaming} variant="root" />
+        </div>
+        {branchClusters.length > 0 && (
+          <div className="mt-3 grid gap-2">
+            {branchClusters.map((cluster) => (
+              <ClusterCard
+                key={cluster.key}
+                graphModel={graphModel}
+                cluster={cluster}
+                isStreaming={isStreaming}
+                variant="branch"
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+          <span className="font-medium">Runtime</span>
+          <span>{isStreaming ? 'live' : 'settled'}</span>
+        </div>
+        {focusNode ? (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                <GraphNodeIcon node={focusNode} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+                    {focusNode.title}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {focusNode.status || 'ready'}
+                  </span>
+                </div>
+                {focusNode.summary && (
+                  <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                    {focusNode.summary}
+                  </div>
+                )}
+              </div>
+              <span className="pt-0.5">{statusIcon(focusNode.status)}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <RuntimeStat label="Edges" value={String(graphModel.edges.length)} />
+              <RuntimeStat label="Clusters" value={String(graphModel.clusters.length)} />
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+            No focused runtime node yet.
+          </p>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function ClusterCard({
+  graphModel,
+  cluster,
+  isStreaming,
+  variant,
+}: {
+  graphModel: RunGraphModel
+  cluster: RunGraphCluster
+  isStreaming: boolean
+  variant: 'root' | 'branch'
+}) {
+  const nodes = cluster.nodeKeys
+    .map((key) => graphModel.nodes.find((node) => node.key === key))
+    .filter((node): node is RunGraphNode => node != null)
+  const active = cluster.key === graphModel.activeClusterKey
+  const anchorNode = cluster.anchorNodeKey
+    ? graphModel.nodes.find((node) => node.key === cluster.anchorNodeKey)
+    : null
 
   return (
-    <div id="execution-pane-graph" className="space-y-2 text-[11px]">
-      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">Run graph</span>
-        <span>{isStreaming ? 'live' : `${nodes.length} nodes`}</span>
+    <section
+      className={cn(
+        'rounded-2xl border p-2.5',
+        active
+          ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)]'
+          : 'border-[var(--color-border)] bg-[var(--color-panel-alt)]',
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold text-[var(--color-text)]">
+              {variant === 'root' ? 'Main graph' : cluster.label}
+            </span>
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              {cluster.status || 'ready'}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+            {variant === 'root'
+              ? `${nodes.length} nodes`
+              : `${cluster.pathLabel} · ${nodes.length} nodes`}
+          </div>
+        </div>
+        {active && isStreaming && (
+          <motion.span
+            className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--color-text)]"
+            initial={{ opacity: 0.35, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1.06 }}
+            transition={{ repeat: Infinity, repeatType: "reverse", duration: 0.8 }}
+          />
+        )}
       </div>
 
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+      {anchorNode && variant === 'branch' && (
+        <div className="mt-2 flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
+          <span className="inline-flex h-px w-4 bg-[var(--color-border-strong)]" />
+          <span>forked from</span>
+          <span className="truncate text-[var(--color-text)]">{anchorNode.title}</span>
+        </div>
+      )}
+
+      <div className="mt-2 overflow-x-auto pb-1">
+        <div className="flex min-w-max items-center gap-2">
           {nodes.map((node, index) => (
             <div key={node.key} className="flex items-center gap-2">
-              <motion.div
-                initial={{ opacity: 0, y: 6, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.18, delay: Math.min(index * 0.04, 0.24) }}
-                className={cn(
-                  'group relative min-w-[132px] rounded-2xl border px-3 py-2',
-                  activeIndex === index
-                    ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-panel-alt)]',
-                )}
-              >
-                {activeIndex === index && (
-                  <motion.span
-                    className="absolute inset-0 rounded-2xl border border-[var(--color-border-strong)]"
-                    initial={{ opacity: 0.16, scale: 0.96 }}
-                    animate={{ opacity: 0.34, scale: 1.02 }}
-                    transition={{ repeat: Infinity, repeatType: 'reverse', duration: 0.9 }}
-                  />
-                )}
-                <div className="relative flex items-center gap-2">
-                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
-                    <GraphNodeIcon kind={node.kind} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">
-                      {node.title}
-                    </div>
-                    <div className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
-                      {node.status || 'ready'}
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
+              <GraphNodeCard
+                node={node}
+                active={node.key === graphModel.activeNodeKey}
+                latest={node.key === graphModel.latestNodeKey}
+              />
               {index < nodes.length - 1 && (
-                <div className="flex min-w-[26px] justify-center">
+                <div className="flex min-w-[28px] justify-center">
                   <motion.div
                     className="h-px w-8 bg-[var(--color-border-strong)]"
-                    initial={{ scaleX: 0.5, opacity: 0.4 }}
+                    initial={{ scaleX: 0.5, opacity: 0.3 }}
                     animate={{ scaleX: 1, opacity: 0.9 }}
-                    transition={{ duration: 0.24, delay: Math.min(index * 0.05, 0.3) }}
+                    transition={{ duration: 0.25, delay: Math.min(index * 0.04, 0.24) }}
                   />
                 </div>
               )}
@@ -302,48 +376,65 @@ function RunGraphView({
           ))}
         </div>
       </div>
+    </section>
+  )
+}
 
-      <ol className="space-y-1.5">
-        <AnimatePresence initial={false}>
-          {nodes.map((node, index) => (
-            <motion.li
-              key={node.key}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.18 }}
-              className={cn(
-                'rounded-xl border px-2.5 py-2',
-                activeIndex === index
-                  ? 'border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-panel)]',
-              )}
-            >
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)]">
-                  <GraphNodeIcon kind={node.kind} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-[var(--color-text-muted)]">{index + 1}.</span>
-                    <span className="truncate text-[11px] font-semibold text-[var(--color-text)]">
-                      {node.title}
-                    </span>
-                    <span className="text-[10px] text-[var(--color-text-muted)]">{node.status}</span>
-                  </div>
-                  {node.summary && (
-                    <div className="mt-1 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                      {node.summary}
-                    </div>
-                  )}
-                </div>
-                <span className="pt-0.5">{statusIcon(node.status)}</span>
-              </div>
-            </motion.li>
-          ))}
-        </AnimatePresence>
-      </ol>
-    </div>
+function GraphNodeCard({
+  node,
+  active,
+  latest,
+}: {
+  node: RunGraphNode
+  active: boolean
+  latest: boolean
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.18 }}
+      className={cn(
+        'group relative min-w-[144px] rounded-2xl border px-3 py-2.5',
+        active
+          ? 'border-[var(--color-border-strong)] bg-[var(--color-bg)]'
+          : latest
+            ? 'border-[var(--color-border-strong)] bg-[var(--color-bg)]/80'
+            : 'border-[var(--color-border)] bg-[var(--color-panel)]',
+      )}
+    >
+      {active && (
+        <motion.span
+          className="absolute inset-0 rounded-2xl border border-[var(--color-border-strong)]"
+          initial={{ opacity: 0.16, scale: 0.96 }}
+          animate={{ opacity: 0.36, scale: 1.02 }}
+          transition={{ repeat: Infinity, repeatType: 'reverse', duration: 0.9 }}
+        />
+      )}
+      <div className="relative flex items-start gap-2">
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-alt)]">
+          {node.kind === 'tool' && node.provider ? (
+            <ProviderIcon provider={node.provider} size="md" className="h-8 w-8 border-0 bg-transparent" />
+          ) : (
+            <GraphNodeIcon node={node} />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[11px] font-semibold text-[var(--color-text)]">
+            {node.title}
+          </div>
+          <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+            {node.status || 'ready'}
+          </div>
+          {node.summary && (
+            <div className="mt-1 line-clamp-3 break-words text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+              {node.summary}
+            </div>
+          )}
+        </div>
+        <span className="pt-0.5">{statusIcon(node.status)}</span>
+      </div>
+    </motion.div>
   )
 }
 
@@ -437,8 +528,8 @@ function StateSnapshotView({ runState }: { runState?: DeepAgentsRunState }) {
       </div>
 
       <div className="grid grid-cols-2 gap-1.5">
-        <StateStatCard label="Messages" value={String(messagesCount)} />
-        <StateStatCard label="Todos" value={String(todosCount)} />
+        <RuntimeStat label="Messages" value={String(messagesCount)} />
+        <RuntimeStat label="Todos" value={String(todosCount)} />
       </div>
 
       {runState?.runId && (
@@ -495,53 +586,7 @@ function StateSnapshotView({ runState }: { runState?: DeepAgentsRunState }) {
   )
 }
 
-function SubagentView({
-  subagents,
-}: {
-  subagents: ReturnType<typeof subagentSnapshotsFromRunState>
-}) {
-  if (!subagents.length) {
-    return (
-      <p id="execution-pane-agents" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-        No subagent namespaces yet.
-      </p>
-    )
-  }
-
-  return (
-    <div id="execution-pane-agents" className="space-y-2 text-[11px]">
-      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">Subagents</span>
-        <span>{subagents.length}</span>
-      </div>
-      <ul className="space-y-1.5">
-        {subagents.map((item) => (
-          <li key={item.key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-            <div className="flex items-start gap-2">
-              <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                <Bot size={12} className="text-[var(--color-text)]" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                    {item.label}
-                  </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">{item.status || '-'}</span>
-                </div>
-                <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                  {item.taskCount} task{item.taskCount === 1 ? '' : 's'}
-                </div>
-              </div>
-              <span className="pt-0.5">{statusIcon(item.status)}</span>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function StateStatCard({ label, value }: { label: string; value: string }) {
+function RuntimeStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
       <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
