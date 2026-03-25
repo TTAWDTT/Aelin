@@ -17,13 +17,7 @@ type RawSseEvent = {
   data: string
 }
 
-type RawAelinPayload = {
-  type?: string
-  run_id?: string
-  seq?: number
-  ns?: string[]
-  data?: Record<string, unknown>
-}
+type RawAelinPayload = unknown
 
 type TransportStreamEvent = {
   id?: string
@@ -84,8 +78,7 @@ function toPayload(raw: string): RawAelinPayload | null {
     return JSON.parse(text) as RawAelinPayload
   } catch {
     return {
-      type: 'error',
-      data: { message: text },
+      message: text,
     }
   }
 }
@@ -112,10 +105,6 @@ function normalizeStreamMessage(message: unknown, fallbackId: string): StreamMes
     type,
     content,
   }
-}
-
-function nsEventName(base: string, ns: string[] | undefined): string {
-  return ns && ns.length ? `${base}|${ns.join('|')}` : base
 }
 
 export class AelinUseStreamTransport {
@@ -182,7 +171,6 @@ export class AelinUseStreamTransport {
 
     return (async function* () {
       let buffer = ''
-      let metadataEmitted = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -196,105 +184,67 @@ export class AelinUseStreamTransport {
           if (!parsedPayload) continue
           self.options.onAelinEvent?.(item.event, parsedPayload)
 
-          if (!metadataEmitted && parsedPayload.run_id) {
-            metadataEmitted = true
+          if (item.event === 'metadata') {
+            const record =
+              parsedPayload && typeof parsedPayload === 'object' && !Array.isArray(parsedPayload)
+                ? parsedPayload as Record<string, unknown>
+                : {}
             yield {
               event: 'metadata',
               data: {
-                run_id: parsedPayload.run_id,
+                ...record,
                 thread_id: threadId,
               },
             }
+            continue
           }
 
-          const ns = Array.isArray(parsedPayload.ns) ? parsedPayload.ns.map((part) => String(part)) : undefined
-          const data = parsedPayload.data ?? {}
-
-          if (item.event === 'topology') {
+          if (item.event === 'custom') {
             yield {
               event: 'custom',
-              data: {
-                kind: 'topology',
-                topology: data,
-              },
-            }
-            continue
-          }
-
-          if (item.event === 'values') {
-            yield {
-              event: 'custom',
-              data: {
-                kind: 'values',
-                values: data,
-              },
-            }
-            continue
-          }
-
-          if (item.event === 'final') {
-            yield {
-              event: 'custom',
-              data: {
-                kind: 'final',
-                final: data,
-              },
-            }
-            continue
-          }
-
-          if (item.event === 'updates') {
-            yield {
-              event: nsEventName('updates', ns),
-              data,
-            }
-            continue
-          }
-
-          if (item.event === 'tasks') {
-            yield {
-              event: nsEventName('tasks', ns),
-              data,
-            }
-            continue
-          }
-
-          if (item.event === 'messages') {
-            const record = data as Record<string, unknown>
-            const metadata =
-              record.metadata && typeof record.metadata === 'object' && !Array.isArray(record.metadata)
-                ? { ...(record.metadata as Record<string, unknown>) }
-                : {}
-            if (ns?.length) {
-              const checkpointNs = ns.join('|')
-              metadata.langgraph_checkpoint_ns ??= checkpointNs
-              metadata.checkpoint_ns ??= checkpointNs
-            }
-
-            const message = normalizeStreamMessage(record.message, `${parsedPayload.run_id || threadId}:${parsedPayload.seq || Date.now()}`)
-            if (!message) continue
-
-            yield {
-              event: nsEventName('messages', ns),
-              data: [message, metadata],
-            }
-            continue
-          }
-
-          if (item.event === 'error') {
-            const message = String((data as Record<string, unknown>).message || 'stream error')
-            yield {
-              event: 'error',
-              data: {
-                error: message,
-                message,
-              },
+              data: parsedPayload,
             }
             continue
           }
 
           if (item.event === 'done' || item.event === 'ping' || item.event === 'start') {
             continue
+          }
+
+          if (item.event === 'error') {
+            const message = String((parsedPayload as Record<string, unknown>).message || 'stream error')
+            yield {
+              event: 'error',
+              data: { error: message, message },
+            }
+            continue
+          }
+
+          if (item.event === 'messages' || item.event.startsWith('messages|')) {
+            const tuple = Array.isArray(parsedPayload) ? parsedPayload : []
+            const rawMessage = tuple[0]
+            const metadata =
+              tuple[1] && typeof tuple[1] === 'object' && !Array.isArray(tuple[1])
+                ? { ...(tuple[1] as Record<string, unknown>) }
+                : {}
+            const message = normalizeStreamMessage(rawMessage, `${threadId}:${Date.now()}`)
+            if (!message) continue
+            yield {
+              event: item.event,
+              data: [message, metadata],
+            }
+            continue
+          }
+
+          if (
+            item.event === 'updates' || item.event.startsWith('updates|')
+            || item.event === 'tasks' || item.event.startsWith('tasks|')
+            || item.event === 'values' || item.event.startsWith('values|')
+          ) {
+            yield {
+              event: item.event,
+              data: parsedPayload,
+            }
           }
         }
       }

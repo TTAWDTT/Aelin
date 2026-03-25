@@ -25,14 +25,12 @@ function statusTextFromAelinEvent(
   payload: Record<string, unknown>,
   t: (key: 'status.tools.invoking', vars?: Record<string, string | number>) => string,
 ): string {
-  const data =
-    payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
-      ? payload.data as Record<string, unknown>
-      : {}
+  const baseEvent = String(event || '').split('|')[0]
+  const data = payload
   if (event === 'error') {
     return String(data.message || '')
   }
-  if (event !== 'tasks' && event !== 'updates') return ''
+  if (baseEvent !== 'tasks' && baseEvent !== 'updates') return ''
 
   const toolName = String(
     data.tool_name
@@ -91,27 +89,6 @@ export function useChatStream() {
         mutate((prev) => ({
           ...prev,
           topology: (record.topology as Record<string, unknown> | undefined),
-        }))
-        return
-      }
-      if (kind === 'values') {
-        const values = record.values && typeof record.values === 'object' && !Array.isArray(record.values)
-          ? record.values as Record<string, unknown>
-          : {}
-        mutate((prev) => ({
-          ...prev,
-          ...values,
-        }))
-        return
-      }
-      if (kind === 'final') {
-        const final = record.final && typeof record.final === 'object' && !Array.isArray(record.final)
-          ? record.final as Record<string, unknown>
-          : {}
-        mutate((prev) => ({
-          ...prev,
-          final,
-          answer: String(final.answer || prev.answer || ''),
         }))
       }
     },

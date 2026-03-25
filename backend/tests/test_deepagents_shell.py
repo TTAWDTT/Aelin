@@ -34,7 +34,7 @@ def _parse_sse_events(body: str) -> list[tuple[str, dict]]:
 
 @pytest.mark.integration
 def test_deepagents_chat_stream_basic(monkeypatch):
-    """Ensure /api/v1/deepagents/chat/stream emits native v2 events."""
+    """Ensure /api/v1/deepagents/chat/stream emits near-native v2 events."""
 
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -146,45 +146,42 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     events = _parse_sse_events(body)
     names = [name for name, _ in events]
     assert "start" in names
-    assert "topology" in names
-    assert "messages" in names
-    assert "updates" in names
-    assert "tasks" in names
-    assert "values" in names
-    assert "final" in names
+    assert "metadata" in names
+    assert "custom" in names
+    assert "messages|root|model" in names
+    assert "updates|root" in names
+    assert "tasks|root" in names
+    assert "values|root" in names
 
-    topology_payload = next(payload for name, payload in events if name == "topology")
-    assert topology_payload["type"] == "topology"
-    assert topology_payload["data"]["nodes"][0]["id"] == "__start__"
-    assert topology_payload["data"]["edges"][0]["target"] == "model"
+    metadata_payload = next(payload for name, payload in events if name == "metadata")
+    assert isinstance(metadata_payload["run_id"], str) and metadata_payload["run_id"]
 
-    message_payload = next(payload for name, payload in events if name == "messages")
-    assert message_payload["type"] == "messages"
-    assert isinstance(message_payload["run_id"], str) and message_payload["run_id"]
-    assert isinstance(message_payload["seq"], int) and message_payload["seq"] > 0
-    assert message_payload["ns"] == ["root", "model"]
-    assert message_payload["data"]["content"] == "hello from deepagents"
-    assert message_payload["data"]["metadata"]["langgraph_node"] == "model"
-    assert message_payload["data"]["message"]["id"] == "msg-1"
-    assert message_payload["data"]["message"]["type"] == "ai"
+    topology_payload = next(payload for name, payload in events if name == "custom")
+    assert topology_payload["kind"] == "topology"
+    assert topology_payload["topology"]["nodes"][0]["id"] == "__start__"
+    assert topology_payload["topology"]["edges"][0]["target"] == "model"
 
-    task_payload = next(payload for name, payload in events if name == "tasks")
-    assert task_payload["data"]["name"] == "tools"
-    assert task_payload["data"]["tool_name"] == "web_search"
-    assert task_payload["data"]["tool_call"]["id"] == "call-1"
-    assert task_payload["data"]["tool_call"]["args"]["query"] == "today shanghai weather"
-    assert "files" not in task_payload["data"]
-    assert "result_summary" in task_payload["data"]
+    message_payload = next(payload for name, payload in events if name == "messages|root|model")
+    assert isinstance(message_payload, list) and len(message_payload) == 2
+    assert message_payload[0]["id"] == "msg-1"
+    assert message_payload[0]["type"] == "ai"
+    assert message_payload[0]["content"] == "hello from deepagents"
+    assert message_payload[1]["langgraph_node"] == "model"
+    assert message_payload[1]["langgraph_checkpoint_ns"] == "root|model"
 
-    values_payload = next(payload for name, payload in events if name == "values")
-    assert values_payload["data"]["messages_count"] == 1
-    assert values_payload["data"]["todos_count"] == 1
-    assert values_payload["data"]["answer"] == "hello from deepagents"
-    assert "files" not in values_payload["data"]
+    task_payload = next(payload for name, payload in events if name == "tasks|root")
+    assert task_payload["name"] == "tools"
+    assert task_payload["tool_name"] == "web_search"
+    assert task_payload["tool_call"]["id"] == "call-1"
+    assert task_payload["tool_call"]["args"]["query"] == "today shanghai weather"
+    assert "files" not in task_payload
+    assert "result_summary" in task_payload
 
-    final_payload = next(payload for name, payload in events if name == "final")
-    assert final_payload["type"] == "final"
-    assert final_payload["data"]["answer"] == "hello from deepagents"
+    values_payload = next(payload for name, payload in events if name == "values|root")
+    assert values_payload["messages_count"] == 1
+    assert values_payload["todos_count"] == 1
+    assert values_payload["answer"] == "hello from deepagents"
+    assert "files" not in values_payload
     assert captured["stream_kwargs"] == {
         "stream_mode": ["messages", "updates", "tasks", "values"],
         "version": "v2",

@@ -3,7 +3,6 @@ import type { BaseMessage } from '@langchain/core/messages'
 export type ChatStreamState = {
   messages: Array<Record<string, unknown>>
   topology?: Record<string, unknown>
-  final?: Record<string, unknown>
   answer?: string
   todos?: unknown[]
   [key: string]: unknown

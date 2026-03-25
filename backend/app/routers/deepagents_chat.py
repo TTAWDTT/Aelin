@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import logging
 import queue
 import threading
@@ -32,7 +31,7 @@ from app.services.deepagents.input_mapping import (
     normalize_history_turns,
     normalize_image_inputs,
 )
-from app.services.deepagents.output_utils import extract_answer, message_to_text
+from app.services.deepagents.output_utils import message_to_text
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.tool_runtime import (
     ToolCallLimiter,
@@ -221,17 +220,6 @@ def _message_chunk_parts(data: Any) -> tuple[Any, dict[str, Any]]:
     return data, {}
 
 
-def _extract_message_delta(data: Any) -> str:
-    if isinstance(data, (tuple, list)) and len(data) == 2:
-        message, metadata = _message_chunk_parts(data)
-        if isinstance(metadata, dict):
-            node_name = str(metadata.get("langgraph_node") or "").strip().lower()
-            if node_name != "model":
-                return ""
-        return message_to_text(message).strip()
-    return message_to_text(data).strip()
-
-
 def _summarize_tool_call(value: Any) -> dict[str, Any]:
     record = _as_record(value)
     if not record:
@@ -390,13 +378,17 @@ def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
 
     if event_type == "messages":
         message, metadata = _message_chunk_parts(data)
+        metadata_payload = _json_safe(metadata)
+        metadata_record = (
+            metadata_payload if isinstance(metadata_payload, dict) else {}
+        )
+        if ns:
+            checkpoint_ns = "|".join(ns)
+            metadata_record.setdefault("langgraph_checkpoint_ns", checkpoint_ns)
+            metadata_record.setdefault("checkpoint_ns", checkpoint_ns)
         return (
             event_type,
-            {
-                "content": message_to_text(message),
-                "metadata": _json_safe(metadata),
-                "message": _serialize_langgraph_message(message),
-            },
+            [_serialize_langgraph_message(message), metadata_record],
             ns,
         )
 
@@ -514,51 +506,34 @@ def deepagents_chat_stream(
         req_id = uuid4().hex[:10]
         started = _now_ms()
         heartbeat_count = 0
-        event_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
+        event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         done_token = "__done__"
-        event_seq = 0
-        event_seq_lock = threading.Lock()
 
         class _CancelToken:
             cancelled: bool = False
 
         cancel_token = _CancelToken()
 
-        def _envelope(
-            event: str,
-            data: Any = None,
-            *,
-            ns: list[str] | None = None,
-        ) -> dict[str, Any]:
-            nonlocal event_seq
-            with event_seq_lock:
-                event_seq += 1
-                seq = event_seq
-            payload: dict[str, Any] = {
-                "type": event,
-                "run_id": req_id,
-                "seq": seq,
-                "ts": _now_ms(),
-            }
-            if ns:
-                payload["ns"] = [str(item) for item in ns]
-            if data is not None:
-                payload["data"] = _json_safe(data)
-            return payload
+        def _event_name(event: str, ns: list[str] | None = None) -> str:
+            clean_ns = [str(item) for item in (ns or []) if str(item)]
+            return f"{event}|{'|'.join(clean_ns)}" if clean_ns else event
 
         def _push(event: str, data: Any = None, *, ns: list[str] | None = None) -> None:
-            payload = _envelope(event, data, ns=ns)
+            event_name = _event_name(event, ns)
+            payload = _json_safe(data) if data is not None else {}
             _LOG.debug(
                 "deepagents_stream event req=%s uid=%s event=%s keys=%s",
                 req_id,
                 int(current_user.id),
-                str(event),
+                event_name,
                 ",".join(
                     sorted([str(k) for k in list(payload.keys())[:8] if str(k)])
+                    if isinstance(payload, dict)
+                    else []
                 )
                 or "-",
             )
-            event_queue.put((event, payload))
+            event_queue.put((event_name, payload))
 
         def _worker() -> None:
             try:
@@ -641,9 +616,11 @@ def deepagents_chat_stream(
                     )
                     return
 
+                _push("metadata", {"run_id": req_id})
+
                 topology = _serialize_agent_topology(agent)
                 if topology is not None:
-                    _push("topology", topology)
+                    _push("custom", {"kind": "topology", "topology": topology})
 
                 # 构造 DeepAgents 期望的消息格式。
                 invoke_payload = build_invoke_payload(
@@ -652,9 +629,6 @@ def deepagents_chat_stream(
                     images=images,
                     files_mapping=files_mapping,
                 )
-
-                streamed_text_parts: list[str] = []
-                final_answer = ""
 
                 for chunk in agent.stream(
                     invoke_payload,
@@ -669,43 +643,6 @@ def deepagents_chat_stream(
                     if serialized is not None:
                         event_name, event_data, event_ns = serialized
                         _push(event_name, event_data, ns=event_ns)
-
-                    if not isinstance(chunk, dict):
-                        continue
-
-                    mode = str(chunk.get("type") or "").strip().lower()
-                    data = chunk.get("data")
-
-                    if mode == "messages":
-                        delta = _extract_message_delta(data)
-                        if delta:
-                            streamed_text_parts.append(delta)
-                        continue
-
-                    if mode == "values":
-                        candidate = extract_answer(data).strip()
-                        if candidate:
-                            final_answer = candidate
-                        continue
-
-                    candidate = extract_answer(data).strip()
-                    if candidate:
-                        final_answer = candidate
-
-                if not final_answer:
-                    final_answer = "".join(streamed_text_parts).strip()
-
-                _push(
-                    "final",
-                    {
-                        "answer": final_answer,
-                        "finished_at": datetime.now(timezone.utc).isoformat(),
-                        "usage": {
-                            "total_calls": int(getattr(usage, "total_calls", 0) or 0),
-                            "write_calls": int(getattr(usage, "write_calls", 0) or 0),
-                        },
-                    },
-                )
             except Exception as exc:  # noqa: BLE001
                 _LOG.exception(
                     "deepagents_stream worker_error req=%s uid=%s error=%s",
@@ -748,9 +685,9 @@ def deepagents_chat_stream(
                     event, data = event_queue.get(timeout=heartbeat_interval_s)
                 except queue.Empty:
                     heartbeat_count += 1
-                    yield _sse_event("ping", _envelope("ping", {"hb": heartbeat_count}))
+                    yield _sse_event("ping", {"hb": heartbeat_count})
                     if (not worker.is_alive()) and event_queue.empty():
-                        yield _sse_event("done", _envelope("done", {"status": done_token}))
+                        yield _sse_event("done", {"status": done_token})
                         break
                     continue
 
