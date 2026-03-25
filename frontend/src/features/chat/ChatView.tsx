@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef } from 'react'
+import { startTransition, useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
@@ -9,12 +9,10 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
-import type { AelinAttachmentUploadResponse, DeepAgentsExecutionEvent } from '@/shared/api/types'
+import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
-import { executionEventsFromRunState } from './executionEventUtils'
-
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
   const session = sessions.find((s) => s.id === activeSessionId)
@@ -95,17 +93,12 @@ export function ChatView() {
 
   const currentRunState = focusedRunState ?? latestAssistantWithExecution?.runState
 
-  const executionEvents: DeepAgentsExecutionEvent[] = useMemo(
-    () => executionEventsFromRunState(currentRunState),
-    [currentRunState]
-  )
-
   // 桌面模式下，当本轮已经产生执行事件且正在流式时，自动展开右侧 ExecutionPane。
   useEffect(() => {
-    if (!compact && isStreaming && executionEvents.length > 0 && !open && !suppressAutoOpen) {
+    if (!compact && isStreaming && (currentRunState?.parts.length ?? 0) > 0 && !open && !suppressAutoOpen) {
       setOpen(true)
     }
-  }, [compact, isStreaming, executionEvents.length, open, suppressAutoOpen, setOpen])
+  }, [compact, currentRunState?.parts.length, isStreaming, open, suppressAutoOpen, setOpen])
 
   const handleOpenExecutionForLatest = () => {
     openForMessage(latestAssistantWithExecution?.id ?? null)

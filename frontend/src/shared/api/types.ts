@@ -85,28 +85,6 @@ export interface DeepAgentsStreamUpdate {
   done?: boolean
 }
 
-export type DeepAgentsExecutionEventKind =
-  | 'system'
-  | 'model'
-  | 'task'
-  | 'tool'
-  | 'state'
-  | 'final'
-  | 'error'
-
-export interface DeepAgentsExecutionEvent {
-  id: string
-  type: string
-  kind: DeepAgentsExecutionEventKind
-  title: string
-  summary?: string
-  status?: string
-  node?: string
-  ns?: string[]
-  ts: number
-  metadata?: Record<string, unknown>
-}
-
 export type AelinChatRequest = ChatRequest
 export type AelinCitation = ChatCitation
 export type AelinAction = ChatAction

@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react'
 import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
 import type { AelinChatRequest, DeepAgentsStreamPart, DeepAgentsStreamUpdate } from '@/shared/api/types'
-import { appendRunStatePart, createExecutionEventFromPart } from '../executionEventUtils'
+import { appendRunStatePart, summarizeStreamPartStatus } from '../executionEventUtils'
 
 const MAX_QUERY_CHARS = 1200
 
@@ -147,9 +147,9 @@ export function buildStreamCallbacks(params: {
     onUpdate: (update: DeepAgentsStreamUpdate) => {
       const part: DeepAgentsStreamPart | undefined = update.part
       if (part) {
-        const event = createExecutionEventFromPart(part)
-        if (event) {
-          params.store.setStatusText(event.summary || event.title)
+        const partStatus = summarizeStreamPartStatus(part)
+        if (partStatus) {
+          params.store.setStatusText(partStatus)
         }
         appendRunState(params.sessionId, part)
       }
