@@ -205,7 +205,7 @@ export class AelinUseStreamTransport {
             continue
           }
 
-          if (item.event === 'done' || item.event === 'ping' || item.event === 'start') {
+          if (item.event === 'done' || item.event === 'ping') {
             continue
           }
 

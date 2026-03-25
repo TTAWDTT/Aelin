@@ -665,16 +665,6 @@ def deepagents_chat_stream(
                     max(0, _now_ms() - started),
                 )
 
-        # 先发送一个 start 事件，方便前端初始化上下文。
-        _push(
-            "start",
-            {
-                "query": payload.query.strip()[:180],
-                "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
-                "workspace": payload.workspace,
-            },
-        )
-
         worker = threading.Thread(target=_worker, daemon=True)
         worker.start()
 

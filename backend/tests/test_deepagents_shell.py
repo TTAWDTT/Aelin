@@ -145,7 +145,6 @@ def test_deepagents_chat_stream_basic(monkeypatch):
 
     events = _parse_sse_events(body)
     names = [name for name, _ in events]
-    assert "start" in names
     assert "metadata" in names
     assert "custom" in names
     assert "messages|root|model" in names
