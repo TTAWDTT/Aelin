@@ -231,14 +231,14 @@ def deepagents_chat_stream(
                 )
 
                 allow_write_tools = bool(
-                    getattr(settings, "aelin_agent_loop_allow_write_tools", False)
+                    getattr(settings, "deepagents_allow_write_tools", False)
                 )
                 limiter = ToolCallLimiter(
                     max_tool_calls=int(
-                        getattr(settings, "aelin_agent_loop_max_tool_calls", 512) or 512
+                        getattr(settings, "deepagents_max_tool_calls", 512) or 512
                     ),
                     max_write_calls=int(
-                        getattr(settings, "aelin_agent_loop_max_write_calls", 128) or 128
+                        getattr(settings, "deepagents_max_write_calls", 128) or 128
                     ),
                 allow_write_tools=allow_write_tools,
                 )

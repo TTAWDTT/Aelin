@@ -39,8 +39,8 @@ _log = logging.getLogger(__name__)
 
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
-_NO_RESULT_DETAIL = "agent_loop_no_result"
-_NO_RESULT_ANSWER = "当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
+_NO_RESULT_DETAIL = "deepagents_no_result"
+_NO_RESULT_ANSWER = "当前会话使用 DeepAgents，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
 
 
 def _build_context_bundle(
@@ -90,7 +90,7 @@ def _map_actions(raw_actions: list[dict[str, Any]]) -> list[ChatAction]:
     return actions
 
 
-def _try_agent_loop_chat(
+def _try_deepagents_chat(
     payload: ChatRequest,
     db: Session,
     current_user: User,
@@ -111,7 +111,7 @@ def _try_agent_loop_chat(
     resolve_started = time.perf_counter()
     service, provider = _resolve_llm_service(db, current_user)
     _log.info(
-        "agent_loop preflight phase=resolve_service user_id=%s source=%s workspace=%s provider=%s latency_ms=%s query=%s",
+        "deepagents preflight phase=resolve_service user_id=%s source=%s workspace=%s provider=%s latency_ms=%s query=%s",
         int(current_user.id),
         source,
         workspace,
@@ -129,7 +129,7 @@ def _try_agent_loop_chat(
         workspace=workspace,
     )
     _log.info(
-        "agent_loop preflight phase=memory_file user_id=%s source=%s workspace=%s bytes=%s latency_ms=%s",
+        "deepagents preflight phase=memory_file user_id=%s source=%s workspace=%s bytes=%s latency_ms=%s",
         int(current_user.id),
         source,
         workspace,
@@ -142,7 +142,7 @@ def _try_agent_loop_chat(
     images = normalize_image_inputs(payload.images)
     attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
     _log.info(
-        "agent_loop preflight phase=normalize_inputs user_id=%s source=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
+        "deepagents preflight phase=normalize_inputs user_id=%s source=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
         int(current_user.id),
         source,
         workspace,
@@ -165,7 +165,7 @@ def _try_agent_loop_chat(
         available_attachment_ids=attachment_ids,
     )
     _log.info(
-        "agent_loop preflight phase=tool_runtime_ready user_id=%s source=%s workspace=%s latency_ms=%s",
+        "deepagents preflight phase=tool_runtime_ready user_id=%s source=%s workspace=%s latency_ms=%s",
         int(current_user.id),
         source,
         workspace,
@@ -173,16 +173,16 @@ def _try_agent_loop_chat(
     )
 
     limiter = ToolCallLimiter(
-        max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 512) or 512),
-        max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 128) or 128),
+        max_tool_calls=int(getattr(settings, "deepagents_max_tool_calls", 512) or 512),
+        max_write_calls=int(getattr(settings, "deepagents_max_write_calls", 128) or 128),
         allow_write_tools=(
             False
             if force_disable_writes
-            else bool(getattr(settings, "aelin_agent_loop_allow_write_tools", False))
+            else bool(getattr(settings, "deepagents_allow_write_tools", False))
         ),
     )
     _log.info(
-        "agent_loop preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
+        "deepagents preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
         int(current_user.id),
         source,
         workspace,
@@ -228,7 +228,7 @@ def _build_no_result_response(
         actions=[],
         tool_trace=[
             ChatToolStep(
-                stage="agent_loop",
+                stage="deepagents",
                 status="failed",
                 detail=_NO_RESULT_DETAIL,
                 count=0,
@@ -240,14 +240,14 @@ def _build_no_result_response(
     )
 
 
-def is_no_result_response(response: ChatResponse | None) -> bool:
+def is_deepagents_no_result_response(response: ChatResponse | None) -> bool:
     if response is None:
         return False
     answer = str(getattr(response, "answer", "") or "").strip()
     if answer == _NO_RESULT_ANSWER:
         return True
     for step in list(getattr(response, "tool_trace", []) or []):
-        if str(getattr(step, "stage", "") or "") != "agent_loop":
+        if str(getattr(step, "stage", "") or "") != "deepagents":
             continue
         if _NO_RESULT_DETAIL in str(getattr(step, "detail", "") or ""):
             return True
@@ -262,7 +262,7 @@ def run_chat_request(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> ChatResponse:
-    response = _try_agent_loop_chat(
+    response = _try_deepagents_chat(
         payload,
         db,
         current_user,

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.models import User
 from app.schemas import ChatRequest, ChatResponse
 import app.services.aelin.core as _core
-from app.services.aelin.core import _try_agent_loop_chat
+from app.services.aelin.core import _try_deepagents_chat
 from app.services.aelin.core_support import (
     _build_context_bundle,
     _build_cached_base_context_bundle,

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -77,9 +78,30 @@ class Settings(BaseSettings):
     # 这些配置仅用于构造 DeepAgents 工具调用限制器。
     # 当前默认值刻意放宽，以便 DeepAgents 在每轮对话中可以更自由地尝试工具调用。
     # DeepAgents 工具策略：默认给足够大的空间，让复杂任务可以自由使用工具。
-    aelin_agent_loop_max_tool_calls: int = 512
-    aelin_agent_loop_max_write_calls: int = 128
-    aelin_agent_loop_allow_write_tools: bool = True
+    deepagents_max_tool_calls: int = Field(
+        default=512,
+        validation_alias=AliasChoices(
+            "AELIN_DEEPAGENTS_MAX_TOOL_CALLS",
+            "AELIN_AGENT_LOOP_MAX_TOOL_CALLS",
+            "MERCURYDESK_AGENT_LOOP_MAX_TOOL_CALLS",
+        ),
+    )
+    deepagents_max_write_calls: int = Field(
+        default=128,
+        validation_alias=AliasChoices(
+            "AELIN_DEEPAGENTS_MAX_WRITE_CALLS",
+            "AELIN_AGENT_LOOP_MAX_WRITE_CALLS",
+            "MERCURYDESK_AGENT_LOOP_MAX_WRITE_CALLS",
+        ),
+    )
+    deepagents_allow_write_tools: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "AELIN_DEEPAGENTS_ALLOW_WRITE_TOOLS",
+            "AELIN_AGENT_LOOP_ALLOW_WRITE_TOOLS",
+            "MERCURYDESK_AGENT_LOOP_ALLOW_WRITE_TOOLS",
+        ),
+    )
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""

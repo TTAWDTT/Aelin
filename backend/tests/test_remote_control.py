@@ -18,7 +18,7 @@ from app import crud
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 
-def test_remote_control_execute_routes_into_agent_loop_dispatch(monkeypatch):
+def test_remote_control_execute_routes_into_deepagents_dispatch(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
     captured: dict[str, object] = {}
@@ -65,14 +65,14 @@ def test_remote_control_execute_routes_into_agent_loop_dispatch(monkeypatch):
     assert (captured["source_metadata"] or {}).get("source_chat_id") == "oc_xxx"
 
 
-def test_remote_control_execute_reports_agent_loop_failure(monkeypatch):
+def test_remote_control_execute_reports_deepagents_failure(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
     def _fake_run_chat_request(payload, db, current_user, **kwargs):
         _ = payload, db, current_user, kwargs
         return ChatResponse(
-            answer="当前会话仅使用 Agent Loop，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。",
+            answer="当前会话使用 DeepAgents，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。",
             expression="exp-04",
             citations=[],
             actions=[],
@@ -91,7 +91,7 @@ def test_remote_control_execute_reports_agent_loop_failure(monkeypatch):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data.get("ok") is False
-    assert data.get("status") == "agent_loop_no_result"
+    assert data.get("status") == "deepagents_no_result"
 
 
 def test_remote_control_status_exposes_unified_device_contract(monkeypatch):
