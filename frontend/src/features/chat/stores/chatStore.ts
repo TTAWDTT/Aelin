@@ -35,8 +35,6 @@ interface ChatStore {
   renameSession: (id: string, title: string) => void
   addMessage: (sessionId: string, msg: ChatMessage) => void
   setSessionMessages: (sessionId: string, messages: ChatMessage[]) => void
-  updateLastAssistant: (sessionId: string, partial: Partial<ChatMessage>) => void
-  appendContent: (sessionId: string, chunk: string) => void
   setStreaming: (v: boolean) => void
   setStatusText: (v: string) => void
   setLastErrorCode: (code: string | null) => void
@@ -80,26 +78,6 @@ export const useChatStore = create<ChatStore>()(
 
       setSessionMessages: (sessionId, messages) => set(s => ({
         sessions: s.sessions.map(x => x.id === sessionId ? { ...x, messages } : x),
-      })),
-
-      updateLastAssistant: (sessionId, partial) => set(s => ({
-        sessions: s.sessions.map(x => {
-          if (x.id !== sessionId) return x
-          const msgs = [...x.messages]
-          const last = msgs.findLast((m: ChatMessage) => m.role === 'assistant')
-          if (last) Object.assign(last, partial)
-          return { ...x, messages: msgs }
-        }),
-      })),
-
-      appendContent: (sessionId, chunk) => set(s => ({
-        sessions: s.sessions.map(x => {
-          if (x.id !== sessionId) return x
-          const msgs = [...x.messages]
-          const last = msgs.findLast((m: ChatMessage) => m.role === 'assistant')
-          if (last) last.content += chunk
-          return { ...x, messages: msgs }
-        }),
       })),
 
       setStreaming: (v) => set({ isStreaming: v }),
