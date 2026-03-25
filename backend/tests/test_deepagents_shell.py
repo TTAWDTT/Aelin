@@ -34,7 +34,7 @@ def _parse_sse_events(body: str) -> list[tuple[str, dict]]:
 
 @pytest.mark.integration
 def test_deepagents_chat_stream_basic(monkeypatch):
-    """Ensure /api/v1/deepagents/chat/stream emits native v2 events plus compatibility events."""
+    """Ensure /api/v1/deepagents/chat/stream emits native v2 events."""
 
     client = _create_test_client()
     headers = _auth_headers(client)
@@ -109,7 +109,6 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     assert "updates" in names
     assert "tasks" in names
     assert "values" in names
-    assert "reply" in names
     assert "final" in names
 
     message_payload = next(payload for name, payload in events if name == "messages")

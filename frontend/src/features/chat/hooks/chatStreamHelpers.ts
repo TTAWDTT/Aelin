@@ -150,10 +150,9 @@ export function buildStreamCallbacks(params: {
     onActions: (actions: NonNullable<ChatMessage['actions']>) =>
       params.store.updateLastAssistant(params.sessionId, { actions }),
     onReplyChunk: (chunk: string) => params.store.appendContent(params.sessionId, chunk),
-    onDone: (data: { expression?: string; memory_summary?: string; answer?: string }) => {
+    onDone: (data: { expression?: string; answer?: string }) => {
       const nextPartial: Partial<ChatMessage> = {
         expression: data.expression,
-        memorySummary: data.memory_summary,
       }
       if (typeof data.answer === 'string' && data.answer.trim()) {
         nextPartial.content = normalizeAssistantMarkdown(data.answer)

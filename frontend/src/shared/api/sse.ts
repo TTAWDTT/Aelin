@@ -11,7 +11,7 @@ interface StreamCallbacks {
   onCitations?: (citations: AelinCitation[]) => void
   onActions?: (actions: AelinAction[]) => void
   onReplyChunk?: (text: string) => void
-  onDone?: (data: { expression: string; memory_summary: string; answer?: string }) => void
+  onDone?: (data: { expression: string; answer?: string }) => void
   onError?: (error: { message: string; code?: string }) => void
 }
 
@@ -125,7 +125,6 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       finalized = true
       callbacks.onDone?.({
         expression: String(payload?.expression || 'exp-04'),
-        memory_summary: String(payload?.memory_summary || ''),
         answer: typeof payload?.answer === 'string' ? payload.answer : '',
       })
     }
@@ -152,7 +151,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
       debugLog('event', { sseEvent, eventType })
 
-      if (!['reply', 'ping', 'done'].includes(eventType)) {
+      if (!['ping', 'done'].includes(eventType)) {
         const executionEvent = createExecutionEvent(
           eventType,
           payload?.data != null && ['messages', 'updates', 'tasks', 'values'].includes(eventType)
@@ -171,12 +170,6 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
         case 'actions':
           callbacks.onActions?.((payload.data ?? payload) as AelinAction[])
           return
-        case 'reply': {
-          // Legacy compatibility event. The native DeepAgents/LangGraph
-          // streaming path now uses `messages` as the primary text source,
-          // so we intentionally avoid double-appending here.
-          return
-        }
         case 'ping':
           // Keepalive heartbeat from backend; no UI mutation needed.
           return

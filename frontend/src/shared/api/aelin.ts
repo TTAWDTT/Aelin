@@ -1,6 +1,6 @@
 import { fetchFormData, fetchJson } from './client'
 import type {
-  AelinChatRequest, AelinChatResponse, AelinContextResponse,
+  AelinContextResponse,
   AelinBrowserConfirmRequest, AelinBrowserConfirmResponse,
   AelinBrowserLoginCheckpointListResponse,
   AelinDeviceCapabilitiesResponse,
@@ -9,9 +9,6 @@ import type {
 } from './types'
 
 export const aelinApi = {
-  chat: (body: AelinChatRequest) =>
-    fetchJson<AelinChatResponse>('/api/v1/aelin/chat', { method: 'POST', body: JSON.stringify(body) }),
-
   uploadAttachment: (file: File, params?: { workspace?: string; session_id?: string }) => {
     const fd = new FormData()
     fd.append('file', file)

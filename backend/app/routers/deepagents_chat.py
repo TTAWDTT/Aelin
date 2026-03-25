@@ -296,7 +296,6 @@ def deepagents_chat_stream(
                         delta = _extract_message_delta(data)
                         if delta:
                             streamed_text_parts.append(delta)
-                            _push("reply", {"chunk": delta})
                         continue
 
                     if mode == "values":

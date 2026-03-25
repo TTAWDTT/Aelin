@@ -34,9 +34,6 @@ export interface ChatAction {
   kind: string; title: string; detail?: string
   payload?: Record<string, string>
 }
-export interface ChatToolStep {
-  stage: string; status?: string; detail?: string; count?: number; ts?: number
-}
 
 export type DeepAgentsExecutionEventKind =
   | 'system'
@@ -59,18 +56,10 @@ export interface DeepAgentsExecutionEvent {
   ts: number
   metadata?: Record<string, unknown>
 }
-export interface ChatResponse {
-  answer: string; expression: string
-  citations: ChatCitation[]; actions: ChatAction[]
-  tool_trace: ChatToolStep[]; memory_summary: string
-  generated_at: string
-}
 
 export type AelinChatRequest = ChatRequest
 export type AelinCitation = ChatCitation
 export type AelinAction = ChatAction
-export type AelinToolStep = ChatToolStep
-export type AelinChatResponse = ChatResponse
 
 /* ─── Aelin Context ─── */
 export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }

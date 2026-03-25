@@ -11,7 +11,6 @@ export interface ChatMessage {
   citations?: AelinCitation[]
   actions?: AelinAction[]
   executionEvents?: DeepAgentsExecutionEvent[]
-  memorySummary?: string
   images?: { dataUrl: string; name: string }[]
   timestamp: number
 }
