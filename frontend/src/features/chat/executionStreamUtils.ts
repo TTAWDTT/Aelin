@@ -32,7 +32,6 @@ export type ExecutionTopologyNode = {
   name: string
   kind: string
   depth: number
-  active: boolean
   visits: number
   toolCalls: number
   subagents: number
@@ -233,7 +232,6 @@ export function getExecutionTopology(stream: ChatRuntimeStream): {
     nodes: baseNodes.map((node) => ({
       ...node,
       depth: depths.get(node.id) ?? 0,
-      active: latestTurn?.node === node.id,
       visits: turnCounts.get(node.id) ?? 0,
       toolCalls: toolCallCounts.get(node.id) ?? 0,
       subagents: subagentCounts.get(node.id) ?? 0,
@@ -257,14 +255,6 @@ export function getExecutionTopology(stream: ChatRuntimeStream): {
       }
     }),
   }
-}
-
-export function getExecutionToolCalls(stream: ChatRuntimeStream): ExecutionToolCall[] {
-  return getExecutionTurns(stream).flatMap((turn) => turn.toolCalls)
-}
-
-export function getExecutionSubagents(stream: ChatRuntimeStream): ExecutionSubagent[] {
-  return getExecutionTurns(stream).flatMap((turn) => turn.subagents)
 }
 
 function getMessageId(message: BaseMessage, metadataMessageId: string | undefined, index: number): string {
@@ -365,20 +355,22 @@ export function hasExecutionData(stream: ChatRuntimeStream): boolean {
 }
 
 export function summarizeExecutionStatus(stream: ChatRuntimeStream, fallback: string): string {
+  const turns = getExecutionTurns(stream)
+  const tools = turns.flatMap((turn) => turn.toolCalls)
+  const subagents = turns.flatMap((turn) => turn.subagents)
   const activeSubagents = stream.activeSubagents?.length ?? 0
-  if (activeSubagents > 0) {
-    return activeSubagents === 1
+  const runningSubagents = activeSubagents || subagents.filter((item) => item.status === 'running' || item.status === 'pending').length
+  if (runningSubagents > 0) {
+    return runningSubagents === 1
       ? '正在运行 1 个子代理…'
-      : `正在运行 ${activeSubagents} 个子代理…`
+      : `正在运行 ${runningSubagents} 个子代理…`
   }
 
-  const tools = getExecutionToolCalls(stream)
   const activeTools = tools.filter((item) => item.state === 'running' || item.state === 'pending')
   if (activeTools.length > 0) {
     return `正在调用工具… ${activeTools.slice(0, 3).map((item) => item.name).join(' · ')}`
   }
 
-  const turns = getExecutionTurns(stream)
   const last = turns.at(-1)
   if (stream.isLoading && last?.node) {
     return `正在执行 ${last.node}…`

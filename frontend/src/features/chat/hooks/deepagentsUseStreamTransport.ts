@@ -25,7 +25,7 @@ type TransportStreamEvent = {
   data: unknown
 }
 
-interface AelinUseStreamTransportOptions {
+interface DeepAgentsUseStreamTransportOptions {
   apiUrl: string
   getToken: () => string | null
   getHistoryMessages: (threadId: string) => StreamMessageLike[]
@@ -106,10 +106,10 @@ function normalizeStreamMessage(message: unknown, fallbackId: string): StreamMes
   }
 }
 
-export class AelinUseStreamTransport {
-  private readonly options: AelinUseStreamTransportOptions
+export class DeepAgentsUseStreamTransport {
+  private readonly options: DeepAgentsUseStreamTransportOptions
 
-  constructor(options: AelinUseStreamTransportOptions) {
+  constructor(options: DeepAgentsUseStreamTransportOptions) {
     this.options = options
   }
 

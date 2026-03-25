@@ -16,7 +16,7 @@ import {
   trimQueryForApi,
   type PendingImage,
 } from './chatStreamHelpers'
-import { AelinUseStreamTransport } from './aelinUseStreamTransport'
+import { DeepAgentsUseStreamTransport } from './deepagentsUseStreamTransport'
 
 export type { ChatRuntimeStream, ChatStreamState }
 
@@ -25,7 +25,7 @@ export function useChatStream() {
   const { t } = useChatI18n()
   const session = store.sessions.find((item) => item.id === store.activeSessionId)
 
-  const transport = useMemo(() => new AelinUseStreamTransport({
+  const transport = useMemo(() => new DeepAgentsUseStreamTransport({
     apiUrl: `${import.meta.env.VITE_API_BASE || ''}/api/v1/deepagents/chat/stream`,
     getToken: () => localStorage.getItem('token'),
     getHistoryMessages: (threadId) => {

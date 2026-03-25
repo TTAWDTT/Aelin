@@ -1,8 +1,7 @@
 import { PanelRightOpen } from 'lucide-react'
 import type { ChatRuntimeStream } from '../executionStreamUtils'
 import {
-  getExecutionSubagents,
-  getExecutionToolCalls,
+  getExecutionTurns,
   hasExecutionData,
   summarizeExecutionStatus,
 } from '../executionStreamUtils'
@@ -26,8 +25,9 @@ export function ChatStatusBar({
 }: ChatStatusBarProps) {
   const { t, locale } = useChatI18n()
   const { open, setOpen, setSuppressAutoOpen } = useExecutionPaneStore()
-  const tools = getExecutionToolCalls(stream)
-  const subagents = getExecutionSubagents(stream)
+  const turns = getExecutionTurns(stream)
+  const tools = turns.flatMap((turn) => turn.toolCalls)
+  const subagents = turns.flatMap((turn) => turn.subagents)
   const hasRuns = hasExecutionData(stream)
 
   if (!isStreaming && !statusText && !hasRuns) return null
