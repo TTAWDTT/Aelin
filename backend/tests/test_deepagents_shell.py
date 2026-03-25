@@ -199,3 +199,35 @@ def test_deepagents_chat_stream_accepts_pydantic_history(monkeypatch):
         "version": "v2",
         "subgraphs": True,
     }
+
+
+def test_build_chat_agent_injects_current_date_into_system_prompt(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+
+    def _fake_create_deep_agent(**kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    agent, usage, tool_runs, files_mapping = dag.build_chat_agent(
+        service=SimpleNamespace(),
+        provider="openai",
+        context=SimpleNamespace(),
+        limiter=SimpleNamespace(),
+        memory_text="",
+        cancel_token=None,
+    )
+
+    assert agent is not None
+    assert usage is not None
+    assert tool_runs == []
+    assert isinstance(files_mapping, dict)
+
+    system_prompt = str(captured.get("system_prompt") or "")
+    assert "Current date:" in system_prompt
+    assert "Current timezone: Asia/Shanghai." in system_prompt

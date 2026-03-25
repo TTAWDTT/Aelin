@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from langchain_openai import ChatOpenAI
 
@@ -32,10 +34,23 @@ from app.services.deepagents.cancel_utils import is_cancelled
 
 
 _log = logging.getLogger(__name__)
+_AELIN_TIMEZONE = "Asia/Shanghai"
 
 
 class DeepAgentsCancelled(RuntimeError):
     """Raised when the surrounding request has been cancelled."""
+
+
+def _current_date_context() -> str:
+    try:
+        local_now = datetime.now(ZoneInfo(_AELIN_TIMEZONE))
+    except Exception:
+        local_now = datetime.now(timezone.utc)
+    return (
+        f"Current date: {local_now.date().isoformat()}.\n"
+        f"Current timezone: {_AELIN_TIMEZONE}.\n"
+        f"Current local datetime: {local_now.isoformat(timespec='seconds')}."
+    )
 
 
 @dataclass
@@ -526,6 +541,7 @@ def build_chat_agent(
         "Reply in the same language as the user.\n"
         "Use tools only when they materially help.\n"
         "Prefer one correct tool call over repeated partial attempts.\n"
+        f"{_current_date_context()}\n"
         "Consult /runtime/capabilities.json for the exact tools, skills, and memory files mounted in this run.\n"
         "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
         "Read skills on demand from /skills/... when a matching skill is relevant.\n"
