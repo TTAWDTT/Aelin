@@ -37,6 +37,7 @@ export interface ChatAction {
 
 export type DeepAgentsStreamEventType =
   | 'start'
+  | 'topology'
   | 'messages'
   | 'updates'
   | 'tasks'
@@ -57,11 +58,30 @@ export interface DeepAgentsStreamPart {
   data?: unknown
 }
 
+export interface DeepAgentsTopologyNode {
+  id: string
+  name: string
+  kind: string
+}
+
+export interface DeepAgentsTopologyEdge {
+  source: string
+  target: string
+  conditional?: boolean
+}
+
+export interface DeepAgentsTopology {
+  nodes: DeepAgentsTopologyNode[]
+  edges: DeepAgentsTopologyEdge[]
+  mermaid?: string
+}
+
 export interface DeepAgentsRunState {
   parts: DeepAgentsStreamPart[]
   runId?: string
   latestValues?: Record<string, unknown>
   final?: Record<string, unknown>
+  topology?: DeepAgentsTopology
 }
 
 export interface DeepAgentsStreamEnvelope {

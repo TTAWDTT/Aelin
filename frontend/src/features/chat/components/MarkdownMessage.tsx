@@ -7,7 +7,26 @@ interface MarkdownMessageProps {
   compact?: boolean
 }
 
+function normalizeMarkdownContent(content: string): string {
+  const raw = String(content || '').replace(/\r\n/g, '\n').trim()
+  if (!raw) return ''
+
+  return raw
+    .replace(/([^\n])(\n?#{1,6}\s)/g, '$1\n\n$2')
+    .replace(/([^\n])(\n?[-*+]\s)/g, '$1\n$2')
+    .replace(/([^\n])(\n?\d+\.\s)/g, '$1\n$2')
+    .replace(/([^\n])(\n?>\s)/g, '$1\n$2')
+    .replace(/([^\n])(\n?```)/g, '$1\n\n$2')
+    .replace(/(---)(#{1,6}\s)/g, '$1\n\n$2')
+    .replace(/([:：])\s*(#{1,6}\s)/g, '$1\n\n$2')
+    .replace(/([^\n])(\n?\|.+\|)/g, '$1\n\n$2')
+    .replace(/}\s*(#{1,6}\s|根据|总结|摘要)/g, '}\n\n$1')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
 export function MarkdownMessage({ content, compact = false }: MarkdownMessageProps) {
+  const normalizedContent = normalizeMarkdownContent(content)
+
   return (
     <div
       className={cn(
@@ -87,7 +106,7 @@ export function MarkdownMessage({ content, compact = false }: MarkdownMessagePro
           hr: () => <hr className="my-3 border-none border-t border-[var(--color-border)]" />,
         }}
       >
-        {content || ''}
+        {normalizedContent}
       </ReactMarkdown>
     </div>
   )

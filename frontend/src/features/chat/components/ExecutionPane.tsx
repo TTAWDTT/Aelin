@@ -230,7 +230,12 @@ function RunGraphView({
           <span>{graphModel.nodes.length} nodes · {branchClusters.length} branches</span>
         </div>
         <div className="mt-2">
-          <ClusterCard graphModel={graphModel} cluster={rootCluster} isStreaming={isStreaming} variant="root" />
+          <StaticTopologyCanvas
+            graphModel={graphModel}
+            cluster={rootCluster}
+            branchClusters={branchClusters}
+            isStreaming={isStreaming}
+          />
         </div>
         {branchClusters.length > 0 && (
           <div className="mt-3 grid gap-2">
@@ -240,7 +245,6 @@ function RunGraphView({
                 graphModel={graphModel}
                 cluster={cluster}
                 isStreaming={isStreaming}
-                variant="branch"
               />
             ))}
           </div>
@@ -291,16 +295,242 @@ function RunGraphView({
   )
 }
 
+function StaticTopologyCanvas({
+  graphModel,
+  cluster,
+  branchClusters,
+  isStreaming,
+}: {
+  graphModel: RunGraphModel
+  cluster: RunGraphCluster
+  branchClusters: RunGraphCluster[]
+  isStreaming: boolean
+}) {
+  const nodes = cluster.nodeKeys
+    .map((key) => graphModel.nodes.find((node) => node.key === key))
+    .filter((node): node is RunGraphNode => node != null)
+  const nodeByKey = new Map(nodes.map((node) => [node.key, node]))
+  const edges = graphModel.edges.filter((edge) => nodeByKey.has(edge.from) && nodeByKey.has(edge.to))
+
+  const columns = Array.from(
+    nodes.reduce((map, node) => {
+      const bucket = map.get(node.depth) ?? []
+      bucket.push(node)
+      map.set(node.depth, bucket)
+      return map
+    }, new Map<number, RunGraphNode[]>()),
+  )
+    .sort((a, b) => a[0] - b[0])
+    .map(([depth, columnNodes]) => [
+      depth,
+      [...columnNodes].sort((a, b) => {
+        if (a.ts !== b.ts) return a.ts - b.ts
+        return a.title.localeCompare(b.title)
+      }),
+    ] as const)
+
+  const cardWidth = 148
+  const cardHeight = 92
+  const columnGap = 42
+  const rowGap = 24
+  const width = columns.length * cardWidth + Math.max(0, columns.length - 1) * columnGap
+  const height = Math.max(...columns.map(([, columnNodes]) => columnNodes.length), 1) * cardHeight
+    + Math.max(...columns.map(([, columnNodes]) => columnNodes.length - 1), 0) * rowGap
+
+  const positions = new Map<string, { x: number; y: number }>()
+  columns.forEach(([depth, columnNodes]) => {
+    const totalHeight = columnNodes.length * cardHeight + Math.max(0, columnNodes.length - 1) * rowGap
+    const startY = Math.max(0, (height - totalHeight) / 2)
+    columnNodes.forEach((node, index) => {
+      positions.set(node.key, {
+        x: depth * (cardWidth + columnGap),
+        y: startY + index * (cardHeight + rowGap),
+      })
+    })
+  })
+
+  const branchGroups = Array.from(
+    branchClusters.reduce((map, branchCluster) => {
+      const anchorKey = branchCluster.anchorNodeKey
+      if (!anchorKey || !nodeByKey.has(anchorKey)) return map
+      const current = map.get(anchorKey) ?? []
+      current.push(branchCluster)
+      map.set(anchorKey, current)
+      return map
+    }, new Map<string, RunGraphCluster[]>()),
+  )
+
+  const branchPillWidth = 132
+  const branchPillHeight = 34
+  const branchSpacing = 10
+  const branchLaneGap = 28
+  const extraWidth = branchGroups.reduce((maxWidth, [anchorKey, relatedBranches]) => {
+    const anchorPos = positions.get(anchorKey)
+    if (!anchorPos) return maxWidth
+    const laneWidth = branchLaneGap + branchPillWidth
+    return Math.max(maxWidth, anchorPos.x + cardWidth + laneWidth)
+  }, width)
+
+  const extraHeight = branchGroups.reduce((maxHeight, [anchorKey, relatedBranches]) => {
+    const anchorPos = positions.get(anchorKey)
+    if (!anchorPos) return maxHeight
+    const stackHeight = relatedBranches.length * branchPillHeight
+      + Math.max(0, relatedBranches.length - 1) * branchSpacing
+    const laneTop = anchorPos.y + cardHeight + 18
+    return Math.max(maxHeight, laneTop + stackHeight)
+  }, height)
+
+  return (
+    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel-alt)] p-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold text-[var(--color-text)]">Main graph</span>
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              {cluster.status || 'ready'}
+            </span>
+          </div>
+          <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+            {nodes.length} nodes · {edges.length} edges
+          </div>
+        </div>
+        {isStreaming && cluster.key === graphModel.activeClusterKey && (
+          <motion.span
+            className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--color-text)]"
+            initial={{ opacity: 0.35, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1.06 }}
+            transition={{ repeat: Infinity, repeatType: 'reverse', duration: 0.8 }}
+          />
+        )}
+      </div>
+
+      <div className="mt-3 overflow-x-auto pb-1">
+        <div
+          className="relative"
+          style={{ width: `${extraWidth}px`, height: `${extraHeight}px` }}
+        >
+          <svg className="absolute inset-0 h-full w-full overflow-visible">
+            {edges.map((edge) => {
+              const from = positions.get(edge.from)
+              const to = positions.get(edge.to)
+              if (!from || !to) return null
+              const x1 = from.x + cardWidth
+              const y1 = from.y + cardHeight / 2
+              const x2 = to.x
+              const y2 = to.y + cardHeight / 2
+              const c1x = x1 + columnGap * 0.45
+              const c2x = x2 - columnGap * 0.45
+              const active = edge.from === graphModel.activeNodeKey || edge.to === graphModel.activeNodeKey
+              return (
+                <path
+                  key={edge.key}
+                  d={`M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`}
+                  fill="none"
+                  stroke="var(--color-border-strong)"
+                  strokeWidth={active ? 2 : 1.4}
+                  strokeDasharray={edge.kind === 'branch' ? '5 4' : undefined}
+                  opacity={active ? 0.95 : 0.68}
+                />
+              )
+            })}
+            {branchGroups.map(([anchorKey, relatedBranches]) => {
+              const anchorPos = positions.get(anchorKey)
+              if (!anchorPos) return null
+              const anchorX = anchorPos.x + cardWidth * 0.72
+              const anchorY = anchorPos.y + cardHeight
+              return relatedBranches.map((branchCluster, index) => {
+                const pillX = anchorPos.x + cardWidth + branchLaneGap
+                const pillY = anchorPos.y + cardHeight + 18 + index * (branchPillHeight + branchSpacing)
+                const midY = pillY + branchPillHeight / 2
+                const active = branchCluster.key === graphModel.activeClusterKey
+                return (
+                  <path
+                    key={`branch-overlay:${branchCluster.key}`}
+                    d={`M ${anchorX} ${anchorY} C ${anchorX} ${anchorY + 10}, ${pillX - 16} ${midY}, ${pillX} ${midY}`}
+                    fill="none"
+                    stroke="var(--color-border-strong)"
+                    strokeWidth={active ? 2 : 1.35}
+                    strokeDasharray="5 4"
+                    opacity={active ? 0.92 : 0.65}
+                  />
+                )
+              })
+            })}
+          </svg>
+
+          {nodes.map((node) => {
+            const position = positions.get(node.key)
+            if (!position) return null
+            return (
+              <div
+                key={node.key}
+                className="absolute"
+                style={{
+                  width: `${cardWidth}px`,
+                  height: `${cardHeight}px`,
+                  transform: `translate(${position.x}px, ${position.y}px)`,
+                }}
+              >
+                <GraphNodeCard
+                  node={node}
+                  active={node.key === graphModel.activeNodeKey}
+                  latest={node.key === graphModel.latestNodeKey}
+                />
+              </div>
+            )
+          })}
+
+          {branchGroups.map(([anchorKey, relatedBranches]) => {
+            const anchorPos = positions.get(anchorKey)
+            if (!anchorPos) return null
+            return relatedBranches.map((branchCluster, index) => {
+              const active = branchCluster.key === graphModel.activeClusterKey
+              const top = anchorPos.y + cardHeight + 18 + index * (branchPillHeight + branchSpacing)
+              const left = anchorPos.x + cardWidth + branchLaneGap
+              return (
+                <div
+                  key={`branch-pill:${branchCluster.key}`}
+                  className={cn(
+                    'absolute rounded-xl border px-2 py-1.5',
+                    active
+                      ? 'border-[var(--color-border-strong)] bg-[var(--color-bg)]'
+                      : 'border-[var(--color-border)] bg-[var(--color-panel)]',
+                  )}
+                  style={{
+                    width: `${branchPillWidth}px`,
+                    minHeight: `${branchPillHeight}px`,
+                    transform: `translate(${left}px, ${top}px)`,
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[10px] font-semibold text-[var(--color-text)]">
+                      {branchCluster.label}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      {branchCluster.status || 'ready'}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 truncate text-[9px] text-[var(--color-text-muted)]">
+                    {branchCluster.nodeKeys.length} nodes
+                  </div>
+                </div>
+              )
+            })
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function ClusterCard({
   graphModel,
   cluster,
   isStreaming,
-  variant,
 }: {
   graphModel: RunGraphModel
   cluster: RunGraphCluster
   isStreaming: boolean
-  variant: 'root' | 'branch'
 }) {
   const nodes = cluster.nodeKeys
     .map((key) => graphModel.nodes.find((node) => node.key === key))
@@ -323,16 +553,14 @@ function ClusterCard({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-semibold text-[var(--color-text)]">
-              {variant === 'root' ? 'Main graph' : cluster.label}
+              {cluster.label}
             </span>
             <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
               {cluster.status || 'ready'}
             </span>
           </div>
           <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
-            {variant === 'root'
-              ? `${nodes.length} nodes`
-              : `${cluster.pathLabel} · ${nodes.length} nodes`}
+            {cluster.pathLabel} · {nodes.length} nodes
           </div>
         </div>
         {active && isStreaming && (
@@ -345,7 +573,7 @@ function ClusterCard({
         )}
       </div>
 
-      {anchorNode && variant === 'branch' && (
+      {anchorNode && (
         <div className="mt-2 flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
           <span className="inline-flex h-px w-4 bg-[var(--color-border-strong)]" />
           <span>forked from</span>

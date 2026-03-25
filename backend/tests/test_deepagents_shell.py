@@ -50,6 +50,23 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     )
     monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
     monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    monkeypatch.setattr(
+        dchat,
+        "_serialize_agent_topology",
+        lambda agent: {
+            "nodes": [
+                {"id": "__start__", "name": "__start__", "kind": "start"},
+                {"id": "model", "name": "model", "kind": "model"},
+                {"id": "tools", "name": "tools", "kind": "tools"},
+                {"id": "__end__", "name": "__end__", "kind": "end"},
+            ],
+            "edges": [
+                {"source": "__start__", "target": "model", "conditional": False},
+                {"source": "model", "target": "tools", "conditional": True},
+                {"source": "tools", "target": "__end__", "conditional": True},
+            ],
+        },
+    )
 
     captured: dict[str, object] = {}
 
@@ -129,11 +146,17 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     events = _parse_sse_events(body)
     names = [name for name, _ in events]
     assert "start" in names
+    assert "topology" in names
     assert "messages" in names
     assert "updates" in names
     assert "tasks" in names
     assert "values" in names
     assert "final" in names
+
+    topology_payload = next(payload for name, payload in events if name == "topology")
+    assert topology_payload["type"] == "topology"
+    assert topology_payload["data"]["nodes"][0]["id"] == "__start__"
+    assert topology_payload["data"]["edges"][0]["target"] == "model"
 
     message_payload = next(payload for name, payload in events if name == "messages")
     assert message_payload["type"] == "messages"

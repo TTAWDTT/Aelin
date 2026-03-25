@@ -338,6 +338,85 @@ def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
     )
 
 
+def _classify_topology_node(node_id: str, name: str) -> str:
+    node_id_norm = str(node_id or "").strip().lower()
+    name_norm = str(name or "").strip().lower()
+    if node_id_norm == "__start__":
+        return "start"
+    if node_id_norm == "__end__":
+        return "end"
+    if name_norm == "model":
+        return "model"
+    if name_norm == "tools":
+        return "tools"
+    if "middleware" in name_norm:
+        return "middleware"
+    return "node"
+
+
+def _serialize_agent_topology(agent: Any) -> dict[str, Any] | None:
+    get_graph = getattr(agent, "get_graph", None)
+    if not callable(get_graph):
+        return None
+
+    try:
+        graph = get_graph()
+    except Exception:
+        return None
+
+    raw_nodes = getattr(graph, "nodes", None)
+    raw_edges = getattr(graph, "edges", None)
+    if not isinstance(raw_nodes, dict) or not isinstance(raw_edges, list):
+        return None
+
+    nodes: list[dict[str, Any]] = []
+    for node_id, node in raw_nodes.items():
+        safe_id = str(node_id or "").strip()
+        if not safe_id:
+            continue
+        name = str(getattr(node, "name", None) or safe_id).strip() or safe_id
+        nodes.append(
+            {
+                "id": safe_id,
+                "name": name,
+                "kind": _classify_topology_node(safe_id, name),
+            }
+        )
+
+    edges: list[dict[str, Any]] = []
+    for edge in raw_edges:
+        source = str(getattr(edge, "source", "") or "").strip()
+        target = str(getattr(edge, "target", "") or "").strip()
+        if not source or not target:
+            continue
+        edges.append(
+            {
+                "source": source,
+                "target": target,
+                "conditional": bool(getattr(edge, "conditional", False)),
+            }
+        )
+
+    if not nodes:
+        return None
+
+    mermaid = ""
+    draw_mermaid = getattr(graph, "draw_mermaid", None)
+    if callable(draw_mermaid):
+        try:
+            mermaid = str(draw_mermaid() or "")
+        except Exception:
+            mermaid = ""
+
+    payload: dict[str, Any] = {
+        "nodes": nodes,
+        "edges": edges,
+    }
+    if mermaid:
+        payload["mermaid"] = mermaid
+    return payload
+
+
 @router.post("/chat/stream")
 def deepagents_chat_stream(
     payload: ChatRequest,
@@ -483,6 +562,10 @@ def deepagents_chat_stream(
                         },
                     )
                     return
+
+                topology = _serialize_agent_topology(agent)
+                if topology is not None:
+                    _push("topology", topology)
 
                 # 构造 DeepAgents 期望的消息格式。
                 invoke_payload = build_invoke_payload(

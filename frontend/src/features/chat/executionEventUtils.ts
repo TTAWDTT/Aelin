@@ -1,4 +1,5 @@
 import type {
+  DeepAgentsTopology,
   DeepAgentsRunState,
   DeepAgentsStreamPart,
 } from '@/shared/api/types'
@@ -10,6 +11,7 @@ export type RunGraphEdgeKind = 'flow' | 'branch'
 export interface RunTaskSnapshot {
   key: string
   id: string
+  rawName: string
   name: string
   kind: RunTaskKind
   status: string
@@ -182,6 +184,36 @@ function normalizePartPayload(event: string, payload: Record<string, unknown>): 
     return base
   }
 
+  if (event === 'topology') {
+    const dataRecord = asRecord(data)
+    const nodes = Array.isArray(dataRecord.nodes) ? dataRecord.nodes : []
+    const edges = Array.isArray(dataRecord.edges) ? dataRecord.edges : []
+    base.data = {
+      nodes: nodes
+        .slice(0, 64)
+        .map((item) => {
+          const record = asRecord(item)
+          return {
+            id: compactText(record.id, 80),
+            name: compactText(record.name, 80),
+            kind: compactText(record.kind, 40),
+          }
+        }),
+      edges: edges
+        .slice(0, 128)
+        .map((item) => {
+          const record = asRecord(item)
+          return {
+            source: compactText(record.source, 80),
+            target: compactText(record.target, 80),
+            conditional: Boolean(record.conditional),
+          }
+        }),
+      mermaid: compactText(dataRecord.mermaid, 4000),
+    }
+    return base
+  }
+
   if (event === 'tasks') {
     const dataRecord = asRecord(data)
     base.data = {
@@ -340,6 +372,11 @@ export function appendRunStatePart(
     runId: current?.runId ?? part.runId,
     latestValues: current?.latestValues,
     final: current?.final,
+    topology: current?.topology,
+  }
+  if (part.event === 'topology') {
+    const topology = asTopology(part.data)
+    if (topology) next.topology = topology
   }
   if (part.event === 'values') {
     const values = asRecord(part.data)
@@ -352,6 +389,45 @@ export function appendRunStatePart(
   return next
 }
 
+function asTopology(value: unknown): DeepAgentsTopology | undefined {
+  const record = asRecord(value)
+  const nodes = Array.isArray(record.nodes)
+    ? record.nodes
+      .map((item) => {
+        const node = asRecord(item)
+        const id = compactText(node.id, 120)
+        const name = compactText(node.name, 120)
+        if (!id || !name) return null
+        return {
+          id,
+          name,
+          kind: compactText(node.kind, 40) || 'node',
+        }
+      })
+      .filter((item): item is DeepAgentsTopology['nodes'][number] => item != null)
+    : []
+  const edges: DeepAgentsTopology['edges'] = []
+  if (Array.isArray(record.edges)) {
+    for (const item of record.edges) {
+      const edge = asRecord(item)
+      const source = compactText(edge.source, 120)
+      const target = compactText(edge.target, 120)
+      if (!source || !target) continue
+      edges.push({
+        source,
+        target,
+        conditional: Boolean(edge.conditional),
+      })
+    }
+  }
+  if (!nodes.length) return undefined
+  return {
+    nodes,
+    edges,
+    mermaid: compactText(record.mermaid, 4000) || undefined,
+  }
+}
+
 export function taskSnapshotsFromRunState(
   runState: DeepAgentsRunState | undefined,
 ): RunTaskSnapshot[] {
@@ -362,6 +438,7 @@ export function taskSnapshotsFromRunState(
     const data = asRecord(part.data)
     const ns = normalizeNs(part.ns)
     const rawId = compactText(data.id, 80) || ''
+    const rawName = compactText(data.name, 120) || ''
     const name = coerceTaskName(data)
     const kind = classifyTaskRecord(data)
     const key = `${formatNsLabel(ns)}::${rawId || name}`
@@ -369,6 +446,7 @@ export function taskSnapshotsFromRunState(
     byKey.set(key, {
       key,
       id: rawId || name,
+      rawName,
       name,
       kind,
       status: compactText(data.status, 40) || existing?.status || 'unknown',
@@ -407,6 +485,52 @@ function buildGraphNodeFromTask(task: RunTaskSnapshot): RunGraphNode {
   }
 }
 
+function kindFromTopologyNode(node: DeepAgentsTopology['nodes'][number]): RunGraphNodeKind {
+  const id = String(node.id || '').trim().toLowerCase()
+  const name = String(node.name || '').trim().toLowerCase()
+  if (id === '__start__') return 'start'
+  if (id === '__end__') return 'final'
+  if (name === 'tools') return 'tool'
+  if (name === 'model') return 'model'
+  if (name.includes('middleware')) return 'middleware'
+  return 'model'
+}
+
+function titleFromTopologyNode(node: DeepAgentsTopology['nodes'][number]): string {
+  const id = String(node.id || '').trim()
+  if (id === '__start__') return 'Run started'
+  if (id === '__end__') return 'Final answer'
+  return humanizeTaskName(node.name)
+}
+
+function computeTopologyDepths(topology: DeepAgentsTopology): Map<string, number> {
+  const incoming = new Map<string, number>()
+  const adjacency = new Map<string, string[]>()
+  for (const node of topology.nodes) {
+    incoming.set(node.id, 0)
+    adjacency.set(node.id, [])
+  }
+  for (const edge of topology.edges) {
+    adjacency.set(edge.source, [...(adjacency.get(edge.source) ?? []), edge.target])
+    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
+  }
+  const queue = topology.nodes
+    .filter((node) => (incoming.get(node.id) ?? 0) === 0)
+    .map((node) => node.id)
+  const depths = new Map<string, number>()
+  for (const nodeId of queue) depths.set(nodeId, 0)
+  while (queue.length) {
+    const nodeId = queue.shift() as string
+    const nextDepth = (depths.get(nodeId) ?? 0) + 1
+    for (const target of adjacency.get(nodeId) ?? []) {
+      depths.set(target, Math.max(depths.get(target) ?? 0, nextDepth))
+      incoming.set(target, (incoming.get(target) ?? 1) - 1)
+      if ((incoming.get(target) ?? 0) === 0) queue.push(target)
+    }
+  }
+  return depths
+}
+
 function createRootCluster(): RunGraphCluster {
   return {
     key: ROOT_CLUSTER_KEY,
@@ -430,6 +554,13 @@ export function buildGraphModelFromRunState(
   const nodeMap = new Map<string, RunGraphNode>()
   const parts = runState?.parts ?? []
   const taskSnapshots = taskSnapshotsFromRunState(runState)
+  const topology = runState?.topology
+  const taskByRawName = new Map<string, RunTaskSnapshot[]>()
+  for (const task of taskSnapshots) {
+    const rawName = String(task.rawName || '').trim()
+    if (!rawName) continue
+    taskByRawName.set(rawName, [...(taskByRawName.get(rawName) ?? []), task])
+  }
 
   clusters.set(ROOT_CLUSTER_KEY, createRootCluster())
 
@@ -472,57 +603,113 @@ export function buildGraphModelFromRunState(
   }
 
   const startPart = parts.find((part) => part.event === 'start')
-  if (startPart) {
-    pushNode({
-      key: `start:${startPart.id}`,
-      kind: 'start',
-      title: 'Run started',
-      summary: compactText(asRecord(startPart.data).query, 140),
-      status: 'completed',
-      ts: startPart.ts,
-      clusterKey: ROOT_CLUSTER_KEY,
-      depth: 0,
-      provider: 'core',
-    })
+  const finalPart = [...parts].reverse().find((part) => part.event === 'final')
+  const errorPart = [...parts].reverse().find((part) => part.event === 'error')
+
+  if (topology?.nodes.length) {
+    const depths = computeTopologyDepths(topology)
+    for (const topoNode of topology.nodes) {
+      const rawName = String(topoNode.name || '').trim()
+      const matchingTasks = taskByRawName.get(rawName) ?? []
+      const latestTask = matchingTasks.at(-1)
+      const status =
+        topoNode.id === '__start__'
+          ? 'completed'
+          : topoNode.id === '__end__'
+            ? (errorPart ? 'failed' : finalPart ? 'completed' : 'pending')
+            : latestTask?.status || 'pending'
+      const summary =
+        topoNode.id === '__start__'
+          ? compactText(asRecord(startPart?.data).query, 140)
+          : topoNode.id === '__end__'
+            ? compactText(asRecord((errorPart ?? finalPart)?.data).answer ?? asRecord(errorPart?.data).message, 180)
+            : latestTask?.summary || ''
+      const ts =
+        topoNode.id === '__start__'
+          ? startPart?.ts ?? 0
+          : topoNode.id === '__end__'
+            ? (errorPart ?? finalPart)?.ts ?? (latestTask?.lastTs ?? 0)
+            : latestTask?.lastTs ?? 0
+      pushNode({
+        key: `topology:${topoNode.id}`,
+        kind: topoNode.id === '__end__' && errorPart ? 'error' : kindFromTopologyNode(topoNode),
+        title: titleFromTopologyNode(topoNode),
+        summary,
+        status,
+        ts,
+        clusterKey: ROOT_CLUSTER_KEY,
+        depth: depths.get(topoNode.id) ?? 0,
+        toolName: latestTask?.toolName,
+        provider: inferProvider(latestTask?.toolName || topoNode.name),
+      })
+    }
+
+    for (const edge of topology.edges) {
+      edges.push({
+        key: `topology-edge:${edge.source}:${edge.target}`,
+        from: `topology:${edge.source}`,
+        to: `topology:${edge.target}`,
+        kind: edge.conditional ? 'branch' : 'flow',
+        status: 'ready',
+      })
+    }
+  } else {
+    if (startPart) {
+      pushNode({
+        key: `start:${startPart.id}`,
+        kind: 'start',
+        title: 'Run started',
+        summary: compactText(asRecord(startPart.data).query, 140),
+        status: 'completed',
+        ts: startPart.ts,
+        clusterKey: ROOT_CLUSTER_KEY,
+        depth: 0,
+        provider: 'core',
+      })
+    }
+
+    for (const task of taskSnapshots.filter((task) => task.ns.length === 0)) {
+      pushNode({
+        ...buildGraphNodeFromTask(task),
+        clusterKey: ROOT_CLUSTER_KEY,
+      })
+    }
+
+    if (errorPart) {
+      const data = asRecord(errorPart.data)
+      pushNode({
+        key: `error:${errorPart.id}`,
+        kind: 'error',
+        title: 'Run error',
+        summary: compactText(data.message, 160),
+        status: 'failed',
+        ts: errorPart.ts,
+        clusterKey: ROOT_CLUSTER_KEY,
+        depth: 0,
+        provider: 'core',
+      })
+    } else if (finalPart) {
+      const data = asRecord(finalPart.data)
+      pushNode({
+        key: `final:${finalPart.id}`,
+        kind: 'final',
+        title: 'Final answer',
+        summary: compactText(data.answer, 180),
+        status: 'completed',
+        ts: finalPart.ts,
+        clusterKey: ROOT_CLUSTER_KEY,
+        depth: 0,
+        provider: 'core',
+      })
+    }
   }
 
-  for (const task of taskSnapshots) {
+  for (const task of taskSnapshots.filter((task) => task.ns.length > 0)) {
     const clusterKey = ensureCluster(task.ns)
     pushNode({
       ...buildGraphNodeFromTask(task),
       clusterKey,
     })
-  }
-
-  for (const part of parts) {
-    if (part.event === 'error') {
-      const data = asRecord(part.data)
-      pushNode({
-        key: `error:${part.id}`,
-        kind: 'error',
-        title: 'Run error',
-        summary: compactText(data.message, 160),
-        status: 'failed',
-        ts: part.ts,
-        clusterKey: ROOT_CLUSTER_KEY,
-        depth: 0,
-        provider: 'core',
-      })
-    }
-    if (part.event === 'final') {
-      const data = asRecord(part.data)
-      pushNode({
-        key: `final:${part.id}`,
-        kind: 'final',
-        title: 'Final answer',
-        summary: compactText(data.answer, 180),
-        status: 'completed',
-        ts: part.ts,
-        clusterKey: ROOT_CLUSTER_KEY,
-        depth: 0,
-        provider: 'core',
-      })
-    }
   }
 
   const sortedClusters = [...clusters.values()].sort((a, b) => {
@@ -531,6 +718,7 @@ export function buildGraphModelFromRunState(
   })
 
   for (const cluster of sortedClusters) {
+    if (cluster.key === ROOT_CLUSTER_KEY && topology?.edges.length) continue
     const clusterNodes = cluster.nodeKeys
       .map((key) => nodeMap.get(key))
       .filter((node): node is RunGraphNode => node != null)
