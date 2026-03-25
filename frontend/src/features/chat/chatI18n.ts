@@ -36,15 +36,7 @@ type ChatKeys =
   | 'composer.send.stop'
   | 'composer.send.send'
   | 'timeline.generating'
-  | 'trace.title'
-  | 'trace.steps'
-  | 'trace.status.running'
-  | 'trace.status.completed'
-  | 'trace.status.skipped'
-  | 'trace.status.failed'
-  | 'trace.status.unknown'
   | 'trace.executionPane.title'
-  | 'trace.tab.aelin'
   | 'trace.tab.tools'
   | 'trace.executionPane.empty'
   | 'trace.executionPane.headerOpen'
@@ -52,8 +44,6 @@ type ChatKeys =
   | 'trace.executionPane.emptyDetail'
   | 'trace.tools.empty'
   | 'trace.tools.count'
-  | 'trace.tools.read'
-  | 'trace.tools.write'
   | 'actions.heading'
   | 'actions.confirm.cta'
   | 'actions.confirm.pending'
@@ -98,24 +88,14 @@ const ZH: Record<ChatKeys, string> = {
   'composer.send.send': '发送消息',
   'timeline.generating': '正在生成…',
   'status.cancelled': '已停止本轮对话。',
-  'trace.title': 'Agent 链路',
-  'trace.steps': '{count} 步',
-  'trace.status.running': '进行中',
-  'trace.status.completed': '完成',
-  'trace.status.skipped': '跳过',
-  'trace.status.failed': '失败',
-  'trace.status.unknown': '未知',
   'trace.executionPane.title': '执行面板',
-  'trace.tab.aelin': 'Aelin 链路',
   'trace.tab.tools': '工具调用',
   'trace.executionPane.empty': '暂无执行信息',
   'trace.executionPane.headerOpen': '执行面板',
   'trace.executionPane.headerClosed': '打开执行面板',
-  'trace.executionPane.emptyDetail': '暂无可展示的工具调用。当 Aelin 使用工具处理你的请求时，这里会显示更详细的执行步骤。',
+  'trace.executionPane.emptyDetail': '暂无可展示的执行信息。当本轮运行产生工具、状态或子代理数据时，这里会直接展示。',
   'trace.tools.empty': '本轮暂未调用任何原子工具。',
   'trace.tools.count': '{count} 个调用',
-  'trace.tools.read': 'READ',
-  'trace.tools.write': 'WRITE',
   'actions.heading': '建议动作 ({count})',
   'actions.confirm.cta': '确认并继续',
   'actions.confirm.pending': '处理中…',
@@ -162,25 +142,15 @@ const EN: Record<ChatKeys, string> = {
   'composer.send.send': 'Send message',
   'timeline.generating': 'Generating…',
   'status.cancelled': 'This turn has been cancelled.',
-  'trace.title': 'Agent trace',
-  'trace.steps': '{count} steps',
-  'trace.status.running': 'running',
-  'trace.status.completed': 'completed',
-  'trace.status.skipped': 'skipped',
-  'trace.status.failed': 'failed',
-  'trace.status.unknown': 'unknown',
   'trace.executionPane.title': 'Execution panel',
-  'trace.tab.aelin': 'Aelin chain',
   'trace.tab.tools': 'Tool calls',
   'trace.executionPane.empty': 'No execution info yet',
   'trace.executionPane.headerOpen': 'Execution panel',
   'trace.executionPane.headerClosed': 'Open execution panel',
   'trace.executionPane.emptyDetail':
-    'No tool calls to show yet. When Aelin uses tools to handle your request, detailed steps will appear here.',
+    'No execution data to show yet. Tool calls, state snapshots, and subagent activity will appear here when available.',
   'trace.tools.empty': 'No atomic tools were invoked in this turn.',
   'trace.tools.count': '{count} call(s)',
-  'trace.tools.read': 'READ',
-  'trace.tools.write': 'WRITE',
   'actions.heading': 'Suggested actions ({count})',
   'actions.confirm.cta': 'Confirm and continue',
   'actions.confirm.pending': 'Working…',

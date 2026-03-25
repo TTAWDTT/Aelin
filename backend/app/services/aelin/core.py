@@ -11,10 +11,8 @@ from fastapi import APIRouter
 from sqlalchemy.orm import Session
 
 from app.models import User
-from app.schemas import ChatAction, ChatRequest, ChatResponse, ChatToolStep
+from app.schemas import ChatAction, ChatRequest, ChatResponse
 from app.services.aelin.core_support import (
-    _build_cached_base_context_bundle as _build_cached_base_context_bundle_inner,
-    _build_context_bundle as _build_context_bundle_inner,
     _get_agents_memory_text_for_chat,
     _scoped_web_search_service,
 )
@@ -23,7 +21,6 @@ from app.services.aelin.runtime import (
     normalize_workspace as _normalize_workspace,
     resolve_llm_service as _resolve_llm_service,
 )
-from app.services.aelin.streaming import _now_ms
 from app.services.aelin.utils import normalize_positive_ints
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.deepagents_graph import run_deepagents_loop
@@ -39,27 +36,7 @@ _log = logging.getLogger(__name__)
 
 _base_context_cache_lock = threading.Lock()
 _base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
-_NO_RESULT_DETAIL = "deepagents_no_result"
 _NO_RESULT_ANSWER = "当前会话使用 DeepAgents，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
-
-
-def _build_context_bundle(
-    db: Session,
-    user_id: int,
-    *,
-    workspace: str,
-    query: str,
-) -> dict[str, Any]:
-    return _build_context_bundle_inner(db, user_id, workspace=workspace, query=query)
-
-
-def _build_cached_base_context_bundle(
-    db: Session,
-    user_id: int,
-    *,
-    workspace: str,
-) -> dict[str, Any]:
-    return _build_cached_base_context_bundle_inner(db, user_id, workspace=workspace)
 
 
 def _normalize_attachment_ids(raw_ids: list[Any]) -> list[int]:
@@ -226,15 +203,6 @@ def _build_no_result_response(
         expression=_pick_expression(payload.query, answer),
         citations=[],
         actions=[],
-        tool_trace=[
-            ChatToolStep(
-                stage="deepagents",
-                status="failed",
-                detail=_NO_RESULT_DETAIL,
-                count=0,
-                ts=_now_ms(),
-            )
-        ],
         memory_summary="",
         generated_at=datetime.now(timezone.utc),
     )
@@ -244,14 +212,7 @@ def is_deepagents_no_result_response(response: ChatResponse | None) -> bool:
     if response is None:
         return False
     answer = str(getattr(response, "answer", "") or "").strip()
-    if answer == _NO_RESULT_ANSWER:
-        return True
-    for step in list(getattr(response, "tool_trace", []) or []):
-        if str(getattr(step, "stage", "") or "") != "deepagents":
-            continue
-        if _NO_RESULT_DETAIL in str(getattr(step, "detail", "") or ""):
-            return True
-    return False
+    return answer == _NO_RESULT_ANSWER
 
 
 def run_chat_request(

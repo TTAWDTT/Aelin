@@ -170,7 +170,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
   const debugLog = (...args: unknown[]) => {
     if (!debugEnabled) return
     // eslint-disable-next-line no-console
-    console.info('[aelin-stream]', ...args)
+    console.info('[deepagents-stream]', ...args)
   }
 
   debugLog('request_start', {
@@ -236,7 +236,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
         } catch (callbackError: any) {
           // Callback exceptions should not be misreported as transport failures.
           // eslint-disable-next-line no-console
-          console.error('[aelin-stream] callback_error', {
+          console.error('[deepagents-stream] callback_error', {
             message: String(callbackError?.message || ''),
             event: evt.event,
           })
@@ -248,7 +248,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     const aborted = combined.aborted || String(err?.name || '') === 'AbortError'
     if (!aborted) {
       // eslint-disable-next-line no-console
-      console.error('[aelin-stream] network_error', { message: String(err?.message || ''), stack: String(err?.stack || '') })
+      console.error('[deepagents-stream] network_error', { message: String(err?.message || ''), stack: String(err?.stack || '') })
       callbacks.onUpdate?.({
         type: 'error',
         envelope: { type: 'error' },
