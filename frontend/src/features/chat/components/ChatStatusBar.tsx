@@ -35,8 +35,10 @@ export function ChatStatusBar({
   const toolNames = Array.from(new Set(tools.map((call) => call.name).filter(Boolean)))
   const joinedTools = toolNames.slice(0, 4).join(' · ')
   const fallback = t('timeline.generating')
+  const normalizedStatusText = statusText.trim()
+  const isGenericThinking = normalizedStatusText === t('status.thinking')
 
-  let text = statusText.trim() || summarizeExecutionStatus(stream, '')
+  let text = (!isGenericThinking ? normalizedStatusText : '') || summarizeExecutionStatus(stream, '')
   if (!text && isStreaming && subagents.length > 0) {
     text =
       locale === 'zh'

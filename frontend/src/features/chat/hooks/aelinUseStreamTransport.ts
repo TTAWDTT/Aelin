@@ -31,7 +31,6 @@ interface AelinUseStreamTransportOptions {
   getHistoryMessages: (threadId: string) => StreamMessageLike[]
   getWorkspace: (threadId: string) => string
   getSource?: () => string
-  onAelinEvent?: (event: string, payload: RawAelinPayload) => void
 }
 
 function parseSseChunks(chunkText: string, pending = ''): { events: RawSseEvent[]; rest: string } {
@@ -182,7 +181,6 @@ export class AelinUseStreamTransport {
         for (const item of parsed.events) {
           const parsedPayload = toPayload(item.data)
           if (!parsedPayload) continue
-          self.options.onAelinEvent?.(item.event, parsedPayload)
 
           if (item.event === 'metadata') {
             const record =

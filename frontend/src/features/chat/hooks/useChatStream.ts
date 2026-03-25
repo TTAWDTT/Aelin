@@ -20,27 +20,6 @@ import { AelinUseStreamTransport } from './aelinUseStreamTransport'
 
 export type { ChatRuntimeStream, ChatStreamState }
 
-function statusTextFromAelinEvent(
-  event: string,
-  payload: Record<string, unknown>,
-  t: (key: 'status.tools.invoking', vars?: Record<string, string | number>) => string,
-): string {
-  const baseEvent = String(event || '').split('|')[0]
-  const data = payload
-  if (event === 'error') {
-    return String(data.message || '')
-  }
-  if (baseEvent !== 'tasks' && baseEvent !== 'updates') return ''
-
-  const toolName = String(
-    data.tool_name
-    || (typeof data.name === 'string' && data.name.toLowerCase() === 'tools' ? 'tools' : '')
-    || '',
-  ).trim()
-  if (!toolName) return ''
-  return t('status.tools.invoking', { tools: toolName })
-}
-
 export function useChatStream() {
   const store = useChatStore()
   const { t } = useChatI18n()
@@ -60,17 +39,6 @@ export function useChatStream() {
       return target?.workspace || 'default'
     },
     getSource: () => 'chat_ui',
-    onAelinEvent: (event, payload) => {
-      if (event === 'done' || event === 'ping' || event === 'start') return
-      const status = statusTextFromAelinEvent(
-        event,
-        (payload as Record<string, unknown>) ?? {},
-        t as any,
-      )
-      if (status) {
-        useChatStore.getState().setStatusText(status)
-      }
-    },
   }), [])
 
   const stream = useStream<ChatStreamState>({
