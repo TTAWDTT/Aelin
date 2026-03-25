@@ -1,6 +1,6 @@
 import type { MutableRefObject } from 'react'
 import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
-import type { AelinChatRequest, DeepAgentsStreamPart } from '@/shared/api/types'
+import type { AelinChatRequest, DeepAgentsStreamPart, DeepAgentsStreamUpdate } from '@/shared/api/types'
 import { appendRunStatePart, createExecutionEventFromPart } from '../executionEventUtils'
 
 const MAX_QUERY_CHARS = 1200
@@ -132,6 +132,8 @@ export function buildStreamCallbacks(params: {
   abortRef: MutableRefObject<(() => void) | null>
   getCancel: () => () => void
 }) {
+  let lastFinalAnswer = ''
+
   const finalize = () => {
     if (params.abortRef.current === params.getCancel()) {
       params.abortRef.current = null
@@ -142,49 +144,64 @@ export function buildStreamCallbacks(params: {
   }
 
   return {
-    onStreamPart: (part: DeepAgentsStreamPart) => {
-      const event = createExecutionEventFromPart(part)
-      if (event) {
-        params.store.setStatusText(event.summary || event.title)
+    onUpdate: (update: DeepAgentsStreamUpdate) => {
+      const part: DeepAgentsStreamPart | undefined = update.part
+      if (part) {
+        const event = createExecutionEventFromPart(part)
+        if (event) {
+          params.store.setStatusText(event.summary || event.title)
+        }
+        appendRunState(params.sessionId, part)
       }
-      appendRunState(params.sessionId, part)
-    },
-    onCitations: (citations: NonNullable<ChatMessage['citations']>) =>
-      params.store.updateLastAssistant(params.sessionId, { citations }),
-    onActions: (actions: NonNullable<ChatMessage['actions']>) =>
-      params.store.updateLastAssistant(params.sessionId, { actions }),
-    onReplyChunk: (chunk: string) => params.store.appendContent(params.sessionId, chunk),
-    onDone: (data: { expression?: string; answer?: string }) => {
-      const nextPartial: Partial<ChatMessage> = {
-        expression: data.expression,
-      }
-      if (typeof data.answer === 'string' && data.answer.trim()) {
-        nextPartial.content = normalizeAssistantMarkdown(data.answer)
-      }
-      params.store.updateLastAssistant(params.sessionId, nextPartial)
-      finalize()
-    },
-    onError: (error: { message: string; code?: string }) => {
-      // 仅在当前助手消息尚无任何内容时，才在对话中插入可见错误提示。
-      // 若已经有部分或完整回答（例如 agent_loop partial_result），
-      // 则将网络/传输异常视为非致命，不再打断用户视线。
-      const state = useChatStore.getState()
-      const session = state.sessions.find((s) => s.id === params.sessionId)
-      const lastAssistant =
-        session?.messages
-          .slice()
-          .reverse()
-          .find((m) => m.role === 'assistant') ?? null
-      const hasAnswer =
-        !!lastAssistant && String(lastAssistant.content || '').trim().length > 0
 
-      if (!hasAnswer) {
-        params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
+      if (Array.isArray(update.citations)) {
+        params.store.updateLastAssistant(params.sessionId, { citations: update.citations })
       }
-      if (error.code) {
-        params.store.setLastErrorCode(String(error.code))
+
+      if (Array.isArray(update.actions)) {
+        params.store.updateLastAssistant(params.sessionId, { actions: update.actions })
       }
-      finalize()
+
+      if (typeof update.textDelta === 'string' && update.textDelta) {
+        params.store.appendContent(params.sessionId, update.textDelta)
+      }
+
+      if (typeof update.finalAnswer === 'string' && update.finalAnswer.trim()) {
+        lastFinalAnswer = normalizeAssistantMarkdown(update.finalAnswer)
+        params.store.updateLastAssistant(params.sessionId, { content: lastFinalAnswer })
+      }
+
+      if (update.error) {
+        const error = update.error
+        // 仅在当前助手消息尚无任何内容时，才在对话中插入可见错误提示。
+        // 若已经有部分或完整回答（例如 agent_loop partial_result），
+        // 则将网络/传输异常视为非致命，不再打断用户视线。
+        const state = useChatStore.getState()
+        const session = state.sessions.find((s) => s.id === params.sessionId)
+        const lastAssistant =
+          session?.messages
+            .slice()
+            .reverse()
+            .find((m) => m.role === 'assistant') ?? null
+        const hasAnswer =
+          !!lastAssistant && String(lastAssistant.content || '').trim().length > 0
+
+        if (!hasAnswer) {
+          params.store.appendContent(params.sessionId, `\n\n> ⚠️ 错误: ${error.message}`)
+        }
+        if (error.code) {
+          params.store.setLastErrorCode(String(error.code))
+        }
+        finalize()
+        return
+      }
+
+      if (update.done) {
+        if (lastFinalAnswer) {
+          params.store.updateLastAssistant(params.sessionId, { content: lastFinalAnswer })
+        }
+        finalize()
+      }
     },
   }
 }

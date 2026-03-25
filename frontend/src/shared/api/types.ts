@@ -64,6 +64,27 @@ export interface DeepAgentsRunState {
   final?: Record<string, unknown>
 }
 
+export interface DeepAgentsStreamEnvelope {
+  type: string
+  run_id?: string
+  seq?: number
+  ts?: number
+  ns?: string[]
+  data?: unknown
+}
+
+export interface DeepAgentsStreamUpdate {
+  type: string
+  envelope: DeepAgentsStreamEnvelope
+  part?: DeepAgentsStreamPart
+  textDelta?: string
+  finalAnswer?: string
+  citations?: AelinCitation[]
+  actions?: AelinAction[]
+  error?: { message: string; code?: string }
+  done?: boolean
+}
+
 export type DeepAgentsExecutionEventKind =
   | 'system'
   | 'model'

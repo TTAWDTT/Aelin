@@ -113,12 +113,15 @@ def test_deepagents_chat_stream_basic(monkeypatch):
 
     message_payload = next(payload for name, payload in events if name == "messages")
     assert message_payload["type"] == "messages"
+    assert isinstance(message_payload["run_id"], str) and message_payload["run_id"]
+    assert isinstance(message_payload["seq"], int) and message_payload["seq"] > 0
     assert message_payload["ns"] == ["root", "model"]
     assert message_payload["data"]["content"] == "hello from deepagents"
     assert message_payload["data"]["metadata"]["langgraph_node"] == "model"
 
     final_payload = next(payload for name, payload in events if name == "final")
-    assert final_payload["answer"] == "hello from deepagents"
+    assert final_payload["type"] == "final"
+    assert final_payload["data"]["answer"] == "hello from deepagents"
     assert captured["stream_kwargs"] == {
         "stream_mode": ["messages", "updates", "tasks", "values"],
         "version": "v2",

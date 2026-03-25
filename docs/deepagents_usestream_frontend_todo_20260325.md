@@ -34,18 +34,18 @@
 
 ## 5. 为官方 `useStream` 铺路
 
-- [ ] 5.1 对照官方 DeepAgents / LangGraph Front端文档，确认 `useStream` 直接接入所需最小契约
-- [ ] 5.2 评估当前 Aelin 后端是否能直接接官方 hook；如果不能，明确缺的协议层
-- [ ] 5.3 若短期不能直连官方 hook，则把当前自定义 hook 收成“极薄 useStream-compatible adapter”
+- [x] 5.1 对照官方 DeepAgents / LangGraph Front端文档，确认 `useStream` 直接接入所需最小契约
+- [x] 5.2 评估当前 Aelin 后端是否能直接接官方 hook；如果不能，明确缺的协议层
+- [x] 5.3 若短期不能直连官方 hook，则把当前自定义 hook 收成“极薄 useStream-compatible adapter”
 - [ ] 5.4 若可以直连，则开始替换当前 `streamChat + useChatStream` 主链
 
 ## 6. 最终验证
 
 - [x] 6.1 前端 `npm run build`
-- [ ] 6.2 一轮真实聊天测试：普通对话
-- [ ] 6.3 一轮真实工具测试：web search
-- [ ] 6.4 一轮真实附件测试：attachment grounding
-- [ ] 6.5 一轮真实外围测试：remote control
+- [x] 6.2 一轮真实聊天测试：普通对话
+- [x] 6.3 一轮真实工具测试：web search
+- [x] 6.4 一轮真实附件测试：attachment grounding
+- [x] 6.5 一轮真实外围测试：remote control
 
 ---
 
@@ -63,3 +63,10 @@
 - 当前后端已经收成稳定的 `type + run_id + seq + ts + ns + data` 薄 envelope，前端也已经以 `runState.parts` 作为运行时单一真相。
 - 离官方 `useStream` 还差的核心不是前端面板，而是后端仍然是 FastAPI 自定义 SSE 入口，不是 LangGraph 官方前端直接对接的运行时端点。
 - 因此下一轮最合适的动作是完成 `5.1 ~ 5.3`：把当前 `streamChat` 收成极薄 adapter，并明确列出和官方 hook 直连还差的协议层。
+
+## 本轮实测记录
+
+- 普通聊天：真实返回正常，能够稳定生成最终答复。
+- web search：真实触发了 `web_search` 工具，但模型对“今天”与搜索结果日期的约束仍不够强，答案质量还有优化空间。
+- attachment grounding：真实上传文本附件后，能够正确回答“项目代号 ORBIT，截止日期 2026-04-03”。
+- remote control：`status` 与 `execute` 都能真实返回；当前桌面插件配置存在，但 `desktop_plugin_reachable=false`，说明能力链路正常、插件侧未连通。

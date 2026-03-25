@@ -2,17 +2,13 @@ import type {
   AelinChatRequest,
   AelinCitation,
   AelinAction,
-  DeepAgentsStreamPart,
+  DeepAgentsStreamEnvelope,
+  DeepAgentsStreamUpdate,
 } from './types'
 import { createStreamPart } from '@/features/chat/executionEventUtils'
 
 interface StreamCallbacks {
-  onStreamPart?: (part: DeepAgentsStreamPart) => void
-  onCitations?: (citations: AelinCitation[]) => void
-  onActions?: (actions: AelinAction[]) => void
-  onReplyChunk?: (text: string) => void
-  onDone?: (data: { expression: string; answer?: string }) => void
-  onError?: (error: { message: string; code?: string }) => void
+  onUpdate?: (update: DeepAgentsStreamUpdate) => void
 }
 
 type ParsedSseEvent = {
@@ -71,6 +67,100 @@ function toEventPayload(raw: string): any {
   }
 }
 
+function toEnvelopePayload(payload: any, fallbackType: string): DeepAgentsStreamEnvelope {
+  const base =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {}
+  return {
+    type: String(base.type || base.event || fallbackType || 'message').trim().toLowerCase(),
+    run_id: typeof base.run_id === 'string' ? base.run_id : undefined,
+    seq: typeof base.seq === 'number' ? base.seq : undefined,
+    ts: typeof base.ts === 'number' ? base.ts : undefined,
+    ns: Array.isArray(base.ns) ? base.ns.map((item) => String(item)) : undefined,
+    data: base.data,
+  }
+}
+
+function buildStreamUpdate(sseEvent: string, payload: any): DeepAgentsStreamUpdate | null {
+  if (!payload) return null
+  const envelope = toEnvelopePayload(payload, sseEvent)
+  const type = envelope.type
+  const part = createStreamPart(type, payload)
+  const update: DeepAgentsStreamUpdate = {
+    type,
+    envelope,
+    part: part && type !== 'ping' ? part : undefined,
+  }
+
+  if (type === 'messages') {
+    const metadata = (payload?.data?.metadata ?? {}) as Record<string, unknown>
+    const nodeName = String(metadata?.langgraph_node ?? '').trim().toLowerCase()
+    const text =
+      typeof payload?.data?.content === 'string'
+        ? payload.data.content
+        : typeof payload?.content === 'string'
+          ? payload.content
+          : ''
+    if (text && nodeName === 'model') {
+      update.textDelta = text
+    }
+    return update
+  }
+
+  if (type === 'final') {
+    const result = payload?.data?.result ?? payload?.result ?? payload?.data ?? {}
+    if (Array.isArray(result.citations)) update.citations = result.citations as AelinCitation[]
+    if (Array.isArray(result.actions)) update.actions = result.actions as AelinAction[]
+    const answer =
+      typeof result.answer === 'string' && result.answer
+        ? result.answer
+        : typeof payload?.data?.answer === 'string' && payload.data.answer
+          ? payload.data.answer
+          : ''
+    if (answer) update.finalAnswer = answer
+    return update
+  }
+
+  if (type === 'error') {
+    const raw = payload?.data ?? payload
+    update.error = {
+      message:
+        typeof raw?.message === 'string'
+          ? raw.message
+          : typeof raw === 'string'
+            ? raw
+            : 'stream error',
+      code:
+        typeof raw?.code === 'string'
+          ? raw.code
+          : typeof raw?.error === 'string'
+            ? raw.error
+            : undefined,
+    }
+    return update
+  }
+
+  if (type === 'done') {
+    update.done = true
+    return update
+  }
+
+  if (type === 'citations') {
+    const citations = (payload.data ?? payload) as AelinCitation[]
+    if (Array.isArray(citations)) update.citations = citations
+    return update
+  }
+
+  if (type === 'actions') {
+    const actions = (payload.data ?? payload) as AelinAction[]
+    if (Array.isArray(actions)) update.actions = actions
+    return update
+  }
+
+  return update
+}
+
 export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, signal?: AbortSignal): () => void {
   const controller = new AbortController()
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
@@ -107,106 +197,30 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       const trimmed = String(detail || '').trim()
       const suffix = trimmed ? `: ${trimmed.slice(0, 240)}` : ''
       debugLog('response_error', { status: res.status, detail: trimmed.slice(0, 240) })
-      callbacks.onError?.({ message: `HTTP ${res.status}${suffix}` })
+      callbacks.onUpdate?.({
+        type: 'error',
+        envelope: { type: 'error' },
+        error: { message: `HTTP ${res.status}${suffix}` },
+      })
       return
     }
     if (!res.body) {
-      callbacks.onError?.({ message: 'stream body unavailable' })
+      callbacks.onUpdate?.({
+        type: 'error',
+        envelope: { type: 'error' },
+        error: { message: 'stream body unavailable' },
+      })
       return
     }
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-    let finalized = false
-    let hasReplyText = false
-
-    const emitDone = (payload?: any) => {
-      if (finalized) return
-      finalized = true
-      callbacks.onDone?.({
-        expression: String(payload?.expression || 'exp-04'),
-        answer: typeof payload?.answer === 'string' ? payload.answer : '',
-      })
-    }
-
-    const emitError = (payload: any) => {
-      const message =
-        typeof payload?.message === 'string'
-          ? payload.message
-          : typeof payload === 'string'
-            ? payload
-            : 'stream error'
-      const code =
-        typeof payload?.code === 'string'
-          ? payload.code
-          : typeof payload?.error === 'string'
-            ? payload.error
-            : undefined
-      callbacks.onError?.({ message, code })
-    }
 
     const dispatch = (sseEvent: string, payload: any) => {
-      if (!payload) return
-      const envelopeType = String(payload?.type || payload?.event || '').trim()
-      const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
-      debugLog('event', { sseEvent, eventType })
-
-      const streamPart = createStreamPart(eventType, payload)
-      if (streamPart && eventType !== 'ping') {
-        callbacks.onStreamPart?.(streamPart)
-      }
-
-      switch (eventType) {
-        case 'citations':
-          callbacks.onCitations?.((payload.data ?? payload) as AelinCitation[])
-          return
-        case 'actions':
-          callbacks.onActions?.((payload.data ?? payload) as AelinAction[])
-          return
-        case 'ping':
-          // Keepalive heartbeat from backend; no UI mutation needed.
-          return
-        case 'messages': {
-          const metadata = payload?.data?.metadata ?? {}
-          const nodeName = String(metadata?.langgraph_node ?? '').trim().toLowerCase()
-          const text =
-            typeof payload?.data?.content === 'string'
-              ? payload.data.content
-              : typeof payload?.content === 'string'
-                ? payload.content
-                : ''
-          if (text && nodeName === 'model') {
-            callbacks.onReplyChunk?.(text)
-            hasReplyText = true
-          }
-          return
-        }
-        case 'final': {
-          const result = payload.data?.result ?? payload.result ?? payload.data ?? {}
-          if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
-          if (Array.isArray(result.actions)) callbacks.onActions?.(result.actions as AelinAction[])
-          const answer =
-            typeof result.answer === 'string' && result.answer
-              ? result.answer
-              : typeof payload.data?.answer === 'string' && payload.data.answer
-                  ? payload.data.answer
-                : ''
-          if (answer && !hasReplyText) {
-            callbacks.onReplyChunk?.(answer)
-            hasReplyText = true
-          }
-          emitDone(result)
-          return
-        }
-        case 'error':
-          emitError(payload.data ?? payload)
-          return
-        case 'done':
-          emitDone(payload.data ?? payload)
-          return
-        default:
-          return
-      }
+      const update = buildStreamUpdate(sseEvent, payload)
+      if (!update) return
+      debugLog('event', { sseEvent, eventType: update.type })
+      callbacks.onUpdate?.(update)
     }
 
     while (true) {
@@ -230,13 +244,16 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       }
     }
     debugLog('stream_done')
-    emitDone()
   }).catch((err) => {
     const aborted = combined.aborted || String(err?.name || '') === 'AbortError'
     if (!aborted) {
       // eslint-disable-next-line no-console
       console.error('[aelin-stream] network_error', { message: String(err?.message || ''), stack: String(err?.stack || '') })
-      callbacks.onError?.({ message: err.message })
+      callbacks.onUpdate?.({
+        type: 'error',
+        envelope: { type: 'error' },
+        error: { message: err.message },
+      })
     }
   })
 
