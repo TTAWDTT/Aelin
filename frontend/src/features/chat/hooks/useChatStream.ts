@@ -1,72 +1,20 @@
-import { useRef, useCallback } from 'react'
+import { useCallback } from 'react'
 import { useChatStore } from '../stores/chatStore'
-import { streamChat } from '@/shared/api/sse'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import { useChatI18n } from '../chatI18n'
 import {
-  buildAssistantMessage,
-  buildChatRequest,
-  buildHistory,
-  buildStreamCallbacks,
-  buildUserMessage,
   formatBytes,
-  maybeRenameFreshSession,
-  normalizeAttachmentIds,
-  resolveSessionForSend,
   trimQueryForApi,
   type PendingImage,
 } from './chatStreamHelpers'
+import { useDeepAgentsStream } from './useDeepAgentsStream'
 
 export function useChatStream() {
   const store = useChatStore()
-  const abortRef = useRef<(() => void) | null>(null)
   const { t } = useChatI18n()
-
-  const send = useCallback(
-    (
-      text: string,
-      images?: PendingImage[],
-      attachmentIds?: number[],
-    ) => {
-      abortRef.current?.()
-      abortRef.current = null
-
-      const { sessionId, session } = resolveSessionForSend(store)
-      const normalizedAttachmentIds = normalizeAttachmentIds(attachmentIds)
-      const history = buildHistory(session)
-
-      store.addMessage(sessionId, buildUserMessage(text, images))
-      store.addMessage(sessionId, buildAssistantMessage())
-      store.setStreaming(true)
-      store.setStatusText(t('status.thinking'))
-
-      maybeRenameFreshSession(store, sessionId, session, text, images, normalizedAttachmentIds)
-
-      const body = buildChatRequest({
-        text,
-        session,
-        history,
-        images,
-        attachmentIds: normalizedAttachmentIds,
-      })
-
-      let cancel = () => {}
-      cancel = streamChat(
-        body,
-        buildStreamCallbacks({
-          store,
-          sessionId,
-          abortRef,
-          getCancel: () => cancel,
-        }),
-      )
-
-      abortRef.current = cancel
-    },
-    [store, t]
-  )
+  const { send, stop } = useDeepAgentsStream()
 
   const captureAndSend = useCallback(
     async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
@@ -141,14 +89,6 @@ export function useChatStream() {
     const finalPrompt = trimQueryForApi([String(textHint || '').trim(), attachmentBlock].filter(Boolean).join('\n\n').trim())
     send(finalPrompt || '我上传了附件，请先基于附件内容回答。', undefined, attachmentIds)
   }, [send, store])
-
-  const stop = useCallback(() => {
-    abortRef.current?.()
-    abortRef.current = null
-    store.setStreaming(false)
-    store.setStatusText(t('status.cancelled'))
-    store.setLastErrorCode(null)
-  }, [store, t])
 
   return { send, captureAndSend, uploadAttachments, sendWithAttachments, stop }
 }

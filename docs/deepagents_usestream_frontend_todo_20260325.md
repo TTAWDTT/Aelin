@@ -37,7 +37,7 @@
 - [x] 5.1 对照官方 DeepAgents / LangGraph Front端文档，确认 `useStream` 直接接入所需最小契约
 - [x] 5.2 评估当前 Aelin 后端是否能直接接官方 hook；如果不能，明确缺的协议层
 - [x] 5.3 若短期不能直连官方 hook，则把当前自定义 hook 收成“极薄 useStream-compatible adapter”
-- [ ] 5.4 若可以直连，则开始替换当前 `streamChat + useChatStream` 主链
+- [x] 5.4 若可以直连，则开始替换当前 `streamChat + useChatStream` 主链
 
 ## 6. 最终验证
 
@@ -70,3 +70,4 @@
 - web search：真实触发了 `web_search` 工具，但模型对“今天”与搜索结果日期的约束仍不够强，答案质量还有优化空间。
 - attachment grounding：真实上传文本附件后，能够正确回答“项目代号 ORBIT，截止日期 2026-04-03”。
 - remote control：`status` 与 `execute` 都能真实返回；当前桌面插件配置存在，但 `desktop_plugin_reachable=false`，说明能力链路正常、插件侧未连通。
+- 主链替换：已引入 `useDeepAgentsStream` 作为更贴近官方流 runtime 的主 hook，`useChatStream` 现在只保留截图/附件等 UI 便利封装。
