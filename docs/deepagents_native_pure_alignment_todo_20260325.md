@@ -51,7 +51,7 @@
 - [x] 5.1 审查并删除 `backend/app/services/deepagents/deepagents_loop.py` 这类仅为旧壳保留的桥接层
 - [x] 5.2 继续排查并删除后端中残留的 Aelin agent-loop 命名、类型与兼容逻辑
 - [x] 5.3 继续排查并删除前端中残留的旧聊天协议字段与适配代码
-- [ ] 5.4 更新 `docs/deepagents_arch.md` 等文档，说明新的纯原生链路
+- [x] 5.4 更新 `docs/deepagents_arch.md` 等文档，说明新的纯原生链路
 - [ ] 5.5 完成一轮真实链路测试，验证聊天、工具、skills、memory、remote control
 - [ ] 5.6 清理冗余代码、运行测试、提交 commit
 
