@@ -35,7 +35,9 @@ export function ChatView() {
     messages.length,
     messages.at(-1)?.content,
     isStreaming,
-  ])
+  ], {
+    streaming: isStreaming,
+  })
 
   const handleSend = (text: string) => {
     if (!text.trim()) return
