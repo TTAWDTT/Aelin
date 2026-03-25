@@ -13,8 +13,11 @@ from deepagents.backends.utils import create_file_data
 from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
-from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage
-from app.services.aelin.tool_hub import AelinToolHub
+from app.services.deepagents.tool_runtime import (
+    ToolCallLimiter,
+    ToolPolicyUsage,
+    ToolRuntimeContext,
+)
 from app.services.foundation.llm import LLMService
 from app.services.tools.tool_helpers import _result_error
 from app.services.tools.tools_device import tool_device, tool_screen_get
@@ -159,9 +162,9 @@ def _invoke_tool(
     *,
     name: str,
     args: dict[str, Any],
-    handler: Callable[[AelinToolHub, dict[str, Any]], dict[str, Any]],
-    tool_hub: AelinToolHub,
-    policy: AelinToolPolicy,
+    handler: Callable[[ToolRuntimeContext, dict[str, Any]], dict[str, Any]],
+    context: ToolRuntimeContext,
+    limiter: ToolCallLimiter,
     usage: ToolPolicyUsage,
     tool_runs: list[dict[str, Any]],
     cancel_token: Any | None = None,
@@ -171,7 +174,7 @@ def _invoke_tool(
     if is_cancelled(cancel_token):
         raise DeepAgentsCancelled("cancelled")
 
-    decision = policy.evaluate(name=name, args=args, usage=usage)
+    decision = limiter.evaluate(name=name, args=args, usage=usage)
     call_index = len(tool_runs) + 1
     started = perf_counter()
 
@@ -196,7 +199,7 @@ def _invoke_tool(
         raise DeepAgentsCancelled("cancelled")
 
     try:
-        result = handler(tool_hub, args)
+        result = handler(context, args)
     except Exception as exc:  # noqa: BLE001
         result = _result_error(f"{name}_failed:{str(exc)[:160]}")
 
@@ -252,8 +255,8 @@ def _invoke_tool(
 
 def build_chat_tools(
     *,
-    tool_hub: AelinToolHub,
-    policy: AelinToolPolicy,
+    context: ToolRuntimeContext,
+    limiter: ToolCallLimiter,
     cancel_token: Any | None = None,
 ) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
     """
@@ -268,7 +271,7 @@ def build_chat_tools(
 
     def _make_structured_tool(
         name: str,
-        handler: Callable[[AelinToolHub, dict[str, Any]], dict[str, Any]],
+        handler: Callable[[ToolRuntimeContext, dict[str, Any]], dict[str, Any]],
         args_schema: type[BaseModel],
         arg_names: list[str],
     ) -> Tool:
@@ -282,8 +285,8 @@ def build_chat_tools(
                 name=name,
                 args=args,
                 handler=handler,
-                tool_hub=tool_hub,
-                policy=policy,
+                context=context,
+                limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
                 cancel_token=cancel_token,
@@ -307,8 +310,8 @@ def build_chat_tools(
                 name="device",
                 args=args,
                 handler=tool_device,
-                tool_hub=tool_hub,
-                policy=policy,
+                context=context,
+                limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
                 cancel_token=cancel_token,
@@ -347,8 +350,8 @@ def build_chat_tools(
                 name="screen_get",
                 args=args,
                 handler=tool_screen_get,
-                tool_hub=tool_hub,
-                policy=policy,
+                context=context,
+                limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
                 cancel_token=cancel_token,
@@ -413,8 +416,8 @@ def build_chat_agent(
     *,
     service: LLMService,
     provider: str,
-    tool_hub: AelinToolHub,
-    policy: AelinToolPolicy,
+    context: ToolRuntimeContext,
+    limiter: ToolCallLimiter,
     memory_summary: str,
     skills_root: Path | None = None,
     cancel_token: Any | None = None,
@@ -428,8 +431,8 @@ def build_chat_agent(
         return None, ToolPolicyUsage(), [], {}
 
     tools, tool_runs, usage = build_chat_tools(
-        tool_hub=tool_hub,
-        policy=policy,
+        context=context,
+        limiter=limiter,
         cancel_token=cancel_token,
     )
 

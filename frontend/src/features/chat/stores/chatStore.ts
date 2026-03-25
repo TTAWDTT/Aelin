@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AelinCitation, AelinAction, DeepAgentsExecutionEvent, DeepAgentsToolRun } from '@/shared/api/types'
+import type { AelinCitation, AelinAction, DeepAgentsExecutionEvent } from '@/shared/api/types'
 import { useLocaleStore } from '@/shared/stores/localeStore'
 
 export interface ChatMessage {
@@ -11,7 +11,6 @@ export interface ChatMessage {
   citations?: AelinCitation[]
   actions?: AelinAction[]
   executionEvents?: DeepAgentsExecutionEvent[]
-  toolRuns?: DeepAgentsToolRun[]
   memorySummary?: string
   images?: { dataUrl: string; name: string }[]
   timestamp: number

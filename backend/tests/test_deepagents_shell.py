@@ -41,7 +41,7 @@ def test_deepagents_chat_stream_basic(monkeypatch):
 
     import app.routers.deepagents_chat as dchat
     from app.services.deepagents import deepagents_graph as dag
-    from app.services.aelin.tool_policy import ToolPolicyUsage
+    from app.services.deepagents.tool_runtime import ToolPolicyUsage
 
     monkeypatch.setattr(
         dchat,
@@ -134,7 +134,7 @@ def test_deepagents_chat_stream_accepts_pydantic_history(monkeypatch):
 
     import app.routers.deepagents_chat as dchat
     from app.services.deepagents import deepagents_graph as dag
-    from app.services.aelin.tool_policy import ToolPolicyUsage
+    from app.services.deepagents.tool_runtime import ToolPolicyUsage
 
     monkeypatch.setattr(
         dchat,

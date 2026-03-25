@@ -21,8 +21,6 @@ from app.services.aelin.runtime import (
     resolve_llm_service as _resolve_llm_service,
 )
 from app.services.aelin.streaming import _now_ms, _sse_event
-from app.services.aelin.tool_hub import AelinToolHub
-from app.services.aelin.tool_policy import AelinToolPolicy
 from app.services.aelin.utils import normalize_positive_ints
 from app.services.aelin.core_support import (
     _get_memory_summary_for_chat,
@@ -32,6 +30,10 @@ from app.services.deepagents.deepagents_graph import build_chat_agent
 from app.services.deepagents.input_mapping import build_invoke_payload
 from app.services.deepagents.output_utils import extract_answer, message_to_text
 from app.services.deepagents.cancel_utils import is_cancelled
+from app.services.deepagents.tool_runtime import (
+    ToolCallLimiter,
+    build_tool_runtime_context,
+)
 from app.settings import settings
 
 
@@ -189,7 +191,7 @@ def deepagents_chat_stream(
                     query_preview,
                 )
 
-                # 为 DeepAgents 构造 LLM 服务与工具壳。
+                # 为 DeepAgents 构造 LLM 服务与工具运行时上下文。
                 service, provider = _resolve_llm_service(db, current_user)
                 if provider == "rule_based" or not service.is_configured():
                     _push(
@@ -212,7 +214,7 @@ def deepagents_chat_stream(
                     cap=20,
                 )
 
-                tool_hub = AelinToolHub(
+                tool_context = build_tool_runtime_context(
                     db=db,
                     user_id=current_user.id,
                     workspace=workspace,
@@ -225,7 +227,7 @@ def deepagents_chat_stream(
                 allow_write_tools = bool(
                     getattr(settings, "aelin_agent_loop_allow_write_tools", False)
                 )
-                policy = AelinToolPolicy(
+                limiter = ToolCallLimiter(
                     max_tool_calls=int(
                         getattr(settings, "aelin_agent_loop_max_tool_calls", 512) or 512
                     ),
@@ -238,8 +240,8 @@ def deepagents_chat_stream(
                 agent, usage, tool_runs, files_mapping = build_chat_agent(
                     service=service,
                     provider=provider,
-                    tool_hub=tool_hub,
-                    policy=policy,
+                    context=tool_context,
+                    limiter=limiter,
                     memory_summary=memory_summary,
                     cancel_token=cancel_token,
                 )
@@ -309,7 +311,6 @@ def deepagents_chat_stream(
                     {
                         "answer": final_answer,
                         "finished_at": datetime.now(timezone.utc).isoformat(),
-                        "tool_runs": tool_runs,
                         "usage": {
                             "total_calls": int(getattr(usage, "total_calls", 0) or 0),
                             "write_calls": int(getattr(usage, "write_calls", 0) or 0),

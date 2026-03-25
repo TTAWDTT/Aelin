@@ -6,21 +6,21 @@ from typing import Any
 from app.services.deepagents.deepagents_loop import DeepAgentsLoopResult
 
 
-class _FakeToolHub:
+class _FakeToolContext:
     """
-    Minimal stand-in for AelinToolHub used in DeepAgents-related tests.
+    Minimal stand-in for ToolRuntimeContext used in DeepAgents-related tests.
 
     It only records constructor kwargs and exposes `workspace` / `user_id`
-    attributes so tests can assert that the hub is wired correctly.
+    attributes so tests can assert that the runtime context is wired correctly.
     """
 
-    instances: list["_FakeToolHub"] = []
+    instances: list["_FakeToolContext"] = []
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
         self.workspace = str(kwargs.get("workspace") or "default")
         self.user_id = int(kwargs.get("user_id") or 0)
-        _FakeToolHub.instances.append(self)
+        _FakeToolContext.instances.append(self)
 
 
 class _FakeRunner:
@@ -47,7 +47,7 @@ def _reset_fakes() -> None:
     """
     Clear all state accumulated in shared DeepAgents test fakes.
     """
-    _FakeToolHub.instances.clear()
+    _FakeToolContext.instances.clear()
     _FakeRunner.calls.clear()
 
 

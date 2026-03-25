@@ -3,6 +3,49 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy.orm import Session
+
+from app.services.aelin.attachment_service import (
+    AelinAttachmentService,
+    get_aelin_attachment_service,
+)
+from app.services.aelin.utils import normalize_positive_ints
+from app.services.web.web_search import WebSearchService
+
+
+def normalize_workspace(raw: str) -> str:
+    clean = " ".join(str(raw or "").strip().split())
+    return (clean[:64] if clean else "default") or "default"
+
+
+@dataclass
+class ToolRuntimeContext:
+    db: Session
+    user_id: int
+    workspace: str
+    web_search_service: WebSearchService
+    attachment_service: AelinAttachmentService
+    available_attachment_ids: list[int]
+
+
+def build_tool_runtime_context(
+    *,
+    db: Session,
+    user_id: int,
+    workspace: str,
+    web_search_service: WebSearchService | None = None,
+    attachment_service: AelinAttachmentService | None = None,
+    available_attachment_ids: list[int] | None = None,
+) -> ToolRuntimeContext:
+    return ToolRuntimeContext(
+        db=db,
+        user_id=int(user_id),
+        workspace=normalize_workspace(workspace),
+        web_search_service=web_search_service or WebSearchService(),
+        attachment_service=attachment_service or get_aelin_attachment_service(),
+        available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
+    )
+
 
 @dataclass
 class ToolPolicyDecision:
@@ -18,32 +61,31 @@ class ToolPolicyUsage:
 
 
 def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
-    """Return True when the tool call is a write operation."""
     tool = str(name or "").strip().lower()
     action = str((args or {}).get("action") or "").strip().lower()
 
     if tool == "device":
         return action in {"open_url", "open_aelin"}
-    if tool == "web_search":
-        return False
-    if tool == "attachment_search":
-        return False
-    if tool == "screen_get":
+    if tool in {"web_search", "attachment_search", "screen_get"}:
         return False
     if tool == "google_workspace":
-        # 读操作（runtime/auth_status/gmail_list/gmail_get/drive_list/calendar_list）视为只读；
-        # 写操作在工具层预留，占位 action 统一视为写，以便配额与安全策略可以统一控制。
         return action in {"calendar_create_event", "gmail_send", "gmail_draft", "docs_create"}
     return False
 
 
-def _deny_if_over_limit(*, current: int, limit: int, reason: str, is_write: bool = False) -> ToolPolicyDecision | None:
+def _deny_if_over_limit(
+    *,
+    current: int,
+    limit: int,
+    reason: str,
+    is_write: bool = False,
+) -> ToolPolicyDecision | None:
     if int(current) >= int(limit):
         return ToolPolicyDecision(allowed=False, is_write=is_write, reason=reason)
     return None
 
 
-class AelinToolPolicy:
+class ToolCallLimiter:
     def __init__(
         self,
         *,
@@ -57,13 +99,7 @@ class AelinToolPolicy:
 
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
-        if tool not in {
-            "device",
-            "web_search",
-            "attachment_search",
-            "screen_get",
-            "google_workspace",
-        }:
+        if tool not in {"device", "web_search", "attachment_search", "screen_get", "google_workspace"}:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
         total_limit_deny = _deny_if_over_limit(

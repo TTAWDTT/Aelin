@@ -29,13 +29,13 @@
 
 ## 3. 工具层去壳与标准化
 
-- [ ] 3.1 审查并精简 `backend/app/services/deepagents/deepagents_graph.py`
-- [ ] 3.2 找出 `AelinToolHub` 在主链中的剩余职责，并逐项迁出
-- [ ] 3.3 找出 `AelinToolPolicy` 在主链中的剩余职责，并收紧到最薄保护层
-- [ ] 3.4 删除手工 `tool_runs` 记录作为主链执行数据源的角色
-- [ ] 3.5 让现有工具直接以标准 LangChain / DeepAgents tool 形式注册
-- [ ] 3.6 评估并接入 DeepAgents 自带可复用工具能力，避免重复手搓
-- [ ] 3.7 补齐工具注册与运行测试，确认 remote control / device / web search 不回退
+- [x] 3.1 审查并精简 `backend/app/services/deepagents/deepagents_graph.py`
+- [x] 3.2 找出 `AelinToolHub` 在主链中的剩余职责，并逐项迁出
+- [x] 3.3 找出 `AelinToolPolicy` 在主链中的剩余职责，并收紧到最薄保护层
+- [x] 3.4 删除手工 `tool_runs` 记录作为主链执行数据源的角色
+- [x] 3.5 让现有工具直接以标准 LangChain / DeepAgents tool 形式注册
+- [x] 3.6 评估并接入 DeepAgents 自带可复用工具能力，避免重复手搓
+- [x] 3.7 补齐工具注册与运行测试，确认 remote control / device / web search 不回退
 
 ## 4. 记忆与输入映射去桥接
 

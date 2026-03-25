@@ -38,21 +38,6 @@ export interface ChatToolStep {
   stage: string; status?: string; detail?: string; count?: number; ts?: number
 }
 
-// DeepAgents-native tool run record, emitted by the DeepAgents shell in the
-// final streaming envelope. This is a thin mirror of the Python-side
-// `tool_runs` entries assembled in `deepagents_graph._invoke_tool`.
-export interface DeepAgentsToolRun {
-  call_index: number
-  name: string
-  args: Record<string, unknown>
-  status: string
-  result?: Record<string, unknown>
-  error?: string
-  is_write?: boolean
-  latency_ms?: number
-  summary?: string
-}
-
 export type DeepAgentsExecutionEventKind =
   | 'system'
   | 'model'

@@ -8,7 +8,7 @@ import {
   Workflow,
   XCircle,
 } from 'lucide-react'
-import type { DeepAgentsExecutionEvent, DeepAgentsToolRun } from '@/shared/api/types'
+import type { DeepAgentsExecutionEvent } from '@/shared/api/types'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import { extractToolCalls } from '../executionEventUtils'
@@ -17,7 +17,6 @@ import { ProviderIcon } from './ProviderIcon'
 
 interface ExecutionPaneProps {
   executionEvents: DeepAgentsExecutionEvent[]
-  toolRuns: DeepAgentsToolRun[]
   isStreaming: boolean
   compact?: boolean
 }
@@ -26,16 +25,15 @@ type ExecutionTab = 'timeline' | 'tools'
 
 export function ExecutionPane({
   executionEvents,
-  toolRuns,
   isStreaming,
   compact = false,
 }: ExecutionPaneProps) {
   const { t } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const hasExecution = executionEvents.length > 0 || toolRuns.length > 0
+  const hasExecution = executionEvents.length > 0
   const toolCalls = useMemo(
-    () => extractToolCalls(executionEvents, toolRuns),
-    [executionEvents, toolRuns],
+    () => extractToolCalls(executionEvents),
+    [executionEvents],
   )
   const [tab, setTab] = useState<ExecutionTab>('timeline')
 

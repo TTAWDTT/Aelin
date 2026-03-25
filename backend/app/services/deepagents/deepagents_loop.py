@@ -5,12 +5,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.aelin.tool_hub import AelinToolHub
-from app.services.aelin.tool_policy import AelinToolPolicy
 from app.services.deepagents.deepagents_graph import DeepAgentsCancelled, build_chat_agent
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.input_mapping import build_invoke_payload
 from app.services.deepagents.output_utils import extract_answer
+from app.services.deepagents.tool_runtime import ToolCallLimiter, ToolRuntimeContext
 
 _log = logging.getLogger(__name__)
 
@@ -109,8 +108,8 @@ def run_deepagents_loop(
     *,
     service: LLMService,
     provider: str,
-    tool_hub: AelinToolHub,
-    policy: AelinToolPolicy,
+    context: ToolRuntimeContext,
+    limiter: ToolCallLimiter,
     query: str,
     memory_summary: str,
     history_turns: list[dict[str, Any]],
@@ -122,8 +121,8 @@ def run_deepagents_loop(
         agent, usage, raw_tool_runs, files_mapping = build_chat_agent(
             service=service,
             provider=provider,
-            tool_hub=tool_hub,
-            policy=policy,
+            context=context,
+            limiter=limiter,
             memory_summary=memory_summary,
             cancel_token=cancel_token,
         )

@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     aelin_base_context_cache_max_entries: int = 128
 
     # Agent tool policy knobs (DeepAgents-only). Legacy AelinAgentLoop 已经移除，
-    # 这些配置仅用于构造 AelinToolPolicy，限制 DeepAgents 工具调用行为。
+    # 这些配置仅用于构造 DeepAgents 工具调用限制器。
     # 当前默认值刻意放宽，以便 DeepAgents 在每轮对话中可以更自由地尝试工具调用。
     # DeepAgents 工具策略：默认给足够大的空间，让复杂任务可以自由使用工具。
     aelin_agent_loop_max_tool_calls: int = 512

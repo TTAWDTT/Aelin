@@ -9,7 +9,7 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
-import type { AelinAttachmentUploadResponse, DeepAgentsExecutionEvent, DeepAgentsToolRun } from '@/shared/api/types'
+import type { AelinAttachmentUploadResponse, DeepAgentsExecutionEvent } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
@@ -84,7 +84,7 @@ export function ChatView() {
 
   const latestAssistantWithExecution = [...messages]
     .reverse()
-    .find((m) => m.role === 'assistant' && ((m.executionEvents?.length ?? 0) > 0 || (m.toolRuns?.length ?? 0) > 0))
+    .find((m) => m.role === 'assistant' && (m.executionEvents?.length ?? 0) > 0)
 
   const focusedExecutionEvents: DeepAgentsExecutionEvent[] | null =
     focusedMessageId && messages.length
@@ -92,15 +92,8 @@ export function ChatView() {
           ?.executionEvents ?? null
       : null
 
-  const focusedRuns: DeepAgentsToolRun[] | null =
-    focusedMessageId && messages.length
-      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant')
-          ?.toolRuns ?? null
-      : null
-
   const executionEvents: DeepAgentsExecutionEvent[] =
     focusedExecutionEvents ?? latestAssistantWithExecution?.executionEvents ?? []
-  const executionRuns: DeepAgentsToolRun[] = focusedRuns ?? latestAssistantWithExecution?.toolRuns ?? []
 
   // 桌面模式下，当本轮已经产生执行事件且正在流式时，自动展开右侧 ExecutionPane。
   useEffect(() => {
@@ -130,7 +123,6 @@ export function ChatView() {
             statusText={statusText}
             compact={compact}
             executionEvents={executionEvents}
-            toolRuns={executionRuns}
             onOpenExecution={handleOpenExecutionForLatest}
           />
           <ChatTimeline
@@ -154,7 +146,7 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane executionEvents={executionEvents} toolRuns={executionRuns} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane executionEvents={executionEvents} isStreaming={isStreaming} compact={compact} />
       </div>
     </PageScaffold>
   )

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
+from app.services.deepagents.tool_runtime import ToolRuntimeContext
 from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
 
-if TYPE_CHECKING:
-    from app.services.aelin.tool_hub import AelinToolHub
 
-
-def tool_attachment_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
+def tool_attachment_search(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, Any]:
     from app.services.aelin.utils import normalize_positive_ints
 
     query = str(args.get("query") or "").strip()[:500]
@@ -21,7 +19,7 @@ def tool_attachment_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[st
         cap=20,
     )
     if not attachment_ids:
-        attachment_ids = list(getattr(hub, "_available_attachment_ids", []) or [])
+        attachment_ids = list(context.available_attachment_ids or [])
     if not attachment_ids:
         return _result_error("missing attachment_ids")
 
@@ -30,11 +28,11 @@ def tool_attachment_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[st
     if mode not in {"keyword", "hybrid"}:
         mode = "keyword"
 
-    service = getattr(hub, "_attachments", None)
+    service = context.attachment_service
     result = service.search(  # type: ignore[call-arg]
-        getattr(hub, "db", None),
-        user_id=int(getattr(hub, "user_id", 0) or 0),
-        workspace=str(getattr(hub, "workspace", "default") or "default"),
+        context.db,
+        user_id=int(context.user_id or 0),
+        workspace=str(context.workspace or "default"),
         query=query,
         attachment_ids=attachment_ids,
         top_k=top_k,

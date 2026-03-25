@@ -1,4 +1,4 @@
-import type { DeepAgentsExecutionEvent, DeepAgentsToolRun } from '@/shared/api/types'
+import type { DeepAgentsExecutionEvent } from '@/shared/api/types'
 import { useChatI18n } from '../chatI18n'
 import { extractToolCalls, summarizeExecutionStatus } from '../executionEventUtils'
 import { PanelRightOpen } from 'lucide-react'
@@ -10,7 +10,6 @@ interface ChatStatusBarProps {
   statusText: string
   compact?: boolean
   executionEvents?: DeepAgentsExecutionEvent[]
-  toolRuns?: DeepAgentsToolRun[]
   onOpenExecution?: () => void
 }
 
@@ -19,17 +18,16 @@ export function ChatStatusBar({
   statusText,
   compact = false,
   executionEvents,
-  toolRuns,
   onOpenExecution,
 }: ChatStatusBarProps) {
   const { t } = useChatI18n()
   const { open, setOpen, setFocusedMessageId, setSuppressAutoOpen } = useExecutionPaneStore()
 
-  const hasRuns = (executionEvents?.length ?? 0) > 0 || (toolRuns?.length ?? 0) > 0
+  const hasRuns = (executionEvents?.length ?? 0) > 0
   if (!isStreaming && !statusText && !hasRuns) return null
 
   const fallback = t('timeline.generating')
-  const tools = hasRuns ? extractToolCalls(executionEvents, toolRuns) : []
+  const tools = hasRuns ? extractToolCalls(executionEvents) : []
   const toolNames = Array.from(new Set(tools.map((call) => call.name || '').filter(Boolean)))
   const joinedTools = toolNames.slice(0, 4).join(' · ')
   const providers = Array.from(new Set(tools.map((call) => call.provider || '').filter(Boolean))).slice(0, 3)

@@ -24,12 +24,11 @@ from app.services.aelin.runtime import (
     resolve_llm_service as _resolve_llm_service,
 )
 from app.services.aelin.streaming import _now_ms
-from app.services.aelin.tool_hub import AelinToolHub
-from app.services.aelin.tool_policy import AelinToolPolicy
 from app.services.aelin.utils import normalize_positive_ints
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.deepagents_loop import run_deepagents_loop
 from app.services.deepagents.input_mapping import build_history_messages, build_image_inputs
+from app.services.deepagents.tool_runtime import ToolCallLimiter, build_tool_runtime_context
 from app.services.memory.file_memory_bridge import file_memory_bridge
 from app.settings import settings
 
@@ -150,8 +149,8 @@ def _try_agent_loop_chat(
     if is_cancelled(cancel_token):
         return None
 
-    tool_hub_started = time.perf_counter()
-    tool_hub = AelinToolHub(
+    tool_runtime_started = time.perf_counter()
+    tool_context = build_tool_runtime_context(
         db=db,
         user_id=current_user.id,
         workspace=workspace,
@@ -161,14 +160,14 @@ def _try_agent_loop_chat(
         available_attachment_ids=attachment_ids,
     )
     _log.info(
-        "agent_loop preflight phase=tool_hub_ready user_id=%s source=%s workspace=%s latency_ms=%s",
+        "agent_loop preflight phase=tool_runtime_ready user_id=%s source=%s workspace=%s latency_ms=%s",
         int(current_user.id),
         source,
         workspace,
-        int((time.perf_counter() - tool_hub_started) * 1000),
+        int((time.perf_counter() - tool_runtime_started) * 1000),
     )
 
-    policy = AelinToolPolicy(
+    limiter = ToolCallLimiter(
         max_tool_calls=int(getattr(settings, "aelin_agent_loop_max_tool_calls", 512) or 512),
         max_write_calls=int(getattr(settings, "aelin_agent_loop_max_write_calls", 128) or 128),
         allow_write_tools=(
@@ -188,8 +187,8 @@ def _try_agent_loop_chat(
     result = run_deepagents_loop(
         service=service,
         provider=provider,
-        tool_hub=tool_hub,
-        policy=policy,
+        context=tool_context,
+        limiter=limiter,
         query=payload.query,
         memory_summary=memory_summary,
         history_turns=history_turns,

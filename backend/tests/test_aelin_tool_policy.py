@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage, classify_tool_call
+from app.services.deepagents.tool_runtime import ToolCallLimiter, ToolPolicyUsage, classify_tool_call
 
 
 def test_classify_write_tools():
@@ -11,7 +11,7 @@ def test_classify_write_tools():
 
 
 def test_policy_allows_screen_get_when_reads_enabled():
-    policy = AelinToolPolicy(
+    policy = ToolCallLimiter(
         max_tool_calls=4,
         max_write_calls=1,
         allow_write_tools=False,
@@ -28,7 +28,7 @@ def test_policy_allows_screen_get_when_reads_enabled():
 
 
 def test_policy_blocks_device_writes_when_writes_disabled():
-    policy = AelinToolPolicy(
+    policy = ToolCallLimiter(
         max_tool_calls=4,
         max_write_calls=1,
         allow_write_tools=False,
@@ -51,7 +51,7 @@ def test_classify_device_actions():
 
 def test_google_workspace_policy_allows_reads_and_marks_writes():
     usage = ToolPolicyUsage(total_calls=0, write_calls=0)
-    policy = AelinToolPolicy(
+    policy = ToolCallLimiter(
         max_tool_calls=10,
         max_write_calls=3,
         allow_write_tools=True,

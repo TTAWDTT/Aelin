@@ -5,8 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.aelin.tool_policy import AelinToolPolicy, ToolPolicyUsage
-from app.services.aelin.tool_hub import AelinToolHub
+from app.services.deepagents.tool_runtime import (
+    ToolCallLimiter,
+    ToolPolicyUsage,
+    build_tool_runtime_context,
+)
 from app.services.web.web_search import WebSearchResult
 from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_files import tool_attachment_search
@@ -79,8 +82,8 @@ class _FakeAttachmentService:
         }
 
 
-def _hub(fake_web: _FakeWebSearch, *, attachment_service=None, available_attachment_ids=None) -> AelinToolHub:
-    return AelinToolHub(
+def _tool_context(fake_web: _FakeWebSearch, *, attachment_service=None, available_attachment_ids=None):
+    return build_tool_runtime_context(
         db=None,  # type: ignore[arg-type]
         user_id=1,
         workspace="default",
@@ -92,10 +95,10 @@ def _hub(fake_web: _FakeWebSearch, *, attachment_service=None, available_attachm
 
 def test_web_search_tool_search_and_fetch():
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     result = tool_web_search(
-        hub,
+        context,
         {
             "action": "search_and_fetch",
             "query": "DeepAgents 架构",
@@ -115,13 +118,13 @@ def test_web_search_tool_search_and_fetch():
 def test_attachment_search_uses_available_ids_fallback():
     fake_web = _FakeWebSearch()
     fake_attachment = _FakeAttachmentService()
-    hub = _hub(
+    context = _tool_context(
         fake_web,
         attachment_service=fake_attachment,
         available_attachment_ids=[3, "2", 3, 0],  # type: ignore[list-item]
     )
 
-    result = tool_attachment_search(hub, {"query": "总结附件"})
+    result = tool_attachment_search(context, {"query": "总结附件"})
 
     assert result["ok"] is True
     assert result["attachment_ids"] == [2, 3]
@@ -131,14 +134,14 @@ def test_attachment_search_uses_available_ids_fallback():
 def test_attachment_search_prefers_explicit_ids():
     fake_web = _FakeWebSearch()
     fake_attachment = _FakeAttachmentService()
-    hub = _hub(
+    context = _tool_context(
         fake_web,
         attachment_service=fake_attachment,
         available_attachment_ids=[9, 10],
     )
 
     result = tool_attachment_search(
-        hub,
+        context,
         {"query": "翻译", "attachment_ids": [5, "6", -1], "top_k": 6, "mode": "hybrid"},  # type: ignore[list-item]
     )
 
@@ -153,7 +156,7 @@ def test_screen_get_tool_success(monkeypatch):
     from app.services.tools import tools_device
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     monkeypatch.setattr(
         tools_device,
@@ -168,7 +171,7 @@ def test_screen_get_tool_success(monkeypatch):
         },
     )
 
-    result = tool_screen_get(hub, {"max_edge": 1024, "format": "jpeg"})
+    result = tool_screen_get(context, {"max_edge": 1024, "format": "jpeg"})
     assert result["ok"] is True
     assert str(result.get("data_url") or "").startswith("data:image/jpeg;base64,")
     assert result["width"] == 1280
@@ -178,7 +181,7 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
     from app.services.tools import tools_device
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     monkeypatch.setattr(
         tools_device,
@@ -202,15 +205,15 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
         lambda route: {"route": route, "opened": True, "detail": "ok"},
     )
 
-    status = tool_device(hub, {"action": "status"})
+    status = tool_device(context, {"action": "status"})
     assert status["ok"] is True
     assert status["desktop_plugin_reachable"] is True
 
-    opened = tool_device(hub, {"action": "open_url", "url": "https://example.com"})
+    opened = tool_device(context, {"action": "open_url", "url": "https://example.com"})
     assert opened["ok"] is True
     assert opened["opened"] is True
 
-    aelin_opened = tool_device(hub, {"action": "open_aelin", "route": "/"})
+    aelin_opened = tool_device(context, {"action": "open_aelin", "route": "/"})
     assert aelin_opened["ok"] is True
     assert aelin_opened["route"] == "/"
 
@@ -219,7 +222,7 @@ def test_device_open_url_rejects_non_http_schemes(monkeypatch):
     from app.services.tools import tools_device
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
     opened_urls: list[str] = []
 
     monkeypatch.setattr(
@@ -228,7 +231,7 @@ def test_device_open_url_rejects_non_http_schemes(monkeypatch):
         lambda url: opened_urls.append(url) or {"url": url, "opened": True, "detail": "ok"},
     )
 
-    blocked = tool_device(hub, {"action": "open_url", "url": "file:///C:/Windows/System32/notepad.exe"})
+    blocked = tool_device(context, {"action": "open_url", "url": "file:///C:/Windows/System32/notepad.exe"})
 
     assert blocked["ok"] is False
     assert blocked["error"] == "invalid_url_scheme"
@@ -237,9 +240,9 @@ def test_device_open_url_rejects_non_http_schemes(monkeypatch):
 
 def test_device_tool_rejects_unknown_action():
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
-    result = tool_device(hub, {"action": "capabilities"})
+    result = tool_device(context, {"action": "capabilities"})
 
     assert result["ok"] is False
     assert "unsupported device action" in str(result.get("error") or "")
@@ -249,7 +252,7 @@ def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
     from app.services.tools import tools_gws
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     class _FakeGWS:
         def runtime_status(self):
@@ -272,12 +275,12 @@ def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
 
     monkeypatch.setattr(tools_gws, "get_google_workspace_cli_service", lambda: _FakeGWS())
 
-    runtime = tool_google_workspace(hub, {"action": "runtime"})
+    runtime = tool_google_workspace(context, {"action": "runtime"})
     assert runtime["ok"] is True
     assert runtime["scope"] == "runtime"
     assert runtime["available"] is True
 
-    auth = tool_google_workspace(hub, {"action": "auth_status"})
+    auth = tool_google_workspace(context, {"action": "auth_status"})
     assert auth["scope"] == "auth"
     assert auth["ok"] is False
     assert auth["authenticated"] is False
@@ -288,7 +291,7 @@ def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch)
     from app.services.tools import tools_gws
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     class _FakeGWS:
         def runtime_status(self):
@@ -309,22 +312,22 @@ def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch)
     monkeypatch.setattr(tools_gws, "get_google_workspace_cli_service", lambda: _FakeGWS())
 
     gmail_list = tool_google_workspace(
-        hub,
+        context,
         {"action": "gmail_list", "query": "is:unread", "max_results": 5, "include_spam_trash": True},
     )
     assert gmail_list["ok"] is True
     assert gmail_list["scope"] == "gmail"
     assert [item["id"] for item in gmail_list["items"]] == ["m1", "m2"]
 
-    gmail_get = tool_google_workspace(hub, {"action": "gmail_get", "message_id": "m1", "format": "minimal"})
+    gmail_get = tool_google_workspace(context, {"action": "gmail_get", "message_id": "m1", "format": "minimal"})
     assert gmail_get["ok"] is True
     assert gmail_get["item"]["id"] == "m1"
 
-    drive = tool_google_workspace(hub, {"action": "drive_list", "query": "name contains 'Spec'", "max_results": 3})
+    drive = tool_google_workspace(context, {"action": "drive_list", "query": "name contains 'Spec'", "max_results": 3})
     assert drive["ok"] is True
     assert drive["items"][0]["name"] == "Spec"
 
-    calendar = tool_google_workspace(hub, {"action": "calendar_list", "calendar_id": "primary", "max_results": 4})
+    calendar = tool_google_workspace(context, {"action": "calendar_list", "calendar_id": "primary", "max_results": 4})
     assert calendar["ok"] is True
     assert calendar["items"][0]["summary"] == "Demo"
 
@@ -333,7 +336,7 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
     from app.services.tools import tools_gws
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     class _FakeGWS:
         def gmail_list_messages(self, **kwargs):
@@ -356,13 +359,13 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
 
     monkeypatch.setattr(tools_gws, "get_google_workspace_cli_service", lambda: _FakeGWS())
 
-    assert tool_google_workspace(hub, {"action": "gmail_list"})["scope"] == "gmail"
-    assert tool_google_workspace(hub, {"action": "drive_list"})["scope"] == "drive"
-    assert tool_google_workspace(hub, {"action": "calendar_list"})["scope"] == "calendar"
-    assert tool_google_workspace(hub, {"action": "calendar_create_event"})["scope"] == "calendar"
-    assert tool_google_workspace(hub, {"action": "gmail_send"})["scope"] == "gmail"
-    assert tool_google_workspace(hub, {"action": "gmail_draft"})["scope"] == "gmail"
-    unknown = tool_google_workspace(hub, {"action": "unknown_action"})
+    assert tool_google_workspace(context, {"action": "gmail_list"})["scope"] == "gmail"
+    assert tool_google_workspace(context, {"action": "drive_list"})["scope"] == "drive"
+    assert tool_google_workspace(context, {"action": "calendar_list"})["scope"] == "calendar"
+    assert tool_google_workspace(context, {"action": "calendar_create_event"})["scope"] == "calendar"
+    assert tool_google_workspace(context, {"action": "gmail_send"})["scope"] == "gmail"
+    assert tool_google_workspace(context, {"action": "gmail_draft"})["scope"] == "gmail"
+    unknown = tool_google_workspace(context, {"action": "unknown_action"})
     assert unknown["ok"] is False
     assert unknown["error"] == "unsupported_action"
 
@@ -371,22 +374,22 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
     from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
     calls: list[dict[str, object]] = []
 
-    def _fake_tool_device(tool_hub, args):  # type: ignore[no-untyped-def]
-        calls.append({"tool_hub": tool_hub, "args": dict(args)})
+    def _fake_tool_device(tool_context, args):  # type: ignore[no-untyped-def]
+        calls.append({"tool_context": tool_context, "args": dict(args)})
         return {"ok": True, "echo": dict(args)}
 
     monkeypatch.setattr(dag, "tool_device", _fake_tool_device)
 
-    policy = AelinToolPolicy(
+    limiter = ToolCallLimiter(
         max_tool_calls=20,
         max_write_calls=10,
         allow_write_tools=True,
     )
 
-    tools, tool_runs, usage = dag.build_chat_tools(tool_hub=hub, policy=policy)
+    tools, tool_runs, usage = dag.build_chat_tools(context=context, limiter=limiter)
 
     assert isinstance(usage, ToolPolicyUsage)
     assert [tool.name for tool in tools] == [
@@ -410,17 +413,17 @@ def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     monkeypatch.setattr(dag, "tool_web_search", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
 
-    policy = AelinToolPolicy(
+    limiter = ToolCallLimiter(
         max_tool_calls=4,
         max_write_calls=1,
         allow_write_tools=False,
     )
 
-    tools, tool_runs, usage = dag.build_chat_tools(tool_hub=hub, policy=policy)
+    tools, tool_runs, usage = dag.build_chat_tools(context=context, limiter=limiter)
     web_tool = next(t for t in tools if t.name == "web_search")
     result = web_tool.invoke({"action": "search", "query": "deepagents"})
 
@@ -434,12 +437,12 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
     # Avoid hitting real ChatOpenAI / network when constructing the agent.
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     monkeypatch.setattr(dag, "create_deep_agent", lambda **kwargs: object())
 
-    policy = AelinToolPolicy(
+    limiter = ToolCallLimiter(
         max_tool_calls=8,
         max_write_calls=2,
         allow_write_tools=False,
@@ -448,8 +451,8 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     agent, usage, tool_runs, files = dag.build_chat_agent(  # type: ignore[misc]
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
-        tool_hub=hub,
-        policy=policy,
+        context=context,
+        limiter=limiter,
         memory_summary="User profile: likes agents.\nRecent change: migrated to DeepAgents shell.",
         skills_root=None,
     )
@@ -480,7 +483,7 @@ def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
     (refs_dir / "guide.md").write_text("# Guide\n", encoding="utf-8")
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
 
     # Avoid hitting real ChatOpenAI / network when constructing the agent.
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
@@ -493,7 +496,7 @@ def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
 
     monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
 
-    policy = AelinToolPolicy(
+    limiter = ToolCallLimiter(
         max_tool_calls=8,
         max_write_calls=2,
         allow_write_tools=False,
@@ -502,8 +505,8 @@ def test_deepagents_skills_mount_full_directory_tree(monkeypatch, tmp_path):
     _, _, _, files = dag.build_chat_agent(  # type: ignore[misc]
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
-        tool_hub=hub,
-        policy=policy,
+        context=context,
+        limiter=limiter,
         memory_summary="",
         skills_root=skill_root,
     )
@@ -533,7 +536,7 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
     from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
+    context = _tool_context(fake_web)
     # Avoid hitting real ChatOpenAI / network when constructing the agent.
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     captured: dict[str, object] = {}
@@ -544,12 +547,12 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
 
     monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
 
-    policy = AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False)
+    limiter = ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False)
     dag.build_chat_agent(  # type: ignore[misc]
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
-        tool_hub=hub,
-        policy=policy,
+        context=context,
+        limiter=limiter,
         memory_summary="",
         skills_root=None,
     )
@@ -588,8 +591,8 @@ def test_deepagents_loop_preserves_model_answer_without_legacy_open_claim_guard(
     result = dloop.run_deepagents_loop(
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
-        tool_hub=SimpleNamespace(),
-        policy=AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        context=SimpleNamespace(),
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
         query="请联网查一下",
         memory_summary="",
         history_turns=[],
@@ -631,8 +634,8 @@ def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
     result = dloop.run_deepagents_loop(
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
-        tool_hub=SimpleNamespace(),
-        policy=AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        context=SimpleNamespace(),
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
         query="这张图里有什么？",
         memory_summary="",
         history_turns=[],
@@ -688,8 +691,8 @@ def test_deepagents_loop_preserves_system_history(monkeypatch):
     result = dloop.run_deepagents_loop(
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
-        tool_hub=SimpleNamespace(),
-        policy=AelinToolPolicy(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        context=SimpleNamespace(),
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
         query="继续",
         memory_summary="",
         history_turns=[
@@ -711,13 +714,13 @@ def test_deepagents_build_chat_tools_abort_when_cancelled(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
-    hub = _hub(fake_web)
-    policy = AelinToolPolicy(max_tool_calls=4, max_write_calls=1, allow_write_tools=False)
+    context = _tool_context(fake_web)
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=1, allow_write_tools=False)
     cancel_token = SimpleNamespace(cancelled=True)
 
     tools, _tool_runs, _usage = dag.build_chat_tools(
-        tool_hub=hub,
-        policy=policy,
+        context=context,
+        limiter=limiter,
         cancel_token=cancel_token,
     )
     web_tool = next(t for t in tools if t.name == "web_search")

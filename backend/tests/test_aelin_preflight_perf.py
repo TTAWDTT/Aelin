@@ -11,7 +11,7 @@ from app.schemas import AelinChatRequest, AgentConfigOut
 from app.services.deepagents.deepagents_loop import DeepAgentsLoopResult
 from tests.aelin_deepagents_test_utils import (
     _FakeRunner,
-    _FakeToolHub,
+    _FakeToolContext,
     _reset_fakes,
 )
 
@@ -34,7 +34,7 @@ def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
-    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
+    monkeypatch.setattr(aelin_core, "build_tool_runtime_context", lambda **kwargs: _FakeToolContext(**kwargs))
     monkeypatch.setattr(aelin_core, "run_deepagents_loop", lambda **kwargs: DeepAgentsLoopResult(
         ok=True,
         answer="ok",
@@ -57,14 +57,14 @@ def test_try_agent_loop_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
 
     assert response is not None
     assert response.answer == "ok"
-    assert _FakeToolHub.instances
+    assert _FakeToolContext.instances
 
 
 def test_try_agent_loop_chat_uses_summary_getter_instead_of_base_context_bundle(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "fast-summary")
-    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
+    monkeypatch.setattr(aelin_core, "build_tool_runtime_context", lambda **kwargs: _FakeToolContext(**kwargs))
     calls: list[dict] = []
 
     def _fake_run_loop(**kwargs):
@@ -105,7 +105,7 @@ def test_try_agent_loop_chat_forwards_images_and_cancel_token(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "fast-summary")
-    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
+    monkeypatch.setattr(aelin_core, "build_tool_runtime_context", lambda **kwargs: _FakeToolContext(**kwargs))
 
     calls: list[dict] = []
 
@@ -158,7 +158,7 @@ def test_try_agent_loop_chat_preserves_system_history(monkeypatch):
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "fast-summary")
-    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
+    monkeypatch.setattr(aelin_core, "build_tool_runtime_context", lambda **kwargs: _FakeToolContext(**kwargs))
 
     calls: list[dict] = []
 
@@ -206,7 +206,7 @@ def test_try_agent_loop_chat_skips_attachment_fallback_when_cancelled(monkeypatc
     _reset_fakes()
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeConfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_memory_summary_for_chat", lambda db, user_id, workspace="default": "summary")
-    monkeypatch.setattr(aelin_core, "AelinToolHub", _FakeToolHub)
+    monkeypatch.setattr(aelin_core, "build_tool_runtime_context", lambda **kwargs: _FakeToolContext(**kwargs))
     monkeypatch.setattr(
         aelin_core,
         "run_deepagents_loop",
@@ -247,7 +247,7 @@ def test_try_agent_loop_chat_returns_none_when_llm_is_unavailable(monkeypatch):
     )
 
     assert response is None
-    assert not _FakeToolHub.instances
+    assert not _FakeToolContext.instances
 
 
 def test_resolve_llm_service_fetches_config_and_decrypts_once(monkeypatch):

@@ -3,7 +3,6 @@ import type {
   AelinCitation,
   AelinAction,
   DeepAgentsExecutionEvent,
-  DeepAgentsToolRun,
 } from './types'
 import { createExecutionEvent } from '@/features/chat/executionEventUtils'
 
@@ -12,7 +11,6 @@ interface StreamCallbacks {
   onCitations?: (citations: AelinCitation[]) => void
   onActions?: (actions: AelinAction[]) => void
   onReplyChunk?: (text: string) => void
-  onToolRuns?: (runs: DeepAgentsToolRun[]) => void
   onDone?: (data: { expression: string; memory_summary: string; answer?: string }) => void
   onError?: (error: { message: string; code?: string }) => void
 }
@@ -199,11 +197,6 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
         }
         case 'final': {
           const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
-          const rawToolRuns = payload.tool_runs ?? payload.data?.tool_runs
-          if (Array.isArray(rawToolRuns) && rawToolRuns.length > 0) {
-            callbacks.onToolRuns?.(rawToolRuns as DeepAgentsToolRun[])
-          }
-
           if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
           if (Array.isArray(result.actions)) callbacks.onActions?.(result.actions as AelinAction[])
           const answer =

@@ -1,6 +1,6 @@
 import type { MutableRefObject } from 'react'
 import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
-import type { AelinChatRequest, DeepAgentsExecutionEvent, DeepAgentsToolRun } from '@/shared/api/types'
+import type { AelinChatRequest, DeepAgentsExecutionEvent } from '@/shared/api/types'
 
 const MAX_QUERY_CHARS = 1200
 
@@ -125,16 +125,6 @@ function appendExecutionEvent(sessionId: string, event: DeepAgentsExecutionEvent
   })
 }
 
-function updateLatestAssistantToolRuns(sessionId: string, runs: DeepAgentsToolRun[]): void {
-  const state = useChatStore.getState()
-  const targetSession = state.sessions.find((session) => session.id === sessionId)
-  if (!targetSession) return
-
-  state.updateLastAssistant(sessionId, {
-    toolRuns: [...runs],
-  })
-}
-
 export function buildStreamCallbacks(params: {
   store: ChatStoreState
   sessionId: string
@@ -160,9 +150,6 @@ export function buildStreamCallbacks(params: {
     onActions: (actions: NonNullable<ChatMessage['actions']>) =>
       params.store.updateLastAssistant(params.sessionId, { actions }),
     onReplyChunk: (chunk: string) => params.store.appendContent(params.sessionId, chunk),
-    onToolRuns: (runs: DeepAgentsToolRun[]) => {
-      updateLatestAssistantToolRuns(params.sessionId, runs)
-    },
     onDone: (data: { expression?: string; memory_summary?: string; answer?: string }) => {
       const nextPartial: Partial<ChatMessage> = {
         expression: data.expression,

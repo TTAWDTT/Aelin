@@ -1,7 +1,6 @@
 import type {
   DeepAgentsExecutionEvent,
   DeepAgentsExecutionEventKind,
-  DeepAgentsToolRun,
 } from '@/shared/api/types'
 
 function compactText(value: unknown, max = 180): string {
@@ -89,8 +88,9 @@ function deriveSummary(type: string, payload: Record<string, unknown>): string {
   }
   if (type === 'final') {
     const answer = compactText(payload.answer, 180)
-    const toolRuns = Array.isArray(payload.tool_runs) ? payload.tool_runs.length : 0
-    return [answer, toolRuns > 0 ? `tools=${toolRuns}` : ''].filter(Boolean).join(' · ')
+    const usage = asRecord(payload.usage)
+    const totalCalls = Number(usage.total_calls ?? 0)
+    return [answer, totalCalls > 0 ? `tools=${totalCalls}` : ''].filter(Boolean).join(' · ')
   }
   if (type === 'error') return compactText(payload.message, 220)
   return compactText(stableStringify(payload), 220)
@@ -145,20 +145,7 @@ function inferProvider(name: string): string {
 
 export function extractToolCalls(
   executionEvents: DeepAgentsExecutionEvent[] | undefined,
-  toolRuns: DeepAgentsToolRun[] | undefined,
 ): ExecutionToolCall[] {
-  if (toolRuns && toolRuns.length > 0) {
-    return toolRuns.map((run, index) => ({
-      key: `${run.call_index}-${run.name}-${index}`,
-      name: String(run.name || 'tool'),
-      status: String(run.status || 'unknown'),
-      summary: compactText(run.summary || run.error || '', 180),
-      provider: inferProvider(String(run.name || '')),
-      latencyMs: Number(run.latency_ms || 0),
-      isWrite: Boolean(run.is_write),
-    }))
-  }
-
   return (executionEvents || [])
     .filter((event) => event.type === 'tasks')
     .map((event, index) => ({

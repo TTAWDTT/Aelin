@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from app.services.tools.tool_helpers import _result_error, _result_items, _safe_int
 from app.services.web.web_search import WebSearchResult
-
-if TYPE_CHECKING:
-    from app.services.aelin.tool_hub import AelinToolHub
+from app.services.deepagents.tool_runtime import ToolRuntimeContext
 
 
-def tool_web_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
+def tool_web_search(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, Any]:
     action = str(args.get("action") or "search_and_fetch").strip().lower()
     if action not in {"search", "search_and_fetch"}:
         # Keep the error short and explicit so DeepAgents can easily recover.
@@ -26,10 +24,10 @@ def tool_web_search(hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]
 
     rows: list[WebSearchResult] = []
     if action == "search":
-        rows = list(hub._web_search.search(query, max_results=max_results) or [])
+        rows = list(context.web_search_service.search(query, max_results=max_results) or [])
     else:
         rows = list(
-            hub._web_search.search_and_fetch(
+            context.web_search_service.search_and_fetch(
                 query,
                 max_results=max_results,
                 fetch_top_k=fetch_top_k,
