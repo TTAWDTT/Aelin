@@ -12,7 +12,7 @@ import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
-import { hasExecutionData } from './executionStreamUtils'
+import { getExecutionRuntime } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
@@ -28,6 +28,11 @@ export function ChatView() {
     setOpen,
     suppressAutoOpen,
   } = useExecutionPaneStore()
+  const execution = getExecutionRuntime(stream)
+  const values =
+    stream.values && typeof stream.values === 'object' && !Array.isArray(stream.values)
+      ? stream.values
+      : {}
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -76,13 +81,11 @@ export function ChatView() {
     if (sessions.length === 0) createSession()
   }, [sessions.length, createSession])
 
-  const hasExecution = hasExecutionData(stream)
-
   useEffect(() => {
-    if (!compact && isStreaming && hasExecution && !open && !suppressAutoOpen) {
+    if (!compact && isStreaming && execution.hasExecution && !open && !suppressAutoOpen) {
       setOpen(true)
     }
-  }, [compact, hasExecution, isStreaming, open, suppressAutoOpen, setOpen])
+  }, [compact, execution.hasExecution, isStreaming, open, suppressAutoOpen, setOpen])
 
   return (
     <PageScaffold
@@ -96,7 +99,7 @@ export function ChatView() {
             isStreaming={isStreaming}
             statusText={statusText}
             compact={compact}
-            stream={stream}
+            execution={execution}
             onOpenExecution={() => setOpen(true)}
           />
           <ChatTimeline
@@ -119,7 +122,7 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane stream={stream} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane runtime={execution} values={values} isStreaming={isStreaming} compact={compact} />
       </div>
     </PageScaffold>
   )

@@ -1,8 +1,6 @@
 import { PanelRightOpen } from 'lucide-react'
-import type { ChatRuntimeStream } from '../executionStreamUtils'
+import type { ExecutionRuntime } from '../executionStreamUtils'
 import {
-  getExecutionTurns,
-  hasExecutionData,
   summarizeExecutionStatus,
 } from '../executionStreamUtils'
 import { useChatI18n } from '../chatI18n'
@@ -12,7 +10,7 @@ interface ChatStatusBarProps {
   isStreaming: boolean
   statusText: string
   compact?: boolean
-  stream: ChatRuntimeStream
+  execution: ExecutionRuntime
   onOpenExecution?: () => void
 }
 
@@ -20,15 +18,12 @@ export function ChatStatusBar({
   isStreaming,
   statusText,
   compact = false,
-  stream,
+  execution,
   onOpenExecution,
 }: ChatStatusBarProps) {
   const { t, locale } = useChatI18n()
   const { open, setOpen, setSuppressAutoOpen } = useExecutionPaneStore()
-  const turns = getExecutionTurns(stream)
-  const tools = turns.flatMap((turn) => turn.toolCalls)
-  const subagents = turns.flatMap((turn) => turn.subagents)
-  const hasRuns = hasExecutionData(stream)
+  const { tools, subagents, hasExecution: hasRuns } = execution
 
   if (!isStreaming && !statusText && !hasRuns) return null
 
@@ -38,7 +33,10 @@ export function ChatStatusBar({
   const normalizedStatusText = statusText.trim()
   const isGenericThinking = normalizedStatusText === t('status.thinking')
 
-  let text = (!isGenericThinking ? normalizedStatusText : '') || summarizeExecutionStatus(stream, '')
+  let text = (!isGenericThinking ? normalizedStatusText : '') || summarizeExecutionStatus(execution, {
+    isLoading: isStreaming,
+    fallback: '',
+  })
   if (!text && isStreaming && subagents.length > 0) {
     text =
       locale === 'zh'

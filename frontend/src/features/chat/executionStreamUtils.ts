@@ -81,6 +81,17 @@ export type ExecutionTurn = {
   isStreaming: boolean
 }
 
+export type ExecutionRuntime = {
+  topology: {
+    nodes: ExecutionTopologyNode[]
+    edges: ExecutionTopologyEdge[]
+  }
+  turns: ExecutionTurn[]
+  tools: ExecutionToolCall[]
+  subagents: ExecutionSubagent[]
+  hasExecution: boolean
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -172,11 +183,13 @@ function computeDepths(
   return depth
 }
 
-export function getExecutionTopology(stream: ChatRuntimeStream): {
+function buildExecutionTopology(
+  raw: Record<string, unknown>,
+  turns: ExecutionTurn[],
+): {
   nodes: ExecutionTopologyNode[]
   edges: ExecutionTopologyEdge[]
 } {
-  const raw = asRecord(stream.values?.topology)
   const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : []
   const rawEdges: BaseTopologyEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
     .map((item) => {
@@ -192,7 +205,6 @@ export function getExecutionTopology(stream: ChatRuntimeStream): {
     })
     .filter((item): item is BaseTopologyEdge => item != null)
 
-  const turns = getExecutionTurns(stream)
   const latestTurn = turns.at(-1)
   const baseNodes = rawNodes
     .map((item) => {
@@ -255,6 +267,13 @@ export function getExecutionTopology(stream: ChatRuntimeStream): {
       }
     }),
   }
+}
+
+export function getExecutionTopology(stream: ChatRuntimeStream): {
+  nodes: ExecutionTopologyNode[]
+  edges: ExecutionTopologyEdge[]
+} {
+  return buildExecutionTopology(asRecord(stream.values?.topology), getExecutionTurns(stream))
 }
 
 function getMessageId(message: BaseMessage, metadataMessageId: string | undefined, index: number): string {
@@ -346,20 +365,37 @@ export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
 }
 
 export function hasExecutionData(stream: ChatRuntimeStream): boolean {
-  const topology = getExecutionTopology(stream)
-  return (
-    topology.nodes.length > 0
-    || getExecutionTurns(stream).length > 0
-    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
-  )
+  return getExecutionRuntime(stream).hasExecution
 }
 
-export function summarizeExecutionStatus(stream: ChatRuntimeStream, fallback: string): string {
+export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
   const turns = getExecutionTurns(stream)
+  const topology = buildExecutionTopology(asRecord(stream.values?.topology), turns)
   const tools = turns.flatMap((turn) => turn.toolCalls)
   const subagents = turns.flatMap((turn) => turn.subagents)
-  const activeSubagents = stream.activeSubagents?.length ?? 0
-  const runningSubagents = activeSubagents || subagents.filter((item) => item.status === 'running' || item.status === 'pending').length
+  const hasExecution =
+    topology.nodes.length > 0
+    || turns.length > 0
+    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
+
+  return {
+    topology,
+    turns,
+    tools,
+    subagents,
+    hasExecution,
+  }
+}
+
+export function summarizeExecutionStatus(
+  runtime: ExecutionRuntime,
+  options: {
+    isLoading: boolean
+    fallback: string
+  },
+): string {
+  const { turns, tools, subagents } = runtime
+  const runningSubagents = subagents.filter((item) => item.status === 'running' || item.status === 'pending').length
   if (runningSubagents > 0) {
     return runningSubagents === 1
       ? '正在运行 1 个子代理…'
@@ -372,9 +408,9 @@ export function summarizeExecutionStatus(stream: ChatRuntimeStream, fallback: st
   }
 
   const last = turns.at(-1)
-  if (stream.isLoading && last?.node) {
+  if (options.isLoading && last?.node) {
     return `正在执行 ${last.node}…`
   }
 
-  return fallback
+  return options.fallback
 }

@@ -12,21 +12,19 @@ import {
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import type {
-  ChatRuntimeStream,
+  ExecutionRuntime,
   ExecutionTurn,
   ExecutionSubagent,
   ExecutionToolCall,
   ExecutionTopologyNode,
 } from '../executionStreamUtils'
 import {
-  getExecutionTurns,
-  getExecutionTopology,
-  hasExecutionData,
 } from '../executionStreamUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 
 interface ExecutionPaneProps {
-  stream: ChatRuntimeStream
+  runtime: ExecutionRuntime
+  values: Record<string, unknown>
   isStreaming: boolean
   compact?: boolean
 }
@@ -83,19 +81,16 @@ function nodeIcon(kind: string) {
 }
 
 export function ExecutionPane({
-  stream,
+  runtime,
+  values,
   isStreaming,
   compact = false,
 }: ExecutionPaneProps) {
   const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const topology = getExecutionTopology(stream)
-  const turns = getExecutionTurns(stream)
-  const tools = turns.flatMap((turn) => turn.toolCalls)
-  const values = asRecord(stream.values)
+  const { topology, turns, tools, hasExecution } = runtime
   const todos = Array.isArray(values.todos) ? values.todos : []
   const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
-  const hasExecution = hasExecutionData(stream)
   const [tab, setTab] = useState<ExecutionTab>('graph')
 
   useEffect(() => {
