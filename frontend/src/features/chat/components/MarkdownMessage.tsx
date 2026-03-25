@@ -12,6 +12,7 @@ function normalizeMarkdownContent(content: string): string {
   if (!raw) return ''
 
   return raw
+    .replace(/^(#{1,6})(\S)/gm, '$1 $2')
     .replace(/([^\n])(\n?#{1,6}\s)/g, '$1\n\n$2')
     .replace(/([^\n])(\n?[-*+]\s)/g, '$1\n$2')
     .replace(/([^\n])(\n?\d+\.\s)/g, '$1\n$2')
