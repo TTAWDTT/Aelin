@@ -361,7 +361,7 @@ function TopologyBoard({
   isStreaming,
 }: {
   nodes: ExecutionTopologyNode[]
-  edges: Array<{ source: string; target: string }>
+  edges: Array<{ source: string; target: string; active?: boolean; traversed?: number; conditional?: boolean }>
   isStreaming: boolean
 }) {
   if (nodes.length === 0) {
@@ -419,9 +419,11 @@ function TopologyBoard({
               <path
                 key={`${edge.source}:${edge.target}`}
                 d={`M ${from.x + 48} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${to.x - 48} ${to.y}`}
-                stroke="var(--color-border)"
-                strokeWidth="2"
+                stroke={edge.active ? 'var(--color-text)' : 'var(--color-border)'}
+                strokeWidth={edge.active ? 2.6 : 2}
                 strokeLinecap="round"
+                strokeDasharray={edge.conditional ? '6 6' : undefined}
+                opacity={edge.active ? 0.92 : 0.45}
               />
             )
           })}
@@ -437,12 +439,24 @@ function TopologyBoard({
                 <div
                   key={node.id}
                   className={cn(
-                    'relative rounded-2xl border px-3 py-2.5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]',
-                    node.active
+                    'relative overflow-hidden rounded-2xl border px-3 py-2.5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]',
+                    node.status === 'running'
                       ? 'border-[var(--color-text)] bg-[var(--color-panel)]'
-                      : 'border-[var(--color-border)] bg-[var(--color-panel)]',
+                      : node.status === 'completed'
+                        ? 'border-[var(--color-border)] bg-[var(--color-panel)]'
+                        : 'border-[var(--color-border)] bg-[var(--color-panel)] opacity-80',
                   )}
                 >
+                  {node.status !== 'idle' && (
+                    <div
+                      className={cn(
+                        'absolute inset-x-0 top-0 h-0.5',
+                        node.status === 'running'
+                          ? 'bg-[var(--color-text)]'
+                          : 'bg-[var(--color-border)]',
+                      )}
+                    />
+                  )}
                   <div className="flex items-start gap-2">
                     <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                       {nodeIcon(node.kind)}
@@ -454,8 +468,27 @@ function TopologyBoard({
                       <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
                         {node.kind}
                       </div>
+                      {(node.visits > 0 || node.toolCalls > 0 || node.subagents > 0) && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {node.visits > 0 && (
+                            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+                              {node.visits} hits
+                            </span>
+                          )}
+                          {node.toolCalls > 0 && (
+                            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+                              {node.toolCalls} tools
+                            </span>
+                          )}
+                          {node.subagents > 0 && (
+                            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+                              {node.subagents} subagents
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    {statusIcon(node.active ? (isStreaming ? 'running' : 'completed') : 'idle')}
+                    {statusIcon(node.status === 'running' ? (isStreaming ? 'running' : 'completed') : node.status)}
                   </div>
                 </div>
               ))}

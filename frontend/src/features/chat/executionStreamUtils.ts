@@ -33,11 +33,24 @@ export type ExecutionTopologyNode = {
   kind: string
   depth: number
   active: boolean
+  visits: number
+  toolCalls: number
+  subagents: number
+  status: 'idle' | 'completed' | 'running'
 }
 
 export type ExecutionTopologyEdge = {
   source: string
   target: string
+  conditional?: boolean
+  active: boolean
+  traversed: number
+}
+
+type BaseTopologyEdge = {
+  source: string
+  target: string
+  conditional: boolean
 }
 
 export type ExecutionToolCall = {
@@ -121,7 +134,7 @@ function normalizeStatus(value: unknown, fallback = 'idle'): string {
 
 function computeDepths(
   nodes: Array<{ id: string }>,
-  edges: ExecutionTopologyEdge[],
+  edges: Array<{ source: string; target: string }>,
 ): Map<string, number> {
   const indegree = new Map<string, number>()
   const outgoing = new Map<string, string[]>()
@@ -166,17 +179,22 @@ export function getExecutionTopology(stream: ChatRuntimeStream): {
 } {
   const raw = asRecord(stream.values?.topology)
   const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : []
-  const edges = (Array.isArray(raw.edges) ? raw.edges : [])
+  const rawEdges: BaseTopologyEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
     .map((item) => {
       const record = asRecord(item)
       const source = String(record.source || '').trim()
       const target = String(record.target || '').trim()
       if (!source || !target) return null
-      return { source, target }
+      return {
+        source,
+        target,
+        conditional: Boolean(record.conditional),
+      }
     })
-    .filter((item): item is ExecutionTopologyEdge => item != null)
+    .filter((item): item is BaseTopologyEdge => item != null)
 
-  const activeNodeKeys = new Set(getExecutionTurns(stream).map((item) => item.node))
+  const turns = getExecutionTurns(stream)
+  const latestTurn = turns.at(-1)
   const baseNodes = rawNodes
     .map((item) => {
       const record = asRecord(item)
@@ -189,15 +207,55 @@ export function getExecutionTopology(stream: ChatRuntimeStream): {
       }
     })
     .filter((item): item is { id: string; name: string; kind: string } => item != null)
-  const depths = computeDepths(baseNodes, edges)
+  const depths = computeDepths(baseNodes, rawEdges)
+  const nodeIds = new Set(baseNodes.map((node) => node.id))
+  const turnNodeKeys = turns.map((turn) => turn.node).filter((node) => nodeIds.has(node))
+  const turnCounts = new Map<string, number>()
+  const toolCallCounts = new Map<string, number>()
+  const subagentCounts = new Map<string, number>()
+  const edgeTraversals = new Map<string, number>()
+
+  for (const turn of turns) {
+    if (!nodeIds.has(turn.node)) continue
+    turnCounts.set(turn.node, (turnCounts.get(turn.node) ?? 0) + 1)
+    toolCallCounts.set(turn.node, (toolCallCounts.get(turn.node) ?? 0) + turn.toolCalls.length)
+    subagentCounts.set(turn.node, (subagentCounts.get(turn.node) ?? 0) + turn.subagents.length)
+  }
+
+  for (let index = 0; index < turnNodeKeys.length - 1; index += 1) {
+    const source = turnNodeKeys[index]
+    const target = turnNodeKeys[index + 1]
+    const edgeKey = `${source}->${target}`
+    edgeTraversals.set(edgeKey, (edgeTraversals.get(edgeKey) ?? 0) + 1)
+  }
 
   return {
     nodes: baseNodes.map((node) => ({
       ...node,
       depth: depths.get(node.id) ?? 0,
-      active: activeNodeKeys.has(node.id),
+      active: latestTurn?.node === node.id,
+      visits: turnCounts.get(node.id) ?? 0,
+      toolCalls: toolCallCounts.get(node.id) ?? 0,
+      subagents: subagentCounts.get(node.id) ?? 0,
+      status: latestTurn?.node === node.id
+        ? 'running'
+        : (turnCounts.get(node.id) ?? 0) > 0
+          ? 'completed'
+          : 'idle',
     })),
-    edges,
+    edges: rawEdges.map((edge) => {
+      const traversed = edgeTraversals.get(`${edge.source}->${edge.target}`) ?? 0
+      return {
+        ...edge,
+        traversed,
+        active:
+          traversed > 0
+          || (
+            latestTurn != null
+            && (latestTurn.node === edge.source || latestTurn.node === edge.target)
+          ),
+      }
+    }),
   }
 }
 
