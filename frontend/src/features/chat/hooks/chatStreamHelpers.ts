@@ -1,17 +1,15 @@
 import type { MutableRefObject } from 'react'
 import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
-import type { AelinChatRequest, AelinToolStep, DeepAgentsToolRun } from '@/shared/api/types'
+import type { AelinChatRequest, DeepAgentsExecutionEvent, DeepAgentsToolRun } from '@/shared/api/types'
 
 const MAX_QUERY_CHARS = 1200
 
 export type PendingImage = { dataUrl: string; name: string }
 export type ChatStoreState = ReturnType<typeof useChatStore.getState>
 
-function mergeToolTrace(prev: AelinToolStep[] | undefined, step: AelinToolStep): AelinToolStep[] {
-  const existing = [...(prev ?? [])]
-  const stage = String(step.stage || '').trim()
-  if (!stage) return existing
-  return [...existing, { ...step, stage }]
+function normalizeAssistantMarkdown(text: string): string {
+  const normalized = String(text || '').replace(/\r\n/g, '\n')
+  return normalized.replace(/^(#{1,6})(\S)/gm, '$1 $2')
 }
 
 export function formatBytes(size: number): string {
@@ -110,20 +108,20 @@ export function buildChatRequest(params: {
   }
 }
 
-function updateLatestAssistantToolTrace(sessionId: string, step: AelinToolStep): void {
+function appendExecutionEvent(sessionId: string, event: DeepAgentsExecutionEvent): void {
   const state = useChatStore.getState()
   const targetSession = state.sessions.find((session) => session.id === sessionId)
   if (!targetSession) return
-  let currentTrace: AelinToolStep[] | undefined
+  let currentEvents: DeepAgentsExecutionEvent[] | undefined
   for (let i = targetSession.messages.length - 1; i >= 0; i -= 1) {
     const msg = targetSession.messages[i]
     if (msg.role === 'assistant') {
-      currentTrace = msg.toolTrace
+      currentEvents = msg.executionEvents
       break
     }
   }
   state.updateLastAssistant(sessionId, {
-    toolTrace: mergeToolTrace(currentTrace, step),
+    executionEvents: [...(currentEvents ?? []), event],
   })
 }
 
@@ -153,11 +151,9 @@ export function buildStreamCallbacks(params: {
   }
 
   return {
-    onIntent: (data: { intent_type?: string }) => params.store.setStatusText(`意图: ${data.intent_type}`),
-    onPlan: (data: { steps?: unknown[] }) => params.store.setStatusText(`计划: ${data.steps?.length || 0} 步`),
-    onToolStep: (step: AelinToolStep) => {
-      params.store.setStatusText(`${step.stage}…`)
-      updateLatestAssistantToolTrace(params.sessionId, step)
+    onExecutionEvent: (event: DeepAgentsExecutionEvent) => {
+      params.store.setStatusText(event.summary || event.title)
+      appendExecutionEvent(params.sessionId, event)
     },
     onCitations: (citations: NonNullable<ChatMessage['citations']>) =>
       params.store.updateLastAssistant(params.sessionId, { citations }),
@@ -167,11 +163,15 @@ export function buildStreamCallbacks(params: {
     onToolRuns: (runs: DeepAgentsToolRun[]) => {
       updateLatestAssistantToolRuns(params.sessionId, runs)
     },
-    onDone: (data: { expression?: string; memory_summary?: string }) => {
-      params.store.updateLastAssistant(params.sessionId, {
+    onDone: (data: { expression?: string; memory_summary?: string; answer?: string }) => {
+      const nextPartial: Partial<ChatMessage> = {
         expression: data.expression,
         memorySummary: data.memory_summary,
-      })
+      }
+      if (typeof data.answer === 'string' && data.answer.trim()) {
+        nextPartial.content = normalizeAssistantMarkdown(data.answer)
+      }
+      params.store.updateLastAssistant(params.sessionId, nextPartial)
       finalize()
     },
     onError: (error: { message: string; code?: string }) => {

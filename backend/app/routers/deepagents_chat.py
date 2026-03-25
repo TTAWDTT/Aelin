@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 import logging
 import queue
 import threading
@@ -9,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -30,12 +30,111 @@ from app.services.aelin.core_support import (
 )
 from app.services.deepagents.deepagents_graph import build_chat_agent
 from app.services.deepagents.input_mapping import build_invoke_payload
+from app.services.deepagents.output_utils import extract_answer, message_to_text
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.settings import settings
 
 
 router = APIRouter(prefix="/deepagents", tags=["deepagents"])
 _LOG = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        return jsonable_encoder(value)
+    except Exception:
+        pass
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, dict):
+        return {str(key): _json_safe(val) for key, val in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+
+    for attr in ("model_dump", "dict"):
+        method = getattr(value, attr, None)
+        if callable(method):
+            try:
+                return _json_safe(method())
+            except Exception:
+                pass
+
+    message_type = getattr(value, "type", None)
+    if hasattr(value, "content") or message_type:
+        payload: dict[str, Any] = {}
+        if message_type:
+            payload["message_type"] = str(message_type)
+        content = message_to_text(value)
+        if content:
+            payload["content"] = content
+        for extra_key in ("tool_calls", "additional_kwargs", "response_metadata"):
+            extra_value = getattr(value, extra_key, None)
+            if extra_value:
+                payload[extra_key] = _json_safe(extra_value)
+        if payload:
+            return payload
+
+    return str(value)
+
+
+def _message_chunk_parts(data: Any) -> tuple[Any, dict[str, Any]]:
+    if isinstance(data, (tuple, list)) and len(data) == 2:
+        message, metadata = data
+        if isinstance(metadata, dict):
+            return message, metadata
+        return message, {}
+    return data, {}
+
+
+def _extract_message_delta(data: Any) -> str:
+    if isinstance(data, (tuple, list)) and len(data) == 2:
+        message, metadata = _message_chunk_parts(data)
+        if isinstance(metadata, dict):
+            node_name = str(metadata.get("langgraph_node") or "").strip().lower()
+            if node_name != "model":
+                return ""
+        return message_to_text(message).strip()
+    return message_to_text(data).strip()
+
+
+def _serialize_stream_part(chunk: Any) -> tuple[str, dict[str, Any]] | None:
+    if not isinstance(chunk, dict):
+        return None
+
+    event_type = str(chunk.get("type") or "").strip().lower()
+    if not event_type:
+        return None
+
+    ns_raw = chunk.get("ns") or ()
+    ns = [str(item) for item in ns_raw] if isinstance(ns_raw, (list, tuple)) else []
+    data = chunk.get("data")
+
+    if event_type == "messages":
+        message, metadata = _message_chunk_parts(data)
+        return (
+            event_type,
+            {
+                "type": event_type,
+                "ns": ns,
+                "data": {
+                    "content": message_to_text(message),
+                    "metadata": _json_safe(metadata),
+                    "message": _json_safe(message),
+                },
+            },
+        )
+
+    return (
+        event_type,
+        {
+            "type": event_type,
+            "ns": ns,
+            "data": _json_safe(data),
+        },
+    )
 
 
 @router.post("/chat/stream")
@@ -47,7 +146,7 @@ def deepagents_chat_stream(
     """
     DeepAgents-native streaming endpoint.
 
-    直接透出 DeepAgents / LangGraph 的 streaming chunk。
+    用稳定的 SSE 事件包装 DeepAgents / LangGraph 的 streaming 输出。
 
     路由层只负责认证、workspace/provider 归一化以及 SSE 包装，
     不再承担旧聊天壳的 trace/stop-reason 翻译职责。
@@ -162,24 +261,53 @@ def deepagents_chat_stream(
                     files_mapping=files_mapping,
                 )
 
-                # 透传 DeepAgents streaming chunk。
-                for chunk in agent.stream(invoke_payload):
+                streamed_text_parts: list[str] = []
+                final_answer = ""
+
+                for chunk in agent.stream(
+                    invoke_payload,
+                    stream_mode=["messages", "updates", "tasks", "values"],
+                    version="v2",
+                    subgraphs=True,
+                ):
                     if is_cancelled(cancel_token):
                         break
-                    try:
-                        if hasattr(chunk, "dict"):
-                            payload_obj = chunk.dict()  # type: ignore[assignment]
-                        elif isinstance(chunk, dict):
-                            payload_obj = chunk
-                        else:
-                            payload_obj = {"data": json.loads(json.dumps(chunk, default=str))}
-                    except Exception:
-                        payload_obj = {"data": json.loads(json.dumps(chunk, default=str))}
-                    _push("chunk", payload_obj)
+
+                    serialized = _serialize_stream_part(chunk)
+                    if serialized is not None:
+                        event_name, event_payload = serialized
+                        _push(event_name, event_payload)
+
+                    if not isinstance(chunk, dict):
+                        continue
+
+                    mode = str(chunk.get("type") or "").strip().lower()
+                    data = chunk.get("data")
+
+                    if mode == "messages":
+                        delta = _extract_message_delta(data)
+                        if delta:
+                            streamed_text_parts.append(delta)
+                            _push("reply", {"chunk": delta})
+                        continue
+
+                    if mode == "values":
+                        candidate = extract_answer(data).strip()
+                        if candidate:
+                            final_answer = candidate
+                        continue
+
+                    candidate = extract_answer(data).strip()
+                    if candidate:
+                        final_answer = candidate
+
+                if not final_answer:
+                    final_answer = "".join(streamed_text_parts).strip()
 
                 _push(
                     "final",
                     {
+                        "answer": final_answer,
                         "finished_at": datetime.now(timezone.utc).isoformat(),
                         "tool_runs": tool_runs,
                         "usage": {

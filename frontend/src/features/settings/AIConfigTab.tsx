@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as Select from '@radix-ui/react-select'
 import * as Slider from '@radix-ui/react-slider'
+import * as Switch from '@radix-ui/react-switch'
 import { Check, ChevronDown, FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { agentApi } from '@/shared/api/agent'
@@ -15,6 +16,7 @@ type AgentFormState = {
   web_search_proxy_url: string
   model: string
   temperature: string
+  verify_ssl: boolean
   api_key: string
 }
 
@@ -97,6 +99,7 @@ export function AIConfigTab() {
     web_search_proxy_url: '',
     model: '',
     temperature: '0.5',
+    verify_ssl: true,
     api_key: '',
   })
 
@@ -119,6 +122,7 @@ export function AIConfigTab() {
       web_search_proxy_url: config.web_search_proxy_url || '',
       model: config.model || '',
       temperature: String(config.temperature ?? 0.5),
+      verify_ssl: config.verify_ssl ?? true,
       api_key: '',
     })
   }, [config, providers])
@@ -147,6 +151,7 @@ export function AIConfigTab() {
 
       const body: AgentConfigUpdate = {
         provider: resolvedProvider,
+        verify_ssl: form.verify_ssl,
         web_search_proxy_url: form.web_search_proxy_url.trim() || '',
       }
       if (!isRuleBased) {
@@ -376,6 +381,28 @@ export function AIConfigTab() {
             disabled={isRuleBased}
           />
         </label>
+      </div>
+
+      <div className="flex items-start justify-between gap-4 rounded-[18px] border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-panel-alt)_28%,var(--color-panel)_72%)] px-4 py-3.5">
+        <div className="min-w-0 space-y-1 text-xs">
+          <div className="text-[var(--color-text)]">
+            {isZh ? '校验 SSL 证书' : 'Verify SSL certificates'}
+          </div>
+          <div className="text-[var(--color-text-muted)] leading-relaxed">
+            {isZh
+              ? '如果你的 Base URL 使用自签名证书，请关闭此项。关闭后会跳过 TLS 证书校验。'
+              : 'Disable this if your Base URL uses a self-signed certificate. When off, TLS certificate verification is skipped.'}
+          </div>
+        </div>
+        <Switch.Root
+          checked={form.verify_ssl}
+          onCheckedChange={(checked) => setForm((prev) => ({ ...prev, verify_ssl: checked }))}
+          disabled={isRuleBased}
+          aria-label={isZh ? '校验 SSL 证书' : 'Verify SSL certificates'}
+          className="relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-panel-alt)_70%,var(--color-panel)_30%)] p-1 transition-[background-color,border-color,opacity] duration-200 data-[state=checked]:border-[color-mix(in_srgb,var(--color-accent)_35%,var(--color-border))] data-[state=checked]:bg-[color-mix(in_srgb,var(--color-accent)_24%,var(--color-panel)_76%)] disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          <Switch.Thumb className="block h-5 w-5 rounded-full bg-[var(--color-text)] shadow-[0_1px_4px_rgba(0,0,0,0.22)] transition-transform duration-200 data-[state=checked]:translate-x-5" />
+        </Switch.Root>
       </div>
 
       <label className="block text-xs space-y-1">

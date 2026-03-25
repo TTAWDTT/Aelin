@@ -52,6 +52,28 @@ export interface DeepAgentsToolRun {
   latency_ms?: number
   summary?: string
 }
+
+export type DeepAgentsExecutionEventKind =
+  | 'system'
+  | 'model'
+  | 'task'
+  | 'tool'
+  | 'state'
+  | 'final'
+  | 'error'
+
+export interface DeepAgentsExecutionEvent {
+  id: string
+  type: string
+  kind: DeepAgentsExecutionEventKind
+  title: string
+  summary?: string
+  status?: string
+  node?: string
+  ns?: string[]
+  ts: number
+  metadata?: Record<string, unknown>
+}
 export interface ChatResponse {
   answer: string; expression: string
   citations: ChatCitation[]; actions: ChatAction[]

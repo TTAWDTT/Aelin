@@ -105,7 +105,7 @@ export function MessageBubble({
             'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
           )}
           style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || ''}</ReactMarkdown>
         </div>
 
         {!isUser && stickerSrc && !isThinking && (
@@ -114,7 +114,10 @@ export function MessageBubble({
               src={stickerSrc}
               alt={stickerLabel}
               title={stickerLabel}
-              className={cn('block object-contain', compact ? 'h-16 w-16' : 'h-20 w-20')}
+              className={cn(
+                'block rounded-[18px] object-contain',
+                compact ? 'h-16 w-16' : 'h-20 w-20'
+              )}
               draggable={false}
             />
           </div>

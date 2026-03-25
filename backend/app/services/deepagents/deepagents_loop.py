@@ -10,6 +10,7 @@ from app.services.aelin.tool_policy import AelinToolPolicy
 from app.services.deepagents.deepagents_graph import DeepAgentsCancelled, build_chat_agent
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.input_mapping import build_invoke_payload
+from app.services.deepagents.output_utils import extract_answer
 
 _log = logging.getLogger(__name__)
 
@@ -59,30 +60,6 @@ def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[DeepAgentsToolRu
 def _assert_not_cancelled(cancel_token: Any | None) -> None:
     if is_cancelled(cancel_token):
         raise DeepAgentsCancelled("cancelled")
-
-
-def _extract_answer(response: Any) -> str:
-    try:
-        if hasattr(response, "content"):
-            return str(getattr(response, "content", "") or "")
-        if isinstance(response, str):
-            return response
-        if isinstance(response, dict):
-            if "answer" in response:
-                return str(response.get("answer") or "")
-            if "output" in response:
-                return str(response.get("output") or "")
-            messages = response.get("messages") or []
-            if isinstance(messages, list) and messages:
-                last = messages[-1]
-                if hasattr(last, "content"):
-                    return str(getattr(last, "content", "") or "")
-                if isinstance(last, dict) and "content" in last:
-                    return str(last.get("content") or "")
-        return str(response)
-    except Exception as exc:  # noqa: BLE001
-        _log.warning("deepagents_parse_response_failed error=%s", str(exc)[:160])
-        return ""
 
 
 def _parse_capabilities_file(files_mapping: dict[str, Any]) -> dict[str, Any]:
@@ -175,7 +152,7 @@ def run_deepagents_loop(
         response = agent.invoke(invoke_payload)
         _assert_not_cancelled(cancel_token)
 
-        answer = _extract_answer(response).strip()
+        answer = extract_answer(response).strip()
         tool_runs = _map_tool_runs(raw_tool_runs)
 
         if not answer:

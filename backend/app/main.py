@@ -55,6 +55,7 @@ def _add_missing_columns(engine: Engine) -> None:
     migrations: list[tuple[str, str, str]] = [
         # (table, column, DDL type)
         ("agent_configs", "web_search_proxy_url", "TEXT"),
+        ("agent_configs", "verify_ssl", "BOOLEAN DEFAULT 1"),
     ]
     for table, column, ddl_type in migrations:
         if not inspector.has_table(table):

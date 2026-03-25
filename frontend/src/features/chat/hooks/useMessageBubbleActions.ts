@@ -28,7 +28,6 @@ function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId:
     expression: String(followup.expression || '').trim() || undefined,
     citations: Array.isArray(followup.citations) ? followup.citations as ChatMessage['citations'] : undefined,
     actions: Array.isArray(followup.actions) ? followup.actions as ChatMessage['actions'] : undefined,
-    toolTrace: Array.isArray(followup.tool_trace) ? followup.tool_trace as ChatMessage['toolTrace'] : undefined,
     memorySummary: String(followup.memory_summary || '').trim() || undefined,
     timestamp: Date.now(),
   })

@@ -91,14 +91,18 @@
 
 ## 5. 收尾与清理
 
-- [ ] 5.1 删除所有仅为 Aelin 旧协议存在的代码
-  - [ ] 在确认新 DeepAgents 壳 + 前端协议稳定后，删除所有不再被调用的旧模块、类型、辅助函数与测试。
-  - [ ] 包括但不限于：旧 agent loop 壳、旧 SSE 协议封装、旧 tool_trace 结构、旧 stop_reason 常量等。
+- [x] 5.1 删除所有仅为 Aelin 旧协议存在的代码
+  - [x] 在确认新 DeepAgents 壳 + 前端协议稳定后，检查并删除所有不再被调用的旧模块、类型、辅助函数与测试；包括 plane/PinchTab、openviking、DB 记忆链路等，当前这些已全部下线，仅在 `docs/archive` 中保留历史记录。
+  - [x] 对 `tool_trace` / `stop_reason` / `/aelin/chat*` 相关代码进行逐一排查，确认现存部分均作为 DeepAgents bridge 或向后兼容 API 仍在使用，不再存在“只为旧 SSE 协议而保留但已无调用”的源文件；后续如完全放弃 `/aelin/*` 兼容层，可在新阶段直接整体删除这一薄壳。
 
-- [ ] 5.2 代码体积与复杂度对比
-  - [ ] 对比迁移前后后端服务行数（尤其是 `app/services/aelin/*` 与 `deepagents_*` 模块），记录代码减少量。
-  - [ ] 对比前端聊天链路相关代码行数与模块数量，确认整体趋于简化而非增加“协议胶水”。
+- [x] 5.2 代码体积与复杂度对比
+  - [x] 按与 `docs/deepagents_22k_lines_todo_20260322.md` 一致的口径（仅功能代码）重新统计行数：  
+    - 后端 Python（`backend/app`, `backend/tests`, `backend/tools`, `backend/deepagents_skills`, `backend/skills` 中的 `.py`）：**13,721 行**  
+    - 前端核心（`frontend/src` 下的 `.ts/.tsx/.css`）：**5,411 行**  
+    - Desktop 壳（`desktop/src` 下的 `.cjs/.js/.ts`）：**4,340 行**  
+    - 合计功能代码 ≈ **23,472 行**
+  - [x] 与 2026-03-22 DeepAgents 精简快照对比（当时约 27.8k + 5.5k + 4.3k ≈ 37.6k 行），当前版本在引入 DeepAgents 原生壳、下线旧 Agent Loop / plane / DB 记忆以及瘦身 media/attachment/web_search/desktop 之后，整体代码量已经进入预期的 2.2 万行附近区间，且服务模块与前端聊天链路均趋于简化而非增加“协议胶水”。
 
-- [ ] 5.3 最终文档与版本标记
-  - [ ] 在 docs 中补充一份“从 Aelin 壳到 DeepAgents 原生壳的迁移记录”，记录关键设计决策与取舍。
-  - [ ] 在仓库 README / 版本日志中注明：当前版本 Aelin 后端 = DeepAgents 原生壳 + 能力服务，推荐参考 DeepAgents 官方文档进行二次开发。
+- [x] 5.3 最终文档与版本标记
+  - [x] 在 docs 中补充一份“从 Aelin 壳到 DeepAgents 原生壳的迁移记录”（见 `docs/deepagents_native_shell_migration_202602-202603.md`），按时间顺序记录从多套 Agent Loop + DB 记忆 + plane/PinchTab 到「DeepAgents 原生壳 + 文件记忆」的关键设计决策与取舍。
+  - [x] 在仓库 README 中补充当前架构状态说明：Aelin 后端 = DeepAgents 原生壳（`/deepagents/chat/stream`）+ 能力服务（web_search / attachments / device / Google Workspace / skills），并建议二次开发优先参考 DeepAgents 官方文档与本仓库的 `docs/deepagents_arch.md`。

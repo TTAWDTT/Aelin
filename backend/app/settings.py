@@ -133,6 +133,7 @@ class Settings(BaseSettings):
     # LLM client runtime tuning.
     # DeepAgents 回路可能会触发多轮工具调用，因此默认超时时间相对更长。
     llm_request_timeout_seconds: float = 180.0
+    llm_verify_ssl: bool = True
     backend_log_level: str = "INFO"
 
     # Optional extra DeepAgents skills root dir (for example chrome-cdp-skill).

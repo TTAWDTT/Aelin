@@ -9,7 +9,7 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
-import type { AelinAttachmentUploadResponse, DeepAgentsToolRun } from '@/shared/api/types'
+import type { AelinAttachmentUploadResponse, DeepAgentsExecutionEvent, DeepAgentsToolRun } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
@@ -82,27 +82,35 @@ export function ChatView() {
     setFocusedMessageId(null)
   }, [activeSessionId, setFocusedMessageId])
 
-  const latestAssistantWithRuns = [...messages]
+  const latestAssistantWithExecution = [...messages]
     .reverse()
-    .find((m) => m.role === 'assistant' && m.toolRuns && m.toolRuns.length)
+    .find((m) => m.role === 'assistant' && ((m.executionEvents?.length ?? 0) > 0 || (m.toolRuns?.length ?? 0) > 0))
+
+  const focusedExecutionEvents: DeepAgentsExecutionEvent[] | null =
+    focusedMessageId && messages.length
+      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant')
+          ?.executionEvents ?? null
+      : null
 
   const focusedRuns: DeepAgentsToolRun[] | null =
     focusedMessageId && messages.length
-      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant' && m.toolRuns && m.toolRuns.length)
+      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant')
           ?.toolRuns ?? null
       : null
 
-  const executionRuns: DeepAgentsToolRun[] = focusedRuns ?? latestAssistantWithRuns?.toolRuns ?? []
+  const executionEvents: DeepAgentsExecutionEvent[] =
+    focusedExecutionEvents ?? latestAssistantWithExecution?.executionEvents ?? []
+  const executionRuns: DeepAgentsToolRun[] = focusedRuns ?? latestAssistantWithExecution?.toolRuns ?? []
 
-  // 桌面模式下，当本轮已经产生工具 trace 且正在流式时，自动展开右侧 ExecutionPane。
+  // 桌面模式下，当本轮已经产生执行事件且正在流式时，自动展开右侧 ExecutionPane。
   useEffect(() => {
-    if (!compact && isStreaming && executionRuns.length > 0 && !open && !suppressAutoOpen) {
+    if (!compact && isStreaming && executionEvents.length > 0 && !open && !suppressAutoOpen) {
       setOpen(true)
     }
-  }, [compact, isStreaming, executionRuns.length, open, suppressAutoOpen, setOpen])
+  }, [compact, isStreaming, executionEvents.length, open, suppressAutoOpen, setOpen])
 
   const handleOpenExecutionForLatest = () => {
-    openForMessage(latestAssistantWithRuns?.id ?? null)
+    openForMessage(latestAssistantWithExecution?.id ?? null)
   }
 
   const handleOpenExecutionForMessage = (messageId: string | null) => {
@@ -121,6 +129,7 @@ export function ChatView() {
             isStreaming={isStreaming}
             statusText={statusText}
             compact={compact}
+            executionEvents={executionEvents}
             toolRuns={executionRuns}
             onOpenExecution={handleOpenExecutionForLatest}
           />
@@ -145,7 +154,7 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane toolRuns={executionRuns} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane executionEvents={executionEvents} toolRuns={executionRuns} isStreaming={isStreaming} compact={compact} />
       </div>
     </PageScaffold>
   )

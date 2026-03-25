@@ -2,19 +2,18 @@ import type {
   AelinChatRequest,
   AelinCitation,
   AelinAction,
-  AelinToolStep,
+  DeepAgentsExecutionEvent,
   DeepAgentsToolRun,
 } from './types'
+import { createExecutionEvent } from '@/features/chat/executionEventUtils'
 
 interface StreamCallbacks {
-  onIntent?: (data: { intent_type: string; time_sensitivity?: string }) => void
-  onPlan?: (data: { steps: string[] }) => void
-  onToolStep?: (step: AelinToolStep) => void
+  onExecutionEvent?: (event: DeepAgentsExecutionEvent) => void
   onCitations?: (citations: AelinCitation[]) => void
   onActions?: (actions: AelinAction[]) => void
   onReplyChunk?: (text: string) => void
   onToolRuns?: (runs: DeepAgentsToolRun[]) => void
-  onDone?: (data: { expression: string; memory_summary: string }) => void
+  onDone?: (data: { expression: string; memory_summary: string; answer?: string }) => void
   onError?: (error: { message: string; code?: string }) => void
 }
 
@@ -92,7 +91,6 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     historyCount: Array.isArray(body?.history) ? body.history.length : 0,
     imageCount: Array.isArray(body?.images) ? body.images.length : 0,
   })
-  let hasTraceSteps = false
 
   fetch(`${BASE}/api/v1/deepagents/chat/stream`, {
     method: 'POST',
@@ -122,6 +120,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
     const decoder = new TextDecoder()
     let buffer = ''
     let finalized = false
+    let hasReplyText = false
 
     const emitDone = (payload?: any) => {
       if (finalized) return
@@ -129,6 +128,7 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       callbacks.onDone?.({
         expression: String(payload?.expression || 'exp-04'),
         memory_summary: String(payload?.memory_summary || ''),
+        answer: typeof payload?.answer === 'string' ? payload.answer : '',
       })
     }
 
@@ -154,18 +154,19 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
       debugLog('event', { sseEvent, eventType })
 
+      if (!['reply', 'ping', 'done'].includes(eventType)) {
+        const executionEvent = createExecutionEvent(
+          eventType,
+          payload?.data != null && ['messages', 'updates', 'tasks', 'values'].includes(eventType)
+            ? { ...(payload.data || {}), ns: payload?.ns ?? [] }
+            : payload,
+        )
+        if (executionEvent) {
+          callbacks.onExecutionEvent?.(executionEvent)
+        }
+      }
+
       switch (eventType) {
-        case 'intent':
-          callbacks.onIntent?.(payload.data ?? payload)
-          return
-        case 'plan':
-          callbacks.onPlan?.(payload.data ?? payload)
-          return
-        case 'trace':
-        case 'tool_step':
-          callbacks.onToolStep?.((payload.data?.step ?? payload.step ?? payload.data ?? payload) as AelinToolStep)
-          hasTraceSteps = true
-          return
         case 'citations':
           callbacks.onCitations?.((payload.data ?? payload) as AelinCitation[])
           return
@@ -173,37 +174,31 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
           callbacks.onActions?.((payload.data ?? payload) as AelinAction[])
           return
         case 'reply': {
-          const chunk = payload.data?.chunk ?? payload.chunk ?? payload.data ?? ''
-          callbacks.onReplyChunk?.(String(chunk))
+          // Legacy compatibility event. The native DeepAgents/LangGraph
+          // streaming path now uses `messages` as the primary text source,
+          // so we intentionally avoid double-appending here.
           return
         }
         case 'ping':
           // Keepalive heartbeat from backend; no UI mutation needed.
           return
         case 'messages': {
-          // DeepAgents v2 streaming chunks where type === "messages". We only
-          // rely on the textual delta here so that the UI can stream the
-          // answer; richer run-graph rendering will be handled by a separate
-          // layer built on top of the raw chunk stream.
+          const metadata = payload?.data?.metadata ?? {}
+          const nodeName = String(metadata?.langgraph_node ?? '').trim().toLowerCase()
           const text =
             typeof payload?.data?.content === 'string'
               ? payload.data.content
               : typeof payload?.content === 'string'
                 ? payload.content
                 : ''
-          if (text) {
+          if (text && nodeName === 'model') {
             callbacks.onReplyChunk?.(text)
+            hasReplyText = true
           }
           return
         }
         case 'final': {
           const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
-          if (Array.isArray(result.tool_trace) && !hasTraceSteps) {
-            for (const step of result.tool_trace) {
-              callbacks.onToolStep?.(step as AelinToolStep)
-            }
-          }
-
           const rawToolRuns = payload.tool_runs ?? payload.data?.tool_runs
           if (Array.isArray(rawToolRuns) && rawToolRuns.length > 0) {
             callbacks.onToolRuns?.(rawToolRuns as DeepAgentsToolRun[])
@@ -211,8 +206,17 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
 
           if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
           if (Array.isArray(result.actions)) callbacks.onActions?.(result.actions as AelinAction[])
-          if (typeof result.answer === 'string' && result.answer) {
-            callbacks.onReplyChunk?.(result.answer)
+          const answer =
+            typeof result.answer === 'string' && result.answer
+              ? result.answer
+              : typeof payload.answer === 'string' && payload.answer
+                ? payload.answer
+                : typeof payload.data?.answer === 'string' && payload.data.answer
+                  ? payload.data.answer
+                  : ''
+          if (answer && !hasReplyText) {
+            callbacks.onReplyChunk?.(answer)
+            hasReplyText = true
           }
           emitDone(result)
           return
