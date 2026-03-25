@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AelinAction, AelinBrowserConfirmResponse } from '@/shared/api/types'
+import type { ChatAction, AelinBrowserConfirmResponse } from '@/shared/api/types'
 import { useChatStore, type ChatMessage } from '../stores/chatStore'
 import {
   buildBrowserConfirmBody,
@@ -34,7 +34,7 @@ function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId:
 
 export function useMessageBubbleActions({ message: _message, onQuickPrompt }: UseMessageBubbleActionsOptions) {
   const confirmBrowser = useMutation({
-    mutationFn: async (action: AelinAction) => {
+    mutationFn: async (action: ChatAction) => {
       const originSessionId = useChatStore.getState().activeSessionId
       const response = await aelinApi.confirmBrowserAction(buildBrowserConfirmBody(action))
       return { response, originSessionId }

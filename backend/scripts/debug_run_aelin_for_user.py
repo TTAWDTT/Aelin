@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from app.db import create_session
 from app.models import User
-from app.schemas import AelinChatRequest
+from app.schemas import ChatRequest
 from app.services.aelin.core import run_chat_request
 from app.settings import settings
 
@@ -27,7 +27,7 @@ def run_for_user(user_id: int, name: str, query: str) -> None:
         print(f"[user {user_id}] not found")
         return
     print(f"\n=== [{name}] Aelin chat for user {user.id} {user.email!r} ===")
-    payload = AelinChatRequest(
+payload = ChatRequest(
         query=query,
         workspace="default",
         use_memory=True,

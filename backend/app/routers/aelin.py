@@ -1,30 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-
 from sqlalchemy.orm import Session
 
 from app.models import User
 from app.schemas import ChatRequest, ChatResponse
 import app.services.aelin.core as _core
-from app.services.aelin.core import _try_deepagents_chat
-from app.services.aelin.core_support import (
-    _build_context_bundle,
-    _build_cached_base_context_bundle,
-    _get_agents_memory_text_for_chat,
-    _scoped_web_search_service,
-)
-from app.services.aelin.expressions import (
-    _AELIN_EXPRESSION_IDS,
-    _extract_expression_tag,
-    _pick_expression,
-)
-from app.services.web.web_search import WebSearchService
 
 
 router = _core.router
-
-_web_search: WebSearchService = _scoped_web_search_service()
 
 
 def run_chat_request(

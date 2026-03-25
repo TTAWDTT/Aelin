@@ -1,5 +1,5 @@
 import type {
-  AelinAction,
+  ChatAction,
   AelinBrowserConfirmRequest,
   AelinBrowserConfirmResponse,
 } from '@/shared/api/types'
@@ -32,7 +32,7 @@ export function formatMessageTime(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export function resolveActionHref(action: AelinAction): string {
+export function resolveActionHref(action: ChatAction): string {
   const kind = String(action.kind || '').trim().toLowerCase()
   const payload = action.payload || {}
 
@@ -42,11 +42,11 @@ export function resolveActionHref(action: AelinAction): string {
   return ''
 }
 
-export function isBrowserConfirmAction(action: AelinAction) {
+export function isBrowserConfirmAction(action: ChatAction) {
   return String(action.kind || '').trim().toLowerCase() === 'confirm_browser_action'
 }
 
-export function buildBrowserConfirmBody(action: AelinAction): AelinBrowserConfirmRequest {
+export function buildBrowserConfirmBody(action: ChatAction): AelinBrowserConfirmRequest {
   const payload = action.payload || {}
   const rawNextCall = String(payload.next_call || '').trim()
   let nextCall: Record<string, unknown> | undefined

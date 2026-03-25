@@ -79,15 +79,11 @@ export interface DeepAgentsStreamUpdate {
   part?: DeepAgentsStreamPart
   textDelta?: string
   finalAnswer?: string
-  citations?: AelinCitation[]
-  actions?: AelinAction[]
+  citations?: ChatCitation[]
+  actions?: ChatAction[]
   error?: { message: string; code?: string }
   done?: boolean
 }
-
-export type AelinChatRequest = ChatRequest
-export type AelinCitation = ChatCitation
-export type AelinAction = ChatAction
 
 /* ─── Aelin Context ─── */
 export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }

@@ -1,6 +1,6 @@
 import type { MutableRefObject } from 'react'
 import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
-import type { AelinChatRequest, DeepAgentsStreamPart, DeepAgentsStreamUpdate } from '@/shared/api/types'
+import type { ChatRequest, DeepAgentsStreamPart, DeepAgentsStreamUpdate } from '@/shared/api/types'
 import { appendRunStatePart, summarizeStreamPartStatus } from '../executionEventUtils'
 
 const MAX_QUERY_CHARS = 1200
@@ -93,7 +93,7 @@ export function buildChatRequest(params: {
   history: Array<{ role: ChatMessage['role']; content: string }>
   images?: PendingImage[]
   attachmentIds: number[]
-}): AelinChatRequest {
+}): ChatRequest {
   const normalizedQuery = trimQueryForApi(String(params.text || '').trim())
   return {
     query:

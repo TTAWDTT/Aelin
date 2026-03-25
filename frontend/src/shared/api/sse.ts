@@ -1,7 +1,7 @@
 import type {
-  AelinChatRequest,
-  AelinCitation,
-  AelinAction,
+  ChatRequest,
+  ChatCitation,
+  ChatAction,
   DeepAgentsStreamEnvelope,
   DeepAgentsStreamUpdate,
 } from './types'
@@ -110,8 +110,8 @@ function buildStreamUpdate(sseEvent: string, payload: any): DeepAgentsStreamUpda
 
   if (type === 'final') {
     const result = payload?.data?.result ?? payload?.result ?? payload?.data ?? {}
-    if (Array.isArray(result.citations)) update.citations = result.citations as AelinCitation[]
-    if (Array.isArray(result.actions)) update.actions = result.actions as AelinAction[]
+    if (Array.isArray(result.citations)) update.citations = result.citations as ChatCitation[]
+    if (Array.isArray(result.actions)) update.actions = result.actions as ChatAction[]
     const answer =
       typeof result.answer === 'string' && result.answer
         ? result.answer
@@ -147,13 +147,13 @@ function buildStreamUpdate(sseEvent: string, payload: any): DeepAgentsStreamUpda
   }
 
   if (type === 'citations') {
-    const citations = (payload.data ?? payload) as AelinCitation[]
+    const citations = (payload.data ?? payload) as ChatCitation[]
     if (Array.isArray(citations)) update.citations = citations
     return update
   }
 
   if (type === 'actions') {
-    const actions = (payload.data ?? payload) as AelinAction[]
+    const actions = (payload.data ?? payload) as ChatAction[]
     if (Array.isArray(actions)) update.actions = actions
     return update
   }
@@ -161,7 +161,7 @@ function buildStreamUpdate(sseEvent: string, payload: any): DeepAgentsStreamUpda
   return update
 }
 
-export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, signal?: AbortSignal): () => void {
+export function streamChat(body: ChatRequest, callbacks: StreamCallbacks, signal?: AbortSignal): () => void {
   const controller = new AbortController()
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const token = localStorage.getItem('token')

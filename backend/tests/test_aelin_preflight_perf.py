@@ -7,7 +7,7 @@ import app.services.aelin.core as aelin_core
 import app.services.aelin.core_support as aelin_core_support
 import app.services.foundation.llm as llm_service
 import app.services.aelin.runtime as aelin_runtime
-from app.schemas import AelinChatRequest, AgentConfigOut
+from app.schemas import ChatRequest, AgentConfigOut
 from app.services.deepagents.deepagents_graph import DeepAgentsLoopResult
 from tests.aelin_deepagents_test_utils import (
     _FakeRunner,
@@ -44,9 +44,8 @@ def test_try_deepagents_chat_skips_sync_attachment_prefetch_on_happy_path(monkey
         actions=[],
         error="",
     ))
-    monkeypatch.setattr(aelin_core, "_build_cached_base_context_bundle", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not build base context")))
 
-    payload = AelinChatRequest(query="请总结附件", workspace="default", attachment_ids=[1])
+    payload = ChatRequest(query="请总结附件", workspace="default", attachment_ids=[1])
     response = aelin_core._try_deepagents_chat(
         payload,
         db=None,  # type: ignore[arg-type]
@@ -78,13 +77,8 @@ def test_try_deepagents_chat_uses_memory_file_getter_instead_of_base_context_bun
         )
 
     monkeypatch.setattr(aelin_core, "run_deepagents_loop", _fake_run_loop)
-    monkeypatch.setattr(
-        aelin_core,
-        "_build_cached_base_context_bundle",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full base context should not be used")),
-    )
 
-    payload = AelinChatRequest(query="你好", workspace="default")
+    payload = ChatRequest(query="你好", workspace="default")
     response = aelin_core._try_deepagents_chat(
         payload,
         db=None,  # type: ignore[arg-type]
@@ -120,7 +114,7 @@ def test_try_deepagents_chat_forwards_images_and_cancel_token(monkeypatch):
     monkeypatch.setattr(aelin_core, "run_deepagents_loop", _fake_run_loop)
 
     cancel_token = SimpleNamespace(cancelled=False)
-    payload = AelinChatRequest(
+    payload = ChatRequest(
         query="请描述这张图",
         workspace="default",
         images=[
@@ -170,7 +164,7 @@ def test_try_deepagents_chat_preserves_system_history(monkeypatch):
 
     monkeypatch.setattr(aelin_core, "run_deepagents_loop", _fake_run_loop)
 
-    payload = AelinChatRequest(
+    payload = ChatRequest(
         query="继续",
         workspace="default",
         history=[
@@ -214,7 +208,7 @@ def test_try_deepagents_chat_skips_attachment_fallback_when_cancelled(monkeypatc
         ),
     )
     response = aelin_core._try_deepagents_chat(
-        AelinChatRequest(query="请总结附件", workspace="default", attachment_ids=[1]),
+        ChatRequest(query="请总结附件", workspace="default", attachment_ids=[1]),
         db=None,  # type: ignore[arg-type]
         current_user=SimpleNamespace(id=1),
         cancel_token=SimpleNamespace(cancelled=False),
@@ -228,7 +222,7 @@ def test_try_deepagents_chat_returns_none_when_llm_is_unavailable(monkeypatch):
     monkeypatch.setattr(aelin_core, "_resolve_llm_service", lambda db, user: (_FakeUnconfiguredService(), "openai"))
     monkeypatch.setattr(aelin_core, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace="default": "# Memory")
 
-    payload = AelinChatRequest(query="请总结附件", workspace="default", attachment_ids=[1])
+    payload = ChatRequest(query="请总结附件", workspace="default", attachment_ids=[1])
     response = aelin_core._try_deepagents_chat(
         payload,
         db=None,  # type: ignore[arg-type]
@@ -382,7 +376,7 @@ def test_build_context_bundle_reuses_shared_memory_primitives(monkeypatch):
 
     monkeypatch.setattr(aelin_core_support, "_memory", _FakeMemory())
 
-    bundle = aelin_core._build_context_bundle(db=None, user_id=1, workspace="default", query="hello")  # type: ignore[arg-type]
+    bundle = aelin_core_support._build_context_bundle(db=None, user_id=1, workspace="default", query="hello")  # type: ignore[arg-type]
 
     assert bundle["summary"] == "summary"
     assert calls["get_summary"] == 1

@@ -239,16 +239,6 @@ class ChatResponse(BaseModel):
     memory_summary: str = ""
     generated_at: datetime
 
-
-AelinChatRequest = ChatRequest
-AelinChatHistoryTurn = ChatHistoryTurn
-AelinImageInput = ImageInput
-AelinCitation = ChatCitation
-AelinAction = ChatAction
-AelinToolStep = ChatToolStep
-AelinChatResponse = ChatResponse
-
-
 class RemoteControlExecuteRequest(BaseModel):
     text: str = Field(default="", max_length=1200)
     workspace: str = Field(default="default", min_length=1, max_length=64)
