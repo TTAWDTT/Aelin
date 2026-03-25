@@ -45,6 +45,54 @@ router = APIRouter(prefix="/deepagents", tags=["deepagents"])
 _LOG = logging.getLogger(__name__)
 
 
+def _compact_text(value: Any, limit: int = 240) -> str:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 1)]}…"
+
+
+def _as_record(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _summarize_scalar(value: Any, limit: int = 220) -> Any:
+    if isinstance(value, str):
+        return _compact_text(value, limit)
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    return None
+
+
+def _summarize_unknown(value: Any, depth: int = 0) -> Any:
+    scalar = _summarize_scalar(value)
+    if scalar is not None:
+        return scalar
+
+    if depth >= 2:
+        if isinstance(value, list):
+            return f"items={len(value)}"
+        if isinstance(value, dict):
+            return f"keys={len(value)}"
+        return _compact_text(value, 120)
+
+    if isinstance(value, list):
+        return [_summarize_unknown(item, depth + 1) for item in value[:4]]
+
+    record = _as_record(value)
+    if record:
+        out: dict[str, Any] = {}
+        for key in list(record.keys())[:8]:
+            out[str(key)] = _summarize_unknown(record.get(key), depth + 1)
+        if len(record) > 8:
+            out["__truncated"] = True
+        return out
+
+    return _compact_text(value, 120)
+
+
 def _json_safe(value: Any) -> Any:
     try:
         return jsonable_encoder(value)
@@ -106,6 +154,150 @@ def _extract_message_delta(data: Any) -> str:
     return message_to_text(data).strip()
 
 
+def _summarize_tool_call(value: Any) -> dict[str, Any]:
+    record = _as_record(value)
+    if not record:
+        return {}
+    out: dict[str, Any] = {}
+    name = _compact_text(record.get("name"), 80)
+    if name:
+        out["name"] = name
+    call_id = _compact_text(record.get("id"), 120)
+    if call_id:
+        out["id"] = call_id
+    args = record.get("args")
+    if isinstance(args, dict) and args:
+        out["args"] = _summarize_unknown(args, 1)
+    return out
+
+
+def _extract_task_tool_info(data: dict[str, Any]) -> dict[str, Any]:
+    info: dict[str, Any] = {}
+
+    input_record = _as_record(data.get("input"))
+    tool_call = _as_record(input_record.get("tool_call"))
+    if tool_call:
+        tool = _summarize_tool_call(tool_call)
+        if tool:
+            info["tool_call"] = tool
+            if tool.get("name"):
+                info["tool_name"] = tool["name"]
+        return info
+
+    result_record = _as_record(data.get("result"))
+    messages = result_record.get("messages")
+    if not isinstance(messages, list):
+        return info
+
+    for message in messages:
+        message_record = _as_record(message)
+        tool_calls = message_record.get("tool_calls")
+        if not isinstance(tool_calls, list) or not tool_calls:
+            continue
+        summarized = [
+            tool
+            for tool in (_summarize_tool_call(item) for item in tool_calls)
+            if tool
+        ]
+        if summarized:
+            info["tool_calls"] = summarized
+            first = summarized[0]
+            if first.get("name"):
+                info["tool_name"] = first["name"]
+            return info
+
+    return info
+
+
+def _summarize_task_payload(data: Any) -> dict[str, Any]:
+    record = _as_record(data)
+    if not record:
+        return {}
+
+    out: dict[str, Any] = {}
+    for key in ("id", "name", "status"):
+        value = _summarize_scalar(record.get(key), 120)
+        if value not in (None, ""):
+            out[key] = value
+
+    interrupts = record.get("interrupts")
+    if isinstance(interrupts, list):
+        out["interrupts"] = len(interrupts)
+
+    triggers = record.get("triggers")
+    if isinstance(triggers, list):
+        out["triggers"] = len(triggers)
+
+    error = record.get("error")
+    if error is not None:
+        out["error"] = _summarize_unknown(error, 0)
+
+    out.update(_extract_task_tool_info(record))
+
+    result_record = _as_record(record.get("result"))
+    if result_record:
+        summary_bits: list[str] = []
+        ok = result_record.get("ok")
+        if isinstance(ok, bool):
+            summary_bits.append("ok" if ok else "failed")
+        total = result_record.get("total")
+        if isinstance(total, int):
+            summary_bits.append(f"total={total}")
+        query = _compact_text(result_record.get("query"), 120)
+        if query:
+            summary_bits.append(f"query={query}")
+        summary = _compact_text(" · ".join(summary_bits), 220)
+        if summary:
+            out["result_summary"] = summary
+
+    return out
+
+
+def _summarize_values_payload(data: Any) -> dict[str, Any]:
+    record = _as_record(data)
+    if not record:
+        return {}
+
+    todos = record.get("todos")
+    todos_list = todos if isinstance(todos, list) else []
+    messages = record.get("messages")
+    messages_list = messages if isinstance(messages, list) else []
+    answer = ""
+    for message in reversed(messages_list):
+        message_record = _as_record(message)
+        role = str(
+            message_record.get("role")
+            or message_record.get("type")
+            or ""
+        ).strip().lower()
+        if role not in {"assistant", "ai"}:
+            continue
+        text = _compact_text(message_to_text(message_record), 800)
+        if text:
+            answer = text
+            break
+
+    out: dict[str, Any] = {
+        "messages_count": len(messages_list),
+        "todos_count": len(todos_list),
+    }
+    if answer:
+        out["answer"] = answer
+    if todos_list:
+        out["todos"] = [_summarize_unknown(item, 1) for item in todos_list[:6]]
+    plan = record.get("plan")
+    if plan is not None:
+        out["plan"] = _summarize_unknown(plan, 0)
+    return out
+
+
+def _summarize_updates_payload(data: Any) -> dict[str, Any]:
+    summary = _summarize_unknown(data, 0)
+    if isinstance(summary, dict):
+        return summary
+    return {"summary": summary}
+
+
 def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
     if not isinstance(chunk, dict):
         return None
@@ -129,6 +321,15 @@ def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
             },
             ns,
         )
+
+    if event_type == "tasks":
+        return (event_type, _summarize_task_payload(data), ns)
+
+    if event_type == "values":
+        return (event_type, _summarize_values_payload(data), ns)
+
+    if event_type == "updates":
+        return (event_type, _summarize_updates_payload(data), ns)
 
     return (
         event_type,

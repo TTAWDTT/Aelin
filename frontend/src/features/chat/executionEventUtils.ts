@@ -141,8 +141,10 @@ function detectKind(type: string, payload: Record<string, unknown>): DeepAgentsE
   if (type === 'messages') return 'model'
   if (type === 'updates' || type === 'values') return 'state'
   if (type === 'tasks') {
+    const toolName = String(payload.tool_name ?? '').trim().toLowerCase()
+    if (toolName) return 'tool'
     const name = String(payload.name ?? payload.id ?? '').toLowerCase()
-    return name ? 'tool' : 'task'
+    return name ? 'task' : 'task'
   }
   return 'system'
 }
@@ -166,6 +168,8 @@ function deriveTitle(type: string, payload: Record<string, unknown>): string {
     return node ? `Model · ${node}` : 'Model output'
   }
   if (type === 'tasks') {
+    const toolName = compactText(payload.tool_name, 80)
+    if (toolName) return `Tool · ${toolName}`
     return compactText(payload.name ?? payload.id ?? 'Task', 80) || 'Task'
   }
   if (type === 'updates') {
@@ -186,7 +190,16 @@ function deriveSummary(type: string, payload: Record<string, unknown>): string {
   if (type === 'tasks') {
     const status = compactText(payload.status, 40)
     const id = compactText(payload.id, 40)
-    return [status, id && `id=${id}`].filter(Boolean).join(' · ')
+    const resultSummary = compactText(payload.result_summary, 180)
+    const toolCall = asRecord(payload.tool_call)
+    const toolArgs = compactText(stableStringify(toolCall.args), 180)
+    const toolBits = [
+      status,
+      resultSummary,
+      toolArgs && `args=${toolArgs}`,
+      id && `id=${id}`,
+    ]
+    return toolBits.filter(Boolean).join(' · ')
   }
   if (type === 'updates') return compactText(stableStringify(payload), 220)
   if (type === 'values') {
@@ -327,6 +340,8 @@ function formatNsLabel(ns: string[] | undefined): string {
 }
 
 function coerceTaskName(data: Record<string, unknown>): string {
+  const toolName = compactText(data.tool_name, 80)
+  if (toolName) return `Tool · ${toolName}`
   return compactText(data.name ?? data.id ?? 'Task', 80) || 'Task'
 }
 
@@ -344,6 +359,7 @@ export function taskSnapshotsFromRunState(
     const key = `${formatNsLabel(ns)}::${rawId || name}`
     const summaryBits = [
       compactText(data.status, 40),
+      compactText(data.result_summary, 180),
       rawId ? `id=${rawId}` : '',
       Number(data.interrupts || 0) > 0 ? `interrupts=${Number(data.interrupts)}` : '',
       Number(data.triggers || 0) > 0 ? `triggers=${Number(data.triggers)}` : '',

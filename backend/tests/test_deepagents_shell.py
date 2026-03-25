@@ -73,12 +73,36 @@ def test_deepagents_chat_stream_basic(monkeypatch):
             yield {
                 "type": "tasks",
                 "ns": ["root"],
-                "data": {"id": "task-1", "name": "web_search", "status": "completed"},
+                "data": {
+                    "id": "task-1",
+                    "name": "tools",
+                    "status": "completed",
+                    "input": {
+                        "__type": "tool_call_with_context",
+                        "tool_call": {
+                            "name": "web_search",
+                            "id": "call-1",
+                            "args": {
+                                "query": "today shanghai weather",
+                                "max_results": 5,
+                            },
+                        },
+                    },
+                    "result": {
+                        "ok": True,
+                        "total": 2,
+                        "query": "today shanghai weather",
+                    },
+                },
             }
             yield {
                 "type": "values",
                 "ns": ["root"],
-                "data": {"messages": [{"role": "assistant", "content": "hello from deepagents"}]},
+                "data": {
+                    "messages": [{"role": "assistant", "content": "hello from deepagents"}],
+                    "files": {"/memory/AGENTS.md": {"content": ["secret"]}},
+                    "todos": [{"title": "todo-1"}],
+                },
             }
 
     def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
@@ -118,6 +142,20 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     assert message_payload["ns"] == ["root", "model"]
     assert message_payload["data"]["content"] == "hello from deepagents"
     assert message_payload["data"]["metadata"]["langgraph_node"] == "model"
+
+    task_payload = next(payload for name, payload in events if name == "tasks")
+    assert task_payload["data"]["name"] == "tools"
+    assert task_payload["data"]["tool_name"] == "web_search"
+    assert task_payload["data"]["tool_call"]["id"] == "call-1"
+    assert task_payload["data"]["tool_call"]["args"]["query"] == "today shanghai weather"
+    assert "files" not in task_payload["data"]
+    assert "result_summary" in task_payload["data"]
+
+    values_payload = next(payload for name, payload in events if name == "values")
+    assert values_payload["data"]["messages_count"] == 1
+    assert values_payload["data"]["todos_count"] == 1
+    assert values_payload["data"]["answer"] == "hello from deepagents"
+    assert "files" not in values_payload["data"]
 
     final_payload = next(payload for name, payload in events if name == "final")
     assert final_payload["type"] == "final"
