@@ -1,7 +1,6 @@
 import type { ChatRequest } from '@/shared/api/types'
 import {
   buildChatRequestFromStream,
-  type PendingImage,
 } from './chatStreamHelpers'
 
 type StreamMessageLike = {
@@ -17,7 +16,7 @@ type RawSseEvent = {
   data: string
 }
 
-type RawAelinPayload = unknown
+type RawSsePayload = unknown
 
 type TransportStreamEvent = {
   id?: string
@@ -70,11 +69,11 @@ function parseSseChunks(chunkText: string, pending = ''): { events: RawSseEvent[
   return { events, rest }
 }
 
-function toPayload(raw: string): RawAelinPayload | null {
+function toPayload(raw: string): RawSsePayload | null {
   const text = String(raw || '').trim()
   if (!text || text === '[DONE]') return null
   try {
-    return JSON.parse(text) as RawAelinPayload
+    return JSON.parse(text) as RawSsePayload
   } catch {
     return {
       message: text,
@@ -165,8 +164,6 @@ export class DeepAgentsUseStreamTransport {
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
-
-    const self = this
 
     return (async function* () {
       let buffer = ''

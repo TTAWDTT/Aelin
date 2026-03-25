@@ -269,13 +269,6 @@ function buildExecutionTopology(
   }
 }
 
-export function getExecutionTopology(stream: ChatRuntimeStream): {
-  nodes: ExecutionTopologyNode[]
-  edges: ExecutionTopologyEdge[]
-} {
-  return buildExecutionTopology(asRecord(stream.values?.topology), getExecutionTurns(stream))
-}
-
 function getMessageId(message: BaseMessage, metadataMessageId: string | undefined, index: number): string {
   const direct = String((message as any)?.id || '').trim()
   if (direct) return direct
@@ -362,10 +355,6 @@ export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
       }
     })
     .filter((item): item is ExecutionTurn => item != null)
-}
-
-export function hasExecutionData(stream: ChatRuntimeStream): boolean {
-  return getExecutionRuntime(stream).hasExecution
 }
 
 export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
