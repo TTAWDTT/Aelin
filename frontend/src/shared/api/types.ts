@@ -35,6 +35,35 @@ export interface ChatAction {
   payload?: Record<string, string>
 }
 
+export type DeepAgentsStreamEventType =
+  | 'start'
+  | 'messages'
+  | 'updates'
+  | 'tasks'
+  | 'values'
+  | 'final'
+  | 'error'
+  | 'done'
+  | 'ping'
+
+export interface DeepAgentsStreamPart {
+  id: string
+  event: string
+  ts: number
+  runId?: string
+  seq?: number
+  ns?: string[]
+  payload: Record<string, unknown>
+  data?: unknown
+}
+
+export interface DeepAgentsRunState {
+  parts: DeepAgentsStreamPart[]
+  runId?: string
+  latestValues?: Record<string, unknown>
+  final?: Record<string, unknown>
+}
+
 export type DeepAgentsExecutionEventKind =
   | 'system'
   | 'model'

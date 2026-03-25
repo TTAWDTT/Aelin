@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { startTransition, useEffect, useMemo, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
@@ -13,6 +13,7 @@ import type { AelinAttachmentUploadResponse, DeepAgentsExecutionEvent } from '@/
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
+import { executionEventsFromRunState } from './executionEventUtils'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
@@ -79,21 +80,25 @@ export function ChatView() {
 
   useEffect(() => {
     // 切换 session 时，让 Execution Pane 自动跟随该会话的最新执行信息。
-    setFocusedMessageId(null)
+    startTransition(() => setFocusedMessageId(null))
   }, [activeSessionId, setFocusedMessageId])
 
   const latestAssistantWithExecution = [...messages]
     .reverse()
-    .find((m) => m.role === 'assistant' && (m.executionEvents?.length ?? 0) > 0)
+    .find((m) => m.role === 'assistant' && (m.runState?.parts.length ?? 0) > 0)
 
-  const focusedExecutionEvents: DeepAgentsExecutionEvent[] | null =
+  const focusedRunState =
     focusedMessageId && messages.length
       ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant')
-          ?.executionEvents ?? null
+          ?.runState ?? null
       : null
 
-  const executionEvents: DeepAgentsExecutionEvent[] =
-    focusedExecutionEvents ?? latestAssistantWithExecution?.executionEvents ?? []
+  const currentRunState = focusedRunState ?? latestAssistantWithExecution?.runState
+
+  const executionEvents: DeepAgentsExecutionEvent[] = useMemo(
+    () => executionEventsFromRunState(currentRunState),
+    [currentRunState]
+  )
 
   // 桌面模式下，当本轮已经产生执行事件且正在流式时，自动展开右侧 ExecutionPane。
   useEffect(() => {
@@ -122,7 +127,7 @@ export function ChatView() {
             isStreaming={isStreaming}
             statusText={statusText}
             compact={compact}
-            executionEvents={executionEvents}
+            runState={currentRunState}
             onOpenExecution={handleOpenExecutionForLatest}
           />
           <ChatTimeline
@@ -146,7 +151,7 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane executionEvents={executionEvents} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane runState={currentRunState} isStreaming={isStreaming} compact={compact} />
       </div>
     </PageScaffold>
   )

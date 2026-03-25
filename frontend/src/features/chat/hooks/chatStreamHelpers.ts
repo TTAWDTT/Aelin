@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react'
 import { useChatStore, type ChatMessage, type ChatSession } from '../stores/chatStore'
-import type { AelinChatRequest, DeepAgentsExecutionEvent } from '@/shared/api/types'
+import type { AelinChatRequest, DeepAgentsStreamPart } from '@/shared/api/types'
+import { appendRunStatePart, createExecutionEventFromPart } from '../executionEventUtils'
 
 const MAX_QUERY_CHARS = 1200
 
@@ -108,20 +109,20 @@ export function buildChatRequest(params: {
   }
 }
 
-function appendExecutionEvent(sessionId: string, event: DeepAgentsExecutionEvent): void {
+function appendRunState(sessionId: string, part: DeepAgentsStreamPart): void {
   const state = useChatStore.getState()
   const targetSession = state.sessions.find((session) => session.id === sessionId)
   if (!targetSession) return
-  let currentEvents: DeepAgentsExecutionEvent[] | undefined
+  let currentRunState: ChatMessage['runState']
   for (let i = targetSession.messages.length - 1; i >= 0; i -= 1) {
     const msg = targetSession.messages[i]
     if (msg.role === 'assistant') {
-      currentEvents = msg.executionEvents
+      currentRunState = msg.runState
       break
     }
   }
   state.updateLastAssistant(sessionId, {
-    executionEvents: [...(currentEvents ?? []), event],
+    runState: appendRunStatePart(currentRunState, part),
   })
 }
 
@@ -141,9 +142,12 @@ export function buildStreamCallbacks(params: {
   }
 
   return {
-    onExecutionEvent: (event: DeepAgentsExecutionEvent) => {
-      params.store.setStatusText(event.summary || event.title)
-      appendExecutionEvent(params.sessionId, event)
+    onStreamPart: (part: DeepAgentsStreamPart) => {
+      const event = createExecutionEventFromPart(part)
+      if (event) {
+        params.store.setStatusText(event.summary || event.title)
+      }
+      appendRunState(params.sessionId, part)
     },
     onCitations: (citations: NonNullable<ChatMessage['citations']>) =>
       params.store.updateLastAssistant(params.sessionId, { citations }),

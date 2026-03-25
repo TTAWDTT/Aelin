@@ -106,7 +106,7 @@ def _extract_message_delta(data: Any) -> str:
     return message_to_text(data).strip()
 
 
-def _serialize_stream_part(chunk: Any) -> tuple[str, dict[str, Any]] | None:
+def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
     if not isinstance(chunk, dict):
         return None
 
@@ -123,23 +123,17 @@ def _serialize_stream_part(chunk: Any) -> tuple[str, dict[str, Any]] | None:
         return (
             event_type,
             {
-                "type": event_type,
-                "ns": ns,
-                "data": {
-                    "content": message_to_text(message),
-                    "metadata": _json_safe(metadata),
-                    "message": _json_safe(message),
-                },
+                "content": message_to_text(message),
+                "metadata": _json_safe(metadata),
+                "message": _json_safe(message),
             },
+            ns,
         )
 
     return (
         event_type,
-        {
-            "type": event_type,
-            "ns": ns,
-            "data": _json_safe(data),
-        },
+        _json_safe(data),
+        ns,
     )
 
 
@@ -164,21 +158,49 @@ def deepagents_chat_stream(
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
         done_token = "__done__"
+        event_seq = 0
+        event_seq_lock = threading.Lock()
 
         class _CancelToken:
             cancelled: bool = False
 
         cancel_token = _CancelToken()
 
-        def _push(event: str, data: dict[str, Any]) -> None:
+        def _envelope(
+            event: str,
+            data: Any = None,
+            *,
+            ns: list[str] | None = None,
+        ) -> dict[str, Any]:
+            nonlocal event_seq
+            with event_seq_lock:
+                event_seq += 1
+                seq = event_seq
+            payload: dict[str, Any] = {
+                "type": event,
+                "run_id": req_id,
+                "seq": seq,
+                "ts": _now_ms(),
+            }
+            if ns:
+                payload["ns"] = [str(item) for item in ns]
+            if data is not None:
+                payload["data"] = _json_safe(data)
+            return payload
+
+        def _push(event: str, data: Any = None, *, ns: list[str] | None = None) -> None:
+            payload = _envelope(event, data, ns=ns)
             _LOG.debug(
                 "deepagents_stream event req=%s uid=%s event=%s keys=%s",
                 req_id,
                 int(current_user.id),
                 str(event),
-                ",".join(sorted([str(k) for k in list((data or {}).keys())[:8] if str(k)])) or "-",
+                ",".join(
+                    sorted([str(k) for k in list(payload.keys())[:8] if str(k)])
+                )
+                or "-",
             )
-            event_queue.put((event, data))
+            event_queue.put((event, payload))
 
         def _worker() -> None:
             try:
@@ -283,8 +305,8 @@ def deepagents_chat_stream(
 
                     serialized = _serialize_stream_part(chunk)
                     if serialized is not None:
-                        event_name, event_payload = serialized
-                        _push(event_name, event_payload)
+                        event_name, event_data, event_ns = serialized
+                        _push(event_name, event_data, ns=event_ns)
 
                     if not isinstance(chunk, dict):
                         continue
@@ -336,7 +358,7 @@ def deepagents_chat_stream(
                     },
                 )
             finally:
-                _push("done", {"ts": _now_ms(), "status": done_token})
+                _push("done", {"status": done_token})
                 _LOG.info(
                     "deepagents_stream worker_done req=%s uid=%s duration_ms=%s",
                     req_id,
@@ -348,8 +370,6 @@ def deepagents_chat_stream(
         _push(
             "start",
             {
-                "ts": _now_ms(),
-                "req_id": req_id,
                 "query": payload.query.strip()[:180],
                 "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
                 "workspace": payload.workspace,
@@ -366,14 +386,9 @@ def deepagents_chat_stream(
                     event, data = event_queue.get(timeout=heartbeat_interval_s)
                 except queue.Empty:
                     heartbeat_count += 1
-                    yield _sse_event(
-                        "ping",
-                        {"ts": _now_ms(), "req_id": req_id, "hb": heartbeat_count},
-                    )
+                    yield _sse_event("ping", _envelope("ping", {"hb": heartbeat_count}))
                     if (not worker.is_alive()) and event_queue.empty():
-                        yield _sse_event(
-                            "done", {"ts": _now_ms(), "status": done_token}
-                        )
+                        yield _sse_event("done", _envelope("done", {"status": done_token}))
                         break
                     continue
 

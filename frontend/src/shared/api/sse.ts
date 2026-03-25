@@ -2,12 +2,12 @@ import type {
   AelinChatRequest,
   AelinCitation,
   AelinAction,
-  DeepAgentsExecutionEvent,
+  DeepAgentsStreamPart,
 } from './types'
-import { createExecutionEvent } from '@/features/chat/executionEventUtils'
+import { createStreamPart } from '@/features/chat/executionEventUtils'
 
 interface StreamCallbacks {
-  onExecutionEvent?: (event: DeepAgentsExecutionEvent) => void
+  onStreamPart?: (part: DeepAgentsStreamPart) => void
   onCitations?: (citations: AelinCitation[]) => void
   onActions?: (actions: AelinAction[]) => void
   onReplyChunk?: (text: string) => void
@@ -151,16 +151,9 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
       const eventType = (envelopeType || sseEvent || 'message').toLowerCase()
       debugLog('event', { sseEvent, eventType })
 
-      if (!['ping', 'done'].includes(eventType)) {
-        const executionEvent = createExecutionEvent(
-          eventType,
-          payload?.data != null && ['messages', 'updates', 'tasks', 'values'].includes(eventType)
-            ? { ...(payload.data || {}), ns: payload?.ns ?? [] }
-            : payload,
-        )
-        if (executionEvent) {
-          callbacks.onExecutionEvent?.(executionEvent)
-        }
+      const streamPart = createStreamPart(eventType, payload)
+      if (streamPart && eventType !== 'ping') {
+        callbacks.onStreamPart?.(streamPart)
       }
 
       switch (eventType) {
@@ -189,17 +182,15 @@ export function streamChat(body: AelinChatRequest, callbacks: StreamCallbacks, s
           return
         }
         case 'final': {
-          const result = payload.result ?? payload.data?.result ?? payload.data ?? {}
+          const result = payload.data?.result ?? payload.result ?? payload.data ?? {}
           if (Array.isArray(result.citations)) callbacks.onCitations?.(result.citations as AelinCitation[])
           if (Array.isArray(result.actions)) callbacks.onActions?.(result.actions as AelinAction[])
           const answer =
             typeof result.answer === 'string' && result.answer
               ? result.answer
-              : typeof payload.answer === 'string' && payload.answer
-                ? payload.answer
-                : typeof payload.data?.answer === 'string' && payload.data.answer
+              : typeof payload.data?.answer === 'string' && payload.data.answer
                   ? payload.data.answer
-                  : ''
+                : ''
           if (answer && !hasReplyText) {
             callbacks.onReplyChunk?.(answer)
             hasReplyText = true

@@ -8,33 +8,46 @@ import {
   Workflow,
   XCircle,
 } from 'lucide-react'
-import type { DeepAgentsExecutionEvent } from '@/shared/api/types'
+import type { DeepAgentsExecutionEvent, DeepAgentsRunState } from '@/shared/api/types'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
-import { extractToolCalls } from '../executionEventUtils'
+import {
+  executionEventsFromRunState,
+  subagentSnapshotsFromRunState,
+  taskSnapshotsFromRunState,
+} from '../executionEventUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { ProviderIcon } from './ProviderIcon'
 
 interface ExecutionPaneProps {
-  executionEvents: DeepAgentsExecutionEvent[]
+  runState?: DeepAgentsRunState
   isStreaming: boolean
   compact?: boolean
 }
 
-type ExecutionTab = 'timeline' | 'tools'
+type ExecutionTab = 'timeline' | 'tools' | 'state' | 'agents'
 
 export function ExecutionPane({
-  executionEvents,
+  runState,
   isStreaming,
   compact = false,
 }: ExecutionPaneProps) {
   const { t } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const hasExecution = executionEvents.length > 0
-  const toolCalls = useMemo(
-    () => extractToolCalls(executionEvents),
-    [executionEvents],
+  const executionEvents = useMemo(
+    () => executionEventsFromRunState(runState),
+    [runState],
   )
+  const hasExecution = executionEvents.length > 0
+  const taskSnapshots = useMemo(
+    () => taskSnapshotsFromRunState(runState),
+    [runState],
+  )
+  const subagentSnapshots = useMemo(
+    () => subagentSnapshotsFromRunState(runState),
+    [runState],
+  )
+  const hasStateSnapshot = Object.keys(runState?.latestValues ?? {}).length > 0
   const [tab, setTab] = useState<ExecutionTab>('timeline')
 
   useEffect(() => {
@@ -84,8 +97,22 @@ export function ExecutionPane({
                   id="tools"
                   active={tab === 'tools'}
                   label={t('trace.tab.tools')}
-                  disabled={toolCalls.length === 0}
-                  onClick={() => toolCalls.length > 0 && setTab('tools')}
+                  disabled={taskSnapshots.length === 0}
+                  onClick={() => taskSnapshots.length > 0 && setTab('tools')}
+                />
+                <ExecutionTabButton
+                  id="state"
+                  active={tab === 'state'}
+                  label="State"
+                  disabled={!hasStateSnapshot}
+                  onClick={() => hasStateSnapshot && setTab('state')}
+                />
+                <ExecutionTabButton
+                  id="agents"
+                  active={tab === 'agents'}
+                  label="Agents"
+                  disabled={subagentSnapshots.length === 0}
+                  onClick={() => subagentSnapshots.length > 0 && setTab('agents')}
                 />
               </div>
 
@@ -108,7 +135,27 @@ export function ExecutionPane({
                       : 'pointer-events-none translate-y-1 opacity-0',
                   )}
                 >
-                  <ToolCallsView toolCalls={toolCalls} />
+                  <TaskRunsView taskSnapshots={taskSnapshots} />
+                </div>
+                <div
+                  className={cn(
+                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
+                    tab === 'state'
+                      ? 'pointer-events-auto translate-y-0 opacity-100'
+                      : 'pointer-events-none translate-y-1 opacity-0',
+                  )}
+                >
+                  <StateSnapshotView runState={runState} />
+                </div>
+                <div
+                  className={cn(
+                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
+                    tab === 'agents'
+                      ? 'pointer-events-auto translate-y-0 opacity-100'
+                      : 'pointer-events-none translate-y-1 opacity-0',
+                  )}
+                >
+                  <SubagentView subagents={subagentSnapshots} />
                 </div>
               </div>
             </div>
@@ -230,14 +277,14 @@ function ExecutionTimeline({ events, live }: { events: DeepAgentsExecutionEvent[
   )
 }
 
-function ToolCallsView({
-  toolCalls,
+function TaskRunsView({
+  taskSnapshots,
 }: {
-  toolCalls: ReturnType<typeof extractToolCalls>
+  taskSnapshots: ReturnType<typeof taskSnapshotsFromRunState>
 }) {
   const { t } = useChatI18n()
 
-  if (!toolCalls.length) {
+  if (!taskSnapshots.length) {
     return (
       <p id="execution-pane-tools" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
         {t('trace.tools.empty')}
@@ -248,34 +295,186 @@ function ToolCallsView({
   return (
     <div id="execution-pane-tools" className="space-y-2 text-[11px]">
       <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">{t('trace.tab.tools')}</span>
-        <span>{t('trace.tools.count', { count: toolCalls.length })}</span>
+        <span className="font-medium">Task runs</span>
+        <span>{t('trace.tools.count', { count: taskSnapshots.length })}</span>
       </div>
       <ul className="space-y-1.5">
-        {toolCalls.map((call) => (
-          <li key={call.key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+        {taskSnapshots.map((task) => (
+          <li key={task.key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
             <div className="flex items-start gap-2">
-              <ProviderIcon provider={call.provider} size="md" />
+              <ProviderIcon provider="core" size="md" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                    {call.name}
+                    {task.name}
                   </span>
-                  <span className="text-[11px] text-[var(--color-text-muted)]">{call.status || '-'}</span>
-                  {call.latencyMs > 0 && (
-                    <span className="text-[10px] text-[var(--color-text-muted)]">{call.latencyMs} ms</span>
-                  )}
+                  <span className="text-[11px] text-[var(--color-text-muted)]">{task.status || '-'}</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)]">{task.updates} updates</span>
                 </div>
-                {call.summary && (
+                {task.summary && (
                   <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                    {call.summary}
+                    {task.summary}
+                  </div>
+                )}
+                {task.ns.length > 0 && (
+                  <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                    {task.ns.join(' / ')}
+                  </div>
+                )}
+                {task.error && (
+                  <div className="mt-1 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                    {task.error}
                   </div>
                 )}
               </div>
+              <span className="pt-0.5">{statusIcon(task.status)}</span>
             </div>
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function StateSnapshotView({ runState }: { runState?: DeepAgentsRunState }) {
+  const snapshot = runState?.latestValues ?? {}
+  const todos = Array.isArray(snapshot.todos) ? snapshot.todos : []
+  const answer = String(snapshot.answer || '').trim()
+  const messagesCount = Number(snapshot.messages_count || 0)
+  const todosCount = Number(snapshot.todos_count || todos.length || 0)
+  const plan = snapshot.plan
+  const planText =
+    typeof plan === 'string'
+      ? plan
+      : plan != null
+        ? JSON.stringify(plan)
+        : ''
+
+  if (!Object.keys(snapshot).length) {
+    return (
+      <p id="execution-pane-state" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+        No state snapshot yet.
+      </p>
+    )
+  }
+
+  return (
+    <div id="execution-pane-state" className="space-y-2 text-[11px]">
+      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+        <span className="font-medium">Latest values</span>
+        <span>{runState?.parts.length ?? 0} parts</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-1.5">
+        <StateStatCard label="Messages" value={String(messagesCount)} />
+        <StateStatCard label="Todos" value={String(todosCount)} />
+      </div>
+
+      {runState?.runId && (
+        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+            Run id
+          </div>
+          <div className="mt-1 text-[11px] leading-relaxed text-[var(--color-text)]">
+            {runState.runId}
+          </div>
+        </section>
+      )}
+
+      {answer && (
+        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+            Answer snapshot
+          </div>
+          <div className="mt-1 text-[11px] leading-relaxed text-[var(--color-text)]">
+            {answer}
+          </div>
+        </section>
+      )}
+
+      {todos.length > 0 && (
+        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+            Todos
+          </div>
+          <ul className="mt-1 space-y-1">
+            {todos.slice(0, 6).map((todo, index) => (
+              <li
+                key={`todo-${index}`}
+                className="rounded-md bg-[var(--color-bg-elevated)] px-2 py-1 text-[11px] leading-relaxed text-[var(--color-text)]"
+              >
+                {typeof todo === 'string' ? todo : JSON.stringify(todo)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {planText && (
+        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+            Plan
+          </div>
+          <div className="mt-1 text-[11px] leading-relaxed text-[var(--color-text)] [overflow-wrap:anywhere]">
+            {planText}
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
+function SubagentView({
+  subagents,
+}: {
+  subagents: ReturnType<typeof subagentSnapshotsFromRunState>
+}) {
+  if (!subagents.length) {
+    return (
+      <p id="execution-pane-agents" className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+        No subagent namespaces yet.
+      </p>
+    )
+  }
+
+  return (
+    <div id="execution-pane-agents" className="space-y-2 text-[11px]">
+      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+        <span className="font-medium">Subagents</span>
+        <span>{subagents.length}</span>
+      </div>
+      <ul className="space-y-1.5">
+        {subagents.map((item) => (
+          <li key={item.key} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                <Bot size={12} className="text-[var(--color-text)]" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+                    {item.label}
+                  </span>
+                  <span className="text-[11px] text-[var(--color-text-muted)]">{item.status || '-'}</span>
+                </div>
+                <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                  {item.taskCount} task{item.taskCount === 1 ? '' : 's'}
+                </div>
+              </div>
+              <span className="pt-0.5">{statusIcon(item.status)}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function StateStatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
+      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
+      <div className="mt-1 text-[13px] font-semibold text-[var(--color-text)]">{value}</div>
     </div>
   )
 }

@@ -1,6 +1,7 @@
-import type { DeepAgentsExecutionEvent } from '@/shared/api/types'
+import { useMemo } from 'react'
+import type { DeepAgentsRunState } from '@/shared/api/types'
 import { useChatI18n } from '../chatI18n'
-import { extractToolCalls, summarizeExecutionStatus } from '../executionEventUtils'
+import { executionEventsFromRunState, extractToolCalls, summarizeExecutionStatus } from '../executionEventUtils'
 import { PanelRightOpen } from 'lucide-react'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { ProviderIcon } from './ProviderIcon'
@@ -9,7 +10,7 @@ interface ChatStatusBarProps {
   isStreaming: boolean
   statusText: string
   compact?: boolean
-  executionEvents?: DeepAgentsExecutionEvent[]
+  runState?: DeepAgentsRunState
   onOpenExecution?: () => void
 }
 
@@ -17,11 +18,15 @@ export function ChatStatusBar({
   isStreaming,
   statusText,
   compact = false,
-  executionEvents,
+  runState,
   onOpenExecution,
 }: ChatStatusBarProps) {
   const { t } = useChatI18n()
   const { open, setOpen, setFocusedMessageId, setSuppressAutoOpen } = useExecutionPaneStore()
+  const executionEvents = useMemo(
+    () => executionEventsFromRunState(runState),
+    [runState]
+  )
 
   const hasRuns = (executionEvents?.length ?? 0) > 0
   if (!isStreaming && !statusText && !hasRuns) return null
