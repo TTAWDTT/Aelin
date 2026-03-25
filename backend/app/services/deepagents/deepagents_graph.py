@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,6 +20,8 @@ from app.services.deepagents.tool_runtime import (
     ToolRuntimeContext,
 )
 from app.services.foundation.llm import LLMService
+from app.services.deepagents.input_mapping import build_chat_messages
+from app.services.deepagents.output_utils import extract_answer
 from app.services.tools.tool_helpers import _result_error
 from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_files import tool_attachment_search
@@ -33,6 +36,31 @@ _log = logging.getLogger(__name__)
 
 class DeepAgentsCancelled(RuntimeError):
     """Raised when the surrounding request has been cancelled."""
+
+
+@dataclass
+class DeepAgentsToolRun:
+    call_index: int
+    name: str
+    args: dict[str, Any]
+    status: str
+    result: dict[str, Any]
+    error: str = ""
+    is_write: bool = False
+    latency_ms: int = 0
+
+
+@dataclass
+class DeepAgentsLoopResult:
+    ok: bool
+    answer: str
+    tool_runs: list[DeepAgentsToolRun] = field(default_factory=list)
+    total_calls: int = 0
+    write_calls: int = 0
+    actions: list[dict[str, str]] = field(default_factory=list)
+    error: str = ""
+    cancelled: bool = False
+    capability_summary: str = ""
 
 
 class DeviceToolInput(BaseModel):
@@ -156,6 +184,63 @@ def _tool_description(name: str) -> str:
 
 def _backend_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[DeepAgentsToolRun]:
+    return [
+        DeepAgentsToolRun(
+            call_index=int(tr.get("call_index", 1)),
+            name=str(tr.get("name") or ""),
+            args=dict(tr.get("args") or {}),
+            status=str(tr.get("status") or ""),
+            result=dict(tr.get("result") or {}),
+            error=str(tr.get("error") or ""),
+            is_write=bool(tr.get("is_write", False)),
+            latency_ms=int(tr.get("latency_ms", 0)),
+        )
+        for tr in raw_tool_runs
+    ]
+
+
+def _parse_capabilities_file(files_mapping: dict[str, Any]) -> dict[str, Any]:
+    raw = files_mapping.get("/runtime/capabilities.json")
+    if not isinstance(raw, dict):
+        return {}
+    content = raw.get("content")
+    if isinstance(content, list):
+        text = "\n".join(str(line) for line in content)
+    else:
+        text = str(content or "")
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _loop_result(
+    *,
+    ok: bool,
+    answer: str = "",
+    tool_runs: list[DeepAgentsToolRun] | None = None,
+    total_calls: int = 0,
+    write_calls: int = 0,
+    actions: list[dict[str, str]] | None = None,
+    error: str = "",
+    cancelled: bool = False,
+    capability_summary: str = "",
+) -> DeepAgentsLoopResult:
+    return DeepAgentsLoopResult(
+        ok=ok,
+        answer=answer,
+        tool_runs=list(tool_runs or []),
+        total_calls=int(total_calls or 0),
+        write_calls=int(write_calls or 0),
+        actions=list(actions or []),
+        error=error,
+        cancelled=cancelled,
+        capability_summary=capability_summary,
+    )
 
 
 def _invoke_tool(
@@ -527,4 +612,85 @@ def build_chat_agent(
         memory=memory_paths or None,
     )
     return agent, usage, tool_runs, files
+
+
+def run_deepagents_loop(
+    *,
+    service: LLMService,
+    provider: str,
+    context: ToolRuntimeContext,
+    limiter: ToolCallLimiter,
+    query: str,
+    memory_text: str,
+    history_turns: list[dict[str, Any]],
+    images: list[dict[str, Any]] | None = None,
+    cancel_token: Any | None = None,
+) -> DeepAgentsLoopResult:
+    try:
+        if is_cancelled(cancel_token):
+            raise DeepAgentsCancelled("cancelled")
+
+        agent, usage, raw_tool_runs, files_mapping = build_chat_agent(
+            service=service,
+            provider=provider,
+            context=context,
+            limiter=limiter,
+            memory_text=memory_text,
+            cancel_token=cancel_token,
+        )
+        if agent is None:
+            return _loop_result(ok=False, error="llm_not_configured")
+
+        capabilities = _parse_capabilities_file(files_mapping)
+        capability_summary = (
+            f"tools={len(list(capabilities.get('tools') or []))}; "
+            f"skills={len(list(capabilities.get('mounted_skills') or []))}; "
+            f"memory_files={len(list(capabilities.get('memory_files') or []))}"
+        )
+
+        invoke_payload = {
+            "messages": build_chat_messages(
+                query=query,
+                history_turns=history_turns,
+                images=images,
+            )
+        }
+        if files_mapping:
+            invoke_payload["files"] = dict(files_mapping)
+
+        if is_cancelled(cancel_token):
+            raise DeepAgentsCancelled("cancelled")
+        response = agent.invoke(invoke_payload)
+        if is_cancelled(cancel_token):
+            raise DeepAgentsCancelled("cancelled")
+
+        answer = extract_answer(response).strip()
+        tool_runs = _map_tool_runs(raw_tool_runs)
+
+        if not answer:
+            return _loop_result(
+                ok=False,
+                tool_runs=tool_runs,
+                total_calls=getattr(usage, "total_calls", 0),
+                write_calls=getattr(usage, "write_calls", 0),
+                error="empty_answer_from_deepagents",
+                capability_summary=capability_summary,
+            )
+
+        return _loop_result(
+            ok=True,
+            answer=answer,
+            tool_runs=tool_runs,
+            total_calls=getattr(usage, "total_calls", 0),
+            write_calls=getattr(usage, "write_calls", 0),
+            capability_summary=capability_summary,
+        )
+    except DeepAgentsCancelled:
+        return _loop_result(ok=False, cancelled=True, error="cancelled")
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("deepagents_unhandled_error provider=%s", provider)
+        return _loop_result(
+            ok=False,
+            error=f"deepagents_unhandled_error:{str(exc)[:160]}",
+        )
 

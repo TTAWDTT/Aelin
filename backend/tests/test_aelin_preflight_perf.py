@@ -8,7 +8,7 @@ import app.services.aelin.core_support as aelin_core_support
 import app.services.foundation.llm as llm_service
 import app.services.aelin.runtime as aelin_runtime
 from app.schemas import AelinChatRequest, AgentConfigOut
-from app.services.deepagents.deepagents_loop import DeepAgentsLoopResult
+from app.services.deepagents.deepagents_graph import DeepAgentsLoopResult
 from tests.aelin_deepagents_test_utils import (
     _FakeRunner,
     _FakeToolContext,

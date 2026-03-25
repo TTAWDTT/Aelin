@@ -26,7 +26,7 @@ from app.services.aelin.runtime import (
 from app.services.aelin.streaming import _now_ms
 from app.services.aelin.utils import normalize_positive_ints
 from app.services.deepagents.cancel_utils import is_cancelled
-from app.services.deepagents.deepagents_loop import run_deepagents_loop
+from app.services.deepagents.deepagents_graph import run_deepagents_loop
 from app.services.deepagents.input_mapping import (
     normalize_history_turns,
     normalize_image_inputs,

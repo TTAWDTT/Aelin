@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from app.services.deepagents.deepagents_loop import DeepAgentsLoopResult
+from app.services.deepagents.deepagents_graph import DeepAgentsLoopResult
 
 
 class _FakeToolContext:

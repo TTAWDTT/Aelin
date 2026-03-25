@@ -563,7 +563,7 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
 
 
 def test_deepagents_loop_preserves_model_answer_without_legacy_open_claim_guard(monkeypatch):
-    from app.services.deepagents import deepagents_loop as dloop
+    from app.services.deepagents import deepagents_graph as dag
 
     class _FakeAgent:
         def invoke(self, payload):  # noqa: ANN001
@@ -587,8 +587,8 @@ def test_deepagents_loop_preserves_model_answer_without_legacy_open_claim_guard(
             },
         )
 
-    monkeypatch.setattr(dloop, "build_chat_agent", _fake_build_chat_agent)
-    result = dloop.run_deepagents_loop(
+    monkeypatch.setattr(dag, "build_chat_agent", _fake_build_chat_agent)
+    result = dag.run_deepagents_loop(
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
         context=SimpleNamespace(),
@@ -604,7 +604,7 @@ def test_deepagents_loop_preserves_model_answer_without_legacy_open_claim_guard(
 
 
 def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
-    from app.services.deepagents import deepagents_loop as dloop
+    from app.services.deepagents import deepagents_graph as dag
 
     captured: dict[str, object] = {}
 
@@ -630,8 +630,8 @@ def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
             },
         )
 
-    monkeypatch.setattr(dloop, "build_chat_agent", _fake_build_chat_agent)
-    result = dloop.run_deepagents_loop(
+    monkeypatch.setattr(dag, "build_chat_agent", _fake_build_chat_agent)
+    result = dag.run_deepagents_loop(
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
         context=SimpleNamespace(),
@@ -661,7 +661,7 @@ def test_deepagents_loop_forwards_images_in_last_user_message(monkeypatch):
 
 
 def test_deepagents_loop_preserves_system_history(monkeypatch):
-    from app.services.deepagents import deepagents_loop as dloop
+    from app.services.deepagents import deepagents_graph as dag
 
     captured: dict[str, object] = {}
 
@@ -687,8 +687,8 @@ def test_deepagents_loop_preserves_system_history(monkeypatch):
             },
         )
 
-    monkeypatch.setattr(dloop, "build_chat_agent", _fake_build_chat_agent)
-    result = dloop.run_deepagents_loop(
+    monkeypatch.setattr(dag, "build_chat_agent", _fake_build_chat_agent)
+    result = dag.run_deepagents_loop(
         service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
         provider="openai",
         context=SimpleNamespace(),
