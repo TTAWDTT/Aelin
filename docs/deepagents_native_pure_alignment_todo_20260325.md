@@ -52,15 +52,15 @@
 - [x] 5.2 继续排查并删除后端中残留的 Aelin agent-loop 命名、类型与兼容逻辑
 - [x] 5.3 继续排查并删除前端中残留的旧聊天协议字段与适配代码
 - [x] 5.4 更新 `docs/deepagents_arch.md` 等文档，说明新的纯原生链路
-- [ ] 5.5 完成一轮真实链路测试，验证聊天、工具、skills、memory、remote control
-- [ ] 5.6 清理冗余代码、运行测试、提交 commit
+- [x] 5.5 完成一轮真实链路测试，验证聊天、工具、skills、memory、remote control
+- [x] 5.6 清理冗余代码、运行测试、提交 commit
 
 ---
 
 ## 结果要求
 
-- [ ] R1 聊天主链不再依赖旧 Aelin 自定义 SSE 语义
-- [ ] R2 Execution Pane 不再从 `tool_runs` 反推执行过程
-- [ ] R3 记忆主链不再依赖 Aelin 自己的 summary/bridge 方案
-- [ ] R4 工具主链尽可能只保留 DeepAgents 标准注册方式
-- [ ] R5 仓库整体进一步精简，并保持真实链路可用
+- [x] R1 聊天主链不再依赖旧 Aelin 自定义 SSE 语义
+- [x] R2 Execution Pane 不再从 `tool_runs` 反推执行过程
+- [x] R3 记忆主链不再依赖 Aelin 自己的 summary/bridge 方案
+- [x] R4 工具主链尽可能只保留 DeepAgents 标准注册方式
+- [x] R5 仓库整体进一步精简，并保持真实链路可用

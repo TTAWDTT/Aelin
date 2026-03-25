@@ -30,16 +30,9 @@ def content_to_text(content: Any) -> str:
 
 
 def message_to_text(message: Any) -> str:
-    try:
-        text_attr = getattr(message, "text", None)
-        if isinstance(text_attr, str) and text_attr:
-            return text_attr
-        if callable(text_attr):
-            text_value = text_attr()
-            if isinstance(text_value, str) and text_value:
-                return text_value
-    except Exception:
-        pass
+    text_attr = getattr(message, "text", None)
+    if isinstance(text_attr, str) and text_attr:
+        return text_attr
 
     if hasattr(message, "content"):
         return content_to_text(getattr(message, "content", ""))
