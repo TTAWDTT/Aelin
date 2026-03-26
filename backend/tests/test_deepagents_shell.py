@@ -147,7 +147,6 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     events = _parse_sse_events(body)
     names = [name for name, _ in events]
     assert "metadata" in names
-    assert "custom" in names
     assert "messages|root|model" in names
     assert "updates|root" in names
     assert "tasks|root" in names
@@ -156,8 +155,11 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     metadata_payload = next(payload for name, payload in events if name == "metadata")
     assert isinstance(metadata_payload["run_id"], str) and metadata_payload["run_id"]
 
-    topology_payload = next(payload for name, payload in events if name == "custom")
-    assert topology_payload["kind"] == "topology"
+    topology_payload = next(
+        payload
+        for name, payload in events
+        if name == "values|root" and isinstance(payload, dict) and "topology" in payload
+    )
     assert topology_payload["topology"]["nodes"][0]["id"] == "__start__"
     assert topology_payload["topology"]["edges"][0]["target"] == "model"
 
@@ -177,7 +179,11 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     assert "files" not in task_payload
     assert task_payload["result"]["query"] == "today shanghai weather"
 
-    values_payload = next(payload for name, payload in events if name == "values|root")
+    values_payload = next(
+        payload
+        for name, payload in events
+        if name == "values|root" and isinstance(payload, dict) and "messages" in payload
+    )
     assert values_payload["messages"][0]["content"] == "hello from deepagents"
     assert values_payload["todos"][0]["title"] == "todo-1"
     assert "files" not in values_payload
@@ -294,7 +300,7 @@ def test_build_chat_agent_injects_current_date_into_system_prompt(monkeypatch):
 
 
 @pytest.mark.integration
-def test_deepagents_chat_stream_emits_stable_tool_run_and_filters_draft_tool_calls(monkeypatch):
+def test_deepagents_chat_stream_filters_draft_tool_calls_without_tool_run_custom_event(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -366,9 +372,7 @@ def test_deepagents_chat_stream_emits_stable_tool_run_and_filters_draft_tool_cal
 
     events = _parse_sse_events(body)
     custom_events = [payload for name, payload in events if name == "custom"]
-    tool_run = next(payload for payload in custom_events if payload.get("kind") == "tool_run")
-    assert tool_run["tool_run"]["name"] == "web_search"
-    assert tool_run["tool_run"]["state"] == "completed"
+    assert not any(payload.get("kind") == "tool_run" for payload in custom_events)
 
     message_payload = next(payload for name, payload in events if name == "messages|root|model")
     assert len(message_payload[0]["tool_calls"]) == 1
@@ -445,3 +449,91 @@ def test_deepagents_chat_stream_emits_idle_timeout_and_done(monkeypatch):
 
     assert "deepagents_run_idle_timeout" in str(error_payload.get("message") or "")
     assert done_payload["status"] == "__done__"
+
+
+@pytest.mark.integration
+def test_deepagents_chat_stream_does_not_idle_timeout_while_tool_is_running(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    import app.routers.deepagents_chat as dchat
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents.tool_runtime import ToolPolicyUsage
+
+    monkeypatch.setattr(
+        dchat,
+        "_resolve_llm_service",
+        lambda db, user: (
+            SimpleNamespace(
+                is_configured=lambda: True,
+                config=SimpleNamespace(web_search_proxy_url=""),
+            ),
+            "openai",
+        ),
+    )
+    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
+    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
+    monkeypatch.setattr(dchat.settings, "deepagents_stream_idle_timeout_seconds", 0.1, raising=False)
+    monkeypatch.setattr(dchat.settings, "deepagents_run_timeout_seconds", 30.0, raising=False)
+
+    class _FakeAgent:
+        def stream(self, payload, **kwargs):  # noqa: ANN001
+            tool_event_cb = kwargs.pop("_tool_event_cb")
+            _ = payload, kwargs
+            tool_event_cb(
+                {
+                    "key": "web_search:1",
+                    "name": "web_search",
+                    "args": {"query": "github trending"},
+                    "state": "running",
+                    "result": {},
+                    "error": "",
+                    "latency_ms": 0,
+                }
+            )
+            time.sleep(0.35)
+            tool_event_cb(
+                {
+                    "key": "web_search:1",
+                    "name": "web_search",
+                    "args": {"query": "github trending"},
+                    "state": "completed",
+                    "result": {"ok": True, "total": 1},
+                    "error": "",
+                    "latency_ms": 350,
+                }
+            )
+            yield {
+                "type": "values",
+                "ns": ["root"],
+                "data": {"messages": [{"role": "assistant", "content": "ok"}]},
+            }
+
+    def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
+        tool_event_cb = kwargs.get("tool_event_cb")
+
+        class _WrappedAgent(_FakeAgent):
+            def stream(self, payload, **stream_kwargs):  # noqa: ANN001
+                return super().stream(payload, _tool_event_cb=tool_event_cb, **stream_kwargs)
+
+        return _WrappedAgent(), ToolPolicyUsage(), [], {}
+
+    monkeypatch.setattr(dag, "build_chat_agent", _fake_build_chat_agent)
+    monkeypatch.setattr(dchat, "build_chat_agent", _fake_build_chat_agent)
+
+    with client.stream(
+        "POST",
+        "/api/v1/deepagents/chat/stream",
+        json={"query": "tool running timeout test", "use_memory": False, "workspace": "default"},
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200, resp.text
+        body = "".join(resp.iter_text())
+
+    events = _parse_sse_events(body)
+    names = [name for name, _ in events]
+    assert "error" not in names
+    assert "done" in names
+    values_payload = next(payload for name, payload in events if name == "values|root")
+    assert values_payload["messages"][0]["content"] == "ok"

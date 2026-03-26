@@ -91,7 +91,7 @@ export function ExecutionPane({
   const { open } = useExecutionPaneStore()
   const { topology, lanes, turns, tools, hasExecution } = runtime
   const todos = Array.isArray(values.todos) ? values.todos : []
-  const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages' && key !== 'debug_tool_runs')
+  const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
   const toolTurns = turns.filter((turn) => turn.toolCalls.length > 0)
   const [tab, setTab] = useState<ExecutionTab>('graph')
 

@@ -60,10 +60,10 @@
 
 ## Phase 5: Transport And Protocol Thinning
 
-- [ ] 继续收薄 [deepagentsUseStreamTransport.ts](/D:/Github/Aelin/frontend/src/features/chat/hooks/deepagentsUseStreamTransport.ts)，减少手写 SSE 契约判断。
-- [ ] 检查后端 [deepagents_chat.py](/D:/Github/Aelin/backend/app/routers/deepagents_chat.py) 中哪些 `custom` 事件只是为了补前端壳层，能否继续删除或降级。
-- [ ] 尽量让前端依赖 `messages / updates / values / tasks` 这些原生流事件，而不是 Aelin 专属事件名。
-- [ ] 清理 execution/runtime 相关不再需要的旧 helper、status summary、重复 normalize 代码。
+- [x] 继续收薄 [deepagentsUseStreamTransport.ts](/D:/Github/Aelin/frontend/src/features/chat/hooks/deepagentsUseStreamTransport.ts)，减少手写 SSE 契约判断。
+- [x] 检查后端 [deepagents_chat.py](/D:/Github/Aelin/backend/app/routers/deepagents_chat.py) 中哪些 `custom` 事件只是为了补前端壳层，能否继续删除或降级。
+- [x] 尽量让前端依赖 `messages / updates / values / tasks` 这些原生流事件，而不是 Aelin 专属事件名。
+- [x] 清理 execution/runtime 相关不再需要的旧 helper、status summary、重复 normalize 代码。
 
 ## Phase 6: Optional Full Official Shape
 

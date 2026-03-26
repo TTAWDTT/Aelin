@@ -20,25 +20,6 @@ import { DeepAgentsUseStreamTransport } from './deepagentsUseStreamTransport'
 
 export type { ChatRuntimeStream, ChatStreamState }
 
-function mergeStableToolRuns(
-  prev: unknown,
-  nextItem: Record<string, unknown>,
-): Array<Record<string, unknown>> {
-  const items = Array.isArray(prev)
-    ? prev.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-    : []
-  const key = String(nextItem.key || '').trim()
-  if (!key) return items
-  const next = [...items]
-  const index = next.findIndex((item) => String(item.key || '').trim() === key)
-  if (index >= 0) {
-    next[index] = { ...next[index], ...nextItem }
-    return next
-  }
-  next.push(nextItem)
-  return next
-}
-
 function sameImages(
   left?: Array<{ dataUrl: string; name: string }>,
   right?: Array<{ dataUrl: string; name: string }>,
@@ -124,30 +105,6 @@ export function useChatStream() {
     messagesKey: 'messages',
     initialValues: {
       messages: buildSessionHistoryMessages(sessionMessages) as Array<Record<string, unknown>>,
-    },
-    onCustomEvent: (event, { mutate }) => {
-      const record = event && typeof event === 'object' && !Array.isArray(event)
-        ? event as Record<string, unknown>
-        : {}
-      const kind = String(record.kind || '')
-      if (kind === 'topology') {
-        mutate((prev) => ({
-          ...prev,
-          topology: (record.topology as Record<string, unknown> | undefined),
-        }))
-        return
-      }
-      if (kind === 'tool_run') {
-        const toolRun =
-          record.tool_run && typeof record.tool_run === 'object' && !Array.isArray(record.tool_run)
-            ? record.tool_run as Record<string, unknown>
-            : null
-        if (!toolRun) return
-        mutate((prev) => ({
-          ...prev,
-          debug_tool_runs: mergeStableToolRuns(prev?.debug_tool_runs, toolRun),
-        }))
-      }
     },
     onError: (error) => {
       setStatusText(String((error as Error)?.message || 'Stream error'))

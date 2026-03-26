@@ -376,6 +376,8 @@ def deepagents_chat_stream(
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         done_token = "__done__"
+        active_tool_keys: set[str] = set()
+        active_tool_keys_lock = threading.Lock()
         run_timeout_ms = int(
             max(
                 5.0,
@@ -490,7 +492,14 @@ def deepagents_chat_stream(
                 )
 
                 def _tool_event_cb(tool_event: dict[str, Any]) -> None:
-                    _push("custom", {"kind": "tool_run", "tool_run": tool_event})
+                    tool_key = str(tool_event.get("key") or "").strip()
+                    tool_state = str(tool_event.get("state") or "").strip().lower()
+                    if tool_key:
+                        with active_tool_keys_lock:
+                            if tool_state in {"running", "pending", "streaming"}:
+                                active_tool_keys.add(tool_key)
+                            else:
+                                active_tool_keys.discard(tool_key)
 
                 agent, usage, tool_runs, files_mapping = build_chat_agent(
                     service=service,
@@ -515,11 +524,12 @@ def deepagents_chat_stream(
 
                 topology = _serialize_agent_topology(agent)
                 if topology is not None:
-                    _push("custom", {"kind": "topology", "topology": topology})
+                    _push("values", {"topology": topology}, ns=["root"])
 
                 # 构造 DeepAgents 期望的消息格式。
                 invoke_payload = build_invoke_payload(
                     query=payload.query,
+                    query_message_id=getattr(payload, "query_message_id", ""),
                     history_turns=history_turns,
                     images=images,
                     files_mapping=files_mapping,
@@ -570,6 +580,8 @@ def deepagents_chat_stream(
                     event, data = event_queue.get(timeout=heartbeat_interval_s)
                 except queue.Empty:
                     now_ms = _now_ms()
+                    with active_tool_keys_lock:
+                        has_active_tools = bool(active_tool_keys)
                     if worker.is_alive() and now_ms - started >= run_timeout_ms:
                         cancel_token.cancelled = True
                         if not forced_stop_emitted:
@@ -582,7 +594,11 @@ def deepagents_chat_stream(
                             )
                             yield _sse_event("done", {"status": done_token})
                         break
-                    if worker.is_alive() and now_ms - last_progress_ms >= idle_timeout_ms:
+                    if (
+                        worker.is_alive()
+                        and not has_active_tools
+                        and now_ms - last_progress_ms >= idle_timeout_ms
+                    ):
                         cancel_token.cancelled = True
                         if not forced_stop_emitted:
                             forced_stop_emitted = True
@@ -595,7 +611,13 @@ def deepagents_chat_stream(
                             yield _sse_event("done", {"status": done_token})
                         break
                     heartbeat_count += 1
-                    yield _sse_event("ping", {"hb": heartbeat_count})
+                    yield _sse_event(
+                        "ping",
+                        {
+                            "hb": heartbeat_count,
+                            "active_tools": len(active_tool_keys) if has_active_tools else 0,
+                        },
+                    )
                     if (not worker.is_alive()) and event_queue.empty():
                         yield _sse_event("done", {"status": done_token})
                         break

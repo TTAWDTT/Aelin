@@ -5,7 +5,6 @@ export type ChatStreamState = {
   topology?: Record<string, unknown>
   answer?: string
   todos?: unknown[]
-  debug_tool_runs?: Array<Record<string, unknown>>
   [key: string]: unknown
 }
 
@@ -600,7 +599,7 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
   const hasExecution =
     topology.nodes.length > 0
     || normalizedTurns.length > 0
-    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages' && key !== 'debug_tool_runs')
+    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
 
   return {
     topology,

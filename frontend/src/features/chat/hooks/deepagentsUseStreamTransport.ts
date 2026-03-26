@@ -232,14 +232,6 @@ export class DeepAgentsUseStreamTransport {
             continue
           }
 
-          if (item.event === 'custom') {
-            yield {
-              event: 'custom',
-              data: parsedPayload,
-            }
-            continue
-          }
-
           if (item.event === 'done' || item.event === 'ping') {
             continue
           }
