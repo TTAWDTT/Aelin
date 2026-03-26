@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react'
 import type { AnyStreamCustomOptions } from '@langchain/langgraph-sdk/ui'
 import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import { useChatI18n } from '../chatI18n'
 import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
@@ -221,7 +221,7 @@ export function useChatStream() {
   )
 
   const uploadAttachments = useCallback(
-    async (files: File[]): Promise<AelinAttachmentUploadResponse[]> => {
+    async (files: File[]): Promise<AttachmentUploadResponse[]> => {
       if (isStreaming) return []
       const picked = Array.from(files || []).slice(0, MAX_PENDING_ATTACHMENTS)
       if (picked.length === 0) return []
@@ -236,7 +236,7 @@ export function useChatStream() {
         const settled = await Promise.allSettled(
           picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId })),
         )
-        const uploaded: AelinAttachmentUploadResponse[] = []
+        const uploaded: AttachmentUploadResponse[] = []
         const failedNames: string[] = []
         settled.forEach((result, index) => {
           if (result.status === 'fulfilled') {
@@ -259,7 +259,7 @@ export function useChatStream() {
   )
 
   const sendWithAttachments = useCallback(
-    async (attachments: AelinAttachmentUploadResponse[], textHint = '') => {
+    async (attachments: AttachmentUploadResponse[], textHint = '') => {
       if (isStreaming) return
       const rows = Array.from(attachments || []).slice(0, MAX_PENDING_ATTACHMENTS)
       if (rows.length === 0) return

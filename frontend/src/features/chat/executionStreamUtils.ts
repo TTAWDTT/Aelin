@@ -94,6 +94,16 @@ export type ExecutionTurn = {
   isStreaming: boolean
 }
 
+export type ExecutionNamespaceLane = {
+  key: string
+  label: string
+  status: 'idle' | 'completed' | 'running'
+  nodes: string[]
+  currentNode?: string
+  toolCalls: number
+  subagents: number
+}
+
 export type ExecutionRuntime = {
   topology: {
     nodes: ExecutionTopologyNode[]
@@ -106,14 +116,18 @@ export type ExecutionRuntime = {
   hasExecution: boolean
 }
 
-export type ExecutionNamespaceLane = {
+type MessageRuntimeRow = {
   key: string
-  label: string
-  status: 'idle' | 'completed' | 'running'
-  nodes: string[]
-  currentNode?: string
-  toolCalls: number
-  subagents: number
+  messageId: string
+  node: string
+  namespace: string
+  status: string
+  preview: string
+  toolCalls: ExecutionToolCall[]
+  subagents: ExecutionSubagent[]
+  messageType: string
+  hasWork: boolean
+  isStreaming: boolean
 }
 
 const GENERIC_TOOL_NAMES = new Set(['', 'tool'])
@@ -136,6 +150,11 @@ function stableJson(value: unknown, max = 180): string {
   } catch {
     return compactText(value, max)
   }
+}
+
+function normalizeStatus(value: unknown, fallback = 'idle'): string {
+  const text = String(value || '').trim().toLowerCase()
+  return text || fallback
 }
 
 function hasMeaningfulArgsText(value: string): boolean {
@@ -170,8 +189,7 @@ function messagePreview(message: BaseMessage): string {
     const joined = content
       .map((item) => {
         const record = asRecord(item)
-        if (record.type === 'text') return String(record.text || '')
-        return ''
+        return record.type === 'text' ? String(record.text || '') : ''
       })
       .filter(Boolean)
       .join(' ')
@@ -180,9 +198,182 @@ function messagePreview(message: BaseMessage): string {
   return ''
 }
 
-function normalizeStatus(value: unknown, fallback = 'idle'): string {
-  const text = String(value || '').trim().toLowerCase()
-  return text || fallback
+function createMetadataReader(stream: ChatRuntimeStream) {
+  return typeof stream.getMessagesMetadata === 'function'
+    ? stream.getMessagesMetadata.bind(stream)
+    : (() => undefined)
+}
+
+function getMessageId(message: BaseMessage, metadataMessageId: string | undefined, index: number): string {
+  const direct = String((message as any)?.id || '').trim()
+  if (direct) return direct
+  const meta = String(metadataMessageId || '').trim()
+  if (meta) return meta
+  return `message:${index}`
+}
+
+function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage): ExecutionToolCall[] {
+  if (!stream.getToolCalls) return []
+  const rows = (() => {
+    try {
+      return stream.getToolCalls?.(message) ?? []
+    } catch {
+      return []
+    }
+  })()
+  const deduped = new Map<string, ExecutionToolCall & { hasStableId: boolean }>()
+
+  rows.forEach((item, index) => {
+    const record = asRecord(item)
+    const call = asRecord(record.call)
+    const callId = String(record.id || call.id || '').trim()
+    const result = record.result
+    const tool = {
+      key: callId || `${String(call.name || record.name || 'tool').trim() || 'tool'}:${index}`,
+      name: String(call.name || record.name || 'tool').trim() || 'tool',
+      state: normalizeStatus(record.status || record.state, result == null ? 'running' : 'completed'),
+      args: call.args == null ? '' : stableJson(call.args, 160),
+      result: result == null ? '' : stableJson(result, 180),
+      hasStableId: Boolean(callId),
+    }
+
+    if (!shouldDisplayToolCall(tool, tool.hasStableId)) return
+
+    const existing = deduped.get(tool.key)
+    if (!existing) {
+      deduped.set(tool.key, tool)
+      return
+    }
+
+    const existingSettled = isSettledToolState(existing.state)
+    const nextSettled = isSettledToolState(tool.state)
+    if (!existingSettled && nextSettled) {
+      deduped.set(tool.key, tool)
+      return
+    }
+    if ((existing.result?.length || 0) <= (tool.result?.length || 0)) {
+      deduped.set(tool.key, tool)
+    }
+  })
+
+  return Array.from(deduped.values()).map(({ hasStableId: _hasStableId, ...tool }) => tool)
+}
+
+function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): ExecutionSubagent[] {
+  if (!stream.getSubagentsByMessage) return []
+  const rows = (() => {
+    try {
+      return stream.getSubagentsByMessage?.(messageId)
+    } catch {
+      return []
+    }
+  })()
+  if (!Array.isArray(rows)) return []
+  return rows.map((item, index) => {
+    const record = asRecord(item)
+    const messages = Array.isArray(record.messages) ? record.messages : []
+    return {
+      key: String(record.id || record.toolCallId || `subagent:${messageId}:${index}`),
+      name: String(record.name || record.subagent_type || 'subagent'),
+      type: String(record.subagent_type || record.type || 'subagent'),
+      status: normalizeStatus(record.status, 'idle'),
+      depth: Number(record.depth || 1),
+      messageCount: messages.length,
+      namespace: Array.isArray(record.namespace) ? record.namespace.map(String).join(' / ') : undefined,
+    }
+  })
+}
+
+function getRuntimeSubagents(stream: ChatRuntimeStream): ExecutionSubagent[] {
+  if (!(stream.subagents instanceof Map)) return []
+  return Array.from(stream.subagents.values())
+    .map((item, index) => {
+      const record = asRecord(item)
+      const toolCall = asRecord(record.toolCall)
+      const args = asRecord(toolCall.args)
+      const messages = Array.isArray(record.messages) ? record.messages : []
+      const namespace = Array.isArray(record.namespace)
+        ? record.namespace.map(String).join(' / ')
+        : ''
+      return {
+        key: String(record.id || toolCall.id || `subagent:${index}`),
+        name: String(args.subagent_type || record.name || 'subagent'),
+        type: String(args.subagent_type || record.type || 'subagent'),
+        status: normalizeStatus(record.status, 'idle'),
+        depth: Number(record.depth || 0),
+        messageCount: messages.length,
+        namespace: namespace || undefined,
+        preview: messages.length > 0 ? messagePreview(messages[messages.length - 1] as BaseMessage) : undefined,
+      }
+    })
+    .filter((item) => Boolean(item.key))
+}
+
+function getMessageRuntimeRows(stream: ChatRuntimeStream): MessageRuntimeRow[] {
+  const messages = Array.isArray(stream.messages) ? stream.messages : []
+  const readMetadata = createMetadataReader(stream)
+  const lastIndex = messages.length - 1
+
+  return messages.map((message, index) => {
+    const metadata = readMetadata(message, index)
+    const streamMetadata = asRecord(metadata?.streamMetadata)
+    const messageType = messageTypeOf(message)
+    const messageId = getMessageId(message, metadata?.messageId, index)
+    const toolCalls = getToolCallsForMessage(stream, message)
+    const subagents = getSubagentsForMessage(stream, messageId)
+    const node = String(streamMetadata.langgraph_node || '').trim()
+    const namespace = String(
+      streamMetadata.langgraph_checkpoint_ns
+      || streamMetadata.checkpoint_ns
+      || metadata?.branch
+      || 'root',
+    )
+    const isStreaming = Boolean(stream.isLoading) && index === lastIndex
+    const hasWork = Boolean(node) || toolCalls.length > 0 || subagents.length > 0
+
+    return {
+      key: `${messageId}:${node || messageType || 'turn'}`,
+      messageId,
+      node,
+      namespace,
+      status: isStreaming ? 'running' : 'completed',
+      preview: messagePreview(message),
+      toolCalls,
+      subagents,
+      messageType,
+      hasWork,
+      isStreaming,
+    }
+  })
+}
+
+function buildExecutionTurns(rows: MessageRuntimeRow[]): ExecutionTurn[] {
+  return rows
+    .filter((row) => row.hasWork && (Boolean(row.node) || row.messageType === 'ai'))
+    .map((row) => ({
+      key: row.key,
+      messageId: row.messageId,
+      node: row.node || row.messageType || 'message',
+      namespace: row.namespace,
+      preview: row.preview,
+      status: row.status,
+      toolCalls: row.toolCalls,
+      subagents: row.subagents,
+      isStreaming: row.isStreaming,
+    }))
+}
+
+function buildExecutionActivities(rows: MessageRuntimeRow[]): ExecutionActivity[] {
+  return rows
+    .filter((row) => row.hasWork && Boolean(row.node))
+    .map((row) => ({
+      key: `${row.messageId}:${row.node}`,
+      node: row.node,
+      namespace: row.namespace,
+      status: row.status,
+      toolCalls: row.toolCalls.length,
+      subagents: row.subagents.length,
+    }))
 }
 
 function computeDepths(
@@ -260,6 +451,7 @@ function buildExecutionTopology(
       }
     })
     .filter((item): item is { id: string; name: string; kind: string } => item != null)
+
   const depths = computeDepths(baseNodes, rawEdges)
   const nodeIds = new Set(baseNodes.map((node) => node.id))
   const turnCounts = new Map<string, number>()
@@ -315,11 +507,12 @@ function buildExecutionTopology(
           : 'idle',
     })),
     edges: rawEdges.map((edge) => {
-      const traversed = edgeTraversals.get(`${edge.source}->${edge.target}`) ?? 0
+      const edgeKey = `${edge.source}->${edge.target}`
+      const traversed = edgeTraversals.get(edgeKey) ?? 0
       return {
         ...edge,
         traversed,
-        namespaces: traversedNamespacesByEdge.get(`${edge.source}->${edge.target}`)?.size ?? 0,
+        namespaces: traversedNamespacesByEdge.get(edgeKey)?.size ?? 0,
         active:
           traversed > 0
           || (activeNamespacesByNode.get(edge.source)?.size ?? 0) > 0
@@ -327,204 +520,6 @@ function buildExecutionTopology(
       }
     }),
   }
-}
-
-function getMessageId(message: BaseMessage, metadataMessageId: string | undefined, index: number): string {
-  const direct = String((message as any)?.id || '').trim()
-  if (direct) return direct
-  const meta = String(metadataMessageId || '').trim()
-  if (meta) return meta
-  return `message:${index}`
-}
-
-function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage): ExecutionToolCall[] {
-  if (!stream.getToolCalls) return []
-  const rows = (() => {
-    try {
-      return stream.getToolCalls?.(message) ?? []
-    } catch {
-      return []
-    }
-  })()
-  const toolCalls = rows.map((item, index) => {
-    const record = asRecord(item)
-    const call = asRecord(record.call)
-    const callId = String(record.id || call.id || '').trim()
-    const result = record.result
-    const name = String(call.name || record.name || 'tool').trim() || 'tool'
-    const args = call.args == null ? '' : stableJson(call.args, 160)
-    const resolvedState = normalizeStatus(record.status || record.state, result == null ? 'running' : 'completed')
-    return {
-      key: callId || `${name}:${index}`,
-      name,
-      state: resolvedState,
-      args,
-      result: result == null ? '' : stableJson(result, 180),
-      hasStableId: Boolean(callId),
-    }
-  })
-  const deduped = new Map<string, ExecutionToolCall & { hasStableId: boolean }>()
-  for (const tool of toolCalls) {
-    if (!shouldDisplayToolCall(tool, tool.hasStableId)) {
-      continue
-    }
-    const existing = deduped.get(tool.key)
-    if (!existing) {
-      deduped.set(tool.key, tool)
-      continue
-    }
-    const existingSettled = isSettledToolState(existing.state)
-    const nextSettled = isSettledToolState(tool.state)
-    if (!existingSettled && nextSettled) {
-      deduped.set(tool.key, tool)
-      continue
-    }
-    if ((existing.result?.length || 0) <= (tool.result?.length || 0)) {
-      deduped.set(tool.key, tool)
-    }
-  }
-  return Array.from(deduped.values()).map(({ hasStableId: _hasStableId, ...tool }) => tool)
-}
-
-function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): ExecutionSubagent[] {
-  if (!stream.getSubagentsByMessage) return []
-  const rows = (() => {
-    try {
-      return stream.getSubagentsByMessage?.(messageId)
-    } catch {
-      return []
-    }
-  })()
-  if (!Array.isArray(rows)) return []
-  return rows.map((item, index) => {
-    const record = item as unknown as Record<string, unknown>
-    const messages = Array.isArray(record.messages) ? record.messages : []
-    return {
-      key: String(record.id || record.toolCallId || `subagent:${messageId}:${index}`),
-      name: String(record.name || record.subagent_type || 'subagent'),
-      type: String(record.subagent_type || record.type || 'subagent'),
-      status: normalizeStatus(record.status, 'idle'),
-      depth: Number(record.depth || 1),
-      messageCount: messages.length,
-      namespace: Array.isArray(record.namespace) ? record.namespace.map(String).join(' / ') : undefined,
-    }
-  })
-}
-
-function getRuntimeSubagents(stream: ChatRuntimeStream): ExecutionSubagent[] {
-  if (!(stream.subagents instanceof Map)) return []
-  return Array.from(stream.subagents.values())
-    .map((item, index) => {
-      const record = asRecord(item)
-      const toolCall = asRecord(record.toolCall)
-      const args = asRecord(toolCall.args)
-      const messages = Array.isArray(record.messages) ? record.messages : []
-      const namespace = Array.isArray(record.namespace)
-        ? record.namespace.map(String).join(' / ')
-        : ''
-      return {
-        key: String(record.id || toolCall.id || `subagent:${index}`),
-        name: String(args.subagent_type || record.name || 'subagent'),
-        type: String(args.subagent_type || record.type || 'subagent'),
-        status: normalizeStatus(record.status, 'idle'),
-        depth: Number(record.depth || 0),
-        messageCount: messages.length,
-        namespace: namespace || undefined,
-        preview: messages.length > 0 ? messagePreview(messages[messages.length - 1] as BaseMessage) : undefined,
-      }
-    })
-    .filter((item) => Boolean(item.key))
-}
-
-export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
-  const messages = Array.isArray(stream.messages) ? stream.messages : []
-  const isLoading = Boolean(stream.isLoading)
-  const getMessagesMetadata =
-    typeof stream.getMessagesMetadata === 'function'
-      ? stream.getMessagesMetadata.bind(stream)
-      : (() => undefined)
-
-  return messages
-    .map((message, index) => {
-      const metadata = getMessagesMetadata(message, index)
-      const streamMetadata = asRecord(metadata?.streamMetadata)
-      const node = String(streamMetadata.langgraph_node || '').trim()
-      const messageType = messageTypeOf(message)
-      const messageId = getMessageId(message, metadata?.messageId, index)
-      const toolCalls = getToolCallsForMessage(stream, message)
-      const subagents = getSubagentsForMessage(stream, messageId)
-      const preview = messagePreview(message)
-      const namespace = String(
-        streamMetadata.langgraph_checkpoint_ns
-        || streamMetadata.checkpoint_ns
-        || metadata?.branch
-        || 'root',
-      )
-
-      if (
-        !node
-        && toolCalls.length === 0
-        && subagents.length === 0
-        && messageType !== 'ai'
-      ) {
-        return null
-      }
-
-      const hasWork = toolCalls.length > 0 || subagents.length > 0 || Boolean(node)
-      if (!hasWork) return null
-
-      return {
-        key: `${messageId}:${node || 'turn'}`,
-        messageId,
-        node: node || messageType || 'message',
-        namespace,
-        preview,
-        status: isLoading && index === messages.length - 1 ? 'running' : 'completed',
-        toolCalls,
-        subagents,
-        isStreaming: isLoading && index === messages.length - 1,
-      }
-    })
-    .filter((item): item is ExecutionTurn => item != null)
-}
-
-function getExecutionActivities(stream: ChatRuntimeStream): ExecutionActivity[] {
-  const messages = Array.isArray(stream.messages) ? stream.messages : []
-  const isLoading = Boolean(stream.isLoading)
-  const getMessagesMetadata =
-    typeof stream.getMessagesMetadata === 'function'
-      ? stream.getMessagesMetadata.bind(stream)
-      : (() => undefined)
-
-  return messages
-    .map((message, index) => {
-      const metadata = getMessagesMetadata(message, index)
-      const streamMetadata = asRecord(metadata?.streamMetadata)
-      const node = String(streamMetadata.langgraph_node || '').trim()
-      const messageType = messageTypeOf(message)
-      const messageId = getMessageId(message, metadata?.messageId, index)
-      const namespace = String(
-        streamMetadata.langgraph_checkpoint_ns
-        || streamMetadata.checkpoint_ns
-        || metadata?.branch
-        || 'root',
-      )
-      const toolCalls = getToolCallsForMessage(stream, message)
-      const subagents = getSubagentsForMessage(stream, messageId)
-      if (!node && toolCalls.length === 0 && subagents.length === 0 && messageType !== 'ai') {
-        return null
-      }
-      if (!node) return null
-      return {
-        key: `${messageId}:${node}`,
-        node,
-        namespace,
-        status: isLoading && index === messages.length - 1 ? 'running' : 'completed',
-        toolCalls: toolCalls.length,
-        subagents: subagents.length,
-      }
-    })
-    .filter((item): item is ExecutionActivity => item != null)
 }
 
 function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespaceLane[] {
@@ -536,7 +531,6 @@ function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespac
   }
   return Array.from(byNamespace.entries())
     .map(([namespace, items]) => {
-      const nodes = Array.from(new Set(items.map((item) => item.node).filter(Boolean)))
       const status: ExecutionNamespaceLane['status'] = items.some((item) => item.status === 'running')
         ? 'running'
         : items.length > 0
@@ -546,7 +540,7 @@ function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespac
         key: namespace,
         label: namespace === 'root' ? 'root' : namespace,
         status,
-        nodes,
+        nodes: Array.from(new Set(items.map((item) => item.node).filter(Boolean))),
         currentNode: items[items.length - 1]?.node,
         toolCalls: items.reduce((sum, item) => sum + item.toolCalls, 0),
         subagents: items.reduce((sum, item) => sum + item.subagents, 0),
@@ -560,51 +554,36 @@ function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespac
     })
 }
 
+export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
+  return buildExecutionTurns(getMessageRuntimeRows(stream))
+}
+
 export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, ExecutionToolCall[]> {
-  const messages = Array.isArray(stream.messages) ? stream.messages : []
-  const getMessagesMetadata =
-    typeof stream.getMessagesMetadata === 'function'
-      ? stream.getMessagesMetadata.bind(stream)
-      : (() => undefined)
-  const entries = messages
-    .map((message, index) => {
-      const metadata = getMessagesMetadata(message, index)
-      const messageId = getMessageId(message, metadata?.messageId, index)
-      const toolCalls = getToolCallsForMessage(stream, message)
-      return toolCalls.length > 0 ? [messageId, toolCalls] as const : null
-    })
-    .filter((item): item is readonly [string, ExecutionToolCall[]] => item != null)
+  const entries = getMessageRuntimeRows(stream)
+    .filter((row) => row.toolCalls.length > 0)
+    .map((row) => [row.messageId, row.toolCalls] as const)
   return new Map(entries)
 }
 
 export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
-  const turns = getExecutionTurns(stream)
-  const activities = getExecutionActivities(stream)
-  const normalizedTurns = turns.map((turn) => {
-    const toolMap = new Map<string, ExecutionToolCall>()
-    for (const tool of turn.toolCalls) {
-      if (!toolMap.has(tool.key)) {
-        toolMap.set(tool.key, tool)
-      }
-    }
-    return {
-      ...turn,
-      toolCalls: Array.from(toolMap.values()),
-    }
-  })
+  const rows = getMessageRuntimeRows(stream)
+  const turns = buildExecutionTurns(rows).map((turn) => ({
+    ...turn,
+    toolCalls: Array.from(new Map(turn.toolCalls.map((tool) => [tool.key, tool])).values()),
+  }))
+  const activities = buildExecutionActivities(rows)
   const topology = buildExecutionTopology(asRecord(stream.values?.topology), activities)
-  const lanes = buildExecutionLanes(activities)
-  const tools = normalizedTurns.flatMap((turn) => turn.toolCalls)
   const subagents = getRuntimeSubagents(stream)
+  const tools = turns.flatMap((turn) => turn.toolCalls)
   const hasExecution =
     topology.nodes.length > 0
-    || normalizedTurns.length > 0
+    || turns.length > 0
     || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
 
   return {
     topology,
-    lanes,
-    turns: normalizedTurns,
+    lanes: buildExecutionLanes(activities),
+    turns,
     tools,
     subagents,
     hasExecution,
@@ -618,20 +597,19 @@ export function summarizeExecutionStatus(
     fallback: string
   },
 ): string {
-  const { turns, tools, subagents } = runtime
-  const runningSubagents = subagents.filter((item) => item.status === 'running' || item.status === 'pending').length
+  const runningSubagents = runtime.subagents.filter((item) => item.status === 'running' || item.status === 'pending').length
   if (runningSubagents > 0) {
     return runningSubagents === 1
       ? '正在运行 1 个子代理…'
       : `正在运行 ${runningSubagents} 个子代理…`
   }
 
-  const activeTools = tools.filter((item) => item.state === 'running' || item.state === 'pending')
+  const activeTools = runtime.tools.filter((item) => item.state === 'running' || item.state === 'pending')
   if (activeTools.length > 0) {
     return `正在调用工具… ${activeTools.slice(0, 3).map((item) => item.name).join(' · ')}`
   }
 
-  const last = turns.at(-1)
+  const last = runtime.turns.at(-1)
   if (options.isLoading && last?.node) {
     return `正在执行 ${last.node}…`
   }

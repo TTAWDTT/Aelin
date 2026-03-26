@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
-import type { ChatAction, AelinBrowserConfirmResponse } from '@/shared/api/types'
+import type { BrowserConfirmResponse, ChatAction } from '@/shared/api/types'
 import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
 import type { ChatMessage } from '../chatTypes'
 import { useChatStore } from '../stores/chatStore'
@@ -15,7 +15,7 @@ interface UseMessageBubbleActionsOptions {
   onQuickPrompt?: (text: string) => void
 }
 
-function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId: string | null) {
+function appendFollowupMessage(response: BrowserConfirmResponse, sessionId: string | null) {
   const followup = (response.followup_result || {}) as Record<string, unknown>
   const followupAnswer = String(followup.answer || '').trim()
   if (!response.continued || !followupAnswer) return

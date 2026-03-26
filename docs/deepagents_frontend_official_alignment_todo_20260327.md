@@ -65,6 +65,12 @@
 - [x] 尽量让前端依赖 `messages / updates / values / tasks` 这些原生流事件，而不是 Aelin 专属事件名。
 - [x] 清理 execution/runtime 相关不再需要的旧 helper、status summary、重复 normalize 代码。
 
+## Residual Cleanup Follow-up
+
+- [x] 将前端共享 API 类型优先切到通用命名，仅保留 `Aelin*` 兼容别名。
+- [x] 将 execution runtime 的重复消息遍历收敛为单次 row 构建。
+- [x] 将 stream transport 的事件翻译收敛为单一路径，减少分支散落。
+
 ## Phase 6: Optional Full Official Shape
 
 - [x] 评估是否迁移到更接近 LangGraph Agent Server 的协议形态。

@@ -9,7 +9,7 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
-import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { getExecutionRuntime, getMessageToolCallMap } from './executionStreamUtils'
@@ -67,7 +67,7 @@ export function ChatView() {
     }
   }
 
-  const handleSendWithAttachments = async (attachments: AelinAttachmentUploadResponse[], textHint: string) => {
+  const handleSendWithAttachments = async (attachments: AttachmentUploadResponse[], textHint: string) => {
     try {
       await sendWithAttachments(attachments, textHint)
     } catch (error: any) {

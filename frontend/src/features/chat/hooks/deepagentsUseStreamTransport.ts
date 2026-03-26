@@ -26,6 +26,8 @@ type TransportStreamEvent = {
   data: unknown
 }
 
+const PASS_THROUGH_EVENTS = ['updates', 'tasks', 'values'] as const
+
 interface DeepAgentsUseStreamTransportOptions {
   apiUrl: string
   getToken: () => string | null
@@ -95,6 +97,83 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function hasEventPrefix(eventName: string, prefixes: readonly string[]) {
+  return prefixes.some((prefix) => eventName === prefix || eventName.startsWith(`${prefix}|`))
+}
+
+function buildStreamBody(
+  payload: {
+    input: Record<string, unknown> | null | undefined
+    context?: Record<string, unknown>
+    config?: Record<string, unknown>
+  },
+  options: DeepAgentsUseStreamTransportOptions,
+  threadId: string,
+): ChatRequest {
+  const inputRecord = (payload.input ?? {}) as Record<string, unknown>
+  const inputMessages = Array.isArray(inputRecord.messages)
+    ? inputRecord.messages as StreamMessageLike[]
+    : []
+  const contextRecord =
+    payload.context && typeof payload.context === 'object' && !Array.isArray(payload.context)
+      ? payload.context as Record<string, unknown>
+      : {}
+  const attachmentIds = Array.isArray(contextRecord.attachment_ids)
+    ? contextRecord.attachment_ids.filter((id): id is number => Number.isFinite(Number(id))).map(Number)
+    : []
+
+  return buildChatRequestFromStream({
+    historyMessages: buildSessionHistoryMessages(getSessionMessages(threadId)),
+    inputMessages,
+    workspace: String(contextRecord.workspace || options.getWorkspace(threadId) || 'default'),
+    attachmentIds,
+    source: String(contextRecord.source || options.getSource?.() || 'chat_ui'),
+  })
+}
+
+function toTransportEvent(
+  item: RawSseEvent,
+  parsedPayload: RawSsePayload,
+  threadId: string,
+): TransportStreamEvent | null {
+  if (item.event === 'metadata') {
+    return {
+      event: 'metadata',
+      data: {
+        ...asRecord(parsedPayload),
+        thread_id: threadId,
+      },
+    }
+  }
+
+  if (item.event === 'error') {
+    const message = String((parsedPayload as Record<string, unknown>).message || 'stream error')
+    return {
+      event: 'error',
+      data: { error: message, message },
+    }
+  }
+
+  if (item.event === 'messages' || item.event.startsWith('messages|')) {
+    const tuple = Array.isArray(parsedPayload) ? parsedPayload : []
+    const message = normalizeStreamMessage(tuple[0], asRecord(tuple[1]), threadId)
+    if (!message) return null
+    return {
+      event: item.event,
+      data: [message, asRecord(tuple[1])],
+    }
+  }
+
+  if (hasEventPrefix(item.event, PASS_THROUGH_EVENTS)) {
+    return {
+      event: item.event,
+      data: parsedPayload,
+    }
+  }
+
+  return null
+}
+
 function buildStableFallbackId(
   threadId: string,
   message: Record<string, unknown>,
@@ -161,27 +240,7 @@ export class DeepAgentsUseStreamTransport {
       (payload.config as Record<string, any> | undefined)?.configurable?.thread_id
       || crypto.randomUUID(),
     )
-    const inputRecord = (payload.input ?? {}) as Record<string, unknown>
-    const inputMessages = Array.isArray(inputRecord.messages)
-      ? inputRecord.messages as StreamMessageLike[]
-      : []
-
-    const contextRecord =
-      payload.context && typeof payload.context === 'object' && !Array.isArray(payload.context)
-        ? payload.context as Record<string, unknown>
-        : {}
-
-    const attachmentIds = Array.isArray(contextRecord.attachment_ids)
-      ? contextRecord.attachment_ids.filter((id): id is number => Number.isFinite(Number(id))).map(Number)
-      : []
-
-    const body: ChatRequest = buildChatRequestFromStream({
-      historyMessages: buildSessionHistoryMessages(getSessionMessages(threadId)),
-      inputMessages,
-      workspace: String(contextRecord.workspace || this.options.getWorkspace(threadId) || 'default'),
-      attachmentIds,
-      source: String(contextRecord.source || this.options.getSource?.() || 'chat_ui'),
-    })
+    const body = buildStreamBody(payload, this.options, threadId)
 
     const response = await fetch(this.options.apiUrl, {
       method: 'POST',
@@ -217,56 +276,13 @@ export class DeepAgentsUseStreamTransport {
           const parsedPayload = toPayload(item.data)
           if (!parsedPayload) continue
 
-          if (item.event === 'metadata') {
-            const record =
-              parsedPayload && typeof parsedPayload === 'object' && !Array.isArray(parsedPayload)
-                ? parsedPayload as Record<string, unknown>
-                : {}
-            yield {
-              event: 'metadata',
-              data: {
-                ...record,
-                thread_id: threadId,
-              },
-            }
-            continue
-          }
-
           if (item.event === 'done' || item.event === 'ping') {
             continue
           }
 
-          if (item.event === 'error') {
-            const message = String((parsedPayload as Record<string, unknown>).message || 'stream error')
-            yield {
-              event: 'error',
-              data: { error: message, message },
-            }
-            continue
-          }
-
-          if (item.event === 'messages' || item.event.startsWith('messages|')) {
-            const tuple = Array.isArray(parsedPayload) ? parsedPayload : []
-            const rawMessage = tuple[0]
-            const metadata = asRecord(tuple[1])
-            const message = normalizeStreamMessage(rawMessage, metadata, threadId)
-            if (!message) continue
-            yield {
-              event: item.event,
-              data: [message, metadata],
-            }
-            continue
-          }
-
-          if (
-            item.event === 'updates' || item.event.startsWith('updates|')
-            || item.event === 'tasks' || item.event.startsWith('tasks|')
-            || item.event === 'values' || item.event.startsWith('values|')
-          ) {
-            yield {
-              event: item.event,
-              data: parsedPayload,
-            }
+          const transportEvent = toTransportEvent(item, parsedPayload, threadId)
+          if (transportEvent) {
+            yield transportEvent
           }
         }
       }
