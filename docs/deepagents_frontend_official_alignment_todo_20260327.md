@@ -33,7 +33,7 @@
 - [x] 让 `chatStore` 只保留 UI 偏好、本地草稿、当前 session/workspace、pane 开关，而不再保存 canonical message list。
 - [x] 删除 `stream -> chatStore -> timeline` 的双轨同步路径。
 - [x] 把当前消息重复、助手拆条、placeholder 等兼容逻辑继续下沉，尽量减少“流后修补”代码。
-- [ ] 为“单次 submit 只出现一条 user message / 一条 assistant stream”补前端回归测试。
+- [x] 为“单次 submit 只出现一条 user message / 一条 assistant stream”补前端回归测试。
 
 ## Phase 2: Tool Rendering Native-First
 
@@ -67,7 +67,7 @@
 
 ## Phase 6: Optional Full Official Shape
 
-- [ ] 评估是否迁移到更接近 LangGraph Agent Server 的协议形态。
+- [x] 评估是否迁移到更接近 LangGraph Agent Server 的协议形态。
 - [ ] 若迁移，则引入官方 queue / branch / thread history 语义，吃满 `stream.queue` 能力。
 - [ ] 将“多条消息排队、跟进消息 enqueue、取消队列项”设计为产品能力，而不是只支持单次当前 run。
 - [ ] 再评估前端是否需要为 branch/time-travel 提供 UI，而不是只停留在当前单线程流式聊天。
@@ -80,8 +80,8 @@
 
 ## Exit Criteria
 
-- [ ] 聊天区消息完全由 `useStream` 驱动，不再有双轨消息状态。
-- [ ] 工具、subagents、todos 展示主要基于官方 runtime data，而不是 Aelin 自定义重建层。
-- [ ] Execution Pane 的 graph 高亮与节点状态来自 metadata / state，而不是 turns 猜测。
-- [ ] transport / stream adapter 明显变薄，旧 execution mapping 代码体积显著下降。
-- [ ] 如不迁 Agent Server，也要明确记录“当前不支持 queue/branch 完整体验”的边界；如迁移，则接入官方 queue 能力。
+- [x] 聊天区消息完全由 `useStream` 驱动，不再有双轨消息状态。
+- [x] 工具、subagents、todos 展示主要基于官方 runtime data，而不是 Aelin 自定义重建层。
+- [x] Execution Pane 的 graph 高亮与节点状态来自 metadata / state，而不是 turns 猜测。
+- [x] transport / stream adapter 明显变薄，旧 execution mapping 代码体积显著下降。
+- [x] 如不迁 Agent Server，也要明确记录“当前不支持 queue/branch 完整体验”的边界；如迁移，则接入官方 queue 能力。
