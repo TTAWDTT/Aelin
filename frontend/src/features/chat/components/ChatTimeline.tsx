@@ -25,6 +25,8 @@ export function ChatTimeline({
 }: ChatTimelineProps) {
   const isEmpty = messages.length === 0
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
+  const lastMessage = messages.at(-1)
+  const showPendingAssistant = isStreaming && lastMessage?.role !== 'assistant'
   const { t } = useChatI18n()
 
   return (
@@ -56,6 +58,23 @@ export function ChatTimeline({
               </div>
             )
           })}
+          {showPendingAssistant && (
+            <div className="flex flex-col gap-1.5">
+              <MessageBubble
+                message={{
+                  id: 'pending-assistant',
+                  role: 'assistant',
+                  content: '',
+                  timestamp: Date.now(),
+                }}
+                isThinking
+                thinkingText={statusText}
+                compact={compact}
+                viewportWidth={viewportWidth}
+                onQuickPrompt={onQuickPrompt}
+              />
+            </div>
+          )}
           {isStreaming && <div className="h-2" />}
         </div>
       )}

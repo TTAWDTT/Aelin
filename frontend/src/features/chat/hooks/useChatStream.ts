@@ -156,21 +156,8 @@ export function useChatStream() {
     if (!session) return []
     if (stream.messages.length === 0) return sessionMessages
     const nextMessages = streamMessagesToChatMessages(stream.messages as any, sessionMessages)
-    const resolvedMessages = nextMessages.length > 0 ? nextMessages : sessionMessages
-    const lastVisibleMessage = resolvedMessages.at(-1)
-    if (!stream.isLoading || lastVisibleMessage?.role === 'assistant') {
-      return resolvedMessages
-    }
-    return [
-      ...resolvedMessages,
-      {
-        id: `pending-assistant:${activeSessionId || session.id}`,
-        role: 'assistant' as const,
-        content: '',
-        timestamp: Date.now(),
-      },
-    ]
-  }, [activeSessionId, session, sessionMessages, stream.isLoading, stream.messages])
+    return nextMessages.length > 0 ? nextMessages : sessionMessages
+  }, [session, sessionMessages, stream.messages])
 
   useEffect(() => {
     if (isStreaming !== stream.isLoading) {
