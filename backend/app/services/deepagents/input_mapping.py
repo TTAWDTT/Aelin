@@ -20,11 +20,15 @@ def normalize_history_turns(history_turns: Sequence[Any] | None) -> list[dict[st
     for turn in list(history_turns or [])[-MAX_HISTORY_TURNS:]:
         role = str(_field(turn, "role") or "").strip().lower()
         content = str(_field(turn, "content") or "").strip()
+        message_id = str(_field(turn, "id") or "").strip()
         if role not in {"user", "assistant", "system"}:
             continue
         if not content:
             continue
-        messages.append({"role": role, "content": content[:3000]})
+        row = {"role": role, "content": content[:3000]}
+        if message_id:
+            row["id"] = message_id[:128]
+        messages.append(row)
     return messages
 
 
@@ -46,13 +50,20 @@ def normalize_image_inputs(images: Sequence[Any] | None) -> list[dict[str, str]]
 def build_chat_messages(
     *,
     query: str,
+    query_message_id: str = "",
     history_turns: Sequence[Any] | None = None,
     images: Sequence[Any] | None = None,
 ) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [
-        {"role": turn["role"], "content": turn["content"]}
-        for turn in normalize_history_turns(history_turns)
-    ]
+    messages: list[dict[str, Any]] = []
+    for turn in normalize_history_turns(history_turns):
+        row: dict[str, Any] = {
+            "role": turn["role"],
+            "content": turn["content"],
+        }
+        turn_id = str(turn.get("id") or "").strip()
+        if turn_id:
+            row["id"] = turn_id
+        messages.append(row)
 
     latest_query = str(query or "").strip()
     if not latest_query:
@@ -60,7 +71,10 @@ def build_chat_messages(
 
     image_inputs = normalize_image_inputs(images)
     if not image_inputs:
-        messages.append({"role": "user", "content": latest_query})
+        latest_row: dict[str, Any] = {"role": "user", "content": latest_query}
+        if query_message_id:
+            latest_row["id"] = str(query_message_id).strip()[:128]
+        messages.append(latest_row)
         return messages
 
     content_blocks: list[dict[str, Any]] = [{"type": "text", "text": latest_query}]
@@ -74,18 +88,20 @@ def build_chat_messages(
                 "image_url": {"url": data_url},
             }
         )
-    messages.append(
-        {
-            "role": "user",
-            "content": content_blocks if len(content_blocks) > 1 else latest_query,
-        }
-    )
+    latest_row = {
+        "role": "user",
+        "content": content_blocks if len(content_blocks) > 1 else latest_query,
+    }
+    if query_message_id:
+        latest_row["id"] = str(query_message_id).strip()[:128]
+    messages.append(latest_row)
     return messages
 
 
 def build_invoke_payload(
     *,
     query: str,
+    query_message_id: str = "",
     history_turns: Sequence[Any] | None = None,
     images: Sequence[Any] | None = None,
     files_mapping: Mapping[str, Any] | None = None,
@@ -93,6 +109,7 @@ def build_invoke_payload(
     payload: dict[str, Any] = {
         "messages": build_chat_messages(
             query=query,
+            query_message_id=query_message_id,
             history_turns=history_turns,
             images=images,
         )

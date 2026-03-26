@@ -372,9 +372,45 @@ def _invoke_tool(
     )
     worker = threading.Thread(target=_run_handler, daemon=True)
     worker.start()
-    worker.join(timeout=timeout_seconds)
+    wait_slice_seconds = 0.5
+    heartbeat_interval_seconds = 3.0
+    last_heartbeat_at = started
+    cancelled_midflight = False
+    deadline = started + timeout_seconds
 
-    if worker.is_alive():
+    while worker.is_alive():
+        now = perf_counter()
+        remaining = deadline - now
+        if remaining <= 0:
+            break
+        worker.join(timeout=min(wait_slice_seconds, remaining))
+        if not worker.is_alive():
+            break
+        if is_cancelled(cancel_token):
+            cancelled_midflight = True
+            break
+        current = perf_counter()
+        if current - last_heartbeat_at >= heartbeat_interval_seconds:
+            _emit_tool_event(
+                tool_event_cb,
+                {
+                    "key": tool_key,
+                    "name": name,
+                    "args": args,
+                    "state": "running",
+                    "result": {},
+                    "error": "",
+                    "is_write": decision.is_write,
+                    "latency_ms": int((current - started) * 1000),
+                },
+            )
+            last_heartbeat_at = current
+
+    if cancelled_midflight:
+        result = _result_error(
+            f"{name}_cancelled: request cancelled while tool was running"
+        )
+    elif worker.is_alive():
         result = _result_error(
             f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; adjust arguments once or stop using this tool and answer from current evidence"
         )
@@ -392,7 +428,10 @@ def _invoke_tool(
     if decision.is_write:
         usage.write_calls += 1
     usage.note_result(result)
-    status = "completed" if bool(result.get("ok", True)) else "failed"
+    if cancelled_midflight:
+        status = "cancelled"
+    else:
+        status = "completed" if bool(result.get("ok", True)) else "failed"
     error = "" if status == "completed" else str(result.get("error") or "")[:160]
 
     # Provide a compact, human-friendly summary string for UI/trace rendering.

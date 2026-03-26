@@ -59,6 +59,7 @@ class AgentFocusItemOut(BaseModel):
 
 class ChatRequest(BaseModel):
     query: str = Field(default="", max_length=1200)
+    query_message_id: str = Field(default="", max_length=128)
     use_memory: bool = True
     workspace: str = Field(default="default", min_length=1, max_length=64)
     source: str = Field(default="chat_ui", min_length=1, max_length=32)
@@ -71,6 +72,11 @@ class ChatRequest(BaseModel):
     @classmethod
     def _normalize_query(cls, value: Any) -> str:
         return str(value or "").strip()
+
+    @field_validator("query_message_id", mode="before")
+    @classmethod
+    def _normalize_query_message_id(cls, value: Any) -> str:
+        return str(value or "").strip()[:128]
 
     @field_validator("images", mode="before")
     @classmethod
@@ -96,7 +102,11 @@ class ChatRequest(BaseModel):
                 continue
             if not content:
                 continue
-            normalized.append({"role": role[:16], "content": content[:3000]})
+            message_id = str(item.get("id") or "").strip()[:128]
+            row = {"role": role[:16], "content": content[:3000]}
+            if message_id:
+                row["id"] = message_id
+            normalized.append(row)
         return normalized
 
     @field_validator("source", mode="before")
@@ -144,6 +154,7 @@ class ChatRequest(BaseModel):
 class ChatHistoryTurn(BaseModel):
     role: str = Field(min_length=1, max_length=16)
     content: str = Field(min_length=1, max_length=3000)
+    id: str = Field(default="", max_length=128)
 
 
 class ImageInput(BaseModel):
