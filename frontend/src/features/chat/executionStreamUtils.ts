@@ -36,6 +36,7 @@ export type ExecutionTopologyNode = {
   visits: number
   toolCalls: number
   subagents: number
+  activeNamespaces: number
   status: 'idle' | 'completed' | 'running'
 }
 
@@ -45,12 +46,22 @@ export type ExecutionTopologyEdge = {
   conditional?: boolean
   active: boolean
   traversed: number
+  namespaces: number
 }
 
 type BaseTopologyEdge = {
   source: string
   target: string
   conditional: boolean
+}
+
+type ExecutionActivity = {
+  key: string
+  node: string
+  namespace: string
+  status: string
+  toolCalls: number
+  subagents: number
 }
 
 export type ExecutionToolCall = {
@@ -89,10 +100,18 @@ export type ExecutionRuntime = {
     nodes: ExecutionTopologyNode[]
     edges: ExecutionTopologyEdge[]
   }
+  lanes: ExecutionNamespaceLane[]
   turns: ExecutionTurn[]
   tools: ExecutionToolCall[]
   subagents: ExecutionSubagent[]
   hasExecution: boolean
+}
+
+export type ExecutionNamespaceLane = {
+  key: string
+  label: string
+  status: 'idle' | 'completed' | 'running'
+  nodes: string[]
 }
 
 const GENERIC_TOOL_NAMES = new Set(['', 'tool'])
@@ -207,7 +226,7 @@ function computeDepths(
 
 function buildExecutionTopology(
   raw: Record<string, unknown>,
-  turns: ExecutionTurn[],
+  activities: ExecutionActivity[],
 ): {
   nodes: ExecutionTopologyNode[]
   edges: ExecutionTopologyEdge[]
@@ -227,7 +246,6 @@ function buildExecutionTopology(
     })
     .filter((item): item is BaseTopologyEdge => item != null)
 
-  const latestTurn = turns.at(-1)
   const baseNodes = rawNodes
     .map((item) => {
       const record = asRecord(item)
@@ -242,24 +260,42 @@ function buildExecutionTopology(
     .filter((item): item is { id: string; name: string; kind: string } => item != null)
   const depths = computeDepths(baseNodes, rawEdges)
   const nodeIds = new Set(baseNodes.map((node) => node.id))
-  const turnNodeKeys = turns.map((turn) => turn.node).filter((node) => nodeIds.has(node))
   const turnCounts = new Map<string, number>()
   const toolCallCounts = new Map<string, number>()
   const subagentCounts = new Map<string, number>()
   const edgeTraversals = new Map<string, number>()
+  const activeNamespacesByNode = new Map<string, Set<string>>()
+  const traversedNamespacesByEdge = new Map<string, Set<string>>()
+  const activitiesByNamespace = new Map<string, ExecutionActivity[]>()
 
-  for (const turn of turns) {
-    if (!nodeIds.has(turn.node)) continue
-    turnCounts.set(turn.node, (turnCounts.get(turn.node) ?? 0) + 1)
-    toolCallCounts.set(turn.node, (toolCallCounts.get(turn.node) ?? 0) + turn.toolCalls.length)
-    subagentCounts.set(turn.node, (subagentCounts.get(turn.node) ?? 0) + turn.subagents.length)
+  for (const activity of activities) {
+    if (!nodeIds.has(activity.node)) continue
+    turnCounts.set(activity.node, (turnCounts.get(activity.node) ?? 0) + 1)
+    toolCallCounts.set(activity.node, (toolCallCounts.get(activity.node) ?? 0) + activity.toolCalls)
+    subagentCounts.set(activity.node, (subagentCounts.get(activity.node) ?? 0) + activity.subagents)
+    const bucket = activitiesByNamespace.get(activity.namespace) ?? []
+    bucket.push(activity)
+    activitiesByNamespace.set(activity.namespace, bucket)
+    if (activity.status === 'running') {
+      const namespaces = activeNamespacesByNode.get(activity.node) ?? new Set<string>()
+      namespaces.add(activity.namespace)
+      activeNamespacesByNode.set(activity.node, namespaces)
+    }
   }
 
-  for (let index = 0; index < turnNodeKeys.length - 1; index += 1) {
-    const source = turnNodeKeys[index]
-    const target = turnNodeKeys[index + 1]
-    const edgeKey = `${source}->${target}`
-    edgeTraversals.set(edgeKey, (edgeTraversals.get(edgeKey) ?? 0) + 1)
+  for (const namespaceActivities of activitiesByNamespace.values()) {
+    const nodeKeys = namespaceActivities
+      .map((activity) => activity.node)
+      .filter((node) => nodeIds.has(node))
+    for (let index = 0; index < nodeKeys.length - 1; index += 1) {
+      const source = nodeKeys[index]
+      const target = nodeKeys[index + 1]
+      const edgeKey = `${source}->${target}`
+      edgeTraversals.set(edgeKey, (edgeTraversals.get(edgeKey) ?? 0) + 1)
+      const namespaces = traversedNamespacesByEdge.get(edgeKey) ?? new Set<string>()
+      namespaces.add(namespaceActivities[index]?.namespace || 'root')
+      traversedNamespacesByEdge.set(edgeKey, namespaces)
+    }
   }
 
   return {
@@ -269,7 +305,8 @@ function buildExecutionTopology(
       visits: turnCounts.get(node.id) ?? 0,
       toolCalls: toolCallCounts.get(node.id) ?? 0,
       subagents: subagentCounts.get(node.id) ?? 0,
-      status: latestTurn?.node === node.id
+      activeNamespaces: activeNamespacesByNode.get(node.id)?.size ?? 0,
+      status: (activeNamespacesByNode.get(node.id)?.size ?? 0) > 0
         ? 'running'
         : (turnCounts.get(node.id) ?? 0) > 0
           ? 'completed'
@@ -280,12 +317,11 @@ function buildExecutionTopology(
       return {
         ...edge,
         traversed,
+        namespaces: traversedNamespacesByEdge.get(`${edge.source}->${edge.target}`)?.size ?? 0,
         active:
           traversed > 0
-          || (
-            latestTurn != null
-            && (latestTurn.node === edge.source || latestTurn.node === edge.target)
-          ),
+          || (activeNamespacesByNode.get(edge.source)?.size ?? 0) > 0
+          || (activeNamespacesByNode.get(edge.target)?.size ?? 0) > 0,
       }
     }),
   }
@@ -450,6 +486,75 @@ export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
     .filter((item): item is ExecutionTurn => item != null)
 }
 
+function getExecutionActivities(stream: ChatRuntimeStream): ExecutionActivity[] {
+  const messages = Array.isArray(stream.messages) ? stream.messages : []
+  const isLoading = Boolean(stream.isLoading)
+  const getMessagesMetadata =
+    typeof stream.getMessagesMetadata === 'function'
+      ? stream.getMessagesMetadata.bind(stream)
+      : (() => undefined)
+
+  return messages
+    .map((message, index) => {
+      const metadata = getMessagesMetadata(message, index)
+      const streamMetadata = asRecord(metadata?.streamMetadata)
+      const node = String(streamMetadata.langgraph_node || '').trim()
+      const messageType = messageTypeOf(message)
+      const messageId = getMessageId(message, metadata?.messageId, index)
+      const namespace = String(
+        streamMetadata.langgraph_checkpoint_ns
+        || streamMetadata.checkpoint_ns
+        || metadata?.branch
+        || 'root',
+      )
+      const toolCalls = getToolCallsForMessage(stream, message)
+      const subagents = getSubagentsForMessage(stream, messageId)
+      if (!node && toolCalls.length === 0 && subagents.length === 0 && messageType !== 'ai') {
+        return null
+      }
+      if (!node) return null
+      return {
+        key: `${messageId}:${node}`,
+        node,
+        namespace,
+        status: isLoading && index === messages.length - 1 ? 'running' : 'completed',
+        toolCalls: toolCalls.length,
+        subagents: subagents.length,
+      }
+    })
+    .filter((item): item is ExecutionActivity => item != null)
+}
+
+function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespaceLane[] {
+  const byNamespace = new Map<string, ExecutionActivity[]>()
+  for (const activity of activities) {
+    const bucket = byNamespace.get(activity.namespace) ?? []
+    bucket.push(activity)
+    byNamespace.set(activity.namespace, bucket)
+  }
+  return Array.from(byNamespace.entries())
+    .map(([namespace, items]) => {
+      const nodes = Array.from(new Set(items.map((item) => item.node).filter(Boolean)))
+      const status: ExecutionNamespaceLane['status'] = items.some((item) => item.status === 'running')
+        ? 'running'
+        : items.length > 0
+          ? 'completed'
+          : 'idle'
+      return {
+        key: namespace,
+        label: namespace === 'root' ? 'root' : namespace,
+        status,
+        nodes,
+      }
+    })
+    .sort((left, right) => {
+      if (left.status === right.status) return left.label.localeCompare(right.label)
+      if (left.status === 'running') return -1
+      if (right.status === 'running') return 1
+      return left.label.localeCompare(right.label)
+    })
+}
+
 export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, ExecutionToolCall[]> {
   const messages = Array.isArray(stream.messages) ? stream.messages : []
   const getMessagesMetadata =
@@ -469,6 +574,7 @@ export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, Ex
 
 export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
   const turns = getExecutionTurns(stream)
+  const activities = getExecutionActivities(stream)
   const normalizedTurns = turns.map((turn) => {
     const toolMap = new Map<string, ExecutionToolCall>()
     for (const tool of turn.toolCalls) {
@@ -481,7 +587,8 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
       toolCalls: Array.from(toolMap.values()),
     }
   })
-  const topology = buildExecutionTopology(asRecord(stream.values?.topology), normalizedTurns)
+  const topology = buildExecutionTopology(asRecord(stream.values?.topology), activities)
+  const lanes = buildExecutionLanes(activities)
   const tools = normalizedTurns.flatMap((turn) => turn.toolCalls)
   const subagents = getRuntimeSubagents(stream)
   const hasExecution =
@@ -491,6 +598,7 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
 
   return {
     topology,
+    lanes,
     turns: normalizedTurns,
     tools,
     subagents,

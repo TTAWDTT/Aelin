@@ -12,6 +12,7 @@ import {
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import type {
+  ExecutionNamespaceLane,
   ExecutionRuntime,
   ExecutionTurn,
   ExecutionSubagent,
@@ -88,7 +89,7 @@ export function ExecutionPane({
 }: ExecutionPaneProps) {
   const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const { topology, turns, tools, hasExecution } = runtime
+  const { topology, lanes, turns, tools, hasExecution } = runtime
   const todos = Array.isArray(values.todos) ? values.todos : []
   const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages' && key !== 'debug_tool_runs')
   const toolTurns = turns.filter((turn) => turn.toolCalls.length > 0)
@@ -161,6 +162,18 @@ export function ExecutionPane({
                         <span>{topology.nodes.length} nodes · {topology.edges.length} edges</span>
                       </div>
                       <TopologyBoard nodes={topology.nodes} edges={topology.edges} isStreaming={isStreaming} />
+                      {lanes.length > 0 && (
+                        <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-2">
+                          <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                            Live paths
+                          </div>
+                          <div className="grid gap-2">
+                            {lanes.map((lane) => (
+                              <NamespaceLaneCard key={lane.key} lane={lane} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </section>
 
                     <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
@@ -509,6 +522,11 @@ function TopologyBoard({
                               {node.subagents} subagents
                             </span>
                           )}
+                          {node.activeNamespaces > 0 && (
+                            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+                              {node.activeNamespaces} active path{node.activeNamespaces > 1 ? 's' : ''}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -555,6 +573,24 @@ function ToolCard({ tool, compact = false }: { tool: ExecutionToolCall; compact?
           )}
         </div>
         <span className="pt-0.5">{statusIcon(tool.state)}</span>
+      </div>
+    </section>
+  )
+}
+
+function NamespaceLaneCard({ lane }: { lane: ExecutionNamespaceLane }) {
+  return (
+    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
+      <div className="flex items-center gap-2">
+        <span>{statusIcon(lane.status)}</span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[11px] font-medium text-[var(--color-text)]">
+            {lane.label}
+          </div>
+          <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+            {lane.nodes.join(' -> ') || 'idle'}
+          </div>
+        </div>
       </div>
     </section>
   )
