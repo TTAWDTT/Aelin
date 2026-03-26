@@ -69,6 +69,7 @@ export type ExecutionSubagent = {
   depth: number
   messageCount: number
   namespace?: string
+  preview?: string
 }
 
 export type ExecutionTurn = {
@@ -391,6 +392,7 @@ function getRuntimeSubagents(stream: ChatRuntimeStream): ExecutionSubagent[] {
         depth: Number(record.depth || 0),
         messageCount: messages.length,
         namespace: namespace || undefined,
+        preview: messages.length > 0 ? messagePreview(messages[messages.length - 1] as BaseMessage) : undefined,
       }
     })
     .filter((item) => Boolean(item.key))

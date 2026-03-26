@@ -582,6 +582,11 @@ function SubagentCard({ subagent, compact = false }: { subagent: ExecutionSubage
           <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
             {subagent.type} · depth {subagent.depth} · {subagent.messageCount} messages
           </div>
+          {subagent.preview && (
+            <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+              {subagent.preview}
+            </div>
+          )}
           {subagent.namespace && (
             <div className="mt-0.5 break-words text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
               {subagent.namespace}

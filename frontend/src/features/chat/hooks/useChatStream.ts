@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react'
+import type { AnyStreamCustomOptions } from '@langchain/langgraph-sdk/ui'
 import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
@@ -116,9 +117,10 @@ export function useChatStream() {
     getSource: () => 'chat_ui',
   }), [])
 
-  const stream = useStream<ChatStreamState>({
+  const streamOptions: AnyStreamCustomOptions<ChatStreamState> = {
     transport,
     threadId: activeSessionId,
+    filterSubagentMessages: true,
     messagesKey: 'messages',
     initialValues: {
       messages: buildSessionHistoryMessages(sessionMessages) as Array<Record<string, unknown>>,
@@ -150,7 +152,9 @@ export function useChatStream() {
     onError: (error) => {
       setStatusText(String((error as Error)?.message || 'Stream error'))
     },
-  })
+  }
+
+  const stream = useStream<ChatStreamState>(streamOptions)
 
   const displayMessages = useMemo(() => {
     if (!session) return []
