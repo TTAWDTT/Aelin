@@ -169,6 +169,16 @@ export function ExecutionPane({
                         <span>{locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}</span>
                       </div>
                       <div className="mt-2 space-y-2">
+                        {runtime.subagents.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                              Subagents
+                            </div>
+                            {runtime.subagents.map((subagent) => (
+                              <SubagentCard key={`runtime:${subagent.key}`} subagent={subagent} compact />
+                            ))}
+                          </div>
+                        )}
                         {turns.length === 0 ? (
                           <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
                             {t('trace.executionPane.emptyDetail')}
@@ -572,6 +582,11 @@ function SubagentCard({ subagent, compact = false }: { subagent: ExecutionSubage
           <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
             {subagent.type} · depth {subagent.depth} · {subagent.messageCount} messages
           </div>
+          {subagent.namespace && (
+            <div className="mt-0.5 break-words text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+              {subagent.namespace}
+            </div>
+          )}
         </div>
         <span className="pt-0.5">{statusIcon(subagent.status)}</span>
       </div>

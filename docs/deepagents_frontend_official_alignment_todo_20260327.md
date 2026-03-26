@@ -45,8 +45,8 @@
 
 ## Phase 3: Subagents / Todos Native-First
 
-- [ ] 右侧 pane 直接消费 `stream.subagents`，而不是优先从 `getSubagentsByMessage` + 中间模型重建。
-- [ ] todo 面板直接消费 `stream.values.todos`，减少额外的 state mapping。
+- [x] 右侧 pane 直接消费 `stream.subagents`，而不是优先从 `getSubagentsByMessage` + 中间模型重建。
+- [x] todo 面板直接消费 `stream.values.todos`，减少额外的 state mapping。
 - [ ] 将 subagent message / coordinator message 的 UI 区分建立在官方 runtime 数据上，而不是自定义 turns。
 - [ ] 用 `filterSubagentMessages` 重新梳理主聊天区与子代理区的职责边界。
 

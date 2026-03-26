@@ -68,6 +68,7 @@ export type ExecutionSubagent = {
   status: string
   depth: number
   messageCount: number
+  namespace?: string
 }
 
 export type ExecutionTurn = {
@@ -366,8 +367,33 @@ function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): E
       status: normalizeStatus(record.status, 'idle'),
       depth: Number(record.depth || 1),
       messageCount: messages.length,
+      namespace: Array.isArray(record.namespace) ? record.namespace.map(String).join(' / ') : undefined,
     }
   })
+}
+
+function getRuntimeSubagents(stream: ChatRuntimeStream): ExecutionSubagent[] {
+  if (!(stream.subagents instanceof Map)) return []
+  return Array.from(stream.subagents.values())
+    .map((item, index) => {
+      const record = asRecord(item)
+      const toolCall = asRecord(record.toolCall)
+      const args = asRecord(toolCall.args)
+      const messages = Array.isArray(record.messages) ? record.messages : []
+      const namespace = Array.isArray(record.namespace)
+        ? record.namespace.map(String).join(' / ')
+        : ''
+      return {
+        key: String(record.id || toolCall.id || `subagent:${index}`),
+        name: String(args.subagent_type || record.name || 'subagent'),
+        type: String(args.subagent_type || record.type || 'subagent'),
+        status: normalizeStatus(record.status, 'idle'),
+        depth: Number(record.depth || 0),
+        messageCount: messages.length,
+        namespace: namespace || undefined,
+      }
+    })
+    .filter((item) => Boolean(item.key))
 }
 
 export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
@@ -455,7 +481,7 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
   })
   const topology = buildExecutionTopology(asRecord(stream.values?.topology), normalizedTurns)
   const tools = normalizedTurns.flatMap((turn) => turn.toolCalls)
-  const subagents = normalizedTurns.flatMap((turn) => turn.subagents)
+  const subagents = getRuntimeSubagents(stream)
   const hasExecution =
     topology.nodes.length > 0
     || normalizedTurns.length > 0
