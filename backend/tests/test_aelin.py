@@ -3,7 +3,6 @@ from __future__ import annotations
 from app.services.web.web_search import WebSearchResult
 import app.services.aelin.core_support as aelin_core_support
 from app.services.aelin.expressions import (
-    _AELIN_EXPRESSION_IDS,
     _extract_expression_tag,
     _pick_expression,
 )
@@ -85,4 +84,6 @@ def test_expression_tag_parsing_and_normalization():
     assert exp2 == "exp-11"
 
     fallback = _pick_expression("今天这事为什么这样？", "先别急，我来解释。")
-    assert fallback in _AELIN_EXPRESSION_IDS
+    assert fallback == "exp-04"
+    failed = _pick_expression("你好", "抱歉", generation_failed=True)
+    assert failed == "exp-07"

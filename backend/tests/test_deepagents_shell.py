@@ -290,8 +290,7 @@ def test_build_chat_agent_injects_current_date_into_system_prompt(monkeypatch):
     system_prompt = str(captured.get("system_prompt") or "")
     assert "Current date:" in system_prompt
     assert "Current timezone: Asia/Shanghai." in system_prompt
-    assert "today/current/latest/recent/now" in system_prompt
-    assert "今天、当前、最近、刚刚、最新" in system_prompt
+    assert "Interpret relative date and time references" in system_prompt
 
 
 @pytest.mark.integration

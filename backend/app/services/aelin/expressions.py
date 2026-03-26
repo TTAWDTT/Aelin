@@ -16,12 +16,6 @@ _AELIN_EXPRESSION_IDS = {
     "exp-10",
     "exp-11",
 }
-
-_FAILURE_TOKENS = ("失败", "错误", "抱歉", "无法", "暂不支持", "不确定")
-_RISK_TOKENS = ("风险", "谨慎", "警告", "注意", "不建议")
-_POSITIVE_TOKENS = ("谢谢", "感谢", "支持", "加油", "辛苦了")
-
-
 def _normalize_expression_id(raw: str | None) -> str | None:
     text = str(raw or "").strip().lower()
     if not text:
@@ -64,18 +58,7 @@ def _extract_expression_tag(answer: str) -> tuple[str, str | None]:
 
 
 def _pick_expression(query: str, answer: str, *, generation_failed: bool = False) -> str:
-    query_text = str(query or "").lower()
-    answer_text = str(answer or "").lower()
-    text = f"{query_text}\n{answer_text}"
-
-    if generation_failed or any(token in text for token in _FAILURE_TOKENS):
+    del query, answer
+    if generation_failed:
         return "exp-07"
-    if any(token in text for token in _RISK_TOKENS):
-        return "exp-05"
-    if any(token in text for token in _POSITIVE_TOKENS):
-        return "exp-03"
-    if "?" in query_text or "？" in query_text:
-        return "exp-04"
-    if any(token in query_text for token in ("为什么", "怎么", "吗", "啥", "什么", "如何")):
-        return "exp-04"
     return "exp-04"

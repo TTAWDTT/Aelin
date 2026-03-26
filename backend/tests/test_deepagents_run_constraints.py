@@ -5,7 +5,6 @@ from app.services.deepagents.tool_runtime import (
     ToolPolicyUsage,
     build_tool_signature,
 )
-from app.services.tools.tools_device import tool_device
 from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_web import tool_web_search
 
@@ -30,7 +29,7 @@ def test_tool_call_limiter_blocks_duplicate_web_search_calls():
     assert "duplicate_web_search_call" in second.reason
 
 
-def test_web_search_signature_normalizes_near_duplicate_queries():
+def test_web_search_signature_keeps_distinct_queries_distinct():
     left = build_tool_signature(
         "web_search",
         {"action": "search_and_fetch", "query": "GitHub trending today 2026-03-26 top projects"},
@@ -40,7 +39,7 @@ def test_web_search_signature_normalizes_near_duplicate_queries():
         {"action": "search_and_fetch", "query": "\"GitHub trending\" \"today\" \"2026-03-26\" repositories stars"},
     )
 
-    assert left == right
+    assert left != right
 
 
 def test_tool_web_search_requires_real_fetch_for_search_and_fetch():
@@ -118,15 +117,3 @@ def test_tool_google_workspace_stops_when_auth_missing(monkeypatch):
     assert result["ok"] is False
     assert result["stop_retry"] is True
     assert "authorization required" in str(result["error"])
-
-
-def test_tool_device_requires_explicit_user_intent_for_open_url():
-    context = type("Ctx", (), {"user_query": "帮我看看 GitHub 今天的 trending"})()
-
-    result = tool_device(
-        context,
-        {"action": "open_url", "url": "https://github.com/trending"},
-    )
-
-    assert result["ok"] is False
-    assert "requires_explicit_user_intent" in str(result["error"])

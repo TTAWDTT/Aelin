@@ -137,7 +137,7 @@ def test_attachment_search_prefers_explicit_ids():
     context = _tool_context(
         fake_web,
         attachment_service=fake_attachment,
-        available_attachment_ids=[9, 10],
+        available_attachment_ids=[5, 6, 9, 10],
     )
 
     result = tool_attachment_search(
@@ -297,6 +297,9 @@ def test_google_workspace_tool_gmail_and_drive_and_calendar_success(monkeypatch)
         def runtime_status(self):
             return {"ok": True, "available": True}
 
+        def auth_status(self):
+            return {"ok": True, "authenticated": True}
+
         def gmail_list_messages(self, **kwargs):
             return {"ok": True, "items": [{"id": "m1"}, {"id": "m2"}], "raw": {"messages": []}}
 
@@ -339,6 +342,12 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
     context = _tool_context(fake_web)
 
     class _FakeGWS:
+        def runtime_status(self):
+            return {"ok": True, "available": True}
+
+        def auth_status(self):
+            return {"ok": True, "authenticated": True}
+
         def gmail_list_messages(self, **kwargs):
             return {"ok": False, "error": "gws_failed:list"}
 
@@ -362,12 +371,36 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
     assert tool_google_workspace(context, {"action": "gmail_list"})["scope"] == "gmail"
     assert tool_google_workspace(context, {"action": "drive_list"})["scope"] == "drive"
     assert tool_google_workspace(context, {"action": "calendar_list"})["scope"] == "calendar"
-    assert tool_google_workspace(context, {"action": "calendar_create_event"})["scope"] == "calendar"
-    assert tool_google_workspace(context, {"action": "gmail_send"})["scope"] == "gmail"
-    assert tool_google_workspace(context, {"action": "gmail_draft"})["scope"] == "gmail"
+    assert tool_google_workspace(
+        context,
+        {
+            "action": "calendar_create_event",
+            "event_summary": "Demo",
+            "event_start": "2026-03-26T10:00:00Z",
+            "event_end": "2026-03-26T11:00:00Z",
+        },
+    )["scope"] == "calendar"
+    assert tool_google_workspace(
+        context,
+        {
+            "action": "gmail_send",
+            "email_to": ["a@example.com"],
+            "email_subject": "Hi",
+            "email_body": "Hello",
+        },
+    )["scope"] == "gmail"
+    assert tool_google_workspace(
+        context,
+        {
+            "action": "gmail_draft",
+            "email_to": ["a@example.com"],
+            "email_subject": "Draft",
+            "email_body": "Hello",
+        },
+    )["scope"] == "gmail"
     unknown = tool_google_workspace(context, {"action": "unknown_action"})
     assert unknown["ok"] is False
-    assert unknown["error"] == "unsupported_action"
+    assert "unsupported_action" in str(unknown["error"])
 
 
 def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch):

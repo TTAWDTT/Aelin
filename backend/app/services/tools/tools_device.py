@@ -15,50 +15,6 @@ from app.services.device.device_center import (
 from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
 
 
-def _has_explicit_desktop_intent(query: str, action: str) -> bool:
-    text = " ".join(str(query or "").strip().lower().split())
-    if not text:
-        return False
-    if action == "status":
-        return True
-
-    open_keywords = (
-        "open",
-        "launch",
-        "navigate",
-        "visit",
-        "打开",
-        "开启",
-        "访问",
-        "前往",
-        "去",
-        "进入",
-    )
-    desktop_keywords = (
-        "browser",
-        "desktop",
-        "app",
-        "window",
-        "page",
-        "tab",
-        "浏览器",
-        "桌面",
-        "页面",
-        "窗口",
-        "标签页",
-        "aelin",
-    )
-
-    has_open_keyword = any(token in text for token in open_keywords)
-    if action == "open_url":
-        return has_open_keyword and any(token in text for token in desktop_keywords)
-    if action == "open_aelin":
-        return has_open_keyword and (
-            "aelin" in text or "界面" in text or "页面" in text or "app" in text
-        )
-    return False
-
-
 def tool_screen_get(_context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, Any]:
     display_id = str(args.get("display_id") or "").strip()[:64]
     max_edge = _safe_int(args.get("max_edge"), 1280, low=640, high=4096)
@@ -109,10 +65,6 @@ def tool_device(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, 
             ),
         )
     if action == "open_url":
-        if not _has_explicit_desktop_intent(getattr(context, "user_query", ""), action):
-            return _result_error(
-                "device_open_url_requires_explicit_user_intent: only open desktop URLs when the user explicitly asks to open or navigate in the browser"
-            )
         url = str(args.get("url") or "").strip()
         if not url:
             return _result_error("missing url")
@@ -131,10 +83,6 @@ def tool_device(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, 
             summary=f"已尝试打开链接: {str(result.get('url') or url)[:220]}",
         )
     if action == "open_aelin":
-        if not _has_explicit_desktop_intent(getattr(context, "user_query", ""), action):
-            return _result_error(
-                "device_open_aelin_requires_explicit_user_intent: only open Aelin views when the user explicitly asks for a desktop navigation action"
-            )
         route = str(args.get("route") or "/").strip() or "/"
         try:
             result = activate_desktop_module(route)

@@ -52,8 +52,7 @@ def _current_date_context() -> str:
         f"Current timezone: {_AELIN_TIMEZONE}.\n"
         f"Current local datetime: {local_now.isoformat(timespec='seconds')}.\n"
         f"Today in {_AELIN_TIMEZONE}: {local_now.strftime('%Y-%m-%d')}.\n"
-        "When the user says today/current/latest/recent/now or uses Chinese words such as 今天、当前、最近、刚刚、最新，"
-        "you must anchor them to the current local datetime above unless a tool result from this run proves otherwise.\n"
+        "Interpret relative date and time references using the current local datetime above unless a tool result from this run proves otherwise.\n"
         "Do not drift to another year or another date just because retrieved content mentions one."
     )
 

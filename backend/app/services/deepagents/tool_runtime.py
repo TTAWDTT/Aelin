@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -26,7 +25,6 @@ class ToolRuntimeContext:
     db: Session
     user_id: int
     workspace: str
-    user_query: str
     web_search_service: WebSearchService
     attachment_service: AelinAttachmentService
     available_attachment_ids: list[int]
@@ -37,7 +35,6 @@ def build_tool_runtime_context(
     db: Session,
     user_id: int,
     workspace: str,
-    user_query: str = "",
     web_search_service: WebSearchService | None = None,
     attachment_service: AelinAttachmentService | None = None,
     available_attachment_ids: list[int] | None = None,
@@ -46,7 +43,6 @@ def build_tool_runtime_context(
         db=db,
         user_id=int(user_id),
         workspace=normalize_workspace(workspace),
-        user_query=str(user_query or "").strip()[:2000],
         web_search_service=web_search_service or WebSearchService(),
         attachment_service=attachment_service or get_aelin_attachment_service(),
         available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
@@ -98,55 +94,6 @@ def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
-_QUERY_TOKEN_RE = re.compile(r"[a-z0-9]+")
-_SEARCH_QUERY_STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "current",
-    "daily",
-    "for",
-    "in",
-    "latest",
-    "march",
-    "now",
-    "of",
-    "on",
-    "project",
-    "projects",
-    "repo",
-    "repos",
-    "repositories",
-    "repository",
-    "recent",
-    "stars",
-    "the",
-    "today",
-    "top",
-}
-
-
-def _normalize_search_query(value: Any) -> str:
-    raw = _normalize_text(value)
-    if not raw:
-        return ""
-    tokens = [
-        token
-        for token in _QUERY_TOKEN_RE.findall(raw)
-        if not token.isdigit() and token not in _SEARCH_QUERY_STOPWORDS
-    ]
-    if not tokens:
-        return raw
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for token in tokens:
-        if token in seen:
-            continue
-        seen.add(token)
-        deduped.append(token)
-    return " ".join(deduped[:12])
-
-
 def _normalize_url(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -178,7 +125,7 @@ def build_tool_signature(name: str, args: dict[str, Any]) -> str:
             {
                 "tool": tool,
                 "action": action or "search_and_fetch",
-                "query": _normalize_search_query((args or {}).get("query")),
+                "query": _normalize_text((args or {}).get("query")),
             },
             ensure_ascii=False,
             sort_keys=True,

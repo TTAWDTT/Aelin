@@ -464,7 +464,6 @@ def deepagents_chat_stream(
                     db=db,
                     user_id=current_user.id,
                     workspace=workspace,
-                    user_query=payload.query,
                     web_search_service=_scoped_web_search_service(
                         getattr(service.config, "web_search_proxy_url", ""),
                     ),
