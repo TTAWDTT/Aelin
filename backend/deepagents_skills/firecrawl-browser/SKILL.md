@@ -2,9 +2,6 @@
 name: firecrawl-browser
 description: |
   DEPRECATED — use scrape + interact instead. Interact lets you scrape a page and then click, fill forms, and navigate without managing sessions manually. Use this skill when the user needs to interact with a webpage, log into a site, click buttons, fill forms, navigate multi-step flows, handle pagination, or when regular scraping fails because content requires JavaScript interaction. Triggers on "click", "fill out the form", "log in to", "paginated", "infinite scroll", "interact with the page", or "scrape failed".
-allowed-tools:
-  - Bash(firecrawl *)
-  - Bash(npx firecrawl *)
 ---
 
 # firecrawl interact (formerly browser)
