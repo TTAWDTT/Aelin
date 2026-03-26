@@ -1,7 +1,9 @@
 import type { ChatRequest } from '@/shared/api/types'
 import {
   buildChatRequestFromStream,
+  buildSessionHistoryMessages,
 } from './chatStreamHelpers'
+import { getSessionMessages } from '../chatHistoryStorage'
 
 type StreamMessageLike = {
   id?: string
@@ -27,7 +29,6 @@ type TransportStreamEvent = {
 interface DeepAgentsUseStreamTransportOptions {
   apiUrl: string
   getToken: () => string | null
-  getHistoryMessages: (threadId: string) => StreamMessageLike[]
   getWorkspace: (threadId: string) => string
   getSource?: () => string
 }
@@ -175,7 +176,7 @@ export class DeepAgentsUseStreamTransport {
       : []
 
     const body: ChatRequest = buildChatRequestFromStream({
-      historyMessages: this.options.getHistoryMessages(threadId),
+      historyMessages: buildSessionHistoryMessages(getSessionMessages(threadId)),
       inputMessages,
       workspace: String(contextRecord.workspace || this.options.getWorkspace(threadId) || 'default'),
       attachmentIds,

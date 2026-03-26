@@ -1,6 +1,6 @@
 import type { BaseMessage } from '@langchain/core/messages'
 import type { ChatRequest } from '@/shared/api/types'
-import type { ChatMessage, ChatSession } from '../stores/chatStore'
+import type { ChatMessage } from '../chatTypes'
 
 const MAX_QUERY_CHARS = 1200
 
@@ -159,8 +159,8 @@ export function chatMessageToStreamMessage(message: ChatMessage): StreamMessageL
   return null
 }
 
-export function buildSessionHistoryMessages(session?: ChatSession): StreamMessageLike[] {
-  return (session?.messages ?? [])
+export function buildSessionHistoryMessages(messages?: ChatMessage[]): StreamMessageLike[] {
+  return (messages ?? [])
     .map(chatMessageToStreamMessage)
     .filter((item): item is StreamMessageLike => item != null)
     .filter((item) => {

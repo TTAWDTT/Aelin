@@ -30,8 +30,8 @@
 ## Phase 1: Stream State Single Source
 
 - [x] 把聊天消息的 canonical source 彻底收敛到 `stream.messages`。
-- [ ] 让 `chatStore` 只保留 UI 偏好、本地草稿、当前 session/workspace、pane 开关，而不再保存 canonical message list。
-- [ ] 删除 `stream -> chatStore -> timeline` 的双轨同步路径。
+- [x] 让 `chatStore` 只保留 UI 偏好、本地草稿、当前 session/workspace、pane 开关，而不再保存 canonical message list。
+- [x] 删除 `stream -> chatStore -> timeline` 的双轨同步路径。
 - [ ] 把当前消息重复、助手拆条、placeholder 等兼容逻辑继续下沉，尽量减少“流后修补”代码。
 - [ ] 为“单次 submit 只出现一条 user message / 一条 assistant stream”补前端回归测试。
 

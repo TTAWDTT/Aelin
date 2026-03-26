@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import type { ChatMessage } from '../stores/chatStore'
+import type { ChatMessage } from '../chatTypes'
 import { MessageBubble } from './MessageBubble'
 import { EmptyChatState } from './EmptyChatState'
 import { useChatI18n } from '../chatI18n'

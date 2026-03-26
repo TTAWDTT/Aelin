@@ -2,7 +2,9 @@ import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
 import type { ChatAction, AelinBrowserConfirmResponse } from '@/shared/api/types'
-import { useChatStore, type ChatMessage } from '../stores/chatStore'
+import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
+import type { ChatMessage } from '../chatTypes'
+import { useChatStore } from '../stores/chatStore'
 import {
   buildBrowserConfirmBody,
   formatBrowserConfirmFeedback,
@@ -19,9 +21,7 @@ function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId:
   if (!response.continued || !followupAnswer) return
 
   if (!sessionId) return
-  const store = useChatStore.getState()
-  const session = store.sessions.find((item) => item.id === sessionId)
-  if (!session) return
+  const sessionMessages = getSessionMessages(sessionId)
 
   const nextMessage: ChatMessage = {
     id: crypto.randomUUID(),
@@ -33,7 +33,7 @@ function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId:
     timestamp: Date.now(),
   }
 
-  store.setSessionMessages(sessionId, [...session.messages, nextMessage])
+  setSessionMessages(sessionId, [...sessionMessages, nextMessage])
 }
 
 export function useMessageBubbleActions({ message: _message, onQuickPrompt }: UseMessageBubbleActionsOptions) {

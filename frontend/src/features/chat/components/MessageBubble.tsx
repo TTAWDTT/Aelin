@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../stores/chatStore'
+import type { ChatMessage } from '../chatTypes'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { MessageActionsPanel } from './MessageActionsPanel'

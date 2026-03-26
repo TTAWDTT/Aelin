@@ -4,6 +4,7 @@ import { aelinApi } from '@/shared/api/aelin'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import { useChatI18n } from '../chatI18n'
+import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
 import type { ChatRuntimeStream, ChatStreamState } from '../executionStreamUtils'
 import { useChatStore } from '../stores/chatStore'
 import {
@@ -98,16 +99,15 @@ export function useChatStream() {
   const setLastErrorCode = useChatStore((state) => state.setLastErrorCode)
   const { t } = useChatI18n()
   const session = sessions.find((item) => item.id === activeSessionId)
+  const sessionMessages = useMemo(
+    () => getSessionMessages(activeSessionId),
+    [activeSessionId, sessions],
+  )
   const thinkingLabel = t('status.thinking')
 
   const transport = useMemo(() => new DeepAgentsUseStreamTransport({
     apiUrl: `${import.meta.env.VITE_API_BASE || ''}/api/v1/deepagents/chat/stream`,
     getToken: () => localStorage.getItem('token'),
-    getHistoryMessages: (threadId) => {
-      const state = useChatStore.getState()
-      const target = state.sessions.find((item) => item.id === threadId)
-      return buildSessionHistoryMessages(target)
-    },
     getWorkspace: (threadId) => {
       const state = useChatStore.getState()
       const target = state.sessions.find((item) => item.id === threadId)
@@ -121,7 +121,7 @@ export function useChatStream() {
     threadId: activeSessionId,
     messagesKey: 'messages',
     initialValues: {
-      messages: buildSessionHistoryMessages(session) as Array<Record<string, unknown>>,
+      messages: buildSessionHistoryMessages(sessionMessages) as Array<Record<string, unknown>>,
     },
     onCustomEvent: (event, { mutate }) => {
       const record = event && typeof event === 'object' && !Array.isArray(event)
@@ -154,9 +154,9 @@ export function useChatStream() {
 
   const displayMessages = useMemo(() => {
     if (!session) return []
-    if (stream.messages.length === 0) return session.messages
-    const nextMessages = streamMessagesToChatMessages(stream.messages as any, session.messages)
-    const resolvedMessages = nextMessages.length > 0 ? nextMessages : session.messages
+    if (stream.messages.length === 0) return sessionMessages
+    const nextMessages = streamMessagesToChatMessages(stream.messages as any, sessionMessages)
+    const resolvedMessages = nextMessages.length > 0 ? nextMessages : sessionMessages
     const lastVisibleMessage = resolvedMessages.at(-1)
     if (!stream.isLoading || lastVisibleMessage?.role === 'assistant') {
       return resolvedMessages
@@ -170,7 +170,7 @@ export function useChatStream() {
         timestamp: Date.now(),
       },
     ]
-  }, [activeSessionId, session, stream.isLoading, stream.messages])
+  }, [activeSessionId, session, sessionMessages, stream.isLoading, stream.messages])
 
   useEffect(() => {
     if (isStreaming !== stream.isLoading) {
@@ -186,13 +186,10 @@ export function useChatStream() {
     if (stream.isLoading) return
     if (stream.messages.length === 0) return
 
-    const state = useChatStore.getState()
-    const currentSession = state.sessions.find((item) => item.id === activeSessionId)
-    if (!currentSession) return
     if (displayMessages.length === 0) return
-    if (sameChatMessages(displayMessages, currentSession.messages)) return
-    state.setSessionMessages(currentSession.id, displayMessages)
-  }, [activeSessionId, displayMessages, stream.isLoading, stream.messages.length])
+    if (sameChatMessages(displayMessages, sessionMessages)) return
+    setSessionMessages(activeSessionId, displayMessages)
+  }, [activeSessionId, displayMessages, sessionMessages, stream.isLoading, stream.messages.length])
 
   const send = useCallback(
     async (text: string, images?: PendingImage[], attachmentIds?: number[]) => {
@@ -202,6 +199,7 @@ export function useChatStream() {
       }
       const currentState = useChatStore.getState()
       const currentSession = currentState.sessions.find((item) => item.id === sessionId)
+      const currentSessionMessages = getSessionMessages(sessionId)
       const normalizedAttachmentIds = Array.from(new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0))).slice(0, 20)
       const prompt = trimQueryForApi(String(text || '').trim())
       const visibleText =
@@ -213,7 +211,7 @@ export function useChatStream() {
             : '')
       if (!visibleText && !images?.length && normalizedAttachmentIds.length === 0) return
 
-      if ((currentSession?.messages.length ?? 0) === 0) {
+      if (currentSessionMessages.length === 0) {
         const seed = visibleText || '新对话'
         currentState.renameSession(sessionId, seed.length > 20 ? `${seed.slice(0, 20)}…` : seed)
       }
@@ -235,7 +233,7 @@ export function useChatStream() {
             optimisticValues: (prev) => ({
               ...(prev || {}),
               messages: [
-                ...(((prev?.messages as Array<Record<string, unknown>> | undefined) ?? buildSessionHistoryMessages(currentSession)) as Array<Record<string, unknown>>),
+                ...(((prev?.messages as Array<Record<string, unknown>> | undefined) ?? buildSessionHistoryMessages(currentSessionMessages)) as Array<Record<string, unknown>>),
                 humanMessage as any,
               ],
             }),
@@ -283,8 +281,7 @@ export function useChatStream() {
       let sessionId = activeSessionId
       if (!sessionId) sessionId = createSession() || useChatStore.getState().activeSessionId
       const resolvedSessionId = String(sessionId || '')
-      const currentSession = useChatStore.getState().sessions.find((item) => item.id === sessionId)
-      const workspace = currentSession?.workspace || 'default'
+      const workspace = useChatStore.getState().sessions.find((item) => item.id === sessionId)?.workspace || 'default'
 
       setStatusText(t('status.attach.processing'))
       try {
