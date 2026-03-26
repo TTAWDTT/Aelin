@@ -1,5 +1,6 @@
 import type { RefObject } from 'react'
 import type { ChatMessage } from '../chatTypes'
+import type { ExecutionToolCall } from '../executionStreamUtils'
 import { MessageBubble } from './MessageBubble'
 import { EmptyChatState } from './EmptyChatState'
 import { useChatI18n } from '../chatI18n'
@@ -11,6 +12,7 @@ interface ChatTimelineProps {
   statusText?: string
   compact?: boolean
   viewportWidth: number
+  toolCallsByMessage?: Map<string, ExecutionToolCall[]>
   onQuickPrompt: (text: string) => void
 }
 
@@ -21,6 +23,7 @@ export function ChatTimeline({
   statusText,
   compact = false,
   viewportWidth,
+  toolCallsByMessage,
   onQuickPrompt,
 }: ChatTimelineProps) {
   const isEmpty = messages.length === 0
@@ -49,6 +52,7 @@ export function ChatTimeline({
               <div key={message.id} className="flex flex-col gap-1.5">
                 <MessageBubble
                   message={message}
+                  toolCalls={toolCallsByMessage?.get(message.id) ?? []}
                   isThinking={isStreaming && message.id === lastAssistantId}
                   thinkingText={statusText}
                   compact={compact}
@@ -67,6 +71,7 @@ export function ChatTimeline({
                   content: '',
                   timestamp: Date.now(),
                 }}
+                toolCalls={[]}
                 isThinking
                 thinkingText={statusText}
                 compact={compact}

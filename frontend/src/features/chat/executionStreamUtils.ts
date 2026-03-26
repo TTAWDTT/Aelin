@@ -425,6 +425,23 @@ export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
     .filter((item): item is ExecutionTurn => item != null)
 }
 
+export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, ExecutionToolCall[]> {
+  const messages = Array.isArray(stream.messages) ? stream.messages : []
+  const getMessagesMetadata =
+    typeof stream.getMessagesMetadata === 'function'
+      ? stream.getMessagesMetadata.bind(stream)
+      : (() => undefined)
+  const entries = messages
+    .map((message, index) => {
+      const metadata = getMessagesMetadata(message, index)
+      const messageId = getMessageId(message, metadata?.messageId, index)
+      const toolCalls = getToolCallsForMessage(stream, message)
+      return toolCalls.length > 0 ? [messageId, toolCalls] as const : null
+    })
+    .filter((item): item is readonly [string, ExecutionToolCall[]] => item != null)
+  return new Map(entries)
+}
+
 export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
   const turns = getExecutionTurns(stream)
   const normalizedTurns = turns.map((turn) => {

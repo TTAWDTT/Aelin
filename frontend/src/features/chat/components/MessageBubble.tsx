@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../chatTypes'
+import type { ExecutionToolCall } from '../executionStreamUtils'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { MessageActionsPanel } from './MessageActionsPanel'
@@ -15,6 +16,7 @@ import { useLocaleStore } from '@/shared/stores/localeStore'
 
 interface MessageBubbleProps {
   message: ChatMessage
+  toolCalls?: ExecutionToolCall[]
   isThinking?: boolean
   thinkingText?: string
   compact?: boolean
@@ -24,6 +26,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({
   message,
+  toolCalls = [],
   isThinking = false,
   thinkingText,
   compact = false,
@@ -98,6 +101,36 @@ export function MessageBubble({
 
         {/* Content */}
         <MarkdownMessage content={message.content || ''} compact={compact} />
+
+        {!isUser && toolCalls.length > 0 && (
+          <div className="mt-2.5 space-y-1.5 border-t border-[var(--color-border)] pt-2">
+            {toolCalls.map((tool) => (
+              <div
+                key={tool.key}
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-medium text-[var(--color-text)]">
+                    {tool.name}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {tool.state}
+                  </span>
+                </div>
+                {tool.args && (
+                  <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                    args: {tool.args}
+                  </div>
+                )}
+                {tool.result && (
+                  <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                    result: {tool.result}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {!isUser && stickerSrc && !isThinking && (
           <div className="mt-2">

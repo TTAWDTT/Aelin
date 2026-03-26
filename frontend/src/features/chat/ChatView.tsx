@@ -12,7 +12,7 @@ import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
-import { getExecutionRuntime } from './executionStreamUtils'
+import { getExecutionRuntime, getMessageToolCallMap } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
 
 export function ChatView() {
@@ -28,6 +28,7 @@ export function ChatView() {
     suppressAutoOpen,
   } = useExecutionPaneStore()
   const execution = getExecutionRuntime(stream)
+  const messageToolCalls = getMessageToolCallMap(stream)
   const values =
     stream.values && typeof stream.values === 'object' && !Array.isArray(stream.values)
       ? stream.values
@@ -108,6 +109,7 @@ export function ChatView() {
             statusText={statusText}
             compact={compact}
             viewportWidth={viewportWidth}
+            toolCallsByMessage={messageToolCalls}
             onQuickPrompt={handleSend}
           />
           <ComposerBar
