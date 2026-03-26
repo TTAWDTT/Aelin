@@ -112,6 +112,9 @@ export type ExecutionNamespaceLane = {
   label: string
   status: 'idle' | 'completed' | 'running'
   nodes: string[]
+  currentNode?: string
+  toolCalls: number
+  subagents: number
 }
 
 const GENERIC_TOOL_NAMES = new Set(['', 'tool'])
@@ -545,6 +548,9 @@ function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespac
         label: namespace === 'root' ? 'root' : namespace,
         status,
         nodes,
+        currentNode: items[items.length - 1]?.node,
+        toolCalls: items.reduce((sum, item) => sum + item.toolCalls, 0),
+        subagents: items.reduce((sum, item) => sum + item.subagents, 0),
       }
     })
     .sort((left, right) => {

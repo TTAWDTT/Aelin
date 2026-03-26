@@ -587,9 +587,28 @@ function NamespaceLaneCard({ lane }: { lane: ExecutionNamespaceLane }) {
           <div className="truncate text-[11px] font-medium text-[var(--color-text)]">
             {lane.label}
           </div>
+          {lane.currentNode && (
+            <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              current: {lane.currentNode}
+            </div>
+          )}
           <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
             {lane.nodes.join(' -> ') || 'idle'}
           </div>
+          {(lane.toolCalls > 0 || lane.subagents > 0) && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {lane.toolCalls > 0 && (
+                <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-panel)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+                  {lane.toolCalls} tools
+                </span>
+              )}
+              {lane.subagents > 0 && (
+                <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-panel)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
+                  {lane.subagents} subagents
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </section>

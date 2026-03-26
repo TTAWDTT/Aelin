@@ -55,8 +55,8 @@
 - [x] 保留静态拓扑，但将运行时高亮直接建立在 `getMessagesMetadata()`、message namespace、state updates 上。
 - [x] 删除 execution graph 中“基于 turns 猜节点运行状态”的逻辑，改为 metadata 驱动。
 - [x] 支持更真实的分叉/子图表现，而不只是串行 column board。
-- [ ] 将工具调用、子代理、节点运行状态统一到同一个 runtime graph 视图中。
-- [ ] 让 graph 面板成为“运行态视图”，而不是“二次摘要视图”。
+- [x] 将工具调用、子代理、节点运行状态统一到同一个 runtime graph 视图中。
+- [x] 让 graph 面板成为“运行态视图”，而不是“二次摘要视图”。
 
 ## Phase 5: Transport And Protocol Thinning
 
