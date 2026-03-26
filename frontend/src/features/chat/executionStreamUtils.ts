@@ -5,7 +5,7 @@ export type ChatStreamState = {
   topology?: Record<string, unknown>
   answer?: string
   todos?: unknown[]
-  tool_runs?: Array<Record<string, unknown>>
+  debug_tool_runs?: Array<Record<string, unknown>>
   [key: string]: unknown
 }
 
@@ -457,8 +457,9 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
     }
   })
   const topology = buildExecutionTopology(asRecord(stream.values?.topology), normalizedTurns)
-  const stableToolRuns = Array.isArray(stream.values?.tool_runs)
-    ? stream.values.tool_runs
+  const directTools = normalizedTurns.flatMap((turn) => turn.toolCalls)
+  const stableToolRuns = Array.isArray(stream.values?.debug_tool_runs)
+    ? stream.values.debug_tool_runs
         .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
         .map((item, index) => ({
           key: String(item.key || `tool-run:${index}`),
@@ -470,18 +471,19 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
         .filter((tool) => !(GENERIC_TOOL_NAMES.has(tool.name.toLowerCase()) && !tool.args && !tool.result))
     : []
   const toolMap = new Map<string, ExecutionToolCall>()
-  for (const tool of normalizedTurns.flatMap((turn) => turn.toolCalls)) {
+  for (const tool of directTools) {
     toolMap.set(tool.key, tool)
   }
   for (const tool of stableToolRuns) {
-    toolMap.set(tool.key, tool)
+    if (!toolMap.has(tool.key)) {
+      toolMap.set(tool.key, tool)
+    }
   }
   const tools = Array.from(toolMap.values())
   const subagents = turns.flatMap((turn) => turn.subagents)
   const hasExecution =
     topology.nodes.length > 0
     || normalizedTurns.length > 0
-    || stableToolRuns.length > 0
     || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
 
   return {

@@ -38,7 +38,7 @@
 ## Phase 2: Tool Rendering Native-First
 
 - [x] 让消息气泡优先直接使用 `stream.getToolCalls(message)` 渲染工具调用。
-- [ ] 将 `tool_runs` 自定义 custom event 从“主数据源”降为“补充数据源”或调试数据。
+- [x] 将 `tool_runs` 自定义 custom event 从“主数据源”降为“补充数据源”或调试数据。
 - [ ] 删除 execution mapping 中仅为兼容旧 `tool_runs` 而存在的冗余聚合逻辑。
 - [ ] 将工具状态卡片改为“每条 AI message 关联其 tool calls”，减少全局扁平工具表依赖。
 - [ ] 检查并收紧对 draft / invalid tool call 的过滤逻辑，避免再次手搓过多契约。

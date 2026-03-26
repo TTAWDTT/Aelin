@@ -143,7 +143,7 @@ export function useChatStream() {
         if (!toolRun) return
         mutate((prev) => ({
           ...prev,
-          tool_runs: mergeStableToolRuns(prev?.tool_runs, toolRun),
+          debug_tool_runs: mergeStableToolRuns(prev?.debug_tool_runs, toolRun),
         }))
       }
     },
