@@ -90,7 +90,8 @@ export function ExecutionPane({
   const { open } = useExecutionPaneStore()
   const { topology, turns, tools, hasExecution } = runtime
   const todos = Array.isArray(values.todos) ? values.todos : []
-  const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
+  const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages' && key !== 'debug_tool_runs')
+  const toolTurns = turns.filter((turn) => turn.toolCalls.length > 0)
   const [tab, setTab] = useState<ExecutionTab>('graph')
 
   useEffect(() => {
@@ -184,7 +185,7 @@ export function ExecutionPane({
 
                 <div className={tabClassName(tab === 'tools')}>
                   <div id="execution-pane-tools" className="space-y-2 text-[11px]">
-                    {tools.length === 0 ? (
+                    {toolTurns.length === 0 ? (
                       <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
                         {t('trace.tools.empty')}
                       </p>
@@ -194,7 +195,29 @@ export function ExecutionPane({
                           <span className="font-medium">{t('trace.tab.tools')}</span>
                           <span>{tools.length} calls</span>
                         </div>
-                        {tools.map((tool) => <ToolCard key={tool.key} tool={tool} />)}
+                        {toolTurns.map((turn) => (
+                          <section
+                            key={`tool-turn:${turn.key}`}
+                            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+                                  {turn.node}
+                                </div>
+                                <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                                  {turn.namespace}
+                                </div>
+                              </div>
+                              <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                                {turn.toolCalls.length} tools
+                              </span>
+                            </div>
+                            <div className="mt-2 space-y-2">
+                              {turn.toolCalls.map((tool) => <ToolCard key={tool.key} tool={tool} compact />)}
+                            </div>
+                          </section>
+                        ))}
                       </section>
                     )}
                   </div>

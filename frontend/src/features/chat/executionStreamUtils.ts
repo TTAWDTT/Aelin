@@ -120,6 +120,18 @@ function hasMeaningfulArgsText(value: string): boolean {
   return Boolean(text) && text !== '{}' && text !== '[]' && text !== 'null'
 }
 
+function isSettledToolState(state: string): boolean {
+  return state === 'completed' || state === 'error' || state === 'failed'
+}
+
+function shouldDisplayToolCall(tool: ExecutionToolCall, hasStableId: boolean): boolean {
+  if (hasStableId) return true
+  if (tool.result) return true
+  if (hasMeaningfulArgsText(tool.args)) return true
+  if (isSettledToolState(tool.state)) return true
+  return !GENERIC_TOOL_NAMES.has(tool.name.toLowerCase())
+}
+
 function messageTypeOf(message: BaseMessage): string {
   const value =
     typeof (message as any)?.getType === 'function'
@@ -148,12 +160,6 @@ function messagePreview(message: BaseMessage): string {
 function normalizeStatus(value: unknown, fallback = 'idle'): string {
   const text = String(value || '').trim().toLowerCase()
   return text || fallback
-}
-
-function normalizeToolState(value: unknown): string {
-  const state = normalizeStatus(value, 'idle')
-  if (state === 'denied') return 'failed'
-  return state
 }
 
 function computeDepths(
@@ -303,32 +309,23 @@ function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage)
   const toolCalls = rows.map((item, index) => {
     const record = asRecord(item)
     const call = asRecord(record.call)
+    const callId = String(record.id || call.id || '').trim()
     const result = record.result
     const name = String(call.name || record.name || 'tool').trim() || 'tool'
     const args = call.args == null ? '' : stableJson(call.args, 160)
     const resolvedState = normalizeStatus(record.status || record.state, result == null ? 'running' : 'completed')
     return {
-      key: String(record.id || call.id || `${name}:${index}`),
+      key: callId || `${name}:${index}`,
       name,
       state: resolvedState,
       args,
       result: result == null ? '' : stableJson(result, 180),
+      hasStableId: Boolean(callId),
     }
   })
-  const deduped = new Map<string, ExecutionToolCall>()
+  const deduped = new Map<string, ExecutionToolCall & { hasStableId: boolean }>()
   for (const tool of toolCalls) {
-    if (
-      GENERIC_TOOL_NAMES.has(tool.name.toLowerCase())
-      && !hasMeaningfulArgsText(tool.args)
-      && !tool.result
-    ) {
-      continue
-    }
-    if (
-      (tool.state === 'pending' || tool.state === 'running')
-      && !hasMeaningfulArgsText(tool.args)
-      && !tool.result
-    ) {
+    if (!shouldDisplayToolCall(tool, tool.hasStableId)) {
       continue
     }
     const existing = deduped.get(tool.key)
@@ -336,8 +333,8 @@ function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage)
       deduped.set(tool.key, tool)
       continue
     }
-    const existingSettled = existing.state === 'completed' || existing.state === 'error' || existing.state === 'failed'
-    const nextSettled = tool.state === 'completed' || tool.state === 'error' || tool.state === 'failed'
+    const existingSettled = isSettledToolState(existing.state)
+    const nextSettled = isSettledToolState(tool.state)
     if (!existingSettled && nextSettled) {
       deduped.set(tool.key, tool)
       continue
@@ -346,7 +343,7 @@ function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage)
       deduped.set(tool.key, tool)
     }
   }
-  return Array.from(deduped.values())
+  return Array.from(deduped.values()).map(({ hasStableId: _hasStableId, ...tool }) => tool)
 }
 
 function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): ExecutionSubagent[] {
@@ -457,34 +454,12 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
     }
   })
   const topology = buildExecutionTopology(asRecord(stream.values?.topology), normalizedTurns)
-  const directTools = normalizedTurns.flatMap((turn) => turn.toolCalls)
-  const stableToolRuns = Array.isArray(stream.values?.debug_tool_runs)
-    ? stream.values.debug_tool_runs
-        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-        .map((item, index) => ({
-          key: String(item.key || `tool-run:${index}`),
-          name: String(item.name || 'tool'),
-          state: normalizeToolState(item.state),
-          args: item.args == null ? '' : stableJson(item.args, 160),
-          result: item.result == null ? '' : stableJson(item.result, 180),
-        }))
-        .filter((tool) => !(GENERIC_TOOL_NAMES.has(tool.name.toLowerCase()) && !tool.args && !tool.result))
-    : []
-  const toolMap = new Map<string, ExecutionToolCall>()
-  for (const tool of directTools) {
-    toolMap.set(tool.key, tool)
-  }
-  for (const tool of stableToolRuns) {
-    if (!toolMap.has(tool.key)) {
-      toolMap.set(tool.key, tool)
-    }
-  }
-  const tools = Array.from(toolMap.values())
-  const subagents = turns.flatMap((turn) => turn.subagents)
+  const tools = normalizedTurns.flatMap((turn) => turn.toolCalls)
+  const subagents = normalizedTurns.flatMap((turn) => turn.subagents)
   const hasExecution =
     topology.nodes.length > 0
     || normalizedTurns.length > 0
-    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
+    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages' && key !== 'debug_tool_runs')
 
   return {
     topology,
