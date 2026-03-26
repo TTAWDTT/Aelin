@@ -33,7 +33,6 @@ interface ChatStore {
   switchSession: (id: string) => void
   deleteSession: (id: string) => void
   renameSession: (id: string, title: string) => void
-  addMessage: (sessionId: string, msg: ChatMessage) => void
   setSessionMessages: (sessionId: string, messages: ChatMessage[]) => void
   setStreaming: (v: boolean) => void
   setStatusText: (v: string) => void
@@ -70,10 +69,6 @@ export const useChatStore = create<ChatStore>()(
 
       renameSession: (id, title) => set(s => ({
         sessions: s.sessions.map(x => x.id === id ? { ...x, title } : x),
-      })),
-
-      addMessage: (sessionId, msg) => set(s => ({
-        sessions: s.sessions.map(x => x.id === sessionId ? { ...x, messages: [...x.messages, msg] } : x),
       })),
 
       setSessionMessages: (sessionId, messages) => set(s => ({

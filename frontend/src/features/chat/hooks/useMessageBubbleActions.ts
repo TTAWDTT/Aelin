@@ -20,8 +20,10 @@ function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId:
 
   if (!sessionId) return
   const store = useChatStore.getState()
+  const session = store.sessions.find((item) => item.id === sessionId)
+  if (!session) return
 
-  store.addMessage(sessionId, {
+  const nextMessage: ChatMessage = {
     id: crypto.randomUUID(),
     role: 'assistant',
     content: followupAnswer,
@@ -29,7 +31,9 @@ function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId:
     citations: Array.isArray(followup.citations) ? followup.citations as ChatMessage['citations'] : undefined,
     actions: Array.isArray(followup.actions) ? followup.actions as ChatMessage['actions'] : undefined,
     timestamp: Date.now(),
-  })
+  }
+
+  store.setSessionMessages(sessionId, [...session.messages, nextMessage])
 }
 
 export function useMessageBubbleActions({ message: _message, onQuickPrompt }: UseMessageBubbleActionsOptions) {

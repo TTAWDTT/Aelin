@@ -88,7 +88,41 @@ function normalizeMessageType(value: unknown): string {
   return type
 }
 
-function normalizeStreamMessage(message: unknown, fallbackId: string): StreamMessageLike | null {
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function buildStableFallbackId(
+  threadId: string,
+  message: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+): string {
+  const type = normalizeMessageType(message.type || metadata.type || 'message') || 'message'
+  const toolCallId = String(message.tool_call_id || metadata.tool_call_id || '').trim()
+  if (toolCallId) return `${threadId}:${type}:tool:${toolCallId}`
+
+  const checkpointNs = String(
+    metadata.langgraph_checkpoint_ns
+    || metadata.checkpoint_ns
+    || metadata.langgraph_node
+    || metadata.node
+    || '',
+  ).trim()
+  if (checkpointNs) return `${threadId}:${type}:${checkpointNs}`
+
+  const runId = String(metadata.run_id || metadata.langgraph_run_id || '').trim()
+  if (runId) return `${threadId}:${type}:${runId}`
+
+  return `${threadId}:${type}:root`
+}
+
+function normalizeStreamMessage(
+  message: unknown,
+  metadata: Record<string, unknown>,
+  threadId: string,
+): StreamMessageLike | null {
   const record =
     message && typeof message === 'object' && !Array.isArray(message)
       ? message as Record<string, unknown>
@@ -99,7 +133,10 @@ function normalizeStreamMessage(message: unknown, fallbackId: string): StreamMes
 
   return {
     ...record,
-    id: typeof record.id === 'string' && record.id.trim() ? record.id.trim() : fallbackId,
+    id:
+      typeof record.id === 'string' && record.id.trim()
+        ? record.id.trim()
+        : buildStableFallbackId(threadId, record, metadata),
     type,
     content,
   }
@@ -218,11 +255,8 @@ export class DeepAgentsUseStreamTransport {
           if (item.event === 'messages' || item.event.startsWith('messages|')) {
             const tuple = Array.isArray(parsedPayload) ? parsedPayload : []
             const rawMessage = tuple[0]
-            const metadata =
-              tuple[1] && typeof tuple[1] === 'object' && !Array.isArray(tuple[1])
-                ? { ...(tuple[1] as Record<string, unknown>) }
-                : {}
-            const message = normalizeStreamMessage(rawMessage, `${threadId}:${Date.now()}`)
+            const metadata = asRecord(tuple[1])
+            const message = normalizeStreamMessage(rawMessage, metadata, threadId)
             if (!message) continue
             yield {
               event: item.event,

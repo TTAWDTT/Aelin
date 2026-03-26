@@ -17,9 +17,7 @@ import { useExecutionPaneStore } from './stores/executionPaneStore'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
-  const session = sessions.find((s) => s.id === activeSessionId)
-  const messages = session?.messages ?? []
-  const { send, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream } = useChatStream()
+  const { send, messages, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()

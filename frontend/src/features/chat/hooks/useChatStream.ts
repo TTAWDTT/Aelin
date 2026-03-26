@@ -7,10 +7,8 @@ import { useChatI18n } from '../chatI18n'
 import type { ChatRuntimeStream, ChatStreamState } from '../executionStreamUtils'
 import { useChatStore } from '../stores/chatStore'
 import {
-  buildAssistantMessage,
   buildHumanStreamMessage,
   buildSessionHistoryMessages,
-  buildUserMessage,
   formatBytes,
   streamMessagesToChatMessages,
   trimQueryForApi,
@@ -154,6 +152,26 @@ export function useChatStream() {
     },
   })
 
+  const displayMessages = useMemo(() => {
+    if (!session) return []
+    if (stream.messages.length === 0) return session.messages
+    const nextMessages = streamMessagesToChatMessages(stream.messages as any, session.messages)
+    const resolvedMessages = nextMessages.length > 0 ? nextMessages : session.messages
+    const lastVisibleMessage = resolvedMessages.at(-1)
+    if (!stream.isLoading || lastVisibleMessage?.role === 'assistant') {
+      return resolvedMessages
+    }
+    return [
+      ...resolvedMessages,
+      {
+        id: `pending-assistant:${activeSessionId || session.id}`,
+        role: 'assistant' as const,
+        content: '',
+        timestamp: Date.now(),
+      },
+    ]
+  }, [activeSessionId, session, stream.isLoading, stream.messages])
+
   useEffect(() => {
     if (isStreaming !== stream.isLoading) {
       setStreaming(stream.isLoading)
@@ -165,21 +183,16 @@ export function useChatStream() {
 
   useEffect(() => {
     if (!activeSessionId) return
+    if (stream.isLoading) return
     if (stream.messages.length === 0) return
 
     const state = useChatStore.getState()
     const currentSession = state.sessions.find((item) => item.id === activeSessionId)
     if (!currentSession) return
-
-    const nextMessages = streamMessagesToChatMessages(
-      stream.messages as any,
-      currentSession.messages,
-      stream.isLoading,
-    )
-    if (nextMessages.length === 0) return
-    if (sameChatMessages(nextMessages, currentSession.messages)) return
-    state.setSessionMessages(currentSession.id, nextMessages)
-  }, [activeSessionId, stream.isLoading, stream.messages])
+    if (displayMessages.length === 0) return
+    if (sameChatMessages(displayMessages, currentSession.messages)) return
+    state.setSessionMessages(currentSession.id, displayMessages)
+  }, [activeSessionId, displayMessages, stream.isLoading, stream.messages.length])
 
   const send = useCallback(
     async (text: string, images?: PendingImage[], attachmentIds?: number[]) => {
@@ -205,13 +218,10 @@ export function useChatStream() {
         currentState.renameSession(sessionId, seed.length > 20 ? `${seed.slice(0, 20)}…` : seed)
       }
 
-      currentState.addMessage(sessionId, buildUserMessage(visibleText, images))
-      currentState.addMessage(sessionId, buildAssistantMessage())
+      const humanMessage = buildHumanStreamMessage(prompt, images)
       currentState.setStreaming(true)
       currentState.setStatusText(t('status.thinking'))
       currentState.setLastErrorCode(null)
-
-      const humanMessage = buildHumanStreamMessage(prompt, images)
 
       try {
         await stream.submit(
@@ -327,6 +337,7 @@ export function useChatStream() {
 
   return {
     send,
+    messages: displayMessages,
     captureAndSend,
     uploadAttachments,
     sendWithAttachments,

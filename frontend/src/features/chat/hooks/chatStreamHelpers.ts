@@ -36,6 +36,26 @@ function getMessageId(message: unknown): string {
   return crypto.randomUUID()
 }
 
+function dedupeStreamMessages(messages: StreamMessageLike[]): StreamMessageLike[] {
+  const byId = new Map<string, StreamMessageLike>()
+  const orderedIds: string[] = []
+
+  for (const message of messages) {
+    const id = String(message.id || '').trim()
+    if (!id) {
+      orderedIds.push(crypto.randomUUID())
+      byId.set(orderedIds[orderedIds.length - 1], message)
+      continue
+    }
+    if (!byId.has(id)) orderedIds.push(id)
+    byId.set(id, message)
+  }
+
+  return orderedIds
+    .map((id) => byId.get(id))
+    .filter((item): item is StreamMessageLike => item != null)
+}
+
 export function normalizeAssistantMarkdown(text: string): string {
   const normalized = String(text || '').replace(/\r\n/g, '\n')
   return normalized.replace(/^(#{1,6})(\S)/gm, '$1 $2')
@@ -91,11 +111,16 @@ export function extractImageInputs(content: unknown): PendingImage[] {
     .filter((item): item is PendingImage => item != null)
 }
 
-export function buildHumanStreamMessage(text: string, images?: PendingImage[]): StreamMessageLike {
+export function buildHumanStreamMessage(
+  text: string,
+  images?: PendingImage[],
+  id?: string,
+): StreamMessageLike {
   const trimmed = trimQueryForApi(text)
+  const messageId = String(id || '').trim() || crypto.randomUUID()
   if (!images?.length) {
     return {
-      id: crypto.randomUUID(),
+      id: messageId,
       type: 'human',
       content: trimmed,
     }
@@ -114,34 +139,15 @@ export function buildHumanStreamMessage(text: string, images?: PendingImage[]): 
   }
 
   return {
-    id: crypto.randomUUID(),
+    id: messageId,
     type: 'human',
     content: blocks.length > 1 ? blocks : trimmed,
   }
 }
 
-export function buildUserMessage(text: string, images?: PendingImage[]): ChatMessage {
-  return {
-    id: crypto.randomUUID(),
-    role: 'user',
-    content: text,
-    images,
-    timestamp: Date.now(),
-  }
-}
-
-export function buildAssistantMessage(): ChatMessage {
-  return {
-    id: crypto.randomUUID(),
-    role: 'assistant',
-    content: '',
-    timestamp: Date.now(),
-  }
-}
-
 export function chatMessageToStreamMessage(message: ChatMessage): StreamMessageLike | null {
   if (message.role === 'user') {
-    return buildHumanStreamMessage(message.content, message.images)
+    return buildHumanStreamMessage(message.content, message.images, message.id)
   }
   if (message.role === 'assistant') {
     return {
@@ -170,7 +176,10 @@ export function buildChatRequestFromStream(params: {
   attachmentIds: number[]
   source?: string
 }): ChatRequest {
-  const fullMessages = [...params.historyMessages, ...params.inputMessages]
+  const fullMessages = dedupeStreamMessages([
+    ...params.historyMessages,
+    ...params.inputMessages,
+  ])
   const lastUserIndex = [...fullMessages]
     .map((message, index) => ({ message, index }))
     .reverse()
@@ -188,18 +197,21 @@ export function buildChatRequestFromStream(params: {
       if (!role || role === 'tool') return null
       const content = extractTextContent(message.content)
       if (!content) return null
+      const id = String(message.id || '').trim()
       return {
+        ...(id ? { id } : {}),
         role: role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'system',
         content,
       }
     })
-    .filter((item): item is { role: 'user' | 'assistant' | 'system'; content: string } => item != null)
+    .filter((item): item is { id?: string; role: 'user' | 'assistant' | 'system'; content: string } => item != null)
 
   const query = trimQueryForApi(extractTextContent(latestUser?.content))
   const images = extractImageInputs(latestUser?.content).map((image) => ({
     data_url: image.dataUrl,
     name: image.name,
   }))
+  const queryMessageId = String(latestUser?.id || '').trim()
 
   return {
     query:
@@ -209,6 +221,7 @@ export function buildChatRequestFromStream(params: {
         : params.attachmentIds.length > 0
           ? '请先基于我上传的附件内容给出结论和建议。'
           : ''),
+    query_message_id: queryMessageId,
     source: params.source || 'chat_ui',
     workspace: params.workspace || 'default',
     history,
@@ -220,51 +233,48 @@ export function buildChatRequestFromStream(params: {
 export function streamMessagesToChatMessages(
   streamMessages: BaseMessage[],
   previousMessages: ChatMessage[],
-  isStreaming: boolean,
 ): ChatMessage[] {
   const previousById = new Map(previousMessages.map((message) => [message.id, message]))
   const next: ChatMessage[] = []
+  const nextIndexById = new Map<string, number>()
 
   for (const message of streamMessages) {
-      const raw = message as unknown as StreamMessageLike
-      const role = normalizeMessageType(
-        typeof (message as any)?.getType === 'function' ? (message as any).getType() : raw.type,
-      )
-      if (role !== 'user' && role !== 'assistant') continue
+    const raw = message as unknown as StreamMessageLike
+    const role = normalizeMessageType(
+      typeof (message as any)?.getType === 'function' ? (message as any).getType() : raw.type,
+    )
+    if (role !== 'user' && role !== 'assistant') continue
 
-      const id = getMessageId(raw)
-      const previous = previousById.get(id)
-      const content = normalizeAssistantMarkdown(extractTextContent((message as any).content ?? raw.content))
-      const images = role === 'user'
-        ? extractImageInputs((message as any).content ?? raw.content)
-        : undefined
+    const id = getMessageId(raw)
+    const previous = previousById.get(id)
+    const content = normalizeAssistantMarkdown(extractTextContent((message as any).content ?? raw.content))
+    const images = role === 'user'
+      ? extractImageInputs((message as any).content ?? raw.content)
+      : undefined
 
-      if (role === 'assistant' && !content.trim() && !(raw.tool_calls?.length)) {
-        continue
-      }
-
-      next.push({
-        id,
-        role,
-        content,
-        images: images?.length ? images : previous?.images,
-        timestamp: previous?.timestamp ?? Date.now(),
-        expression: previous?.expression,
-        citations: previous?.citations,
-        actions: previous?.actions,
-      })
-  }
-
-  if (isStreaming) {
-    const previousPlaceholder = previousMessages.at(-1)
-    const hasAssistant = next.some((message) => message.role === 'assistant')
-    if (
-      previousPlaceholder?.role === 'assistant'
-      && !previousPlaceholder.content
-      && !hasAssistant
-    ) {
-      return [...next, previousPlaceholder]
+    if (role === 'assistant' && !content.trim() && !(raw.tool_calls?.length)) {
+      continue
     }
+
+    const normalizedMessage: ChatMessage = {
+      id,
+      role,
+      content,
+      images: images?.length ? images : previous?.images,
+      timestamp: previous?.timestamp ?? Date.now(),
+      expression: previous?.expression,
+      citations: previous?.citations,
+      actions: previous?.actions,
+    }
+
+    const existingIndex = nextIndexById.get(id)
+    if (typeof existingIndex === 'number') {
+      next[existingIndex] = normalizedMessage
+      continue
+    }
+
+    nextIndexById.set(id, next.length)
+    next.push(normalizedMessage)
   }
 
   return next
