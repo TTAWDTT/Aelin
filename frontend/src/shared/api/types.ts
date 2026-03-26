@@ -27,8 +27,6 @@ export interface AttachmentUploadResponse {
   summary?: string
   deduplicated?: boolean
 }
-export type AelinImageInput = ImageInput
-export type AelinAttachmentUploadResponse = AttachmentUploadResponse
 export interface ChatCitation {
   message_id: number; source: string; source_label: string; sender: string
   sender_avatar_url?: string; title: string; received_at: string; score: number
@@ -61,10 +59,6 @@ export interface ContextResponse {
   memory_layers: MemoryLayers
   generated_at: string
 }
-export type AelinMemoryLayerItem = MemoryLayerItem
-export type AelinMemoryLayers = MemoryLayers
-export type AelinTodoItem = TodoItem
-export type AelinContextResponse = ContextResponse
 
 export interface BrowserConfirmRequest {
   workspace?: string
@@ -109,10 +103,6 @@ export interface BrowserLoginCheckpointListResponse {
   items: BrowserLoginCheckpointItem[]
   generated_at: string
 }
-export type AelinBrowserConfirmRequest = BrowserConfirmRequest
-export type AelinBrowserConfirmResponse = BrowserConfirmResponse
-export type AelinBrowserLoginCheckpointItem = BrowserLoginCheckpointItem
-export type AelinBrowserLoginCheckpointListResponse = BrowserLoginCheckpointListResponse
 export interface FileMemoryItem {
   path: string; title: string; preview: string; score: number
   updated_at: string; canonical_id: string; target: string
@@ -126,9 +116,6 @@ export interface FileMemoryContentResponse {
   source: string; kind: string; topic_path: string; entry_kind: string
   updated_at: string; content: string; generated_at: string
 }
-export type AelinFileMemoryItem = FileMemoryItem
-export type AelinFileMemorySearchResponse = FileMemorySearchResponse
-export type AelinFileMemoryContentResponse = FileMemoryContentResponse
 
 /* ─── Device Center ─── */
 export interface DeviceCapabilitiesResponse {
@@ -152,9 +139,6 @@ export interface DeviceScreenCaptureRequest {
   quality?: number
   selection_timeout_ms?: number
 }
-export type AelinDeviceCapabilitiesResponse = DeviceCapabilitiesResponse
-export type AelinDeviceScreenCaptureResponse = DeviceScreenCaptureResponse
-export type AelinDeviceScreenCaptureRequest = DeviceScreenCaptureRequest
 
 /* ─── Agent ─── */
 export interface AgentConfigOut {

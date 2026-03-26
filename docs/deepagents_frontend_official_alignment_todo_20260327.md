@@ -70,6 +70,8 @@
 - [x] 将前端共享 API 类型优先切到通用命名，仅保留 `Aelin*` 兼容别名。
 - [x] 将 execution runtime 的重复消息遍历收敛为单次 row 构建。
 - [x] 将 stream transport 的事件翻译收敛为单一路径，减少分支散落。
+- [x] 删除前端共享 API 类型中的 `Aelin*` 兼容别名，收紧为通用命名。
+- [x] 将 [ExecutionPane.tsx](/D:/Github/Aelin/frontend/src/features/chat/components/ExecutionPane.tsx) 拆成更小的展示部件文件，去掉超大单文件壳层。
 
 ## Phase 6: Optional Full Official Shape
 
