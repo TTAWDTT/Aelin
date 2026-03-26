@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.tools.tool_helpers import _result_error, _result_items, _safe_int
+from app.services.tools.tool_helpers import _result_error, _result_items, _result_ok, _safe_int
 from app.services.web.web_search import WebSearchResult
 from app.services.deepagents.tool_runtime import ToolRuntimeContext
 
@@ -20,6 +20,10 @@ def tool_web_search(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[s
 
     max_results = _safe_int(args.get("max_results"), 15, low=1, high=15)
     fetch_top_k = _safe_int(args.get("fetch_top_k"), 3, low=0, high=6)
+    if action == "search_and_fetch" and fetch_top_k <= 0:
+        return _result_error(
+            "invalid search_and_fetch call: use action='search' when fetch_top_k is 0, or provide fetch_top_k>=1 when page fetching is needed"
+        )
     fetch_top_k = min(fetch_top_k, max_results)
 
     rows: list[WebSearchResult] = []
@@ -60,11 +64,24 @@ def tool_web_search(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[s
             }
         )
 
+    if not items:
+        return _result_ok(
+            items=[],
+            total=0,
+            query=query,
+            action=action,
+            providers=[],
+            fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
+            no_new_info=True,
+            summary="no web results found",
+        )
+
     return _result_items(
         items,
         query=query,
         action=action,
         providers=sorted(providers),
         fetch_top_k=(fetch_top_k if action == "search_and_fetch" else 0),
+        summary=f"found {len(items)} web result(s)",
     )
 

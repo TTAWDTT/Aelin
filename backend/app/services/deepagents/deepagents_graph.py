@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -178,26 +179,35 @@ def _tool_description(name: str) -> str:
         return (
             "Search the public web.\n"
             "Arguments: action=('search'|'search_and_fetch'), query=<non-empty string>, "
-            "max_results=1..15, fetch_top_k=0..6."
+            "max_results=1..15, fetch_top_k=0..6.\n"
+            "Never call web_search with an empty query. Do not repeat materially identical queries in the same run. "
+            "If one search already returned enough evidence, stop searching and answer."
         )
     if name == "attachment_search":
         return (
             "Search uploaded attachments for relevant chunks.\n"
             "Arguments: query=<non-empty string>, attachment_ids?<int[]>, top_k=1..20, "
-            "mode=('keyword'|'hybrid')."
+            "mode=('keyword'|'hybrid').\n"
+            "Do not repeat the same query against the same attachments. If there are no useful hits, say so and stop."
         )
     if name == "google_workspace":
         return (
             "Access Google Workspace via local gws CLI.\n"
-            "Use action to select runtime/auth/gmail/drive/calendar/docs operations."
+            "Use action to select runtime/auth/gmail/drive/calendar/docs operations.\n"
+            "Before calling, ensure action-specific required fields are present. Never retry the same write action blindly."
         )
     if name == "device":
         return (
             "Desktop actions and status.\n"
-            "Allowed actions: 'status', 'open_url', 'open_aelin'."
+            "Allowed actions: 'status', 'open_url', 'open_aelin'.\n"
+            "Use device only when the user explicitly asks for a desktop action such as opening a page or switching the Aelin app.\n"
+            "For open_url pass a valid http(s) URL. Do not repeat the same desktop action if it already failed once."
         )
     if name == "screen_get":
-        return "Capture a desktop screenshot for visual inspection."
+        return (
+            "Capture a desktop screenshot for visual inspection.\n"
+            "Only use when visual evidence is required. Avoid repeated screenshots with the same arguments."
+        )
     return name
 
 
@@ -262,6 +272,18 @@ def _loop_result(
     )
 
 
+def _emit_tool_event(
+    callback: Callable[[dict[str, Any]], None] | None,
+    payload: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:
+        pass
+
+
 def _invoke_tool(
     *,
     name: str,
@@ -271,6 +293,7 @@ def _invoke_tool(
     limiter: ToolCallLimiter,
     usage: ToolPolicyUsage,
     tool_runs: list[dict[str, Any]],
+    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> dict[str, Any]:
     from time import perf_counter
@@ -285,32 +308,91 @@ def _invoke_tool(
     if not decision.allowed:
         latency_ms = int((perf_counter() - started) * 1000)
         result = {"ok": False, "error": decision.reason}
+        usage.note_denial()
+        tool_key = f"{name}:{call_index}"
         tool_runs.append(
             {
                 "call_index": call_index,
                 "name": name,
                 "args": args,
+                "key": tool_key,
                 "status": "denied",
                 "result": result,
                 "error": decision.reason,
                 "is_write": decision.is_write,
                 "latency_ms": latency_ms,
+                "summary": f"{name} denied: {decision.reason[:160]}",
             }
+        )
+        _emit_tool_event(
+            tool_event_cb,
+            {
+                "key": tool_key,
+                "name": name,
+                "args": args,
+                "state": "denied",
+                "result": result,
+                "error": decision.reason,
+                "is_write": decision.is_write,
+                "latency_ms": latency_ms,
+            },
         )
         return result
 
     if is_cancelled(cancel_token):
         raise DeepAgentsCancelled("cancelled")
 
-    try:
-        result = handler(context, args)
-    except Exception as exc:  # noqa: BLE001
-        result = _result_error(f"{name}_failed:{str(exc)[:160]}")
+    usage.note_invocation(name, args)
+    tool_key = f"{name}:{call_index}"
+    _emit_tool_event(
+        tool_event_cb,
+        {
+            "key": tool_key,
+            "name": name,
+            "args": args,
+            "state": "running",
+            "result": {},
+            "error": "",
+            "is_write": decision.is_write,
+            "latency_ms": 0,
+        },
+    )
+    result: dict[str, Any]
+    result_box: dict[str, Any] = {}
+    error_box: dict[str, BaseException] = {}
+
+    def _run_handler() -> None:
+        try:
+            result_box["value"] = handler(context, args)
+        except BaseException as exc:  # noqa: BLE001
+            error_box["value"] = exc
+
+    timeout_seconds = max(
+        1.0,
+        float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
+    )
+    worker = threading.Thread(target=_run_handler, daemon=True)
+    worker.start()
+    worker.join(timeout=timeout_seconds)
+
+    if worker.is_alive():
+        result = _result_error(
+            f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; adjust arguments once or stop using this tool and answer from current evidence"
+        )
+    elif "value" in error_box:
+        result = _result_error(f"{name}_failed:{str(error_box['value'])[:160]}")
+    else:
+        raw_result = result_box.get("value")
+        if isinstance(raw_result, dict):
+            result = raw_result
+        else:
+            result = _result_error(f"{name}_failed:tool returned invalid payload")
 
     latency_ms = int((perf_counter() - started) * 1000)
     usage.total_calls += 1
     if decision.is_write:
         usage.write_calls += 1
+    usage.note_result(result)
     status = "completed" if bool(result.get("ok", True)) else "failed"
     error = "" if status == "completed" else str(result.get("error") or "")[:160]
 
@@ -346,6 +428,7 @@ def _invoke_tool(
             "call_index": call_index,
             "name": name,
             "args": args,
+            "key": tool_key,
             "status": status,
             "result": result,
             "error": error,
@@ -354,6 +437,20 @@ def _invoke_tool(
             "summary": summary,
         }
     )
+    _emit_tool_event(
+        tool_event_cb,
+        {
+            "key": tool_key,
+            "name": name,
+            "args": args,
+            "state": status,
+            "result": result,
+            "error": error,
+            "is_write": decision.is_write,
+            "latency_ms": latency_ms,
+            "summary": summary,
+        },
+    )
     return result
 
 
@@ -361,6 +458,7 @@ def build_chat_tools(
     *,
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
+    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
     """
@@ -393,6 +491,7 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
+                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -418,6 +517,7 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
+                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -458,6 +558,7 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
+                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -524,6 +625,7 @@ def build_chat_agent(
     limiter: ToolCallLimiter,
     memory_text: str,
     skills_root: Path | None = None,
+    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> tuple[Any, ToolPolicyUsage, list[dict[str, Any]], dict[str, Any]]:
     """
@@ -537,6 +639,7 @@ def build_chat_agent(
     tools, tool_runs, usage = build_chat_tools(
         context=context,
         limiter=limiter,
+        tool_event_cb=tool_event_cb,
         cancel_token=cancel_token,
     )
 
@@ -545,6 +648,17 @@ def build_chat_agent(
         "Reply in the same language as the user.\n"
         "Use tools only when they materially help.\n"
         "Prefer one correct tool call over repeated partial attempts.\n"
+        "Before calling any tool, first form a complete and valid argument set.\n"
+        "If a tool call is rejected for missing or invalid arguments, correct the arguments once instead of retrying blindly.\n"
+        "Do not repeat materially identical tool calls in the same run unless new evidence changes the request.\n"
+        "If two recent tool attempts failed or produced no new information, stop using tools and answer from the current evidence.\n"
+        "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on.\n"
+        "Tool-specific rules:\n"
+        "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence.\n"
+        "- attachment_search: search with a concrete query and available attachment ids only; do not repeat the same attachment search.\n"
+        "- google_workspace: choose a concrete action and include all required fields before calling; never blindly retry writes.\n"
+        "- device: only use status/open_url/open_aelin when the user explicitly asks for desktop or browser navigation; open_url requires a valid http(s) URL.\n"
+        "- screen_get: capture only when visual evidence is necessary; avoid repeated screenshots with the same arguments.\n"
         f"{_current_date_context()}\n"
         "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
         "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"

@@ -14,6 +14,7 @@ import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { getExecutionRuntime } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
+
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
   const session = sessions.find((s) => s.id === activeSessionId)

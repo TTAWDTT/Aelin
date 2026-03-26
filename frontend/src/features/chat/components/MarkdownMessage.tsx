@@ -11,18 +11,21 @@ function normalizeMarkdownContent(content: string): string {
   const raw = String(content || '').replace(/\r\n/g, '\n').trim()
   if (!raw) return ''
 
-  return raw
-    .replace(/^(#{1,6})(\S)/gm, '$1 $2')
-    .replace(/([^\n])(\n?#{1,6}\s)/g, '$1\n\n$2')
-    .replace(/([^\n])(\n?[-*+]\s)/g, '$1\n$2')
-    .replace(/([^\n])(\n?\d+\.\s)/g, '$1\n$2')
-    .replace(/([^\n])(\n?>\s)/g, '$1\n$2')
-    .replace(/([^\n])(\n?```)/g, '$1\n\n$2')
-    .replace(/(---)(#{1,6}\s)/g, '$1\n\n$2')
-    .replace(/([:：])\s*(#{1,6}\s)/g, '$1\n\n$2')
-    .replace(/([^\n])(\n?\|.+\|)/g, '$1\n\n$2')
-    .replace(/}\s*(#{1,6}\s|根据|总结|摘要)/g, '}\n\n$1')
-    .replace(/\n{3,}/g, '\n\n')
+  const lines = raw.split('\n')
+  const normalized: string[] = []
+
+  for (const line of lines) {
+    const current = line.replace(/^(#{1,6})(\S)/, '$1 $2')
+    const isBlockStart =
+      /^(#{1,6}\s|```|~~~|---\s*$|\*\*\*\s*$|___\s*$)/.test(current.trim())
+    const previous = normalized.at(-1) ?? ''
+    if (isBlockStart && previous.trim()) {
+      normalized.push('')
+    }
+    normalized.push(current)
+  }
+
+  return normalized.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
 export function MarkdownMessage({ content, compact = false }: MarkdownMessageProps) {
@@ -33,7 +36,7 @@ export function MarkdownMessage({ content, compact = false }: MarkdownMessagePro
       className={cn(
         'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere]',
         '[&_a]:break-all [&_blockquote]:my-3 [&_blockquote]:rounded-r-2xl [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border-strong)] [&_blockquote]:bg-[var(--color-bg-elevated)] [&_blockquote]:px-3 [&_blockquote]:py-2',
-        '[&_code]:break-all [&_li]:my-1 [&_ol]:my-2 [&_p]:my-2 [&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:my-3 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-2',
+        '[&_code]:break-all [&_li]:my-1 [&_ol]:my-2 [&_p]:my-2 [&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:my-3 [&_table]:max-w-full [&_ul]:my-2',
       )}
       style={{
         fontFamily: 'var(--font-body)',

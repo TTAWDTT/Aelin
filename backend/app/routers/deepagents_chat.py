@@ -167,6 +167,57 @@ def _serialize_langgraph_message(value: Any) -> dict[str, Any]:
     return payload
 
 
+def _sanitize_tool_call(value: Any) -> dict[str, Any] | None:
+    record = _as_record(_json_safe(value))
+    if not record:
+        return None
+    tool_id = str(record.get("id") or "").strip()
+    name = str(record.get("name") or "").strip()
+    args = record.get("args")
+    if not tool_id or not name:
+        return None
+    if isinstance(args, dict) and not args:
+        return None
+    if isinstance(args, str):
+        text = args.strip().lower()
+        if not text or text in {"{}", "[]", "null"}:
+            return None
+    return record
+
+
+def _sanitize_message_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    safe = {str(key): val for key, val in payload.items()}
+    tool_calls_raw = safe.get("tool_calls")
+    if isinstance(tool_calls_raw, list):
+        cleaned_tool_calls = [
+            item
+            for raw in tool_calls_raw
+            if (item := _sanitize_tool_call(raw)) is not None
+        ]
+        if cleaned_tool_calls:
+            safe["tool_calls"] = cleaned_tool_calls
+        else:
+            safe.pop("tool_calls", None)
+
+    invalid_tool_calls_raw = safe.get("invalid_tool_calls")
+    if isinstance(invalid_tool_calls_raw, list):
+        cleaned_invalid_tool_calls = [
+            item
+            for raw in invalid_tool_calls_raw
+            if (item := _as_record(_json_safe(raw))) and str(item.get("name") or "").strip()
+        ]
+        if cleaned_invalid_tool_calls:
+            safe["invalid_tool_calls"] = cleaned_invalid_tool_calls
+        else:
+            safe.pop("invalid_tool_calls", None)
+
+    message_type = _normalize_message_type(safe.get("type"))
+    content = message_to_text(safe)
+    if message_type == "ai" and not content.strip() and not safe.get("tool_calls"):
+        return None
+    return safe
+
+
 def _message_chunk_parts(data: Any) -> tuple[Any, dict[str, Any]]:
     if isinstance(data, (tuple, list)) and len(data) == 2:
         message, metadata = data
@@ -197,6 +248,9 @@ def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
 
     if event_type == "messages":
         message, metadata = _message_chunk_parts(data)
+        message_payload = _sanitize_message_payload(_serialize_langgraph_message(message))
+        if message_payload is None:
+            return None
         metadata_payload = _json_safe(metadata)
         metadata_record = (
             metadata_payload if isinstance(metadata_payload, dict) else {}
@@ -207,7 +261,7 @@ def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
             metadata_record.setdefault("checkpoint_ns", checkpoint_ns)
         return (
             event_type,
-            [_serialize_langgraph_message(message), metadata_record],
+            [message_payload, metadata_record],
             ns,
         )
 
@@ -318,9 +372,25 @@ def deepagents_chat_stream(
     def _event_iter():
         req_id = uuid4().hex[:10]
         started = _now_ms()
+        last_progress_ms = started
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         done_token = "__done__"
+        run_timeout_ms = int(
+            max(
+                5.0,
+                float(getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 75.0),
+            )
+            * 1000
+        )
+        idle_timeout_ms = int(
+            max(
+                5.0,
+                float(getattr(settings, "deepagents_stream_idle_timeout_seconds", 20.0) or 20.0),
+            )
+            * 1000
+        )
+        forced_stop_emitted = False
 
         class _CancelToken:
             cancelled: bool = False
@@ -332,8 +402,10 @@ def deepagents_chat_stream(
             return f"{event}|{'|'.join(clean_ns)}" if clean_ns else event
 
         def _push(event: str, data: Any = None, *, ns: list[str] | None = None) -> None:
+            nonlocal last_progress_ms
             event_name = _event_name(event, ns)
             payload = _json_safe(data) if data is not None else {}
+            last_progress_ms = _now_ms()
             _LOG.debug(
                 "deepagents_stream event req=%s uid=%s event=%s keys=%s",
                 req_id,
@@ -392,6 +464,7 @@ def deepagents_chat_stream(
                     db=db,
                     user_id=current_user.id,
                     workspace=workspace,
+                    user_query=payload.query,
                     web_search_service=_scoped_web_search_service(
                         getattr(service.config, "web_search_proxy_url", ""),
                     ),
@@ -408,8 +481,17 @@ def deepagents_chat_stream(
                     max_write_calls=int(
                         getattr(settings, "deepagents_max_write_calls", 128) or 128
                     ),
-                allow_write_tools=allow_write_tools,
+                    allow_write_tools=allow_write_tools,
+                    consecutive_failures_limit=int(
+                        getattr(settings, "deepagents_consecutive_failures_limit", 3) or 3
+                    ),
+                    consecutive_no_progress_limit=int(
+                        getattr(settings, "deepagents_consecutive_no_progress_limit", 2) or 2
+                    ),
                 )
+
+                def _tool_event_cb(tool_event: dict[str, Any]) -> None:
+                    _push("custom", {"kind": "tool_run", "tool_run": tool_event})
 
                 agent, usage, tool_runs, files_mapping = build_chat_agent(
                     service=service,
@@ -417,6 +499,7 @@ def deepagents_chat_stream(
                     context=tool_context,
                     limiter=limiter,
                     memory_text=agents_memory_text,
+                    tool_event_cb=_tool_event_cb,
                     cancel_token=cancel_token,
                 )
                 if agent is None:
@@ -487,6 +570,31 @@ def deepagents_chat_stream(
                 try:
                     event, data = event_queue.get(timeout=heartbeat_interval_s)
                 except queue.Empty:
+                    now_ms = _now_ms()
+                    if worker.is_alive() and now_ms - started >= run_timeout_ms:
+                        cancel_token.cancelled = True
+                        if not forced_stop_emitted:
+                            forced_stop_emitted = True
+                            yield _sse_event(
+                                "error",
+                                {
+                                    "message": "deepagents_run_timeout: agent run exceeded the configured time budget",
+                                },
+                            )
+                            yield _sse_event("done", {"status": done_token})
+                        break
+                    if worker.is_alive() and now_ms - last_progress_ms >= idle_timeout_ms:
+                        cancel_token.cancelled = True
+                        if not forced_stop_emitted:
+                            forced_stop_emitted = True
+                            yield _sse_event(
+                                "error",
+                                {
+                                    "message": "deepagents_run_idle_timeout: agent run stopped making progress and was cancelled",
+                                },
+                            )
+                            yield _sse_event("done", {"status": done_token})
+                        break
                     heartbeat_count += 1
                     yield _sse_event("ping", {"hb": heartbeat_count})
                     if (not worker.is_alive()) and event_queue.empty():

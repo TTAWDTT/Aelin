@@ -189,17 +189,13 @@ export function ExecutionPane({
                         {t('trace.tools.empty')}
                       </p>
                     ) : (
-                      turns
-                        .filter((turn) => turn.toolCalls.length > 0)
-                        .map((turn) => (
-                          <section key={`tools:${turn.key}`} className="space-y-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
-                            <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-                              <span className="font-medium">{turn.node}</span>
-                              <span>{turn.toolCalls.length} calls</span>
-                            </div>
-                            {turn.toolCalls.map((tool) => <ToolCard key={tool.key} tool={tool} />)}
-                          </section>
-                        ))
+                      <section className="space-y-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+                        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                          <span className="font-medium">{t('trace.tab.tools')}</span>
+                          <span>{tools.length} calls</span>
+                        </div>
+                        {tools.map((tool) => <ToolCard key={tool.key} tool={tool} />)}
+                      </section>
                     )}
                   </div>
                 </div>

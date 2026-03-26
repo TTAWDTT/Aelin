@@ -102,6 +102,11 @@ class Settings(BaseSettings):
             "MERCURYDESK_AGENT_LOOP_ALLOW_WRITE_TOOLS",
         ),
     )
+    deepagents_run_timeout_seconds: float = 75.0
+    deepagents_stream_idle_timeout_seconds: float = 20.0
+    deepagents_tool_timeout_seconds: float = 25.0
+    deepagents_consecutive_failures_limit: int = 3
+    deepagents_consecutive_no_progress_limit: int = 2
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""

@@ -22,6 +22,13 @@ def tool_attachment_search(context: ToolRuntimeContext, args: dict[str, Any]) ->
         attachment_ids = list(context.available_attachment_ids or [])
     if not attachment_ids:
         return _result_error("missing attachment_ids")
+    allowed_ids = set(int(item) for item in list(context.available_attachment_ids or []))
+    if allowed_ids:
+        invalid_ids = [item for item in attachment_ids if item not in allowed_ids]
+        if invalid_ids:
+            return _result_error(
+                f"invalid attachment_ids: these ids are not available in this run: {invalid_ids[:6]}"
+            )
 
     top_k = _safe_int(args.get("top_k"), 5, low=1, high=20)
     mode = str(args.get("mode") or "keyword").strip().lower()
@@ -41,12 +48,28 @@ def tool_attachment_search(context: ToolRuntimeContext, args: dict[str, Any]) ->
     if not bool(result.get("ok")):
         return _result_error(str(result.get("error") or "attachment_search_failed"))
 
+    total = int(result.get("total") or 0)
+    content = str(result.get("content") or "")[:8000]
+    hits = list(result.get("hits") or [])
+    if total <= 0 or (not content and not hits):
+        return _result_ok(
+            query=query,
+            mode=mode,
+            attachment_ids=list(result.get("attachment_ids") or []),
+            total=0,
+            content="",
+            hits=[],
+            no_new_info=True,
+            summary="no matching attachment evidence found",
+        )
+
     return _result_ok(
         query=query,
         mode=mode,
         attachment_ids=list(result.get("attachment_ids") or []),
-        total=int(result.get("total") or 0),
-        content=str(result.get("content") or "")[:8000],
-        hits=list(result.get("hits") or []),
+        total=total,
+        content=content,
+        hits=hits,
+        summary=f"found {total} attachment hit(s)",
     )
 

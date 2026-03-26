@@ -5,19 +5,20 @@ export type ChatStreamState = {
   topology?: Record<string, unknown>
   answer?: string
   todos?: unknown[]
+  tool_runs?: Array<Record<string, unknown>>
   [key: string]: unknown
 }
 
 export type ChatRuntimeStream = {
-  messages: BaseMessage[]
+  messages?: BaseMessage[]
   values?: ChatStreamState
-  isLoading: boolean
+  isLoading?: boolean
   toolCalls?: unknown[]
   activeSubagents?: unknown[]
   subagents?: Map<string, unknown>
   getToolCalls?: (message: BaseMessage) => unknown[]
   getSubagentsByMessage?: (messageId: string) => unknown[]
-  getMessagesMetadata: (
+  getMessagesMetadata?: (
     message: BaseMessage,
     index?: number,
   ) => {
@@ -92,6 +93,8 @@ export type ExecutionRuntime = {
   hasExecution: boolean
 }
 
+const GENERIC_TOOL_NAMES = new Set(['', 'tool'])
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -110,6 +113,11 @@ function stableJson(value: unknown, max = 180): string {
   } catch {
     return compactText(value, max)
   }
+}
+
+function hasMeaningfulArgsText(value: string): boolean {
+  const text = String(value || '').trim()
+  return Boolean(text) && text !== '{}' && text !== '[]' && text !== 'null'
 }
 
 function messageTypeOf(message: BaseMessage): string {
@@ -140,6 +148,12 @@ function messagePreview(message: BaseMessage): string {
 function normalizeStatus(value: unknown, fallback = 'idle'): string {
   const text = String(value || '').trim().toLowerCase()
   return text || fallback
+}
+
+function normalizeToolState(value: unknown): string {
+  const state = normalizeStatus(value, 'idle')
+  if (state === 'denied') return 'failed'
+  return state
 }
 
 function computeDepths(
@@ -279,24 +293,71 @@ function getMessageId(message: BaseMessage, metadataMessageId: string | undefine
 
 function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage): ExecutionToolCall[] {
   if (!stream.getToolCalls) return []
-  return (stream.getToolCalls(message) ?? []).map((item, index) => {
+  const rows = (() => {
+    try {
+      return stream.getToolCalls?.(message) ?? []
+    } catch {
+      return []
+    }
+  })()
+  const toolCalls = rows.map((item, index) => {
     const record = asRecord(item)
     const call = asRecord(record.call)
     const result = record.result
     const name = String(call.name || record.name || 'tool').trim() || 'tool'
+    const args = call.args == null ? '' : stableJson(call.args, 160)
+    const resolvedState = normalizeStatus(record.status || record.state, result == null ? 'running' : 'completed')
     return {
       key: String(record.id || call.id || `${name}:${index}`),
       name,
-      state: normalizeStatus(record.status || record.state, result == null ? 'running' : 'completed'),
-      args: call.args == null ? '' : stableJson(call.args, 160),
+      state: resolvedState,
+      args,
       result: result == null ? '' : stableJson(result, 180),
     }
   })
+  const deduped = new Map<string, ExecutionToolCall>()
+  for (const tool of toolCalls) {
+    if (
+      GENERIC_TOOL_NAMES.has(tool.name.toLowerCase())
+      && !hasMeaningfulArgsText(tool.args)
+      && !tool.result
+    ) {
+      continue
+    }
+    if (
+      (tool.state === 'pending' || tool.state === 'running')
+      && !hasMeaningfulArgsText(tool.args)
+      && !tool.result
+    ) {
+      continue
+    }
+    const existing = deduped.get(tool.key)
+    if (!existing) {
+      deduped.set(tool.key, tool)
+      continue
+    }
+    const existingSettled = existing.state === 'completed' || existing.state === 'error' || existing.state === 'failed'
+    const nextSettled = tool.state === 'completed' || tool.state === 'error' || tool.state === 'failed'
+    if (!existingSettled && nextSettled) {
+      deduped.set(tool.key, tool)
+      continue
+    }
+    if ((existing.result?.length || 0) <= (tool.result?.length || 0)) {
+      deduped.set(tool.key, tool)
+    }
+  }
+  return Array.from(deduped.values())
 }
 
 function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): ExecutionSubagent[] {
   if (!stream.getSubagentsByMessage) return []
-  const rows = stream.getSubagentsByMessage(messageId)
+  const rows = (() => {
+    try {
+      return stream.getSubagentsByMessage?.(messageId)
+    } catch {
+      return []
+    }
+  })()
   if (!Array.isArray(rows)) return []
   return rows.map((item, index) => {
     const record = item as unknown as Record<string, unknown>
@@ -313,9 +374,16 @@ function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): E
 }
 
 export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
-  return stream.messages
+  const messages = Array.isArray(stream.messages) ? stream.messages : []
+  const isLoading = Boolean(stream.isLoading)
+  const getMessagesMetadata =
+    typeof stream.getMessagesMetadata === 'function'
+      ? stream.getMessagesMetadata.bind(stream)
+      : (() => undefined)
+
+  return messages
     .map((message, index) => {
-      const metadata = stream.getMessagesMetadata(message, index)
+      const metadata = getMessagesMetadata(message, index)
       const streamMetadata = asRecord(metadata?.streamMetadata)
       const node = String(streamMetadata.langgraph_node || '').trim()
       const messageType = messageTypeOf(message)
@@ -348,10 +416,10 @@ export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
         node: node || messageType || 'message',
         namespace,
         preview,
-        status: stream.isLoading && index === stream.messages.length - 1 ? 'running' : 'completed',
+        status: isLoading && index === messages.length - 1 ? 'running' : 'completed',
         toolCalls,
         subagents,
-        isStreaming: stream.isLoading && index === stream.messages.length - 1,
+        isStreaming: isLoading && index === messages.length - 1,
       }
     })
     .filter((item): item is ExecutionTurn => item != null)
@@ -359,17 +427,49 @@ export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
 
 export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
   const turns = getExecutionTurns(stream)
-  const topology = buildExecutionTopology(asRecord(stream.values?.topology), turns)
-  const tools = turns.flatMap((turn) => turn.toolCalls)
+  const normalizedTurns = turns.map((turn) => {
+    const toolMap = new Map<string, ExecutionToolCall>()
+    for (const tool of turn.toolCalls) {
+      if (!toolMap.has(tool.key)) {
+        toolMap.set(tool.key, tool)
+      }
+    }
+    return {
+      ...turn,
+      toolCalls: Array.from(toolMap.values()),
+    }
+  })
+  const topology = buildExecutionTopology(asRecord(stream.values?.topology), normalizedTurns)
+  const stableToolRuns = Array.isArray(stream.values?.tool_runs)
+    ? stream.values.tool_runs
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+        .map((item, index) => ({
+          key: String(item.key || `tool-run:${index}`),
+          name: String(item.name || 'tool'),
+          state: normalizeToolState(item.state),
+          args: item.args == null ? '' : stableJson(item.args, 160),
+          result: item.result == null ? '' : stableJson(item.result, 180),
+        }))
+        .filter((tool) => !(GENERIC_TOOL_NAMES.has(tool.name.toLowerCase()) && !tool.args && !tool.result))
+    : []
+  const toolMap = new Map<string, ExecutionToolCall>()
+  for (const tool of normalizedTurns.flatMap((turn) => turn.toolCalls)) {
+    toolMap.set(tool.key, tool)
+  }
+  for (const tool of stableToolRuns) {
+    toolMap.set(tool.key, tool)
+  }
+  const tools = Array.from(toolMap.values())
   const subagents = turns.flatMap((turn) => turn.subagents)
   const hasExecution =
     topology.nodes.length > 0
-    || turns.length > 0
+    || normalizedTurns.length > 0
+    || stableToolRuns.length > 0
     || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
 
   return {
     topology,
-    turns,
+    turns: normalizedTurns,
     tools,
     subagents,
     hasExecution,

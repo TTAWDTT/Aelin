@@ -23,9 +23,18 @@ export function ChatStatusBar({
 }: ChatStatusBarProps) {
   const { t, locale } = useChatI18n()
   const { open, setOpen, setSuppressAutoOpen } = useExecutionPaneStore()
-  const { tools, subagents, hasExecution: hasRuns } = execution
+  const { topology, tools, subagents, hasExecution: hasRuns } = execution
+  const canOpenExecution =
+    Boolean(onOpenExecution)
+    && (
+      isStreaming
+      || hasRuns
+      || topology.nodes.length > 0
+      || tools.length > 0
+      || subagents.length > 0
+    )
 
-  if (!isStreaming && !statusText && !hasRuns) return null
+  if (!isStreaming && !statusText && !hasRuns && !canOpenExecution) return null
 
   const toolNames = Array.from(new Set(tools.map((call) => call.name).filter(Boolean)))
   const joinedTools = toolNames.slice(0, 4).join(' · ')
@@ -63,7 +72,7 @@ export function ChatStatusBar({
       <span className="min-w-0 flex-1 truncate" title={displayText}>
         {displayText}
       </span>
-      {hasRuns && onOpenExecution && (
+      {canOpenExecution && (
         <button
           type="button"
           onClick={() => {
@@ -72,7 +81,7 @@ export function ChatStatusBar({
               setSuppressAutoOpen(true)
             } else {
               setSuppressAutoOpen(false)
-              onOpenExecution()
+              onOpenExecution?.()
             }
           }}
           aria-label={t('trace.executionPane.headerOpen')}
