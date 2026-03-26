@@ -135,6 +135,7 @@ function toTransportEvent(
   item: RawSseEvent,
   parsedPayload: RawSsePayload,
   threadId: string,
+  messageOrdinal: number,
 ): TransportStreamEvent | null {
   if (item.event === 'metadata') {
     return {
@@ -156,7 +157,7 @@ function toTransportEvent(
 
   if (item.event === 'messages' || item.event.startsWith('messages|')) {
     const tuple = Array.isArray(parsedPayload) ? parsedPayload : []
-    const message = normalizeStreamMessage(tuple[0], asRecord(tuple[1]), threadId)
+    const message = normalizeStreamMessage(tuple[0], asRecord(tuple[1]), threadId, messageOrdinal)
     if (!message) return null
     return {
       event: item.event,
@@ -174,10 +175,11 @@ function toTransportEvent(
   return null
 }
 
-function buildStableFallbackId(
+export function buildStreamFallbackId(
   threadId: string,
   message: Record<string, unknown>,
   metadata: Record<string, unknown>,
+  messageOrdinal: number,
 ): string {
   const type = normalizeMessageType(message.type || metadata.type || 'message') || 'message'
   const toolCallId = String(message.tool_call_id || metadata.tool_call_id || '').trim()
@@ -190,18 +192,20 @@ function buildStableFallbackId(
     || metadata.node
     || '',
   ).trim()
-  if (checkpointNs) return `${threadId}:${type}:${checkpointNs}`
+  const ordinal = Math.max(0, Number(messageOrdinal) || 0)
+  if (checkpointNs) return `${threadId}:${type}:${checkpointNs}:${ordinal}`
 
   const runId = String(metadata.run_id || metadata.langgraph_run_id || '').trim()
-  if (runId) return `${threadId}:${type}:${runId}`
+  if (runId) return `${threadId}:${type}:${runId}:${ordinal}`
 
-  return `${threadId}:${type}:root`
+  return `${threadId}:${type}:root:${ordinal}`
 }
 
 function normalizeStreamMessage(
   message: unknown,
   metadata: Record<string, unknown>,
   threadId: string,
+  messageOrdinal: number,
 ): StreamMessageLike | null {
   const record =
     message && typeof message === 'object' && !Array.isArray(message)
@@ -216,7 +220,7 @@ function normalizeStreamMessage(
     id:
       typeof record.id === 'string' && record.id.trim()
         ? record.id.trim()
-        : buildStableFallbackId(threadId, record, metadata),
+        : buildStreamFallbackId(threadId, record, metadata, messageOrdinal),
     type,
     content,
   }
@@ -264,6 +268,7 @@ export class DeepAgentsUseStreamTransport {
 
     return (async function* () {
       let buffer = ''
+      let messageOrdinal = 0
 
       while (true) {
         const { done, value } = await reader.read()
@@ -280,7 +285,16 @@ export class DeepAgentsUseStreamTransport {
             continue
           }
 
-          const transportEvent = toTransportEvent(item, parsedPayload, threadId)
+          if (item.event === 'messages' || item.event.startsWith('messages|')) {
+            messageOrdinal += 1
+          }
+
+          const transportEvent = toTransportEvent(
+            item,
+            parsedPayload,
+            threadId,
+            messageOrdinal,
+          )
           if (transportEvent) {
             yield transportEvent
           }

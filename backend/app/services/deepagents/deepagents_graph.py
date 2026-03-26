@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,8 @@ from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
 from app.services.deepagents.tool_runtime import (
+    _acquire_tool_executor_slot,
+    _submit_tool_future,
     ToolCallLimiter,
     ToolPolicyUsage,
     ToolRuntimeContext,
@@ -36,6 +39,8 @@ from app.services.deepagents.cancel_utils import is_cancelled
 
 _log = logging.getLogger(__name__)
 _AELIN_TIMEZONE = "Asia/Shanghai"
+_SKILL_MOUNT_CACHE_LOCK = threading.Lock()
+_SKILL_MOUNT_CACHE: dict[tuple[str, str], "SkillMountSnapshot"] = {}
 
 
 class DeepAgentsCancelled(RuntimeError):
@@ -80,6 +85,13 @@ class DeepAgentsLoopResult:
     error: str = ""
     cancelled: bool = False
     capability_summary: str = ""
+
+
+@dataclass(frozen=True)
+class SkillMountSnapshot:
+    skill_files: dict[str, str]
+    skill_sources: list[str]
+    mounted_skills: list[str]
 
 
 class DeviceToolInput(BaseModel):
@@ -214,6 +226,67 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
+    skill_files: dict[str, str] = {}
+    skill_sources: list[str] = []
+    mounted_skills: list[str] = []
+
+    def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
+        nonlocal skill_files, skill_sources, mounted_skills
+
+        if not root.is_dir():
+            return
+
+        has_any = False
+        for subdir in root.iterdir():
+            if not subdir.is_dir():
+                continue
+            skill_md = subdir / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+
+            skill_dir_name = subdir.name.replace("_", "-")
+            virtual_dir = f"{virtual_root}{skill_dir_name}/"
+            mounted_any_file = False
+            for file_path in subdir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                try:
+                    text = file_path.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                relative_path = file_path.relative_to(subdir).as_posix()
+                skill_files[f"{virtual_dir}{relative_path}"] = text
+                mounted_any_file = True
+
+            if mounted_any_file:
+                has_any = True
+                mounted_skills.append(f"{virtual_root}{skill_dir_name}/")
+
+        if has_any and virtual_root not in skill_sources:
+            skill_sources.append(virtual_root)
+
+    _mount_skills_from_root(skills_root, "/skills/aelin/")
+    if extra_dir:
+        _mount_skills_from_root(Path(extra_dir), "/skills/external/")
+
+    return SkillMountSnapshot(
+        skill_files=dict(skill_files),
+        skill_sources=list(skill_sources),
+        mounted_skills=list(mounted_skills),
+    )
+
+
+def _get_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
+    key = (str(skills_root.resolve()), str(Path(extra_dir).resolve()) if extra_dir else "")
+    with _SKILL_MOUNT_CACHE_LOCK:
+        snapshot = _SKILL_MOUNT_CACHE.get(key)
+        if snapshot is None:
+            snapshot = _build_skill_mount_snapshot(skills_root, extra_dir)
+            _SKILL_MOUNT_CACHE[key] = snapshot
+        return snapshot
+
+
 def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[DeepAgentsToolRun]:
     return [
         DeepAgentsToolRun(
@@ -341,6 +414,53 @@ def _invoke_tool(
     if is_cancelled(cancel_token):
         raise DeepAgentsCancelled("cancelled")
 
+    slot = _acquire_tool_executor_slot()
+    if slot is None:
+        latency_ms = int((perf_counter() - started) * 1000)
+        result = {
+            "ok": False,
+            "error": (
+                f"{name}_busy: previous long-running tool calls are still draining; "
+                "stop using tools for now and answer from current evidence"
+            ),
+            "stop_retry": True,
+        }
+        if decision.is_write:
+            result["maybe_applied"] = True
+        usage.note_denial()
+        tool_key = f"{name}:{call_index}"
+        tool_runs.append(
+            {
+                "call_index": call_index,
+                "name": name,
+                "args": args,
+                "key": tool_key,
+                "status": "busy",
+                "result": result,
+                "error": str(result["error"]),
+                "is_write": decision.is_write,
+                "latency_ms": latency_ms,
+                "summary": f"{name} busy: prior tool calls are still draining",
+            }
+        )
+        _emit_tool_event(
+            tool_event_cb,
+            {
+                "key": tool_key,
+                "name": name,
+                "args": args,
+                "state": "busy",
+                "result": result,
+                "error": str(result["error"]),
+                "is_write": decision.is_write,
+                "latency_ms": latency_ms,
+                "summary": f"{name} busy: prior tool calls are still draining",
+            },
+        )
+        return result
+
+    executor, semaphore = slot
+
     usage.note_invocation(name, args)
     tool_key = f"{name}:{call_index}"
     _emit_tool_event(
@@ -357,34 +477,30 @@ def _invoke_tool(
         },
     )
     result: dict[str, Any]
-    result_box: dict[str, Any] = {}
-    error_box: dict[str, BaseException] = {}
-
-    def _run_handler() -> None:
-        try:
-            result_box["value"] = handler(context, args)
-        except BaseException as exc:  # noqa: BLE001
-            error_box["value"] = exc
+    future = _submit_tool_future(executor, semaphore, handler, context, args)
 
     timeout_seconds = max(
         1.0,
         float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
     )
-    worker = threading.Thread(target=_run_handler, daemon=True)
-    worker.start()
     wait_slice_seconds = 0.5
     heartbeat_interval_seconds = 3.0
     last_heartbeat_at = started
     cancelled_midflight = False
     deadline = started + timeout_seconds
 
-    while worker.is_alive():
+    while not future.done():
         now = perf_counter()
         remaining = deadline - now
         if remaining <= 0:
             break
-        worker.join(timeout=min(wait_slice_seconds, remaining))
-        if not worker.is_alive():
+        try:
+            future.result(timeout=min(wait_slice_seconds, remaining))
+        except FutureTimeout:
+            pass
+        except BaseException:
+            break
+        if future.done():
             break
         if is_cancelled(cancel_token):
             cancelled_midflight = True
@@ -410,18 +526,35 @@ def _invoke_tool(
         result = _result_error(
             f"{name}_cancelled: request cancelled while tool was running"
         )
-    elif worker.is_alive():
+        result["stop_retry"] = True
+        if decision.is_write:
+            result["maybe_applied"] = True
+            result["error"] = (
+                f"{name}_cancelled: request cancelled while the write tool was running; "
+                "the operation may still complete in the background, so do not retry the same write blindly"
+            )
+    elif not future.done():
         result = _result_error(
-            f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; adjust arguments once or stop using this tool and answer from current evidence"
+            f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
+            "stop using this tool in this run and answer from current evidence"
         )
-    elif "value" in error_box:
-        result = _result_error(f"{name}_failed:{str(error_box['value'])[:160]}")
+        result["stop_retry"] = True
+        if decision.is_write:
+            result["maybe_applied"] = True
+            result["error"] = (
+                f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
+                "the write may still complete in the background, so do not retry the same write blindly"
+            )
     else:
-        raw_result = result_box.get("value")
-        if isinstance(raw_result, dict):
-            result = raw_result
+        try:
+            raw_result = future.result()
+        except BaseException as exc:  # noqa: BLE001
+            result = _result_error(f"{name}_failed:{str(exc)[:160]}")
         else:
-            result = _result_error(f"{name}_failed:tool returned invalid payload")
+            if isinstance(raw_result, dict):
+                result = raw_result
+            else:
+                result = _result_error(f"{name}_failed:tool returned invalid payload")
 
     latency_ms = int((perf_counter() - started) * 1000)
     usage.total_calls += 1
@@ -708,50 +841,8 @@ def build_chat_agent(
     )
 
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
-    skill_files: dict[str, str] = {}
-    skill_sources: list[str] = []
-    mounted_skills: list[str] = []
-
-    def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
-        nonlocal skill_files, skill_sources, mounted_skills
-
-        if not root.is_dir():
-            return
-
-        has_any = False
-        for subdir in root.iterdir():
-            if not subdir.is_dir():
-                continue
-            skill_md = subdir / "SKILL.md"
-            if not skill_md.is_file():
-                continue
-
-            skill_dir_name = subdir.name.replace("_", "-")
-            virtual_dir = f"{virtual_root}{skill_dir_name}/"
-            mounted_any_file = False
-            for file_path in subdir.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                try:
-                    text = file_path.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                relative_path = file_path.relative_to(subdir).as_posix()
-                skill_files[f"{virtual_dir}{relative_path}"] = text
-                mounted_any_file = True
-
-            if mounted_any_file:
-                has_any = True
-                mounted_skills.append(f"{virtual_root}{skill_dir_name}/")
-
-        if has_any and virtual_root not in skill_sources:
-            skill_sources.append(virtual_root)
-
-    _mount_skills_from_root(skills_root, "/skills/aelin/")
-
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
-    if extra_dir:
-        _mount_skills_from_root(Path(extra_dir), "/skills/external/")
+    skill_snapshot = _get_skill_mount_snapshot(skills_root, extra_dir)
 
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []
@@ -761,14 +852,14 @@ def build_chat_agent(
         memory_paths.append(mem_path)
 
     files: dict[str, Any] = {}
-    for path, text in {**skill_files, **memory_files}.items():
+    for path, text in {**skill_snapshot.skill_files, **memory_files}.items():
         files[path] = create_file_data(text)
     files["/runtime/capabilities.json"] = create_file_data(
         json.dumps(
             {
                 "tools": [tool.name for tool in tools],
-                "skill_sources": skill_sources,
-                "mounted_skills": mounted_skills,
+                "skill_sources": skill_snapshot.skill_sources,
+                "mounted_skills": skill_snapshot.mounted_skills,
                 "memory_files": memory_paths,
             },
             ensure_ascii=False,
@@ -782,7 +873,7 @@ def build_chat_agent(
         system_prompt=system_prompt,
         backend=StateBackend,
         tools=tools,
-        skills=skill_sources or None,
+        skills=skill_snapshot.skill_sources or None,
         memory=memory_paths or None,
     )
     return agent, usage, tool_runs, files

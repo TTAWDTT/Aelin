@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
-from typing import Any
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
@@ -28,6 +30,69 @@ class ToolRuntimeContext:
     web_search_service: WebSearchService
     attachment_service: AelinAttachmentService
     available_attachment_ids: list[int]
+    cancel_checker: Callable[[], bool] | None = None
+
+
+_TOOL_EXECUTOR_MAX_WORKERS = 4
+_TOOL_EXECUTOR_SLOT_WAIT_SECONDS = 0.25
+_TOOL_EXECUTOR: ThreadPoolExecutor | None = None
+_TOOL_EXECUTOR_SEMAPHORE: threading.BoundedSemaphore | None = None
+_TOOL_EXECUTOR_LOCK = threading.Lock()
+
+
+def _ensure_tool_executor() -> tuple[ThreadPoolExecutor, threading.BoundedSemaphore]:
+    global _TOOL_EXECUTOR, _TOOL_EXECUTOR_SEMAPHORE
+    with _TOOL_EXECUTOR_LOCK:
+        if _TOOL_EXECUTOR is None or _TOOL_EXECUTOR_SEMAPHORE is None:
+            max_workers = max(1, int(_TOOL_EXECUTOR_MAX_WORKERS or 1))
+            _TOOL_EXECUTOR = ThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix="aelin-tool",
+            )
+            _TOOL_EXECUTOR_SEMAPHORE = threading.BoundedSemaphore(max_workers)
+        return _TOOL_EXECUTOR, _TOOL_EXECUTOR_SEMAPHORE
+
+
+def _acquire_tool_executor_slot() -> tuple[ThreadPoolExecutor, threading.BoundedSemaphore] | None:
+    executor, semaphore = _ensure_tool_executor()
+    acquired = semaphore.acquire(timeout=max(0.0, float(_TOOL_EXECUTOR_SLOT_WAIT_SECONDS)))
+    if not acquired:
+        return None
+    return executor, semaphore
+
+
+def _submit_tool_future(
+    executor: ThreadPoolExecutor,
+    semaphore: threading.BoundedSemaphore,
+    handler: Any,
+    context: ToolRuntimeContext,
+    args: dict[str, Any],
+) -> Future:
+    try:
+        future = executor.submit(handler, context, args)
+    except Exception:
+        semaphore.release()
+        raise
+
+    def _release_slot(_future: Future) -> None:
+        try:
+            semaphore.release()
+        except Exception:
+            pass
+
+    future.add_done_callback(_release_slot)
+    return future
+
+
+def _reset_tool_executor_for_tests(max_workers: int = 4) -> None:
+    global _TOOL_EXECUTOR, _TOOL_EXECUTOR_SEMAPHORE, _TOOL_EXECUTOR_MAX_WORKERS
+    with _TOOL_EXECUTOR_LOCK:
+        old_executor = _TOOL_EXECUTOR
+        _TOOL_EXECUTOR = None
+        _TOOL_EXECUTOR_SEMAPHORE = None
+        _TOOL_EXECUTOR_MAX_WORKERS = max(1, int(max_workers or 1))
+    if old_executor is not None:
+        old_executor.shutdown(wait=False, cancel_futures=True)
 
 
 def build_tool_runtime_context(
@@ -38,6 +103,7 @@ def build_tool_runtime_context(
     web_search_service: WebSearchService | None = None,
     attachment_service: AelinAttachmentService | None = None,
     available_attachment_ids: list[int] | None = None,
+    cancel_checker: Callable[[], bool] | None = None,
 ) -> ToolRuntimeContext:
     return ToolRuntimeContext(
         db=db,
@@ -46,6 +112,7 @@ def build_tool_runtime_context(
         web_search_service=web_search_service or WebSearchService(),
         attachment_service=attachment_service or get_aelin_attachment_service(),
         available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
+        cancel_checker=cancel_checker,
     )
 
 

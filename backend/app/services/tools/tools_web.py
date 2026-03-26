@@ -8,6 +8,9 @@ from app.services.deepagents.tool_runtime import ToolRuntimeContext
 
 
 def tool_web_search(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, Any]:
+    if callable(getattr(context, "cancel_checker", None)) and context.cancel_checker():
+        return _result_error("web_search_cancelled: request cancelled before web search started")
+
     action = str(args.get("action") or "search_and_fetch").strip().lower()
     if action not in {"search", "search_and_fetch"}:
         # Keep the error short and explicit so DeepAgents can easily recover.
@@ -38,6 +41,9 @@ def tool_web_search(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[s
             )
             or []
         )
+
+    if callable(getattr(context, "cancel_checker", None)) and context.cancel_checker():
+        return _result_error("web_search_cancelled: request cancelled while web search was running")
 
     providers: set[str] = set()
     items: list[dict[str, Any]] = []

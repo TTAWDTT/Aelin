@@ -470,6 +470,7 @@ def deepagents_chat_stream(
                         getattr(service.config, "web_search_proxy_url", ""),
                     ),
                     available_attachment_ids=attachment_ids,
+                    cancel_checker=lambda: is_cancelled(cancel_token),
                 )
 
                 allow_write_tools = bool(

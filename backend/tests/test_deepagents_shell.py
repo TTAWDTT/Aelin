@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -299,6 +300,40 @@ def test_build_chat_agent_injects_current_date_into_system_prompt(monkeypatch):
     assert "Interpret relative date and time references" in system_prompt
 
 
+def test_skill_mount_snapshot_uses_process_cache(monkeypatch, tmp_path):
+    from app.services.deepagents import deepagents_graph as dag
+
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "sample-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# Sample\n", encoding="utf-8")
+    (skill_dir / "notes.md").write_text("hello", encoding="utf-8")
+
+    original_read_text = Path.read_text
+    read_count = {"value": 0}
+
+    def _counting_read_text(self, *args, **kwargs):  # noqa: ANN001
+        if str(self).startswith(str(tmp_path)):
+            read_count["value"] += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _counting_read_text)
+
+    key = (str(skills_root.resolve()), "")
+    with dag._SKILL_MOUNT_CACHE_LOCK:
+        dag._SKILL_MOUNT_CACHE.pop(key, None)
+
+    first = dag._get_skill_mount_snapshot(skills_root, "")
+    second = dag._get_skill_mount_snapshot(skills_root, "")
+
+    assert first is second
+    assert read_count["value"] == 2
+    assert "/skills/aelin/sample-skill/SKILL.md" in first.skill_files
+
+    with dag._SKILL_MOUNT_CACHE_LOCK:
+        dag._SKILL_MOUNT_CACHE.pop(key, None)
+
+
 @pytest.mark.integration
 def test_deepagents_chat_stream_filters_draft_tool_calls_without_tool_run_custom_event(monkeypatch):
     client = _create_test_client()
@@ -392,6 +427,59 @@ def test_sanitize_tool_call_drops_empty_json_string_args():
     assert dchat._sanitize_tool_call(
         {"id": "call-1", "name": "web_search", "args": "null"}
     ) is None
+
+
+def test_invoke_tool_timeout_marks_write_unknown_and_uses_bounded_executor(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents import tool_runtime as tr
+
+    monkeypatch.setattr(dag.settings, "deepagents_tool_timeout_seconds", 1.0, raising=False)
+    tr._reset_tool_executor_for_tests(max_workers=1)
+
+    limiter = tr.ToolCallLimiter(
+        max_tool_calls=10,
+        max_write_calls=10,
+        allow_write_tools=True,
+        consecutive_failures_limit=3,
+        consecutive_no_progress_limit=2,
+    )
+    usage = tr.ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+
+    def _slow_write(_context, _args):  # noqa: ANN001
+        time.sleep(2.0)
+        return {"ok": True, "opened": True}
+
+    try:
+        first = dag._invoke_tool(
+            name="device",
+            args={"action": "open_url", "url": "https://example.com"},
+            handler=_slow_write,
+            context=SimpleNamespace(),
+            limiter=limiter,
+            usage=usage,
+            tool_runs=tool_runs,
+        )
+        assert first["ok"] is False
+        assert first["stop_retry"] is True
+        assert first["maybe_applied"] is True
+        assert "do not retry the same write blindly" in str(first["error"])
+
+        second = dag._invoke_tool(
+            name="device",
+            args={"action": "open_url", "url": "https://example.org"},
+            handler=_slow_write,
+            context=SimpleNamespace(),
+            limiter=limiter,
+            usage=usage,
+            tool_runs=tool_runs,
+        )
+        assert second["ok"] is False
+        assert second["stop_retry"] is True
+        assert "previous long-running tool calls are still draining" in str(second["error"])
+    finally:
+        time.sleep(1.2)
+        tr._reset_tool_executor_for_tests(max_workers=4)
 
 
 @pytest.mark.integration
