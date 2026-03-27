@@ -6,7 +6,6 @@ import type {
   ExecutionSubagent,
   ExecutionToolCall,
   ExecutionTopologyNode,
-  ExecutionTurn,
 } from '../executionStreamUtils'
 import {
   nodeIcon,
@@ -42,56 +41,6 @@ export function ExecutionTabButton({ id, active, label, disabled, onClick }: Exe
     >
       <span className="block truncate">{label}</span>
     </button>
-  )
-}
-
-export function TurnCard({ turn }: { turn: ExecutionTurn }) {
-  return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
-      <div className="flex items-start gap-2">
-        <span className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
-          {nodeIcon(turn.node)}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-              {turn.node}
-            </span>
-            <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-              {turn.status}
-            </span>
-          </div>
-          <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-            {turn.namespace}
-          </div>
-        </div>
-        <span className="pt-0.5">{statusIcon(turn.status)}</span>
-      </div>
-
-      {(turn.toolCalls.length > 0 || turn.subagents.length > 0) && (
-        <div className="mt-2 space-y-2 border-t border-[var(--color-border)] pt-2">
-          {turn.toolCalls.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                Tools
-              </div>
-              {turn.toolCalls.map((tool) => <ToolCard key={tool.key} tool={tool} compact />)}
-            </div>
-          )}
-
-          {turn.subagents.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                Subagents
-              </div>
-              {turn.subagents.map((subagent) => (
-                <SubagentCard key={subagent.key} subagent={subagent} compact />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
   )
 }
 

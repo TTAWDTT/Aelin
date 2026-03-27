@@ -10,7 +10,6 @@ import {
   SubagentCard,
   ToolCard,
   TopologyBoard,
-  TurnCard,
 } from './ExecutionPaneParts'
 import {
   asRecord,
@@ -36,10 +35,9 @@ export function ExecutionPane({
 }: ExecutionPaneProps) {
   const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const { topology, lanes, turns, tools, hasExecution } = runtime
+  const { topology, lanes, tools, hasExecution } = runtime
   const todos = Array.isArray(values.todos) ? values.todos : []
   const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
-  const toolTurns = turns.filter((turn) => turn.toolCalls.length > 0)
   const [tab, setTab] = useState<ExecutionTab>('graph')
 
   useEffect(() => {
@@ -107,8 +105,7 @@ export function ExecutionPane({
 
                 <div className={tabClassName(tab === 'tools')}>
                   <ToolsTab
-                    toolTurns={toolTurns}
-                    toolCount={tools.length}
+                    tools={tools}
                     emptyLabel={t('trace.tools.empty')}
                     title={t('trace.tab.tools')}
                   />
@@ -137,7 +134,7 @@ function GraphTab({
   locale: string
   emptyDetail: string
 }) {
-  const { topology, lanes, turns, subagents } = runtime
+  const { topology, lanes, subagents } = runtime
 
   return (
     <div id="execution-pane-graph" className="space-y-2.5 text-[11px]">
@@ -161,51 +158,43 @@ function GraphTab({
         )}
       </section>
 
-      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
-        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-          <span className="font-medium">Runtime</span>
-          <span>{locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}</span>
-        </div>
-        <div className="mt-2 space-y-2">
-          {subagents.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-                Subagents
-              </div>
-              {subagents.map((subagent) => (
-                <SubagentCard key={`runtime:${subagent.key}`} subagent={subagent} compact />
-              ))}
-            </div>
-          )}
-          {turns.length === 0
-            ? (
-                <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-                  {emptyDetail}
-                </p>
-              )
-            : turns.slice(-6).reverse().map((turn) => (
-                <TurnCard key={turn.key} turn={turn} />
-              ))}
-        </div>
-      </section>
+      {subagents.length > 0 && (
+        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+          <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+            <span className="font-medium">Subagents</span>
+            <span>{locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}</span>
+          </div>
+          <div className="mt-2 space-y-2">
+            {subagents.map((subagent) => (
+              <SubagentCard key={`runtime:${subagent.key}`} subagent={subagent} compact />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {subagents.length === 0 && lanes.length === 0 && (
+        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+          <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+            {emptyDetail}
+          </p>
+        </section>
+      )}
     </div>
   )
 }
 
 function ToolsTab({
-  toolTurns,
-  toolCount,
+  tools,
   emptyLabel,
   title,
 }: {
-  toolTurns: ExecutionRuntime['turns']
-  toolCount: number
+  tools: ExecutionRuntime['tools']
   emptyLabel: string
   title: string
 }) {
   return (
     <div id="execution-pane-tools" className="space-y-2 text-[11px]">
-      {toolTurns.length === 0
+      {tools.length === 0
         ? (
             <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
               {emptyLabel}
@@ -215,31 +204,9 @@ function ToolsTab({
             <section className="space-y-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
               <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
                 <span className="font-medium">{title}</span>
-                <span>{toolCount} calls</span>
+                <span>{tools.length} calls</span>
               </div>
-              {toolTurns.map((turn) => (
-                <section
-                  key={`tool-turn:${turn.key}`}
-                  className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-                        {turn.node}
-                      </div>
-                      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                        {turn.namespace}
-                      </div>
-                    </div>
-                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                      {turn.toolCalls.length} tools
-                    </span>
-                  </div>
-                  <div className="mt-2 space-y-2">
-                    {turn.toolCalls.map((tool) => <ToolCard key={tool.key} tool={tool} compact />)}
-                  </div>
-                </section>
-              ))}
+              {tools.map((tool) => <ToolCard key={tool.key} tool={tool} compact />)}
             </section>
           )}
     </div>

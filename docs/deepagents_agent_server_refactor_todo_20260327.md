@@ -39,21 +39,21 @@
 
 - [x] 5.1 盘点并删除 `deepagentsUseStreamTransport.ts` 中仅为自定义协议存在的补层
 - [x] 5.2 收薄 `useChatStream.ts`，让消息流主要依赖官方 thread / run / stream 语义
-- [ ] 5.3 让执行面板直接消费官方 `messages / subagents / values.todos / tasks` 数据
-- [ ] 5.4 删除 `executionStreamUtils.ts` 中仅用于自定义 timeline / graph 推断的逻辑
+- [x] 5.3 让执行面板直接消费官方 `messages / subagents / values.todos / tasks` 数据
+- [x] 5.4 删除 `executionStreamUtils.ts` 中仅用于自定义 timeline / graph 推断的逻辑
 - [ ] 5.5 保持流式输出、停止生成、会话切换仍然可用
 
 ## 6. Graph 展示回归官方运行态语义
 
 - [ ] 6.1 区分静态拓扑图与运行时高亮状态
 - [ ] 6.2 让节点状态直接来自官方 stream 事件，而不是前端二次猜测
-- [ ] 6.3 让 tool call / subagent / todo 在右侧执行面板完整可见
+- [x] 6.3 让 tool call / subagent / todo 在右侧执行面板完整可见
 - [x] 6.4 删除把正文流式文本硬塞进 timeline 的旧展示逻辑
 
 ## 7. 旧代码与冗余测试集中清理
 
 - [ ] 7.1 删除与旧自定义 chat 壳强耦合的后端测试
-- [ ] 7.2 删除与旧自定义 transport / timeline / trace 强耦合的前端测试与状态层
+- [x] 7.2 删除与旧自定义 transport / timeline / trace 强耦合的前端测试与状态层
 - [x] 7.3 收缩 `backend/app/services/deepagents/deepagents_graph.py` 中仅为旧壳兜底的逻辑
 - [x] 7.4 删除迁移后不再需要的兼容代码、旧字段映射与冗余工具事件补层
 
