@@ -379,7 +379,7 @@ function buildExecutionTopology(
   edges: ExecutionTopologyEdge[]
 } {
   const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : []
-  const rawEdges: BaseTopologyEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
+  let rawEdges: BaseTopologyEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
     .map((item) => {
       const record = asRecord(item)
       const source = String(record.source || '').trim()
@@ -393,7 +393,7 @@ function buildExecutionTopology(
     })
     .filter((item): item is BaseTopologyEdge => item != null)
 
-  const baseNodes = rawNodes
+  let baseNodes = rawNodes
     .map((item) => {
       const record = asRecord(item)
       const id = String(record.id || '').trim()
@@ -405,6 +405,42 @@ function buildExecutionTopology(
       }
     })
     .filter((item): item is { id: string; name: string; kind: string } => item != null)
+
+  if (baseNodes.length === 0) {
+    const uniqueNodes = new Map<string, { id: string; name: string; kind: string }>()
+    const derivedEdges = new Map<string, BaseTopologyEdge>()
+    const byNamespace = new Map<string, string[]>()
+
+    for (const activity of activities) {
+      if (!activity.node) continue
+      if (!uniqueNodes.has(activity.node)) {
+        uniqueNodes.set(activity.node, {
+          id: activity.node,
+          name: activity.node,
+          kind: 'node',
+        })
+      }
+      const rows = byNamespace.get(activity.namespace) ?? []
+      rows.push(activity.node)
+      byNamespace.set(activity.namespace, rows)
+    }
+
+    for (const rows of byNamespace.values()) {
+      for (let index = 0; index < rows.length - 1; index += 1) {
+        const source = rows[index]
+        const target = rows[index + 1]
+        if (!source || !target || source === target) continue
+        derivedEdges.set(`${source}->${target}`, {
+          source,
+          target,
+          conditional: false,
+        })
+      }
+    }
+
+    baseNodes = Array.from(uniqueNodes.values())
+    rawEdges = Array.from(derivedEdges.values())
+  }
 
   const depths = computeDepths(baseNodes, rawEdges)
   const nodeIds = new Set(baseNodes.map((node) => node.id))

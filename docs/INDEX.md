@@ -8,7 +8,7 @@
 - `docs/aelin-docs-foundation/getting-started/welcome.md`
 - `docs/aelin-docs-foundation/getting-started/quick-start.md`
 - `docs/aelin-docs-foundation/concepts/how-aelin-works.md`  _(已更新为以 DeepAgents 为唯一 agent loop 的架构说明)_
-- `docs/aelin-docs-foundation/features/agent-chat.md`  _(聊天主入口为 `/api/v1/deepagents/chat/stream`，旧 `/aelin/chat*` 仅作为历史兼容参考)_
+- `docs/aelin-docs-foundation/features/agent-chat.md`  _(聊天主入口已经切到 LangGraph Agent Server 的 `/threads` + `/runs` 流式链路；Aelin 只保留产品 API)_
 - `docs/aelin-docs-foundation/features/web-search-and-local-memory.md`
 - `docs/aelin-docs-foundation/features/proactive-interaction.md`
 - `docs/aelin-docs-foundation/features/device-interaction.md`

@@ -8,13 +8,16 @@ description: Aelin 当前实际可用的核心 API 一览。
 
 ## Chat / DeepAgents
 
-- `POST /api/v1/deepagents/chat/stream`
+- `GET /assistants`
+- `POST /threads`
+- `GET /threads/:thread_id`
+- `POST /threads/:thread_id/runs/stream`
 
 说明：
 
 - 这是聊天 UI 的主入口。
-- SSE 主事件为 `start / messages / updates / tasks / values / final / error / done / ping`。
-- 旧 `POST /api/v1/aelin/chat` 与 `POST /api/v1/aelin/chat/stream` 不再是当前主链。
+- 前端通过 LangGraph SDK / `useStream` 直接消费官方 run stream。
+- 旧 `POST /api/v1/deepagents/chat/stream`、`POST /api/v1/aelin/chat` 与 `POST /api/v1/aelin/chat/stream` 都不再是当前主链。
 
 ## Aelin Product APIs
 

@@ -62,6 +62,6 @@ export const useChatStore = create<ChatStore>()(
       setStatusText: (v) => set({ statusText: v }),
       setLastErrorCode: (code) => set({ lastErrorCode: code }),
     }),
-    { name: 'aelin-chat' }
+    { name: 'aelin-chat-v2' }
   )
 )

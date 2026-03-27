@@ -18,7 +18,6 @@ from app.routers import (
     aelin_device,
     aelin_remote_control,
     auth,
-    deepagents_chat,
 )
 from app.settings import settings
 from app.services.bots.feishu_bot import feishu_bot_service
@@ -121,7 +120,6 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(agent.router, prefix="/api/v1")
     app.include_router(aelin_chat.router, prefix="/api/v1")
-    app.include_router(deepagents_chat.router, prefix="/api/v1")
     app.include_router(aelin_context.router, prefix="/api/v1")
     app.include_router(aelin_device.router, prefix="/api/v1")
     app.include_router(aelin_remote_control.router, prefix="/api/v1")

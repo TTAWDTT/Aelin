@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo } from 'react'
-import type { AnyStreamCustomOptions } from '@langchain/langgraph-sdk/ui'
-import { FetchStreamTransport, useStream } from '@langchain/react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Client } from '@langchain/langgraph-sdk'
+import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
@@ -18,6 +18,28 @@ import {
 } from './chatStreamHelpers'
 
 export type { ChatRuntimeStream, ChatStreamState }
+
+const DEFAULT_AGENT_SERVER_URL = 'http://127.0.0.1:8000'
+const DEEPAGENTS_GRAPH_ID = 'agent'
+
+let deepagentsAssistantIdCache: string | null = null
+let deepagentsAssistantIdPromise: Promise<string> | null = null
+
+function resolveAgentServerUrl(): string {
+  const fromEnv = String(import.meta.env.VITE_API_BASE || '').trim()
+  if (fromEnv) return fromEnv.replace(/\/$/, '')
+  if (typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol)) {
+    const protocol = window.location.protocol
+    const hostname = window.location.hostname || '127.0.0.1'
+    const currentPort = String(window.location.port || '')
+    if (currentPort === '8000' || currentPort === '18080') {
+      return `${protocol}//${window.location.host}`.replace(/\/$/, '')
+    }
+    const inferredPort = currentPort === '1420' ? '18080' : '8000'
+    return `${protocol}//${hostname}:${inferredPort}`
+  }
+  return DEFAULT_AGENT_SERVER_URL
+}
 
 function sameImages(
   left?: Array<{ dataUrl: string; name: string }>,
@@ -69,6 +91,34 @@ function sameChatMessages(
   return true
 }
 
+async function resolveDeepAgentsAssistantId(client: Client): Promise<string> {
+  if (deepagentsAssistantIdCache) return deepagentsAssistantIdCache
+  if (deepagentsAssistantIdPromise) return deepagentsAssistantIdPromise
+
+  deepagentsAssistantIdPromise = client.assistants
+    .search()
+    .then((items) => {
+      const match = items.find((item) => {
+        const graphId = String((item as any)?.graph_id || '').trim()
+        const name = String((item as any)?.name || '').trim()
+        return graphId === DEEPAGENTS_GRAPH_ID || name === DEEPAGENTS_GRAPH_ID
+      })
+      const assistantId = String((match as any)?.assistant_id || '').trim()
+      if (!assistantId) {
+        throw new Error(`Agent Server assistant "${DEEPAGENTS_GRAPH_ID}" not found`)
+      }
+      deepagentsAssistantIdCache = assistantId
+      return assistantId
+    })
+    .finally(() => {
+      if (!deepagentsAssistantIdCache) {
+        deepagentsAssistantIdPromise = null
+      }
+    })
+
+  return deepagentsAssistantIdPromise
+}
+
 export function useChatStream() {
   const sessions = useChatStore((state) => state.sessions)
   const activeSessionId = useChatStore((state) => state.activeSessionId)
@@ -85,9 +135,16 @@ export function useChatStream() {
     [activeSessionId, sessions],
   )
   const thinkingLabel = t('status.thinking')
+  const [assistantId, setAssistantId] = useState<string>(deepagentsAssistantIdCache || '')
+  const assistantIdRef = useRef(assistantId)
+  const assistantReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
+  const [streamThreadId, setStreamThreadId] = useState<string | null>(activeSessionId || null)
+  const streamThreadIdRef = useRef<string | null>(streamThreadId)
+  const threadReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
 
-  const transport = useMemo(() => new FetchStreamTransport({
-    apiUrl: `${import.meta.env.VITE_API_BASE || ''}/api/v1/deepagents/chat/stream`,
+  const client = useMemo(() => new Client({
+    apiUrl: resolveAgentServerUrl(),
+    apiKey: null,
     onRequest: async (_url, init) => {
       const headers = new Headers(init.headers ?? {})
       const token = localStorage.getItem('token')
@@ -99,20 +156,108 @@ export function useChatStream() {
     },
   }), [])
 
-  const streamOptions: AnyStreamCustomOptions<ChatStreamState> = {
-    transport,
-    threadId: activeSessionId,
+  const stream = useStream<ChatStreamState>({
+    assistantId: assistantId || '__aelin_agent_pending__',
+    client,
+    threadId: streamThreadId,
     filterSubagentMessages: true,
     messagesKey: 'messages',
     initialValues: {
       messages: buildSessionHistoryMessages(sessionMessages) as Array<Record<string, unknown>>,
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       setStatusText(String((error as Error)?.message || 'Stream error'))
     },
-  }
+  } as any)
+  const streamRef = useRef(stream)
 
-  const stream = useStream<ChatStreamState>(streamOptions)
+  useEffect(() => {
+    streamRef.current = stream
+  }, [stream])
+
+  useEffect(() => {
+    assistantIdRef.current = assistantId
+    if (!assistantId) return
+    const pending = assistantReadyWaitersRef.current
+    assistantReadyWaitersRef.current = []
+    pending.forEach((waiter) => {
+      if (waiter.id === assistantId) waiter.resolve()
+      else assistantReadyWaitersRef.current.push(waiter)
+    })
+  }, [assistantId])
+
+  useEffect(() => {
+    streamThreadIdRef.current = streamThreadId
+    const currentId = String(streamThreadId || '').trim()
+    if (!currentId) return
+    const pending = threadReadyWaitersRef.current
+    threadReadyWaitersRef.current = []
+    pending.forEach((waiter) => {
+      if (waiter.id === currentId) waiter.resolve()
+      else threadReadyWaitersRef.current.push(waiter)
+    })
+  }, [streamThreadId])
+
+  useEffect(() => {
+    if (assistantId) return
+    let cancelled = false
+    void resolveDeepAgentsAssistantId(client)
+      .then((resolved) => {
+        if (!cancelled) setAssistantId(resolved)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setStatusText(String((error as Error)?.message || 'Assistant lookup failed'))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [assistantId, client, setStatusText])
+
+  const waitForAssistantId = useCallback((expectedId: string) => {
+    if (assistantIdRef.current === expectedId) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      assistantReadyWaitersRef.current.push({ id: expectedId, resolve })
+    })
+  }, [])
+
+  const waitForThreadId = useCallback((expectedId: string) => {
+    if (streamThreadIdRef.current === expectedId) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      threadReadyWaitersRef.current.push({ id: expectedId, resolve })
+    })
+  }, [])
+
+  const ensureThreadReady = useCallback(async (threadId: string) => {
+    const nextId = String(threadId || '').trim()
+    if (!nextId) return
+    await client.threads.create({
+      threadId: nextId,
+      ifExists: 'do_nothing',
+    })
+    if (streamThreadIdRef.current !== nextId) {
+      setStreamThreadId(nextId)
+      await waitForThreadId(nextId)
+    }
+  }, [client, waitForThreadId])
+
+  useEffect(() => {
+    const nextId = String(activeSessionId || '').trim()
+    if (!nextId) {
+      setStreamThreadId(null)
+      return
+    }
+    let cancelled = false
+    void ensureThreadReady(nextId).catch((error: unknown) => {
+      if (!cancelled) {
+        setStatusText(String((error as Error)?.message || 'Thread bootstrap failed'))
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeSessionId, ensureThreadReady, setStatusText])
 
   const displayMessages = useMemo(() => {
     if (!session) return []
@@ -165,6 +310,14 @@ export function useChatStream() {
         currentState.renameSession(sessionId, seed.length > 20 ? `${seed.slice(0, 20)}…` : seed)
       }
 
+      await ensureThreadReady(sessionId)
+
+      const resolvedAssistantId = assistantIdRef.current || await resolveDeepAgentsAssistantId(client)
+      if (assistantIdRef.current !== resolvedAssistantId) {
+        setAssistantId(resolvedAssistantId)
+        await waitForAssistantId(resolvedAssistantId)
+      }
+
       const humanMessage = buildHumanStreamMessage(prompt, images)
       const inputMessages = [
         ...buildSessionHistoryMessages(currentSessionMessages),
@@ -175,7 +328,7 @@ export function useChatStream() {
       currentState.setLastErrorCode(null)
 
       try {
-        await stream.submit(
+        await streamRef.current.submit(
           { messages: inputMessages as any },
           {
             context: {
@@ -183,6 +336,8 @@ export function useChatStream() {
               source: 'chat_ui',
               attachment_ids: normalizedAttachmentIds,
             } as any,
+            streamSubgraphs: true,
+            onDisconnect: 'cancel',
             optimisticValues: (prev) => ({
               ...(prev || {}),
               messages: inputMessages,
@@ -194,7 +349,7 @@ export function useChatStream() {
         currentState.setStatusText(String((error as Error)?.message || 'Stream error'))
       }
     },
-    [activeSessionId, createSession, stream, t],
+    [activeSessionId, client, createSession, ensureThreadReady, t, waitForAssistantId],
   )
 
   const stop = useCallback(() => {

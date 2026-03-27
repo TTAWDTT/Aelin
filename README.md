@@ -24,7 +24,7 @@
 - **File-Based Memory** - Long-term memory is mounted from `/memory/AGENTS.md`.
 - **Skills Runtime** - Built-in skills live in `backend/deepagents_skills/`, with optional external skill mounting.
 - **Desktop Runtime** - Electron shell for local usage and device integration.
-- **Backend Architecture** - The backend is a thin HTTP shell (`/api/v1/deepagents/chat/stream` plus legacy-compatible `/api/v1/aelin/*`) on top of a DeepAgents graph and a small set of domain services (web_search / attachments / device / Google Workspace / skills). For extensions and custom agents, prefer editing the DeepAgents graph/skills and see both `docs/deepagents_arch.md` and the official DeepAgents documentation.
+- **Backend Architecture** - The backend now runs as an official LangGraph Agent Server (`/assistants`, `/threads`, `/runs`) with Aelin product routes mounted alongside it (`/api/v1/aelin/*`, `/api/v1/agent/*`). For extensions and custom agents, prefer editing the DeepAgents graph/skills and see both `docs/deepagents_arch.md` and the official DeepAgents documentation.
 
 ## Repository Layout
 
@@ -41,7 +41,7 @@
 ```powershell
 cd backend
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000
+python -m langgraph dev --config langgraph.json --host 127.0.0.1 --port 8000 --no-browser
 ```
 
 ### 2) Frontend

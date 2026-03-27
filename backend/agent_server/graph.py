@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -83,20 +84,7 @@ def _build_placeholder_agent() -> Any:
     return agent
 
 
-@asynccontextmanager
-async def make_graph(runtime: ServerRuntime[DeepAgentsRunContext]):
-    execution_runtime = runtime.execution_runtime
-    context = execution_runtime.context if execution_runtime is not None else None
-    if execution_runtime is None:
-        yield _build_placeholder_agent()
-        return
-
-    user_id = _runtime_user_id(runtime, context)
-    if user_id <= 0:
-        _LOG.warning("agent_server_factory_missing_user_id access_context=%s", runtime.access_context)
-        yield _build_placeholder_agent()
-        return
-
+def _build_runtime_agent(user_id: int, context: DeepAgentsRunContext | None) -> Any:
     db = create_session()
     try:
         resolved = resolve_deepagents_runtime(
@@ -114,10 +102,28 @@ async def make_graph(runtime: ServerRuntime[DeepAgentsRunContext]):
             memory_text=resolved.memory_text,
             context_schema=DeepAgentsRunContext,
         )
-        if agent is None:
-            _LOG.warning("agent_server_factory_fallback_placeholder user_id=%s", user_id)
-            yield _build_placeholder_agent()
-            return
-        yield agent
+        return agent
     finally:
         db.close()
+
+
+@asynccontextmanager
+async def make_graph(runtime: ServerRuntime[DeepAgentsRunContext]):
+    execution_runtime = runtime.execution_runtime
+    context = execution_runtime.context if execution_runtime is not None else None
+    if execution_runtime is None:
+        yield _build_placeholder_agent()
+        return
+
+    user_id = _runtime_user_id(runtime, context)
+    if user_id <= 0:
+        _LOG.warning("agent_server_factory_missing_user_id access_context=%s", runtime.access_context)
+        yield await asyncio.to_thread(_build_placeholder_agent)
+        return
+
+    agent = await asyncio.to_thread(_build_runtime_agent, user_id, context)
+    if agent is None:
+        _LOG.warning("agent_server_factory_fallback_placeholder user_id=%s", user_id)
+        yield await asyncio.to_thread(_build_placeholder_agent)
+        return
+    yield agent

@@ -2726,7 +2726,19 @@ function startBackend() {
     safeConsoleLog(`[backend] Python runner selected: ${candidate.label}`);
     backendProc = spawn(
       candidate.command,
-      [...candidate.args, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(backendPort)],
+      [
+        ...candidate.args,
+        "-m",
+        "langgraph",
+        "dev",
+        "--config",
+        "langgraph.json",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(backendPort),
+        "--no-browser",
+      ],
       {
         cwd: root,
         env,

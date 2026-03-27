@@ -7,7 +7,7 @@ Aelin 现在是一个以 DeepAgents 为唯一 Agent 内核的 AI 工作台，提
 - Aelin 是产品壳，DeepAgents 是唯一 agent loop。
 - 运行时强调“真实工具结果优先”，避免壳层再发明一套语义状态机。
 - 支持 Web 与 Desktop 两种运行方式。
-- 后端 = 一层很薄的 HTTP 壳（`/api/v1/deepagents/chat/stream` + 兼容的 `/api/v1/aelin/*`）+ DeepAgents graph + 少量领域服务（web_search / attachments / device / Google Workspace / skills）；二次开发时建议优先参考 DeepAgents 官方文档与本仓库的 `docs/deepagents_arch.md`，在 DeepAgents 的 graph/skills 层扩展能力。
+- 后端 = 官方 LangGraph Agent Server（`/assistants`、`/threads`、`/runs`）+ 挂载其上的 Aelin 产品 API（`/api/v1/aelin/*`、`/api/v1/agent/*`）；二次开发时建议优先参考 DeepAgents 官方文档与本仓库的 `docs/deepagents_arch.md`，在 DeepAgents 的 graph/skills 层扩展能力。
 
 ## 2. 核心能力
 
@@ -31,7 +31,7 @@ Aelin 现在是一个以 DeepAgents 为唯一 Agent 内核的 AI 工作台，提
 # Backend
 cd backend
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000
+python -m langgraph dev --config langgraph.json --host 127.0.0.1 --port 8000 --no-browser
 
 # Frontend（新终端）
 cd frontend
