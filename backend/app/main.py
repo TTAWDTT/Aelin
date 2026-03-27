@@ -19,6 +19,7 @@ from app.routers import (
     aelin_device,
     aelin_remote_control,
     auth,
+    deepagents_chat,
 )
 from app.settings import settings
 from app.services.bots.feishu_bot import feishu_bot_service
@@ -54,6 +55,7 @@ def _add_missing_columns(engine: Engine) -> None:
     migrations: list[tuple[str, str, str]] = [
         # (table, column, DDL type)
         ("agent_configs", "web_search_proxy_url", "TEXT"),
+        ("agent_configs", "verify_ssl", "BOOLEAN DEFAULT 1"),
     ]
     for table, column, ddl_type in migrations:
         if not inspector.has_table(table):
@@ -121,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(agent.router, prefix="/api/v1")
     app.include_router(aelin.router, prefix="/api/v1")
     app.include_router(aelin_chat.router, prefix="/api/v1")
+    app.include_router(deepagents_chat.router, prefix="/api/v1")
     app.include_router(aelin_context.router, prefix="/api/v1")
     app.include_router(aelin_device.router, prefix="/api/v1")
     app.include_router(aelin_remote_control.router, prefix="/api/v1")

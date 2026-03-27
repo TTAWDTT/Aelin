@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any
 from urllib.parse import urlparse
 
+from app.services.deepagents.tool_runtime import ToolRuntimeContext
 from app.services.device.device_center import (
     activate_desktop_module,
     capture_device_screen as device_capture_screen,
@@ -13,11 +14,8 @@ from app.services.device.device_center import (
 )
 from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
 
-if TYPE_CHECKING:
-    from app.services.aelin.tool_hub import AelinToolHub
 
-
-def tool_screen_get(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
+def tool_screen_get(_context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, Any]:
     display_id = str(args.get("display_id") or "").strip()[:64]
     max_edge = _safe_int(args.get("max_edge"), 1280, low=640, high=4096)
     fmt = "png" if str(args.get("format") or "").strip().lower() == "png" else "jpeg"
@@ -44,7 +42,7 @@ def tool_screen_get(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any
     )
 
 
-def tool_device(_hub: "AelinToolHub", args: dict[str, Any]) -> dict[str, Any]:
+def tool_device(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, Any]:
     def _is_http_url(value: str) -> bool:
         text = str(value or "").strip()
         if not text:

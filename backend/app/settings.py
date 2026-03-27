@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -74,12 +75,38 @@ class Settings(BaseSettings):
     aelin_base_context_cache_max_entries: int = 128
 
     # Agent tool policy knobs (DeepAgents-only). Legacy AelinAgentLoop 已经移除，
-    # 这些配置仅用于构造 AelinToolPolicy，限制 DeepAgents 工具调用行为。
+    # 这些配置仅用于构造 DeepAgents 工具调用限制器。
     # 当前默认值刻意放宽，以便 DeepAgents 在每轮对话中可以更自由地尝试工具调用。
     # DeepAgents 工具策略：默认给足够大的空间，让复杂任务可以自由使用工具。
-    aelin_agent_loop_max_tool_calls: int = 512
-    aelin_agent_loop_max_write_calls: int = 128
-    aelin_agent_loop_allow_write_tools: bool = True
+    deepagents_max_tool_calls: int = Field(
+        default=512,
+        validation_alias=AliasChoices(
+            "AELIN_DEEPAGENTS_MAX_TOOL_CALLS",
+            "AELIN_AGENT_LOOP_MAX_TOOL_CALLS",
+            "MERCURYDESK_AGENT_LOOP_MAX_TOOL_CALLS",
+        ),
+    )
+    deepagents_max_write_calls: int = Field(
+        default=128,
+        validation_alias=AliasChoices(
+            "AELIN_DEEPAGENTS_MAX_WRITE_CALLS",
+            "AELIN_AGENT_LOOP_MAX_WRITE_CALLS",
+            "MERCURYDESK_AGENT_LOOP_MAX_WRITE_CALLS",
+        ),
+    )
+    deepagents_allow_write_tools: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "AELIN_DEEPAGENTS_ALLOW_WRITE_TOOLS",
+            "AELIN_AGENT_LOOP_ALLOW_WRITE_TOOLS",
+            "MERCURYDESK_AGENT_LOOP_ALLOW_WRITE_TOOLS",
+        ),
+    )
+    deepagents_run_timeout_seconds: float = 75.0
+    deepagents_stream_idle_timeout_seconds: float = 45.0
+    deepagents_tool_timeout_seconds: float = 25.0
+    deepagents_consecutive_failures_limit: int = 3
+    deepagents_consecutive_no_progress_limit: int = 2
     feishu_bot_enabled: bool = False
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
@@ -133,6 +160,7 @@ class Settings(BaseSettings):
     # LLM client runtime tuning.
     # DeepAgents 回路可能会触发多轮工具调用，因此默认超时时间相对更长。
     llm_request_timeout_seconds: float = 180.0
+    llm_verify_ssl: bool = True
     backend_log_level: str = "INFO"
 
     # Optional extra DeepAgents skills root dir (for example chrome-cdp-skill).

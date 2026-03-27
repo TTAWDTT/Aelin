@@ -1,10 +1,10 @@
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import type { ChatMessage } from '../stores/chatStore'
+import type { ChatMessage } from '../chatTypes'
+import type { ExecutionToolCall } from '../executionStreamUtils'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { MessageActionsPanel } from './MessageActionsPanel'
 import { MessageCitationsPanel } from './MessageCitationsPanel'
+import { MarkdownMessage } from './MarkdownMessage'
 import {
   calculateCompactMaxWidth,
   EXPRESSION_LABELS,
@@ -16,22 +16,22 @@ import { useLocaleStore } from '@/shared/stores/localeStore'
 
 interface MessageBubbleProps {
   message: ChatMessage
+  toolCalls?: ExecutionToolCall[]
   isThinking?: boolean
   thinkingText?: string
   compact?: boolean
   viewportWidth: number
   onQuickPrompt?: (text: string) => void
-  highlighted?: boolean
 }
 
 export function MessageBubble({
   message,
+  toolCalls = [],
   isThinking = false,
   thinkingText,
   compact = false,
   viewportWidth,
   onQuickPrompt,
-  highlighted = false,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
@@ -100,13 +100,37 @@ export function MessageBubble({
         )}
 
         {/* Content */}
-        <div
-          className={cn(
-            'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere] [&_a]:break-all [&_blockquote]:my-2 [&_code]:break-all [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:my-1.5'
-          )}
-          style={{ fontFamily: 'var(--font-body)', lineHeight: compact ? 1.58 : 1.64, fontSize: compact ? '0.88rem' : '0.94rem' }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || (isUser ? '' : (isThinking ? '' : '…'))}</ReactMarkdown>
-        </div>
+        <MarkdownMessage content={message.content || ''} compact={compact} />
+
+        {!isUser && toolCalls.length > 0 && (
+          <div className="mt-2.5 space-y-1.5 border-t border-[var(--color-border)] pt-2">
+            {toolCalls.map((tool) => (
+              <div
+                key={tool.key}
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-medium text-[var(--color-text)]">
+                    {tool.name}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {tool.state}
+                  </span>
+                </div>
+                {tool.args && (
+                  <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                    args: {tool.args}
+                  </div>
+                )}
+                {tool.result && (
+                  <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                    result: {tool.result}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {!isUser && stickerSrc && !isThinking && (
           <div className="mt-2">
@@ -114,7 +138,10 @@ export function MessageBubble({
               src={stickerSrc}
               alt={stickerLabel}
               title={stickerLabel}
-              className={cn('block object-contain', compact ? 'h-16 w-16' : 'h-20 w-20')}
+              className={cn(
+                'block rounded-[18px] object-contain',
+                compact ? 'h-16 w-16' : 'h-20 w-20'
+              )}
               draggable={false}
             />
           </div>

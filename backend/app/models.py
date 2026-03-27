@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -40,6 +40,7 @@ class AgentConfig(Base):
     base_url: Mapped[str] = mapped_column(String(2048), default="https://api.openai.com/v1")
     model: Mapped[str] = mapped_column(String(255), default="gpt-4o-mini")
     temperature: Mapped[float] = mapped_column(Float, default=0.2)
+    verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True)
     api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     web_search_proxy_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
 

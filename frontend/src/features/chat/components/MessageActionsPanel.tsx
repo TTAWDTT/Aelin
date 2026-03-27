@@ -1,11 +1,11 @@
-import type { AelinAction } from '@/shared/api/types'
+import type { ChatAction } from '@/shared/api/types'
 import { isBrowserConfirmAction, resolveActionHref } from './messageBubbleUtils'
 import { useChatI18n } from '../chatI18n'
 
 interface MessageActionsPanelProps {
-  actions: AelinAction[]
+  actions: ChatAction[]
   isBrowserPending: boolean
-  onBrowserConfirm: (action: AelinAction) => void
+  onBrowserConfirm: (action: ChatAction) => void
 }
 
 function ActionCard({

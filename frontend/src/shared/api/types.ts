@@ -4,17 +4,18 @@ export interface UserCreate { email: string; password: string }
 export interface UserUpdate { email?: string; password?: string; avatar_url?: string }
 export interface UserOut { id: number; email: string; avatar_url?: string; created_at: string }
 
-/* ─── Aelin Chat ─── */
-export interface AelinChatRequest {
-  query: string; use_memory?: boolean; max_citations?: number
+/* ─── Chat ─── */
+export interface ChatRequest {
+  query: string; use_memory?: boolean
+  query_message_id?: string
   source?: string
   source_metadata?: Record<string, string>
-  workspace?: string; images?: AelinImageInput[]
+  workspace?: string; images?: ImageInput[]
   attachment_ids?: number[]
-  history?: { role: string; content: string }[]
+  history?: { id?: string; role: string; content: string }[]
 }
-export interface AelinImageInput { data_url: string; name?: string }
-export interface AelinAttachmentUploadResponse {
+export interface ImageInput { data_url: string; name?: string }
+export interface AttachmentUploadResponse {
   attachment_id: number
   file_name: string
   mime_type: string
@@ -26,49 +27,40 @@ export interface AelinAttachmentUploadResponse {
   summary?: string
   deduplicated?: boolean
 }
-export interface AelinCitation {
+export interface ChatCitation {
   message_id: number; source: string; source_label: string; sender: string
   sender_avatar_url?: string; title: string; received_at: string; score: number
 }
-export interface AelinAction {
+export interface ChatAction {
   kind: string; title: string; detail?: string
   payload?: Record<string, string>
-}
-export interface AelinToolStep {
-  stage: string; status?: string; detail?: string; count?: number; ts?: number
-}
-export interface AelinChatResponse {
-  answer: string; expression: string
-  citations: AelinCitation[]; actions: AelinAction[]
-  tool_trace: AelinToolStep[]; memory_summary: string
-  generated_at: string
 }
 
 /* ─── Aelin Context ─── */
 export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }
-export interface AelinMemoryLayerItem {
+export interface MemoryLayerItem {
   id: string; layer: string; title: string; detail?: string
   source?: string; confidence: number; updated_at?: string
   meta?: Record<string, string>
 }
-export interface AelinMemoryLayers {
-  facts: AelinMemoryLayerItem[]; preferences: AelinMemoryLayerItem[]
-  in_progress: AelinMemoryLayerItem[]; generated_at: string
+export interface MemoryLayers {
+  facts: MemoryLayerItem[]; preferences: MemoryLayerItem[]
+  in_progress: MemoryLayerItem[]; generated_at: string
 }
-export interface AelinTodoItem {
+export interface TodoItem {
   id: number; title: string; detail?: string; done: boolean
   due_at?: string; priority: string
   contact_id?: number; message_id?: number; updated_at: string
 }
-export interface AelinContextResponse {
+export interface ContextResponse {
   workspace: string; summary: string
   notes: AgentMemoryNoteOut[]; notes_count: number
-  todos: AelinTodoItem[]
-  memory_layers: AelinMemoryLayers
+  todos: TodoItem[]
+  memory_layers: MemoryLayers
   generated_at: string
 }
 
-export interface AelinBrowserConfirmRequest {
+export interface BrowserConfirmRequest {
   workspace?: string
   action_kind?: string
   action?: string
@@ -79,7 +71,7 @@ export interface AelinBrowserConfirmRequest {
   continue_after_confirm?: boolean
   next_call?: Record<string, unknown>
 }
-export interface AelinBrowserConfirmResponse {
+export interface BrowserConfirmResponse {
   ok: boolean
   message: string
   requires_followup: boolean
@@ -92,7 +84,7 @@ export interface AelinBrowserConfirmResponse {
   followup_result: Record<string, unknown>
   generated_at: string
 }
-export interface AelinBrowserLoginCheckpointItem {
+export interface BrowserLoginCheckpointItem {
   request_id: string
   profile_id?: string
   workspace?: string
@@ -106,31 +98,31 @@ export interface AelinBrowserLoginCheckpointItem {
   created_at?: number
   updated_at?: number
 }
-export interface AelinBrowserLoginCheckpointListResponse {
+export interface BrowserLoginCheckpointListResponse {
   total: number
-  items: AelinBrowserLoginCheckpointItem[]
+  items: BrowserLoginCheckpointItem[]
   generated_at: string
 }
-export interface AelinFileMemoryItem {
+export interface FileMemoryItem {
   path: string; title: string; preview: string; score: number
   updated_at: string; canonical_id: string; target: string
   source: string; kind: string; topic_path: string; entry_kind: string
 }
-export interface AelinFileMemorySearchResponse {
-  workspace: string; total: number; items: AelinFileMemoryItem[]; generated_at: string
+export interface FileMemorySearchResponse {
+  workspace: string; total: number; items: FileMemoryItem[]; generated_at: string
 }
-export interface AelinFileMemoryContentResponse {
+export interface FileMemoryContentResponse {
   workspace: string; path: string; title: string
   source: string; kind: string; topic_path: string; entry_kind: string
   updated_at: string; content: string; generated_at: string
 }
 
 /* ─── Device Center ─── */
-export interface AelinDeviceCapabilitiesResponse {
+export interface DeviceCapabilitiesResponse {
   platform: string; capabilities: Record<string, boolean>
   notes: string[]; generated_at: string
 }
-export interface AelinDeviceScreenCaptureResponse {
+export interface DeviceScreenCaptureResponse {
   data_url: string
   name: string
   width: number
@@ -139,7 +131,7 @@ export interface AelinDeviceScreenCaptureResponse {
   captured_at: string
   generated_at: string
 }
-export interface AelinDeviceScreenCaptureRequest {
+export interface DeviceScreenCaptureRequest {
   mode?: 'fullscreen' | 'region'
   display_id?: string
   max_edge?: number
@@ -151,12 +143,12 @@ export interface AelinDeviceScreenCaptureRequest {
 /* ─── Agent ─── */
 export interface AgentConfigOut {
   provider: string; base_url: string; model: string
-  temperature: number; has_api_key: boolean
+  temperature: number; verify_ssl: boolean; has_api_key: boolean
   web_search_proxy_url: string
 }
 export interface AgentConfigUpdate {
   provider?: string; base_url?: string; model?: string
-  temperature?: number; api_key?: string
+  temperature?: number; verify_ssl?: boolean; api_key?: string
   web_search_proxy_url?: string
 }
 export interface AgentTestResponse { ok: boolean; provider: string; message: string }

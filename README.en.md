@@ -7,6 +7,7 @@ Aelin is now an AI workspace built around DeepAgents as the single agent core, w
 - Aelin is the product shell; DeepAgents is the only agent loop.
 - The runtime is designed around factual tool outcomes instead of a separate legacy planner layer.
 - Supports both web and desktop runtimes.
+- Backend = a thin HTTP shell (`/api/v1/deepagents/chat/stream` plus legacy-compatible `/api/v1/aelin/*`) sitting on top of a DeepAgents graph and a small set of domain services (web_search / attachments / device / Google Workspace / skills); for extending behavior, prefer editing the DeepAgents graph/skills and refer to both `docs/deepagents_arch.md` and the official DeepAgents documentation.
 
 ## 2. Core Capabilities
 
@@ -69,6 +70,7 @@ npm run dist
   - `AELIN_DATABASE_URL`
   - `AELIN_CORS_ORIGINS`
   - `AELIN_LLM_REQUEST_TIMEOUT_SECONDS`
+  - `AELIN_LLM_VERIFY_SSL`
   - `AELIN_DEEPAGENTS_EXTRA_SKILLS_DIR`
   - `AELIN_DESKTOP_PLUGIN_BASE_URL`
   - `AELIN_GOOGLE_WORKSPACE_CLI_BIN`

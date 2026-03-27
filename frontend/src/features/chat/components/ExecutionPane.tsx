@@ -1,116 +1,121 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { AelinToolStep } from '@/shared/api/types'
-import { AgentTracePanel } from './AgentTracePanel'
+import { useEffect, useState } from 'react'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
-import {
-  buildRunNodes,
-  extractToolCalls,
-  type RunNode,
-  type ToolCallMeta,
-} from '../traceUtils'
+import type { ExecutionRuntime } from '../executionStreamUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
-import { ProviderIcon } from './ProviderIcon'
+import {
+  ExecutionTabButton,
+  JsonBlock,
+  NamespaceLaneCard,
+  SubagentCard,
+  ToolCard,
+  TopologyBoard,
+  TurnCard,
+} from './ExecutionPaneParts'
+import {
+  asRecord,
+  compactText,
+  statusIcon,
+  tabClassName,
+} from './executionPaneShared'
 
 interface ExecutionPaneProps {
-  trace: AelinToolStep[]
+  runtime: ExecutionRuntime
+  values: Record<string, unknown>
   isStreaming: boolean
   compact?: boolean
 }
 
-type ExecutionTab = 'aelin' | 'tools'
+type ExecutionTab = 'graph' | 'tools' | 'state'
 
-export function ExecutionPane({ trace, isStreaming, compact = false }: ExecutionPaneProps) {
-  const { t } = useChatI18n()
+export function ExecutionPane({
+  runtime,
+  values,
+  isStreaming,
+  compact = false,
+}: ExecutionPaneProps) {
+  const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const hasTrace = useMemo(() => trace && trace.length > 0, [trace])
-  const runNodes = useMemo<RunNode[]>(() => buildRunNodes(trace), [trace])
-  const toolCalls = useMemo(() => extractToolCalls(trace), [trace])
-
-  const agentNodes = useMemo(
-    () => runNodes.filter((n) => n.type === 'preflight' || n.type === 'agent' || n.type === 'plan' || n.type === 'error'),
-    [runNodes],
-  )
-
-  const [tab, setTab] = useState<ExecutionTab>('aelin')
+  const { topology, lanes, turns, tools, hasExecution } = runtime
+  const todos = Array.isArray(values.todos) ? values.todos : []
+  const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
+  const toolTurns = turns.filter((turn) => turn.toolCalls.length > 0)
+  const [tab, setTab] = useState<ExecutionTab>('graph')
 
   useEffect(() => {
-    if (!hasTrace) return
-    setTab('aelin')
-  }, [hasTrace])
+    if (hasExecution) setTab('graph')
+  }, [hasExecution])
 
-  const label = hasTrace ? t('trace.executionPane.title') : t('trace.executionPane.empty')
-  const showTabs = hasTrace
+  const label = hasExecution ? t('trace.executionPane.title') : t('trace.executionPane.empty')
 
   return (
     <aside
       aria-label={label}
       className={cn(
-        'flex shrink-0 flex-col bg-[var(--color-bg)] text-[var(--color-text)] transition-[width,height] duration-200 overflow-hidden',
-        compact
-          ? 'mt-1 w-full border-t border-[var(--color-border)]'
-          : 'hidden min-w-0 max-w-sm lg:flex',
+        'flex shrink-0 flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] transition-[width,height] duration-200',
+        compact ? 'mt-1 w-full border-t border-[var(--color-border)]' : 'hidden min-w-0 max-w-md lg:flex',
         compact
           ? open
-            ? 'h-48'
+            ? 'h-72'
             : 'h-7'
           : open
-            ? 'w-[280px]'
+            ? 'w-[380px]'
             : 'w-0',
       )}
     >
       {open && (
         <div className="flex-1 overflow-y-auto px-2 pb-3 pt-1">
-          {!hasTrace && (
+          {!hasExecution && (
             <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
               {t('trace.executionPane.emptyDetail')}
             </p>
           )}
 
-          {hasTrace && (
+          {hasExecution && (
             <div className="flex h-full flex-col">
-              {showTabs && (
-                <div
-                  role="tablist"
-                  aria-label={t('trace.executionPane.title')}
-                  className="mb-1.5 flex gap-1 rounded-lg bg-[var(--color-bg)] p-0.5"
-                >
-                  <ExecutionTabButton
-                    id="aelin"
-                    active={tab === 'aelin'}
-                    label={t('trace.tab.aelin')}
-                    onClick={() => setTab('aelin')}
-                  />
-                  <ExecutionTabButton
-                    id="tools"
-                    active={tab === 'tools'}
-                    label={t('trace.tab.tools')}
-                    disabled={toolCalls.length === 0}
-                    onClick={() => toolCalls.length > 0 && setTab('tools')}
-                  />
-                </div>
-              )}
+              <div
+                role="tablist"
+                aria-label={t('trace.executionPane.title')}
+                className="mb-1.5 flex gap-1 rounded-lg bg-[var(--color-bg)] p-0.5"
+              >
+                <ExecutionTabButton id="graph" active={tab === 'graph'} label="Graph" onClick={() => setTab('graph')} />
+                <ExecutionTabButton
+                  id="tools"
+                  active={tab === 'tools'}
+                  label={t('trace.tab.tools')}
+                  disabled={tools.length === 0}
+                  onClick={() => tools.length > 0 && setTab('tools')}
+                />
+                <ExecutionTabButton
+                  id="state"
+                  active={tab === 'state'}
+                  label="State"
+                  disabled={!hasStateSnapshot}
+                  onClick={() => hasStateSnapshot && setTab('state')}
+                />
+              </div>
 
-              <div className="mt-1 relative flex-1 pr-1">
-                <div
-                  className={cn(
-                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'aelin'
-                      ? 'opacity-100 pointer-events-auto translate-y-0'
-                      : 'opacity-0 pointer-events-none translate-y-1',
-                  )}
-                >
-                  <AgentTracePanel nodes={agentNodes} live={isStreaming} />
+              <div className="relative mt-1 flex-1 pr-1">
+                <div className={tabClassName(tab === 'graph')}>
+                  <GraphTab
+                    runtime={runtime}
+                    isStreaming={isStreaming}
+                    locale={locale}
+                    emptyDetail={t('trace.executionPane.emptyDetail')}
+                  />
                 </div>
-                <div
-                  className={cn(
-                    'absolute inset-0 overflow-y-auto transition-[opacity,transform] duration-200',
-                    tab === 'tools'
-                      ? 'opacity-100 pointer-events-auto translate-y-0'
-                      : 'opacity-0 pointer-events-none translate-y-1',
-                  )}
-                >
-                  <ToolCallsView toolCalls={toolCalls} />
+
+                <div className={tabClassName(tab === 'tools')}>
+                  <ToolsTab
+                    toolTurns={toolTurns}
+                    toolCount={tools.length}
+                    emptyLabel={t('trace.tools.empty')}
+                    title={t('trace.tab.tools')}
+                  />
+                </div>
+
+                <div className={tabClassName(tab === 'state')}>
+                  <StateTab todos={todos} values={values} />
                 </div>
               </div>
             </div>
@@ -121,174 +126,173 @@ export function ExecutionPane({ trace, isStreaming, compact = false }: Execution
   )
 }
 
-interface ExecutionTabButtonProps {
-  id: string
-  active: boolean
-  label: string
-  disabled?: boolean
-  onClick: () => void
-}
-
-function ExecutionTabButton({ id, active, label, disabled, onClick }: ExecutionTabButtonProps) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      aria-controls={`execution-pane-${id}`}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        'flex-1 rounded-md px-1.5 py-1 text-[11px] transition-colors',
-        active
-          ? 'bg-[var(--color-panel)] text-[var(--color-text)]'
-          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-panel)] hover:text-[var(--color-text)]',
-        disabled && 'opacity-50 hover:bg-transparent hover:text-[var(--color-text-muted)]'
-      )}
-    >
-      <span className="block truncate">{label}</span>
-    </button>
-  )
-}
-
-function ToolCallsView({ toolCalls }: { toolCalls: ToolCallMeta[] }) {
-  const { t } = useChatI18n()
-  const calls = toolCalls
-
-  if (!calls.length) {
-    return (
-      <p
-        id="execution-pane-tools"
-        className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]"
-      >
-        {t('trace.tools.empty')}
-      </p>
-    )
-  }
+function GraphTab({
+  runtime,
+  isStreaming,
+  locale,
+  emptyDetail,
+}: {
+  runtime: ExecutionRuntime
+  isStreaming: boolean
+  locale: string
+  emptyDetail: string
+}) {
+  const { topology, lanes, turns, subagents } = runtime
 
   return (
-    <div id="execution-pane-tools" className="space-y-2 text-[11px]">
-      <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-        <span className="font-medium">{t('trace.tab.tools')}</span>
-        <span>{t('trace.tools.count', { count: calls.length })}</span>
-      </div>
-      <ul className="space-y-1.5">
-        {calls.map((call) => (
-          <ToolCallCard key={`${call.index}-${call.name}-${call.status}`} call={call} />
-        ))}
-      </ul>
+    <div id="execution-pane-graph" className="space-y-2.5 text-[11px]">
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+          <span className="font-medium">Topology</span>
+          <span>{topology.nodes.length} nodes · {topology.edges.length} edges</span>
+        </div>
+        <TopologyBoard nodes={topology.nodes} edges={topology.edges} isStreaming={isStreaming} />
+        {lanes.length > 0 && (
+          <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-2">
+            <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+              Live paths
+            </div>
+            <div className="grid gap-2">
+              {lanes.map((lane) => (
+                <NamespaceLaneCard key={lane.key} lane={lane} />
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+          <span className="font-medium">Runtime</span>
+          <span>{locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}</span>
+        </div>
+        <div className="mt-2 space-y-2">
+          {subagents.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                Subagents
+              </div>
+              {subagents.map((subagent) => (
+                <SubagentCard key={`runtime:${subagent.key}`} subagent={subagent} compact />
+              ))}
+            </div>
+          )}
+          {turns.length === 0
+            ? (
+                <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                  {emptyDetail}
+                </p>
+              )
+            : turns.slice(-6).reverse().map((turn) => (
+                <TurnCard key={turn.key} turn={turn} />
+              ))}
+        </div>
+      </section>
     </div>
   )
 }
 
-function ToolCallCard({ call }: { call: ToolCallMeta }) {
-  const { t } = useChatI18n()
-  const [open, setOpen] = useState(false)
-
-  const writeBadge = call.isWrite
-    ? (
-        <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text)]">
-          {t('trace.tools.write')}
-        </span>
-      )
-    : (
-        <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-          {t('trace.tools.read')}
-        </span>
-      )
-
-  const latencyLabel = call.latencyMs > 0 ? `${call.latencyMs} ms` : ''
-
-  const providerLabel = (() => {
-    const p = call.provider.toLowerCase()
-    if (p === 'google') return 'Google'
-    if (p === 'device') return 'Device'
-    if (p === 'web') return 'Web'
-    return 'Core'
-  })()
-
-  const summary = useMemo(() => {
-    const detail = String(call.detail || '')
-    const firstLine = detail.split('\n', 1)[0]
-    const afterColon = firstLine.split(':', 2)[1]?.trim()
-    if (afterColon) return afterColon
-    // fallback to truncated detail
-    return detail.length > 120 ? `${detail.slice(0, 117)}…` : detail
-  }, [call.detail])
-
-  const urls = useMemo(() => {
-    const text = String(call.detail || '')
-    const matches = text.match(/https?:\/\/[^\s]+/g) ?? []
-    // 去重并截断一下显示长度
-    const unique = Array.from(new Set(matches))
-    return unique.map((u) => u.replace(/[),.;]+$/, ''))
-  }, [call.detail])
-
+function ToolsTab({
+  toolTurns,
+  toolCount,
+  emptyLabel,
+  title,
+}: {
+  toolTurns: ExecutionRuntime['turns']
+  toolCount: number
+  emptyLabel: string
+  title: string
+}) {
   return (
-    <li className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-start gap-2 text-left"
-      >
-        <ProviderIcon provider={providerLabel} size="md" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-[12px] font-semibold text-[var(--color-text)]">
-              {call.name}
-            </span>
-            <span className="text-[11px] text-[var(--color-text-muted)]">
-              {call.status || '-'}
-            </span>
-            {latencyLabel && (
-              <span className="text-[10px] text-[var(--color-text-muted)]">
-                {latencyLabel}
-              </span>
-            )}
-          </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
-            {writeBadge}
-            <span>{providerLabel}</span>
-          </div>
-          {summary && (
-            <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-              {summary}
-            </div>
-          )}
-        </div>
-        <span className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-          {open ? '−' : '+'}
-        </span>
-      </button>
-
-      {call.detail && (
-        <div
-          className={cn(
-            'mt-1 overflow-hidden border-t border-[var(--color-border)] transition-[max-height,opacity] duration-250 ease-out',
-            open ? 'max-h-40 opacity-100 pt-1' : 'max-h-0 opacity-0 pt-0 border-transparent',
-          )}
-        >
-          <div className="space-y-1 text-[10px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-            <div>{call.detail}</div>
-            {urls.length > 0 && (
-              <div className="space-y-0.5">
-                {urls.map((url) => (
-                  <div key={url}>
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[var(--color-text)] underline underline-offset-2"
-                    >
-                      {url}
-                    </a>
-                  </div>
-                ))}
+    <div id="execution-pane-tools" className="space-y-2 text-[11px]">
+      {toolTurns.length === 0
+        ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              {emptyLabel}
+            </p>
+          )
+        : (
+            <section className="space-y-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+              <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+                <span className="font-medium">{title}</span>
+                <span>{toolCount} calls</span>
               </div>
-            )}
+              {toolTurns.map((turn) => (
+                <section
+                  key={`tool-turn:${turn.key}`}
+                  className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-[12px] font-semibold text-[var(--color-text)]">
+                        {turn.node}
+                      </div>
+                      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                        {turn.namespace}
+                      </div>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      {turn.toolCalls.length} tools
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {turn.toolCalls.map((tool) => <ToolCard key={tool.key} tool={tool} compact />)}
+                  </div>
+                </section>
+              ))}
+            </section>
+          )}
+    </div>
+  )
+}
+
+function StateTab({
+  todos,
+  values,
+}: {
+  todos: unknown[]
+  values: Record<string, unknown>
+}) {
+  return (
+    <div id="execution-pane-state" className="space-y-2 text-[11px]">
+      {todos.length > 0 && (
+        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+          <div className="mb-2 text-[11px] font-medium text-[var(--color-text-muted)]">
+            Todos
           </div>
-        </div>
+          <div className="space-y-1.5">
+            {todos.map((item, index) => {
+              const record = asRecord(item)
+              const title = String(record.title || record.content || `Todo ${index + 1}`)
+              return (
+                <div
+                  key={`${title}:${index}`}
+                  className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1.5"
+                >
+                  <span className="pt-0.5">{statusIcon(record.done ? 'completed' : 'pending')}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="break-words text-[12px] text-[var(--color-text)]">
+                      {title}
+                    </div>
+                    {Boolean(record.detail) && (
+                      <div className="mt-0.5 break-words text-[11px] text-[var(--color-text-muted)]">
+                        {compactText(String(record.detail))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
       )}
-    </li>
+
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="mb-2 text-[11px] font-medium text-[var(--color-text-muted)]">
+          Snapshot
+        </div>
+        <JsonBlock value={values} />
+      </section>
+    </div>
   )
 }

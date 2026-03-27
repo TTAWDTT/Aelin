@@ -12,6 +12,9 @@ type ChatKeys =
   | 'error.screenshot'
   | 'error.attach.process'
   | 'error.attach.send'
+  | 'error.llm.notConfigured'
+  | 'error.llm.generic'
+  | 'status.cancelled'
   | 'nav.title'
   | 'nav.subtitle'
   | 'empty.greeting'
@@ -33,24 +36,13 @@ type ChatKeys =
   | 'composer.send.stop'
   | 'composer.send.send'
   | 'timeline.generating'
-  | 'trace.title'
-  | 'trace.steps'
-  | 'trace.status.running'
-  | 'trace.status.completed'
-  | 'trace.status.skipped'
-  | 'trace.status.failed'
-  | 'trace.status.unknown'
   | 'trace.executionPane.title'
-  | 'trace.tab.aelin'
   | 'trace.tab.tools'
   | 'trace.executionPane.empty'
   | 'trace.executionPane.headerOpen'
-  | 'trace.executionPane.headerClosed'
   | 'trace.executionPane.emptyDetail'
   | 'trace.tools.empty'
   | 'trace.tools.count'
-  | 'trace.tools.read'
-  | 'trace.tools.write'
   | 'actions.heading'
   | 'actions.confirm.cta'
   | 'actions.confirm.pending'
@@ -71,6 +63,8 @@ const ZH: Record<ChatKeys, string> = {
   'error.screenshot': '截图失败，请稍后重试',
   'error.attach.process': '附件处理失败，请稍后重试',
   'error.attach.send': '附件发送失败，请稍后重试',
+  'error.llm.notConfigured': '当前会话未配置可用模型，请在设置中先完成模型配置。',
+  'error.llm.generic': '本轮对话发生错误，请稍后重试。',
   'nav.title': 'Chat',
   'nav.subtitle': 'Aelin 在线中',
   'empty.greeting': '你好，欢迎回来',
@@ -92,24 +86,14 @@ const ZH: Record<ChatKeys, string> = {
   'composer.send.stop': '停止生成',
   'composer.send.send': '发送消息',
   'timeline.generating': '正在生成…',
-  'trace.title': 'Agent 链路',
-  'trace.steps': '{count} 步',
-  'trace.status.running': '进行中',
-  'trace.status.completed': '完成',
-  'trace.status.skipped': '跳过',
-  'trace.status.failed': '失败',
-  'trace.status.unknown': '未知',
+  'status.cancelled': '已停止本轮对话。',
   'trace.executionPane.title': '执行面板',
-  'trace.tab.aelin': 'Aelin 链路',
   'trace.tab.tools': '工具调用',
   'trace.executionPane.empty': '暂无执行信息',
   'trace.executionPane.headerOpen': '执行面板',
-  'trace.executionPane.headerClosed': '打开执行面板',
-  'trace.executionPane.emptyDetail': '暂无可展示的工具调用。当 Aelin 使用工具处理你的请求时，这里会显示更详细的执行步骤。',
+  'trace.executionPane.emptyDetail': '暂无可展示的执行信息。当本轮运行产生工具、状态或子代理数据时，这里会直接展示。',
   'trace.tools.empty': '本轮暂未调用任何原子工具。',
   'trace.tools.count': '{count} 个调用',
-  'trace.tools.read': 'READ',
-  'trace.tools.write': 'WRITE',
   'actions.heading': '建议动作 ({count})',
   'actions.confirm.cta': '确认并继续',
   'actions.confirm.pending': '处理中…',
@@ -131,6 +115,8 @@ const EN: Record<ChatKeys, string> = {
   'error.screenshot': 'Screenshot failed, please try again later.',
   'error.attach.process': 'Attachment processing failed, please try again later.',
   'error.attach.send': 'Attachment sending failed, please try again later.',
+  'error.llm.notConfigured': 'No model is configured for this workspace. Please configure a model in Settings first.',
+  'error.llm.generic': 'Something went wrong in this turn. Please try again.',
   'nav.title': 'Chat',
   'nav.subtitle': 'Aelin is online',
   'empty.greeting': 'Hi, welcome back',
@@ -153,25 +139,15 @@ const EN: Record<ChatKeys, string> = {
   'composer.send.stop': 'Stop generation',
   'composer.send.send': 'Send message',
   'timeline.generating': 'Generating…',
-  'trace.title': 'Agent trace',
-  'trace.steps': '{count} steps',
-  'trace.status.running': 'running',
-  'trace.status.completed': 'completed',
-  'trace.status.skipped': 'skipped',
-  'trace.status.failed': 'failed',
-  'trace.status.unknown': 'unknown',
+  'status.cancelled': 'This turn has been cancelled.',
   'trace.executionPane.title': 'Execution panel',
-  'trace.tab.aelin': 'Aelin chain',
   'trace.tab.tools': 'Tool calls',
   'trace.executionPane.empty': 'No execution info yet',
   'trace.executionPane.headerOpen': 'Execution panel',
-  'trace.executionPane.headerClosed': 'Open execution panel',
   'trace.executionPane.emptyDetail':
-    'No tool calls to show yet. When Aelin uses tools to handle your request, detailed steps will appear here.',
+    'No execution data to show yet. Tool calls, state snapshots, and subagent activity will appear here when available.',
   'trace.tools.empty': 'No atomic tools were invoked in this turn.',
   'trace.tools.count': '{count} call(s)',
-  'trace.tools.read': 'READ',
-  'trace.tools.write': 'WRITE',
   'actions.heading': 'Suggested actions ({count})',
   'actions.confirm.cta': 'Confirm and continue',
   'actions.confirm.pending': 'Working…',

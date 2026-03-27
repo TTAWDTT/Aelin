@@ -1,0 +1,618 @@
+import type { BaseMessage } from '@langchain/core/messages'
+
+export type ChatStreamState = {
+  messages: Array<Record<string, unknown>>
+  topology?: Record<string, unknown>
+  answer?: string
+  todos?: unknown[]
+  [key: string]: unknown
+}
+
+export type ChatRuntimeStream = {
+  messages?: BaseMessage[]
+  values?: ChatStreamState
+  isLoading?: boolean
+  toolCalls?: unknown[]
+  activeSubagents?: unknown[]
+  subagents?: Map<string, unknown>
+  getToolCalls?: (message: BaseMessage) => unknown[]
+  getSubagentsByMessage?: (messageId: string) => unknown[]
+  getMessagesMetadata?: (
+    message: BaseMessage,
+    index?: number,
+  ) => {
+    messageId?: string
+    branch?: string
+    streamMetadata?: Record<string, unknown>
+  } | undefined
+}
+
+export type ExecutionTopologyNode = {
+  id: string
+  name: string
+  kind: string
+  depth: number
+  visits: number
+  toolCalls: number
+  subagents: number
+  activeNamespaces: number
+  status: 'idle' | 'completed' | 'running'
+}
+
+export type ExecutionTopologyEdge = {
+  source: string
+  target: string
+  conditional?: boolean
+  active: boolean
+  traversed: number
+  namespaces: number
+}
+
+type BaseTopologyEdge = {
+  source: string
+  target: string
+  conditional: boolean
+}
+
+type ExecutionActivity = {
+  key: string
+  node: string
+  namespace: string
+  status: string
+  toolCalls: number
+  subagents: number
+}
+
+export type ExecutionToolCall = {
+  key: string
+  name: string
+  state: string
+  args: string
+  result: string
+}
+
+export type ExecutionSubagent = {
+  key: string
+  name: string
+  type: string
+  status: string
+  depth: number
+  messageCount: number
+  namespace?: string
+  preview?: string
+}
+
+export type ExecutionTurn = {
+  key: string
+  messageId: string
+  node: string
+  namespace: string
+  preview: string
+  status: string
+  toolCalls: ExecutionToolCall[]
+  subagents: ExecutionSubagent[]
+  isStreaming: boolean
+}
+
+export type ExecutionNamespaceLane = {
+  key: string
+  label: string
+  status: 'idle' | 'completed' | 'running'
+  nodes: string[]
+  currentNode?: string
+  toolCalls: number
+  subagents: number
+}
+
+export type ExecutionRuntime = {
+  topology: {
+    nodes: ExecutionTopologyNode[]
+    edges: ExecutionTopologyEdge[]
+  }
+  lanes: ExecutionNamespaceLane[]
+  turns: ExecutionTurn[]
+  tools: ExecutionToolCall[]
+  subagents: ExecutionSubagent[]
+  hasExecution: boolean
+}
+
+type MessageRuntimeRow = {
+  key: string
+  messageId: string
+  node: string
+  namespace: string
+  status: string
+  preview: string
+  toolCalls: ExecutionToolCall[]
+  subagents: ExecutionSubagent[]
+  messageType: string
+  hasWork: boolean
+  isStreaming: boolean
+}
+
+const GENERIC_TOOL_NAMES = new Set(['', 'tool'])
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function compactText(value: unknown, max = 140): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+function stableJson(value: unknown, max = 180): string {
+  try {
+    return compactText(JSON.stringify(value), max)
+  } catch {
+    return compactText(value, max)
+  }
+}
+
+function normalizeStatus(value: unknown, fallback = 'idle'): string {
+  const text = String(value || '').trim().toLowerCase()
+  return text || fallback
+}
+
+function hasMeaningfulArgsText(value: string): boolean {
+  const text = String(value || '').trim()
+  return Boolean(text) && text !== '{}' && text !== '[]' && text !== 'null'
+}
+
+function isSettledToolState(state: string): boolean {
+  return state === 'completed' || state === 'error' || state === 'failed'
+}
+
+function shouldDisplayToolCall(tool: ExecutionToolCall, hasStableId: boolean): boolean {
+  if (hasStableId) return true
+  if (tool.result) return true
+  if (hasMeaningfulArgsText(tool.args)) return true
+  if (isSettledToolState(tool.state)) return true
+  return !GENERIC_TOOL_NAMES.has(tool.name.toLowerCase())
+}
+
+function messageTypeOf(message: BaseMessage): string {
+  const value =
+    typeof (message as any)?.getType === 'function'
+      ? (message as any).getType()
+      : (message as any)?.type
+  return String(value || '').trim().toLowerCase()
+}
+
+function messagePreview(message: BaseMessage): string {
+  const content = (message as any)?.content
+  if (typeof content === 'string') return compactText(content)
+  if (Array.isArray(content)) {
+    const joined = content
+      .map((item) => {
+        const record = asRecord(item)
+        return record.type === 'text' ? String(record.text || '') : ''
+      })
+      .filter(Boolean)
+      .join(' ')
+    return compactText(joined)
+  }
+  return ''
+}
+
+function createMetadataReader(stream: ChatRuntimeStream) {
+  return typeof stream.getMessagesMetadata === 'function'
+    ? stream.getMessagesMetadata.bind(stream)
+    : (() => undefined)
+}
+
+function getMessageId(message: BaseMessage, metadataMessageId: string | undefined, index: number): string {
+  const direct = String((message as any)?.id || '').trim()
+  if (direct) return direct
+  const meta = String(metadataMessageId || '').trim()
+  if (meta) return meta
+  return `message:${index}`
+}
+
+function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage): ExecutionToolCall[] {
+  if (!stream.getToolCalls) return []
+  const rows = (() => {
+    try {
+      return stream.getToolCalls?.(message) ?? []
+    } catch {
+      return []
+    }
+  })()
+  const deduped = new Map<string, ExecutionToolCall & { hasStableId: boolean }>()
+
+  rows.forEach((item, index) => {
+    const record = asRecord(item)
+    const call = asRecord(record.call)
+    const callId = String(record.id || call.id || '').trim()
+    const result = record.result
+    const tool = {
+      key: callId || `${String(call.name || record.name || 'tool').trim() || 'tool'}:${index}`,
+      name: String(call.name || record.name || 'tool').trim() || 'tool',
+      state: normalizeStatus(record.status || record.state, result == null ? 'running' : 'completed'),
+      args: call.args == null ? '' : stableJson(call.args, 160),
+      result: result == null ? '' : stableJson(result, 180),
+      hasStableId: Boolean(callId),
+    }
+
+    if (!shouldDisplayToolCall(tool, tool.hasStableId)) return
+
+    const existing = deduped.get(tool.key)
+    if (!existing) {
+      deduped.set(tool.key, tool)
+      return
+    }
+
+    const existingSettled = isSettledToolState(existing.state)
+    const nextSettled = isSettledToolState(tool.state)
+    if (!existingSettled && nextSettled) {
+      deduped.set(tool.key, tool)
+      return
+    }
+    if ((existing.result?.length || 0) <= (tool.result?.length || 0)) {
+      deduped.set(tool.key, tool)
+    }
+  })
+
+  return Array.from(deduped.values()).map(({ hasStableId: _hasStableId, ...tool }) => tool)
+}
+
+function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): ExecutionSubagent[] {
+  if (!stream.getSubagentsByMessage) return []
+  const rows = (() => {
+    try {
+      return stream.getSubagentsByMessage?.(messageId)
+    } catch {
+      return []
+    }
+  })()
+  if (!Array.isArray(rows)) return []
+  return rows.map((item, index) => {
+    const record = asRecord(item)
+    const messages = Array.isArray(record.messages) ? record.messages : []
+    return {
+      key: String(record.id || record.toolCallId || `subagent:${messageId}:${index}`),
+      name: String(record.name || record.subagent_type || 'subagent'),
+      type: String(record.subagent_type || record.type || 'subagent'),
+      status: normalizeStatus(record.status, 'idle'),
+      depth: Number(record.depth || 1),
+      messageCount: messages.length,
+      namespace: Array.isArray(record.namespace) ? record.namespace.map(String).join(' / ') : undefined,
+    }
+  })
+}
+
+function getRuntimeSubagents(stream: ChatRuntimeStream): ExecutionSubagent[] {
+  if (!(stream.subagents instanceof Map)) return []
+  return Array.from(stream.subagents.values())
+    .map((item, index) => {
+      const record = asRecord(item)
+      const toolCall = asRecord(record.toolCall)
+      const args = asRecord(toolCall.args)
+      const messages = Array.isArray(record.messages) ? record.messages : []
+      const namespace = Array.isArray(record.namespace)
+        ? record.namespace.map(String).join(' / ')
+        : ''
+      return {
+        key: String(record.id || toolCall.id || `subagent:${index}`),
+        name: String(args.subagent_type || record.name || 'subagent'),
+        type: String(args.subagent_type || record.type || 'subagent'),
+        status: normalizeStatus(record.status, 'idle'),
+        depth: Number(record.depth || 0),
+        messageCount: messages.length,
+        namespace: namespace || undefined,
+        preview: messages.length > 0 ? messagePreview(messages[messages.length - 1] as BaseMessage) : undefined,
+      }
+    })
+    .filter((item) => Boolean(item.key))
+}
+
+function getMessageRuntimeRows(stream: ChatRuntimeStream): MessageRuntimeRow[] {
+  const messages = Array.isArray(stream.messages) ? stream.messages : []
+  const readMetadata = createMetadataReader(stream)
+  const lastIndex = messages.length - 1
+
+  return messages.map((message, index) => {
+    const metadata = readMetadata(message, index)
+    const streamMetadata = asRecord(metadata?.streamMetadata)
+    const messageType = messageTypeOf(message)
+    const messageId = getMessageId(message, metadata?.messageId, index)
+    const toolCalls = getToolCallsForMessage(stream, message)
+    const subagents = getSubagentsForMessage(stream, messageId)
+    const node = String(streamMetadata.langgraph_node || '').trim()
+    const namespace = String(
+      streamMetadata.langgraph_checkpoint_ns
+      || streamMetadata.checkpoint_ns
+      || metadata?.branch
+      || 'root',
+    )
+    const isStreaming = Boolean(stream.isLoading) && index === lastIndex
+    const hasWork = Boolean(node) || toolCalls.length > 0 || subagents.length > 0
+
+    return {
+      key: `${messageId}:${node || messageType || 'turn'}`,
+      messageId,
+      node,
+      namespace,
+      status: isStreaming ? 'running' : 'completed',
+      preview: messagePreview(message),
+      toolCalls,
+      subagents,
+      messageType,
+      hasWork,
+      isStreaming,
+    }
+  })
+}
+
+function buildExecutionTurns(rows: MessageRuntimeRow[]): ExecutionTurn[] {
+  return rows
+    .filter((row) => row.hasWork && (Boolean(row.node) || row.messageType === 'ai'))
+    .map((row) => ({
+      key: row.key,
+      messageId: row.messageId,
+      node: row.node || row.messageType || 'message',
+      namespace: row.namespace,
+      preview: row.preview,
+      status: row.status,
+      toolCalls: row.toolCalls,
+      subagents: row.subagents,
+      isStreaming: row.isStreaming,
+    }))
+}
+
+function buildExecutionActivities(rows: MessageRuntimeRow[]): ExecutionActivity[] {
+  return rows
+    .filter((row) => row.hasWork && Boolean(row.node))
+    .map((row) => ({
+      key: `${row.messageId}:${row.node}`,
+      node: row.node,
+      namespace: row.namespace,
+      status: row.status,
+      toolCalls: row.toolCalls.length,
+      subagents: row.subagents.length,
+    }))
+}
+
+function computeDepths(
+  nodes: Array<{ id: string }>,
+  edges: Array<{ source: string; target: string }>,
+): Map<string, number> {
+  const indegree = new Map<string, number>()
+  const outgoing = new Map<string, string[]>()
+
+  for (const node of nodes) {
+    indegree.set(node.id, 0)
+    outgoing.set(node.id, [])
+  }
+
+  for (const edge of edges) {
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target])
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
+  }
+
+  const queue = nodes
+    .filter((node) => (indegree.get(node.id) ?? 0) === 0)
+    .map((node) => node.id)
+  const depth = new Map<string, number>()
+
+  for (const id of queue) depth.set(id, 0)
+
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    const currentDepth = depth.get(current) ?? 0
+    for (const next of outgoing.get(current) ?? []) {
+      depth.set(next, Math.max(depth.get(next) ?? 0, currentDepth + 1))
+      indegree.set(next, (indegree.get(next) ?? 1) - 1)
+      if ((indegree.get(next) ?? 0) <= 0) queue.push(next)
+    }
+  }
+
+  for (const node of nodes) {
+    if (!depth.has(node.id)) depth.set(node.id, 0)
+  }
+
+  return depth
+}
+
+function buildExecutionTopology(
+  raw: Record<string, unknown>,
+  activities: ExecutionActivity[],
+): {
+  nodes: ExecutionTopologyNode[]
+  edges: ExecutionTopologyEdge[]
+} {
+  const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : []
+  const rawEdges: BaseTopologyEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
+    .map((item) => {
+      const record = asRecord(item)
+      const source = String(record.source || '').trim()
+      const target = String(record.target || '').trim()
+      if (!source || !target) return null
+      return {
+        source,
+        target,
+        conditional: Boolean(record.conditional),
+      }
+    })
+    .filter((item): item is BaseTopologyEdge => item != null)
+
+  const baseNodes = rawNodes
+    .map((item) => {
+      const record = asRecord(item)
+      const id = String(record.id || '').trim()
+      if (!id) return null
+      return {
+        id,
+        name: String(record.name || id),
+        kind: String(record.kind || 'node'),
+      }
+    })
+    .filter((item): item is { id: string; name: string; kind: string } => item != null)
+
+  const depths = computeDepths(baseNodes, rawEdges)
+  const nodeIds = new Set(baseNodes.map((node) => node.id))
+  const turnCounts = new Map<string, number>()
+  const toolCallCounts = new Map<string, number>()
+  const subagentCounts = new Map<string, number>()
+  const edgeTraversals = new Map<string, number>()
+  const activeNamespacesByNode = new Map<string, Set<string>>()
+  const traversedNamespacesByEdge = new Map<string, Set<string>>()
+  const activitiesByNamespace = new Map<string, ExecutionActivity[]>()
+
+  for (const activity of activities) {
+    if (!nodeIds.has(activity.node)) continue
+    turnCounts.set(activity.node, (turnCounts.get(activity.node) ?? 0) + 1)
+    toolCallCounts.set(activity.node, (toolCallCounts.get(activity.node) ?? 0) + activity.toolCalls)
+    subagentCounts.set(activity.node, (subagentCounts.get(activity.node) ?? 0) + activity.subagents)
+    const bucket = activitiesByNamespace.get(activity.namespace) ?? []
+    bucket.push(activity)
+    activitiesByNamespace.set(activity.namespace, bucket)
+    if (activity.status === 'running') {
+      const namespaces = activeNamespacesByNode.get(activity.node) ?? new Set<string>()
+      namespaces.add(activity.namespace)
+      activeNamespacesByNode.set(activity.node, namespaces)
+    }
+  }
+
+  for (const namespaceActivities of activitiesByNamespace.values()) {
+    const nodeKeys = namespaceActivities
+      .map((activity) => activity.node)
+      .filter((node) => nodeIds.has(node))
+    for (let index = 0; index < nodeKeys.length - 1; index += 1) {
+      const source = nodeKeys[index]
+      const target = nodeKeys[index + 1]
+      const edgeKey = `${source}->${target}`
+      edgeTraversals.set(edgeKey, (edgeTraversals.get(edgeKey) ?? 0) + 1)
+      const namespaces = traversedNamespacesByEdge.get(edgeKey) ?? new Set<string>()
+      namespaces.add(namespaceActivities[index]?.namespace || 'root')
+      traversedNamespacesByEdge.set(edgeKey, namespaces)
+    }
+  }
+
+  return {
+    nodes: baseNodes.map((node) => ({
+      ...node,
+      depth: depths.get(node.id) ?? 0,
+      visits: turnCounts.get(node.id) ?? 0,
+      toolCalls: toolCallCounts.get(node.id) ?? 0,
+      subagents: subagentCounts.get(node.id) ?? 0,
+      activeNamespaces: activeNamespacesByNode.get(node.id)?.size ?? 0,
+      status: (activeNamespacesByNode.get(node.id)?.size ?? 0) > 0
+        ? 'running'
+        : (turnCounts.get(node.id) ?? 0) > 0
+          ? 'completed'
+          : 'idle',
+    })),
+    edges: rawEdges.map((edge) => {
+      const edgeKey = `${edge.source}->${edge.target}`
+      const traversed = edgeTraversals.get(edgeKey) ?? 0
+      return {
+        ...edge,
+        traversed,
+        namespaces: traversedNamespacesByEdge.get(edgeKey)?.size ?? 0,
+        active:
+          traversed > 0
+          || (activeNamespacesByNode.get(edge.source)?.size ?? 0) > 0
+          || (activeNamespacesByNode.get(edge.target)?.size ?? 0) > 0,
+      }
+    }),
+  }
+}
+
+function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespaceLane[] {
+  const byNamespace = new Map<string, ExecutionActivity[]>()
+  for (const activity of activities) {
+    const bucket = byNamespace.get(activity.namespace) ?? []
+    bucket.push(activity)
+    byNamespace.set(activity.namespace, bucket)
+  }
+  return Array.from(byNamespace.entries())
+    .map(([namespace, items]) => {
+      const status: ExecutionNamespaceLane['status'] = items.some((item) => item.status === 'running')
+        ? 'running'
+        : items.length > 0
+          ? 'completed'
+          : 'idle'
+      return {
+        key: namespace,
+        label: namespace === 'root' ? 'root' : namespace,
+        status,
+        nodes: Array.from(new Set(items.map((item) => item.node).filter(Boolean))),
+        currentNode: items[items.length - 1]?.node,
+        toolCalls: items.reduce((sum, item) => sum + item.toolCalls, 0),
+        subagents: items.reduce((sum, item) => sum + item.subagents, 0),
+      }
+    })
+    .sort((left, right) => {
+      if (left.status === right.status) return left.label.localeCompare(right.label)
+      if (left.status === 'running') return -1
+      if (right.status === 'running') return 1
+      return left.label.localeCompare(right.label)
+    })
+}
+
+export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
+  return buildExecutionTurns(getMessageRuntimeRows(stream))
+}
+
+export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, ExecutionToolCall[]> {
+  const entries = getMessageRuntimeRows(stream)
+    .filter((row) => row.toolCalls.length > 0)
+    .map((row) => [row.messageId, row.toolCalls] as const)
+  return new Map(entries)
+}
+
+export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
+  const rows = getMessageRuntimeRows(stream)
+  const turns = buildExecutionTurns(rows).map((turn) => ({
+    ...turn,
+    toolCalls: Array.from(new Map(turn.toolCalls.map((tool) => [tool.key, tool])).values()),
+  }))
+  const activities = buildExecutionActivities(rows)
+  const topology = buildExecutionTopology(asRecord(stream.values?.topology), activities)
+  const subagents = getRuntimeSubagents(stream)
+  const tools = turns.flatMap((turn) => turn.toolCalls)
+  const hasExecution =
+    topology.nodes.length > 0
+    || turns.length > 0
+    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
+
+  return {
+    topology,
+    lanes: buildExecutionLanes(activities),
+    turns,
+    tools,
+    subagents,
+    hasExecution,
+  }
+}
+
+export function summarizeExecutionStatus(
+  runtime: ExecutionRuntime,
+  options: {
+    isLoading: boolean
+    fallback: string
+  },
+): string {
+  const runningSubagents = runtime.subagents.filter((item) => item.status === 'running' || item.status === 'pending').length
+  if (runningSubagents > 0) {
+    return runningSubagents === 1
+      ? '正在运行 1 个子代理…'
+      : `正在运行 ${runningSubagents} 个子代理…`
+  }
+
+  const activeTools = runtime.tools.filter((item) => item.state === 'running' || item.state === 'pending')
+  if (activeTools.length > 0) {
+    return `正在调用工具… ${activeTools.slice(0, 3).map((item) => item.name).join(' · ')}`
+  }
+
+  const last = runtime.turns.at(-1)
+  if (options.isLoading && last?.node) {
+    return `正在执行 ${last.node}…`
+  }
+
+  return options.fallback
+}

@@ -11,6 +11,7 @@ from app.models import User
 from app.schemas import AgentConfigOut
 from app.services.foundation.encryption import decrypt_optional
 from app.services.foundation.llm import LLMService
+from app.settings import settings
 
 
 def default_config() -> AgentConfigOut:
@@ -19,6 +20,7 @@ def default_config() -> AgentConfigOut:
         base_url="https://api.openai.com/v1",
         model="gpt-4o-mini",
         temperature=0.2,
+        verify_ssl=bool(getattr(settings, "llm_verify_ssl", True)),
         has_api_key=False,
         web_search_proxy_url="",
     )
@@ -35,6 +37,7 @@ def config_out(db: Session, user_id: int) -> AgentConfigOut:
         base_url=config.base_url or "https://api.openai.com/v1",
         model=config.model or "gpt-4o-mini",
         temperature=float(config.temperature or 0.2),
+        verify_ssl=bool(getattr(config, "verify_ssl", True)),
         has_api_key=bool(api_key),
         web_search_proxy_url=str(config.web_search_proxy_url or ""),
     )

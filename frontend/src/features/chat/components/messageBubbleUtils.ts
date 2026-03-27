@@ -1,7 +1,7 @@
 import type {
-  AelinAction,
-  AelinBrowserConfirmRequest,
-  AelinBrowserConfirmResponse,
+  BrowserConfirmRequest,
+  BrowserConfirmResponse,
+  ChatAction,
 } from '@/shared/api/types'
 
 export const EXPRESSION_LABELS: Record<string, string> = {
@@ -32,7 +32,7 @@ export function formatMessageTime(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-export function resolveActionHref(action: AelinAction): string {
+export function resolveActionHref(action: ChatAction): string {
   const kind = String(action.kind || '').trim().toLowerCase()
   const payload = action.payload || {}
 
@@ -42,11 +42,11 @@ export function resolveActionHref(action: AelinAction): string {
   return ''
 }
 
-export function isBrowserConfirmAction(action: AelinAction) {
+export function isBrowserConfirmAction(action: ChatAction) {
   return String(action.kind || '').trim().toLowerCase() === 'confirm_browser_action'
 }
 
-export function buildBrowserConfirmBody(action: AelinAction): AelinBrowserConfirmRequest {
+export function buildBrowserConfirmBody(action: ChatAction): BrowserConfirmRequest {
   const payload = action.payload || {}
   const rawNextCall = String(payload.next_call || '').trim()
   let nextCall: Record<string, unknown> | undefined
@@ -83,7 +83,7 @@ export function buildBrowserConfirmBody(action: AelinAction): AelinBrowserConfir
   }
 }
 
-export function formatBrowserConfirmFeedback(res: Pick<AelinBrowserConfirmResponse, 'message' | 'tool_result'>) {
+export function formatBrowserConfirmFeedback(res: Pick<BrowserConfirmResponse, 'message' | 'tool_result'>) {
   const base = String(res.message || '确认后执行失败').trim()
   const toolResult = (res.tool_result || {}) as Record<string, unknown>
   const restart = (toolResult.restart || {}) as Record<string, unknown>

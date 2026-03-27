@@ -11,6 +11,7 @@ from app.schemas import AgentConfigOut, AgentConfigUpdate, AgentTestResponse, Mo
 from app.services.foundation.encryption import decrypt_optional
 from app.services.foundation.llm import LLMService
 from app.services.foundation.model_catalog import get_model_catalog
+from app.settings import settings
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -20,6 +21,7 @@ def _default_config() -> AgentConfigOut:
         base_url="https://api.openai.com/v1",
         model="gpt-4o-mini",
         temperature=0.2,
+        verify_ssl=bool(getattr(settings, "llm_verify_ssl", True)),
         has_api_key=False,
         web_search_proxy_url="",
     )
@@ -36,6 +38,7 @@ def _config_out(db: Session, user_id: int) -> AgentConfigOut:
         base_url=config.base_url or "https://api.openai.com/v1",
         model=config.model or "gpt-4o-mini",
         temperature=float(config.temperature or 0.2),
+        verify_ssl=bool(getattr(config, "verify_ssl", True)),
         has_api_key=bool(api_key),
         web_search_proxy_url=str(config.web_search_proxy_url or ""),
     )
@@ -90,6 +93,7 @@ def update_agent_config(
         base_url=payload.base_url,
         model=payload.model,
         temperature=payload.temperature,
+        verify_ssl=payload.verify_ssl,
         api_key=payload.api_key,
         web_search_proxy_url=payload.web_search_proxy_url,
     )
@@ -99,6 +103,7 @@ def update_agent_config(
         base_url=config.base_url,
         model=config.model,
         temperature=float(config.temperature),
+        verify_ssl=bool(getattr(config, "verify_ssl", True)),
         has_api_key=bool(api_key),
         web_search_proxy_url=str(config.web_search_proxy_url or ""),
     )

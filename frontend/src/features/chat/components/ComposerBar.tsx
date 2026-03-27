@@ -3,14 +3,14 @@ import { Send, Square, Camera, Loader2, Paperclip, X, Crop, Monitor } from 'luci
 import toast from 'react-hot-toast'
 import { cn } from '@/shared/utils/cn'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
-import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from '../chatI18n'
 
 interface Props {
   onSend: (text: string) => void
   onCaptureAndSend: (mode: 'fullscreen' | 'region', textHint: string) => Promise<void>
-  onUploadAttachments: (files: File[]) => Promise<AelinAttachmentUploadResponse[]>
-  onSendWithAttachments: (attachments: AelinAttachmentUploadResponse[], textHint: string) => Promise<void>
+  onUploadAttachments: (files: File[]) => Promise<AttachmentUploadResponse[]>
+  onSendWithAttachments: (attachments: AttachmentUploadResponse[], textHint: string) => Promise<void>
   onStop: () => void
   isStreaming: boolean
   compact?: boolean
@@ -33,7 +33,7 @@ export function ComposerBar({
   placeholder = '输入消息…',
 }: Props) {
   const [text, setText] = useState('')
-  const [pendingAttachments, setPendingAttachments] = useState<AelinAttachmentUploadResponse[]>([])
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentUploadResponse[]>([])
   const [uploadingAttachments, setUploadingAttachments] = useState<UploadingAttachmentItem[]>([])
   const [isCapturing, setIsCapturing] = useState(false)
   const [isAttaching, setIsAttaching] = useState(false)

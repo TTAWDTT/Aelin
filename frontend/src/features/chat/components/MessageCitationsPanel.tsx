@@ -1,8 +1,8 @@
-import type { AelinCitation } from '@/shared/api/types'
+import type { ChatCitation } from '@/shared/api/types'
 import { relativeTime, sourceIcon } from '@/shared/utils/format'
 
 interface MessageCitationsPanelProps {
-  citations: AelinCitation[]
+  citations: ChatCitation[]
 }
 
 export function MessageCitationsPanel({ citations }: MessageCitationsPanelProps) {

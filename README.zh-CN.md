@@ -7,6 +7,7 @@ Aelin 现在是一个以 DeepAgents 为唯一 Agent 内核的 AI 工作台，提
 - Aelin 是产品壳，DeepAgents 是唯一 agent loop。
 - 运行时强调“真实工具结果优先”，避免壳层再发明一套语义状态机。
 - 支持 Web 与 Desktop 两种运行方式。
+- 后端 = 一层很薄的 HTTP 壳（`/api/v1/deepagents/chat/stream` + 兼容的 `/api/v1/aelin/*`）+ DeepAgents graph + 少量领域服务（web_search / attachments / device / Google Workspace / skills）；二次开发时建议优先参考 DeepAgents 官方文档与本仓库的 `docs/deepagents_arch.md`，在 DeepAgents 的 graph/skills 层扩展能力。
 
 ## 2. 核心能力
 
@@ -69,6 +70,7 @@ npm run dist
   - `AELIN_DATABASE_URL`
   - `AELIN_CORS_ORIGINS`
   - `AELIN_LLM_REQUEST_TIMEOUT_SECONDS`
+  - `AELIN_LLM_VERIFY_SSL`
   - `AELIN_DEEPAGENTS_EXTRA_SKILLS_DIR`
   - `AELIN_DESKTOP_PLUGIN_BASE_URL`
   - `AELIN_GOOGLE_WORKSPACE_CLI_BIN`

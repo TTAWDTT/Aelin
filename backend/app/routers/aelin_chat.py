@@ -2,25 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
-import queue
-import threading
-from typing import Any
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import get_session, create_session
+from app.db import get_session
 from app.models import AttachmentDocument, User
-from app.services.aelin.core import _dispatch_aelin_chat
-from app.services.aelin.streaming import _now_ms, _sse_event
 from app.routers.auth import get_current_user
 from app.schemas import (
     AelinAttachmentUploadResponse,
-    AelinChatRequest,
-    AelinChatResponse,
     AelinFileMemoryContentResponse,
 )
 from app.services.aelin.attachment_service import AttachmentIngestError, get_aelin_attachment_service
@@ -114,15 +105,6 @@ def aelin_attachment_upload(
     return AelinAttachmentUploadResponse(**response_payload)
 
 
-@router.post("/chat", response_model=AelinChatResponse)
-def aelin_chat(
-    payload: AelinChatRequest,
-    db: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    return _dispatch_aelin_chat(payload, db, current_user)
-
-
 @router.get("/memory/file-memory/content", response_model=AelinFileMemoryContentResponse)
 def aelin_memory_file_memory_content(
     workspace: str = "default",
@@ -150,142 +132,5 @@ def aelin_memory_file_memory_content(
         updated_at=str(entry.get("updated_at") or ""),
         content=str(entry.get("content") or ""),
         generated_at=datetime.now(timezone.utc),
-    )
-
-
-@router.post("/chat/stream")
-def aelin_chat_stream(
-    payload: AelinChatRequest,
-    current_user: User = Depends(get_current_user),
-):
-    def _event_iter():
-        req_id = uuid4().hex[:10]
-        started = _now_ms()
-        heartbeat_count = 0
-        event_queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
-        done_token = "__done__"
-
-        class _CancelToken:
-            cancelled: bool = False
-
-        cancel_token = _CancelToken()
-
-        def _push(event: str, data: dict[str, Any]) -> None:
-            _LOG.debug(
-                "aelin_stream event req=%s uid=%s event=%s keys=%s",
-                req_id,
-                int(current_user.id),
-                str(event),
-                ",".join(sorted([str(k) for k in list((data or {}).keys())[:8] if str(k)])) or "-",
-            )
-            event_queue.put((event, data))
-
-        def _worker() -> None:
-            try:
-                _LOG.info(
-                    "aelin_stream worker_start req=%s uid=%s source=%s workspace=%s query=%s",
-                    req_id,
-                    int(current_user.id),
-                    str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
-                    str(payload.workspace or "default")[:64],
-                    _preview(str(payload.query or "")),
-                )
-                local_db = create_session()
-                try:
-                    result = _dispatch_aelin_chat(
-                        payload,
-                        local_db,
-                        current_user,
-                        event_cb=_push,
-                        cancel_token=cancel_token,
-                    )
-                finally:
-                    try:
-                        local_db.close()
-                    except Exception:
-                        pass
-                _LOG.info(
-                    "aelin_stream worker_final req=%s uid=%s answer_len=%s actions=%s traces=%s",
-                    req_id,
-                    int(current_user.id),
-                    len(str(result.answer or "")),
-                    len(list(result.actions or [])),
-                    len(list(result.tool_trace or [])),
-                )
-                _push("final", {"result": result.model_dump()})
-            except Exception as e:
-                _LOG.exception(
-                    "aelin_stream worker_error req=%s uid=%s error=%s",
-                    req_id,
-                    int(current_user.id),
-                    str(e)[:220],
-                )
-                _push("error", {"message": str(e)[:500] or "stream error"})
-            finally:
-                _push("done", {"ts": _now_ms(), "status": done_token})
-                _LOG.info(
-                    "aelin_stream worker_done req=%s uid=%s duration_ms=%s",
-                    req_id,
-                    int(current_user.id),
-                    max(0, _now_ms() - started),
-                )
-
-        _push(
-            "start",
-            {
-                "ts": _now_ms(),
-                "req_id": req_id,
-                "query": payload.query.strip()[:180],
-                "source": str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
-                "workspace": payload.workspace,
-                "search_mode": str(getattr(payload, "search_mode", "auto") or "auto")[:16],
-            },
-        )
-        worker = threading.Thread(target=_worker, daemon=True)
-        worker.start()
-
-        heartbeat_interval_s = 5.0
-        try:
-            while True:
-                try:
-                    event, data = event_queue.get(timeout=heartbeat_interval_s)
-                except queue.Empty:
-                    heartbeat_count += 1
-                    yield _sse_event("ping", {"ts": _now_ms(), "req_id": req_id, "hb": heartbeat_count})
-                    if (not worker.is_alive()) and event_queue.empty():
-                        yield _sse_event("done", {"ts": _now_ms(), "status": done_token})
-                        break
-                    continue
-
-                yield _sse_event(event, data)
-                if event == "done":
-                    break
-        except BaseException as exc:
-            cancel_token.cancelled = True
-            _LOG.warning(
-                "aelin_stream interrupted req=%s uid=%s type=%s msg=%s",
-                req_id,
-                int(current_user.id),
-                type(exc).__name__,
-                str(exc)[:180],
-            )
-            raise
-        finally:
-            _LOG.info(
-                "aelin_stream closed req=%s uid=%s duration_ms=%s heartbeats=%s",
-                req_id,
-                int(current_user.id),
-                max(0, _now_ms() - started),
-                heartbeat_count,
-            )
-
-    return StreamingResponse(
-        _event_iter(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
     )
 

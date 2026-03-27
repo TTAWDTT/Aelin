@@ -57,6 +57,7 @@ def upsert_agent_config(
     base_url: str | None = None,
     model: str | None = None,
     temperature: float | None = None,
+    verify_ssl: bool | None = None,
     api_key: str | None = None,
     web_search_proxy_url: str | None = None,
 ) -> AgentConfig:
@@ -73,6 +74,8 @@ def upsert_agent_config(
         config.model = model.strip()
     if temperature is not None:
         config.temperature = float(temperature)
+    if verify_ssl is not None:
+        config.verify_ssl = bool(verify_ssl)
     if api_key is not None:
         config.api_key = encrypt_optional(api_key.strip())
     if web_search_proxy_url is not None:

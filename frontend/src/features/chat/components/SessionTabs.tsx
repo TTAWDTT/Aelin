@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
-import { useChatStore, type ChatSession } from '../stores/chatStore'
+import { useChatStore } from '../stores/chatStore'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 

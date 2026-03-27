@@ -4,6 +4,7 @@ import logging
 from typing import Iterator, Any
 from urllib.parse import urlparse, urlunparse
 
+import httpx
 import openai
 from app.schemas import AgentConfigOut
 from app.settings import settings
@@ -26,6 +27,7 @@ class LLMService:
                 self.client = openai.Client(
                     base_url=normalized_base_url,
                     api_key=self.api_key,
+                    http_client=self.create_http_client(),
                     timeout=self.timeout_seconds,
                     max_retries=1,
                 )
@@ -49,6 +51,31 @@ class LLMService:
             return urlunparse(normalized).rstrip("/")
         except Exception:
             return text.rstrip("/")
+
+    @staticmethod
+    def resolve_verify_ssl(config: AgentConfigOut | None = None) -> bool:
+        if config is not None and hasattr(config, "verify_ssl"):
+            return bool(getattr(config, "verify_ssl", True))
+        return bool(getattr(settings, "llm_verify_ssl", True))
+
+    @staticmethod
+    def build_http_client(*, timeout_seconds: float | None = None) -> httpx.Client:
+        timeout = timeout_seconds if timeout_seconds is not None else max(
+            5.0,
+            float(getattr(settings, "llm_request_timeout_seconds", 90.0)),
+        )
+        return httpx.Client(
+            verify=LLMService.resolve_verify_ssl(),
+            follow_redirects=True,
+            timeout=timeout,
+        )
+
+    def create_http_client(self) -> httpx.Client:
+        return httpx.Client(
+            verify=self.resolve_verify_ssl(self.config),
+            follow_redirects=True,
+            timeout=self.timeout_seconds,
+        )
 
     def is_configured(self) -> bool:
         return self.client is not None

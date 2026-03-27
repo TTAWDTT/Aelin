@@ -10,11 +10,8 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.models import User
-from app.schemas import AelinChatRequest, AelinChatResponse, AelinToolStep, RemoteControlExecuteRequest
-from app.services.aelin.chat_dispatch import dispatch_aelin_chat
-from app.services.aelin.core import _try_agent_loop_chat
-from app.services.aelin.expressions import _pick_expression
-from app.services.aelin.streaming import _now_ms
+from app.schemas import ChatRequest, ChatResponse, RemoteControlExecuteRequest
+from app.services.aelin.core import is_deepagents_no_result_response, run_chat_request
 from app.services.device.device_center import device_status_snapshot
 from app.settings import settings
 
@@ -43,7 +40,7 @@ class RemoteCommandSource:
 class RemoteControlExecutionResult:
     ok: bool
     status: str
-    response: AelinChatResponse
+    response: ChatResponse
 
 
 def resolve_remote_control_user(db: Session, *, bind_user_email: str | None = None) -> User:
@@ -82,9 +79,9 @@ def build_remote_chat_request(
     payload: RemoteControlExecuteRequest,
     *,
     source: RemoteCommandSource | None = None,
-) -> AelinChatRequest:
+) -> ChatRequest:
     metadata = build_remote_source_metadata(source)
-    return AelinChatRequest(
+    return ChatRequest(
         query=str(payload.text or "").strip(),
         workspace=str(payload.workspace or "default").strip() or "default",
         source=str((source.source if source is not None else payload.source) or "remote_control").strip().lower()[:32]
@@ -93,7 +90,6 @@ def build_remote_chat_request(
         history=list(payload.history or []),
         images=list(payload.images or []),
         attachment_ids=list(payload.attachment_ids or []),
-        search_mode=str(payload.search_mode or "auto").strip() or "auto",
     )
 
 
@@ -111,18 +107,10 @@ def build_remote_control_status() -> dict[str, Any]:
     }
 
 
-def _derive_remote_execution_status(response: AelinChatResponse) -> tuple[bool, str]:
+def _derive_remote_execution_status(response: ChatResponse) -> tuple[bool, str]:
     answer = str(getattr(response, "answer", "") or "").strip()
-    trace = list(getattr(response, "tool_trace", []) or [])
-    fallback_failed = any(
-        str(getattr(step, "stage", "") or "") == "agent_loop"
-        and str(getattr(step, "status", "") or "") == "failed"
-        and "agent_loop_no_result" in str(getattr(step, "detail", "") or "")
-        for step in trace
-        if isinstance(step, AelinToolStep)
-    )
-    if fallback_failed:
-        return False, "agent_loop_no_result"
+    if is_deepagents_no_result_response(response):
+        return False, "deepagents_no_result"
     if not answer:
         return False, "empty_answer"
     return True, "completed"
@@ -138,15 +126,12 @@ def execute_remote_control_request(
     cancel_token: Any | None = None,
 ) -> RemoteControlExecutionResult:
     chat_payload = build_remote_chat_request(payload, source=source)
-    response = dispatch_aelin_chat(
+    response = run_chat_request(
         chat_payload,
         db,
         current_user,
         event_cb=event_cb,
         cancel_token=cancel_token,
-        try_agent_loop_chat=_try_agent_loop_chat,
-        pick_expression=_pick_expression,
-        now_ms=_now_ms,
     )
     ok, status = _derive_remote_execution_status(response)
     return RemoteControlExecutionResult(ok=ok, status=status, response=response)

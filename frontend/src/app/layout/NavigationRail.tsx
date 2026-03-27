@@ -1,14 +1,16 @@
+import { lazy, Suspense } from 'react'
 import { useLocation, useNavigate, NavLink } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
 import { useLayoutStore } from '@/shared/stores/layoutStore'
 import { useChatStore } from '@/features/chat/stores/chatStore'
 import { useChatI18n } from '@/features/chat/chatI18n'
-import SettingsPage from '@/app/routes/SettingsPage'
 import { ChevronLeft, ChevronRight, Plus, Settings as SettingsIcon, Sun, Moon, SunMoon, X } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { MODULE_NAV_ITEMS } from './moduleNav'
+
+const SettingsPage = lazy(() => import('@/app/routes/SettingsPage'))
 
 export function NavigationRail() {
   const location = useLocation()
@@ -264,7 +266,15 @@ export function NavigationRail() {
                 </Dialog.Close>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto">
-                <SettingsPage />
+                <Suspense
+                  fallback={
+                    <div className="flex h-40 items-center justify-center">
+                      <div className="h-5 w-5 rounded-full border-2 border-[var(--color-border-strong)] border-t-[var(--color-accent)] animate-spin" />
+                    </div>
+                  }
+                >
+                  <SettingsPage />
+                </Suspense>
               </div>
             </Dialog.Content>
           </Dialog.Portal>

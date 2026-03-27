@@ -1,8 +1,8 @@
 import type { RefObject } from 'react'
-import type { ChatMessage } from '../stores/chatStore'
+import type { ChatMessage } from '../chatTypes'
+import type { ExecutionToolCall } from '../executionStreamUtils'
 import { MessageBubble } from './MessageBubble'
 import { EmptyChatState } from './EmptyChatState'
-import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import { useChatI18n } from '../chatI18n'
 
 interface ChatTimelineProps {
@@ -12,8 +12,8 @@ interface ChatTimelineProps {
   statusText?: string
   compact?: boolean
   viewportWidth: number
+  toolCallsByMessage?: Map<string, ExecutionToolCall[]>
   onQuickPrompt: (text: string) => void
-  onOpenExecutionForMessage?: (messageId: string | null) => void
 }
 
 export function ChatTimeline({
@@ -23,12 +23,13 @@ export function ChatTimeline({
   statusText,
   compact = false,
   viewportWidth,
+  toolCallsByMessage,
   onQuickPrompt,
-  onOpenExecutionForMessage,
 }: ChatTimelineProps) {
   const isEmpty = messages.length === 0
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
-  const { focusedMessageId } = useExecutionPaneStore()
+  const lastMessage = messages.at(-1)
+  const showPendingAssistant = isStreaming && lastMessage?.role !== 'assistant'
   const { t } = useChatI18n()
 
   return (
@@ -47,22 +48,38 @@ export function ChatTimeline({
           }`}
         >
           {messages.map((message) => {
-            const isHighlighted = message.id === focusedMessageId
-
             return (
               <div key={message.id} className="flex flex-col gap-1.5">
                 <MessageBubble
                   message={message}
+                  toolCalls={toolCallsByMessage?.get(message.id) ?? []}
                   isThinking={isStreaming && message.id === lastAssistantId}
                   thinkingText={statusText}
                   compact={compact}
                   viewportWidth={viewportWidth}
                   onQuickPrompt={onQuickPrompt}
-                  highlighted={isHighlighted}
                 />
               </div>
             )
           })}
+          {showPendingAssistant && (
+            <div className="flex flex-col gap-1.5">
+              <MessageBubble
+                message={{
+                  id: 'pending-assistant',
+                  role: 'assistant',
+                  content: '',
+                  timestamp: Date.now(),
+                }}
+                toolCalls={[]}
+                isThinking
+                thinkingText={statusText}
+                compact={compact}
+                viewportWidth={viewportWidth}
+                onQuickPrompt={onQuickPrompt}
+              />
+            </div>
+          )}
           {isStreaming && <div className="h-2" />}
         </div>
       )}

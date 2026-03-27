@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
@@ -9,34 +9,38 @@ import { ChatTimeline } from './components/ChatTimeline'
 import { useAutoScrollToBottom } from './hooks/useAutoScrollToBottom'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
-import type { AelinAttachmentUploadResponse } from '@/shared/api/types'
+import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
+import { getExecutionRuntime, getMessageToolCallMap } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
 
 export function ChatView() {
   const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
-  const session = sessions.find((s) => s.id === activeSessionId)
-  const messages = session?.messages ?? []
-  const { send, captureAndSend, uploadAttachments, sendWithAttachments, stop } = useChatStream()
+  const { send, messages, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
   const { t } = useChatI18n()
   const {
-    openForMessage,
-    focusedMessageId,
-    setFocusedMessageId,
     open,
     setOpen,
     suppressAutoOpen,
   } = useExecutionPaneStore()
+  const execution = getExecutionRuntime(stream)
+  const messageToolCalls = getMessageToolCallMap(stream)
+  const values =
+    stream.values && typeof stream.values === 'object' && !Array.isArray(stream.values)
+      ? stream.values
+      : {}
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
     messages.at(-1)?.content,
     isStreaming,
-  ])
+  ], {
+    streaming: isStreaming,
+  })
 
   const handleSend = (text: string) => {
     if (!text.trim()) return
@@ -63,7 +67,7 @@ export function ChatView() {
     }
   }
 
-  const handleSendWithAttachments = async (attachments: AelinAttachmentUploadResponse[], textHint: string) => {
+  const handleSendWithAttachments = async (attachments: AttachmentUploadResponse[], textHint: string) => {
     try {
       await sendWithAttachments(attachments, textHint)
     } catch (error: any) {
@@ -78,36 +82,10 @@ export function ChatView() {
   }, [sessions.length, createSession])
 
   useEffect(() => {
-    // 切换 session 时，让 Execution Pane 自动跟随该会话的最新执行信息。
-    setFocusedMessageId(null)
-  }, [activeSessionId, setFocusedMessageId])
-
-  const latestAssistantWithTrace = [...messages]
-    .reverse()
-    .find((m) => m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
-
-  const focusedTrace =
-    focusedMessageId && messages.length
-      ? messages.find((m) => m.id === focusedMessageId && m.role === 'assistant' && m.toolTrace && m.toolTrace.length)
-          ?.toolTrace ?? null
-      : null
-
-  const executionTrace = focusedTrace ?? latestAssistantWithTrace?.toolTrace ?? []
-
-  // 桌面模式下，当本轮已经产生工具 trace 且正在流式时，自动展开右侧 ExecutionPane。
-  useEffect(() => {
-    if (!compact && isStreaming && executionTrace.length > 0 && !open && !suppressAutoOpen) {
+    if (!compact && isStreaming && execution.hasExecution && !open && !suppressAutoOpen) {
       setOpen(true)
     }
-  }, [compact, isStreaming, executionTrace.length, open, suppressAutoOpen, setOpen])
-
-  const handleOpenExecutionForLatest = () => {
-    openForMessage(latestAssistantWithTrace?.id ?? null)
-  }
-
-  const handleOpenExecutionForMessage = (messageId: string | null) => {
-    openForMessage(messageId)
-  }
+  }, [compact, execution.hasExecution, isStreaming, open, suppressAutoOpen, setOpen])
 
   return (
     <PageScaffold
@@ -121,8 +99,8 @@ export function ChatView() {
             isStreaming={isStreaming}
             statusText={statusText}
             compact={compact}
-            trace={executionTrace}
-            onOpenExecution={handleOpenExecutionForLatest}
+            execution={execution}
+            onOpenExecution={() => setOpen(true)}
           />
           <ChatTimeline
             scrollRef={scrollRef}
@@ -131,8 +109,8 @@ export function ChatView() {
             statusText={statusText}
             compact={compact}
             viewportWidth={viewportWidth}
+            toolCallsByMessage={messageToolCalls}
             onQuickPrompt={handleSend}
-            onOpenExecutionForMessage={handleOpenExecutionForMessage}
           />
           <ComposerBar
             onSend={handleSend}
@@ -145,7 +123,7 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane trace={executionTrace} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane runtime={execution} values={values} isStreaming={isStreaming} compact={compact} />
       </div>
     </PageScaffold>
   )

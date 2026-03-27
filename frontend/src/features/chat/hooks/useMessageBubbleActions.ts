@@ -1,8 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AelinAction, AelinBrowserConfirmResponse } from '@/shared/api/types'
-import { useChatStore, type ChatMessage } from '../stores/chatStore'
+import type { BrowserConfirmResponse, ChatAction } from '@/shared/api/types'
+import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
+import type { ChatMessage } from '../chatTypes'
+import { useChatStore } from '../stores/chatStore'
 import {
   buildBrowserConfirmBody,
   formatBrowserConfirmFeedback,
@@ -13,30 +15,30 @@ interface UseMessageBubbleActionsOptions {
   onQuickPrompt?: (text: string) => void
 }
 
-function appendFollowupMessage(response: AelinBrowserConfirmResponse, sessionId: string | null) {
+function appendFollowupMessage(response: BrowserConfirmResponse, sessionId: string | null) {
   const followup = (response.followup_result || {}) as Record<string, unknown>
   const followupAnswer = String(followup.answer || '').trim()
   if (!response.continued || !followupAnswer) return
 
   if (!sessionId) return
-  const store = useChatStore.getState()
+  const sessionMessages = getSessionMessages(sessionId)
 
-  store.addMessage(sessionId, {
+  const nextMessage: ChatMessage = {
     id: crypto.randomUUID(),
     role: 'assistant',
     content: followupAnswer,
     expression: String(followup.expression || '').trim() || undefined,
     citations: Array.isArray(followup.citations) ? followup.citations as ChatMessage['citations'] : undefined,
     actions: Array.isArray(followup.actions) ? followup.actions as ChatMessage['actions'] : undefined,
-    toolTrace: Array.isArray(followup.tool_trace) ? followup.tool_trace as ChatMessage['toolTrace'] : undefined,
-    memorySummary: String(followup.memory_summary || '').trim() || undefined,
     timestamp: Date.now(),
-  })
+  }
+
+  setSessionMessages(sessionId, [...sessionMessages, nextMessage])
 }
 
 export function useMessageBubbleActions({ message: _message, onQuickPrompt }: UseMessageBubbleActionsOptions) {
   const confirmBrowser = useMutation({
-    mutationFn: async (action: AelinAction) => {
+    mutationFn: async (action: ChatAction) => {
       const originSessionId = useChatStore.getState().activeSessionId
       const response = await aelinApi.confirmBrowserAction(buildBrowserConfirmBody(action))
       return { response, originSessionId }
