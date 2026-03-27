@@ -30,10 +30,10 @@
 
 ## 4. 后端 chat 壳瘦身为极薄网关
 
-- [ ] 4.1 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 worker 生命周期管理
-- [ ] 4.2 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 SSE 事件转译
+- [x] 4.1 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 worker 生命周期管理
+- [x] 4.2 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 SSE 事件转译
 - [x] 4.3 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 idle/progress/tool-activity 判定
-- [ ] 4.4 如果仍保留 FastAPI chat 入口，则只保留鉴权、上下文解析与极薄代理能力
+- [x] 4.4 如果仍保留 FastAPI chat 入口，则只保留鉴权、上下文解析与极薄代理能力
 
 ## 5. 前端切回更原生的官方 useStream 主路径
 
