@@ -36,15 +36,22 @@ def tool_attachment_search(context: ToolRuntimeContext, args: dict[str, Any]) ->
         mode = "keyword"
 
     service = context.attachment_service
-    result = service.search(  # type: ignore[call-arg]
-        context.db,
-        user_id=int(context.user_id or 0),
-        workspace=str(context.workspace or "default"),
-        query=query,
-        attachment_ids=attachment_ids,
-        top_k=top_k,
-        mode=mode,
-    )
+    session_factory = context.session_factory
+    if not callable(session_factory):
+        return _result_error("attachment_search_failed: session_factory unavailable")
+    db = session_factory()
+    try:
+        result = service.search(  # type: ignore[call-arg]
+            db,
+            user_id=int(context.user_id or 0),
+            workspace=str(context.workspace or "default"),
+            query=query,
+            attachment_ids=attachment_ids,
+            top_k=top_k,
+            mode=mode,
+        )
+    finally:
+        db.close()
     if not bool(result.get("ok")):
         return _result_error(str(result.get("error") or "attachment_search_failed"))
 

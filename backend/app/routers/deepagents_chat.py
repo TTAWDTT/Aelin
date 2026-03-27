@@ -9,9 +9,8 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import create_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import ChatRequest
@@ -357,7 +356,6 @@ def _serialize_agent_topology(agent: Any) -> dict[str, Any] | None:
 @router.post("/chat/stream")
 def deepagents_chat_stream(
     payload: ChatRequest,
-    db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -423,6 +421,7 @@ def deepagents_chat_stream(
             event_queue.put((event_name, payload))
 
         def _worker() -> None:
+            worker_db = create_session()
             try:
                 source = str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32]
                 workspace = _normalize_workspace(payload.workspace)
@@ -438,7 +437,7 @@ def deepagents_chat_stream(
                 )
 
                 # 为 DeepAgents 构造 LLM 服务与工具运行时上下文。
-                service, provider = _resolve_llm_service(db, current_user)
+                service, provider = _resolve_llm_service(worker_db, current_user)
                 if provider == "rule_based" or not service.is_configured():
                     _push(
                         "error",
@@ -450,7 +449,7 @@ def deepagents_chat_stream(
                     return
 
                 agents_memory_text = _get_agents_memory_text_for_chat(
-                    db,
+                    worker_db,
                     current_user.id,
                     workspace=workspace,
                 )
@@ -463,7 +462,6 @@ def deepagents_chat_stream(
                 )
 
                 tool_context = build_tool_runtime_context(
-                    db=db,
                     user_id=current_user.id,
                     workspace=workspace,
                     web_search_service=_scoped_web_search_service(
@@ -471,6 +469,7 @@ def deepagents_chat_stream(
                     ),
                     available_attachment_ids=attachment_ids,
                     cancel_checker=lambda: is_cancelled(cancel_token),
+                    session_factory=create_session,
                 )
 
                 allow_write_tools = bool(
@@ -563,6 +562,7 @@ def deepagents_chat_stream(
                     },
                 )
             finally:
+                worker_db.close()
                 _push("done", {"status": done_token})
                 _LOG.info(
                     "deepagents_stream worker_done req=%s uid=%s duration_ms=%s",

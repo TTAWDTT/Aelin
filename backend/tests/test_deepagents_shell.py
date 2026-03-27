@@ -335,6 +335,108 @@ def test_skill_mount_snapshot_uses_process_cache(monkeypatch, tmp_path):
 
 
 @pytest.mark.integration
+def test_deepagents_chat_stream_worker_uses_owned_session(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    import app.routers.deepagents_chat as dchat
+    from app.services.deepagents.tool_runtime import ToolPolicyUsage
+
+    worker_session = SimpleNamespace(closed=False)
+    captured: dict[str, object] = {}
+
+    def _fake_close():
+        worker_session.closed = True
+
+    worker_session.close = _fake_close
+
+    monkeypatch.setattr(dchat, "create_session", lambda: worker_session)
+    def _fake_resolve_llm_service(db, user):  # noqa: ANN001
+        _ = user
+        captured["db"] = db
+        return (
+            SimpleNamespace(
+                is_configured=lambda: True,
+                config=SimpleNamespace(web_search_proxy_url=""),
+            ),
+            "openai",
+        )
+
+    monkeypatch.setattr(dchat, "_resolve_llm_service", _fake_resolve_llm_service)
+    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
+    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
+
+    class _FakeAgent:
+        def stream(self, payload, **kwargs):  # noqa: ANN001
+            _ = payload, kwargs
+            yield {
+                "type": "values",
+                "ns": ["root"],
+                "data": {"messages": [{"role": "assistant", "content": "ok"}]},
+            }
+
+    monkeypatch.setattr(
+        dchat,
+        "build_chat_agent",
+        lambda **kwargs: (_FakeAgent(), ToolPolicyUsage(), [], {}),
+    )
+
+    with client.stream(
+        "POST",
+        "/api/v1/deepagents/chat/stream",
+        json={"query": "ping", "use_memory": False, "workspace": "default"},
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200, resp.text
+        _ = "".join(resp.iter_text())
+
+    assert captured["db"] is worker_session
+    assert worker_session.closed is True
+
+
+def test_tool_attachment_search_uses_fresh_session_factory():
+    from app.services.tools.tools_files import tool_attachment_search
+
+    calls: list[str] = []
+
+    class _FakeSession:
+        def close(self):
+            calls.append("close")
+
+    class _FakeAttachmentService:
+        def search(self, db, **kwargs):  # noqa: ANN001
+            calls.append("search")
+            assert isinstance(db, _FakeSession)
+            assert kwargs["query"] == "needle"
+            return {
+                "ok": True,
+                "total": 1,
+                "content": "hit",
+                "hits": [{"text": "hit"}],
+                "attachment_ids": [7],
+            }
+
+    def _session_factory():
+        calls.append("open")
+        return _FakeSession()
+
+    result = tool_attachment_search(
+        SimpleNamespace(
+            attachment_service=_FakeAttachmentService(),
+            available_attachment_ids=[7],
+            session_factory=_session_factory,
+            user_id=1,
+            workspace="default",
+        ),
+        {"query": "needle", "attachment_ids": [7]},
+    )
+
+    assert result["ok"] is True
+    assert calls == ["open", "search", "close"]
+
+
+@pytest.mark.integration
 def test_deepagents_chat_stream_filters_draft_tool_calls_without_tool_run_custom_event(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)

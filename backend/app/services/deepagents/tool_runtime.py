@@ -24,13 +24,13 @@ def normalize_workspace(raw: str) -> str:
 
 @dataclass
 class ToolRuntimeContext:
-    db: Session
     user_id: int
     workspace: str
     web_search_service: WebSearchService
     attachment_service: AelinAttachmentService
     available_attachment_ids: list[int]
     cancel_checker: Callable[[], bool] | None = None
+    session_factory: Callable[[], Session] | None = None
 
 
 _TOOL_EXECUTOR_MAX_WORKERS = 4
@@ -97,22 +97,22 @@ def _reset_tool_executor_for_tests(max_workers: int = 4) -> None:
 
 def build_tool_runtime_context(
     *,
-    db: Session,
     user_id: int,
     workspace: str,
     web_search_service: WebSearchService | None = None,
     attachment_service: AelinAttachmentService | None = None,
     available_attachment_ids: list[int] | None = None,
     cancel_checker: Callable[[], bool] | None = None,
+    session_factory: Callable[[], Session] | None = None,
 ) -> ToolRuntimeContext:
     return ToolRuntimeContext(
-        db=db,
         user_id=int(user_id),
         workspace=normalize_workspace(workspace),
         web_search_service=web_search_service or WebSearchService(),
         attachment_service=attachment_service or get_aelin_attachment_service(),
         available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
         cancel_checker=cancel_checker,
+        session_factory=session_factory,
     )
 
 
