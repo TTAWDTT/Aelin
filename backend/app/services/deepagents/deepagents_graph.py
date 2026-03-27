@@ -344,18 +344,6 @@ def _loop_result(
     )
 
 
-def _emit_tool_event(
-    callback: Callable[[dict[str, Any]], None] | None,
-    payload: dict[str, Any],
-) -> None:
-    if callback is None:
-        return
-    try:
-        callback(payload)
-    except Exception:
-        pass
-
-
 def _invoke_tool(
     *,
     name: str,
@@ -365,7 +353,6 @@ def _invoke_tool(
     limiter: ToolCallLimiter,
     usage: ToolPolicyUsage,
     tool_runs: list[dict[str, Any]],
-    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> dict[str, Any]:
     from time import perf_counter
@@ -395,19 +382,6 @@ def _invoke_tool(
                 "latency_ms": latency_ms,
                 "summary": f"{name} denied: {decision.reason[:160]}",
             }
-        )
-        _emit_tool_event(
-            tool_event_cb,
-            {
-                "key": tool_key,
-                "name": name,
-                "args": args,
-                "state": "denied",
-                "result": result,
-                "error": decision.reason,
-                "is_write": decision.is_write,
-                "latency_ms": latency_ms,
-            },
         )
         return result
 
@@ -443,39 +417,12 @@ def _invoke_tool(
                 "summary": f"{name} busy: prior tool calls are still draining",
             }
         )
-        _emit_tool_event(
-            tool_event_cb,
-            {
-                "key": tool_key,
-                "name": name,
-                "args": args,
-                "state": "busy",
-                "result": result,
-                "error": str(result["error"]),
-                "is_write": decision.is_write,
-                "latency_ms": latency_ms,
-                "summary": f"{name} busy: prior tool calls are still draining",
-            },
-        )
         return result
 
     executor, semaphore = slot
 
     usage.note_invocation(name, args)
     tool_key = f"{name}:{call_index}"
-    _emit_tool_event(
-        tool_event_cb,
-        {
-            "key": tool_key,
-            "name": name,
-            "args": args,
-            "state": "running",
-            "result": {},
-            "error": "",
-            "is_write": decision.is_write,
-            "latency_ms": 0,
-        },
-    )
     result: dict[str, Any]
     future = _submit_tool_future(executor, semaphore, handler, context, args)
 
@@ -484,8 +431,6 @@ def _invoke_tool(
         float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
     )
     wait_slice_seconds = 0.5
-    heartbeat_interval_seconds = 3.0
-    last_heartbeat_at = started
     cancelled_midflight = False
     deadline = started + timeout_seconds
 
@@ -505,22 +450,6 @@ def _invoke_tool(
         if is_cancelled(cancel_token):
             cancelled_midflight = True
             break
-        current = perf_counter()
-        if current - last_heartbeat_at >= heartbeat_interval_seconds:
-            _emit_tool_event(
-                tool_event_cb,
-                {
-                    "key": tool_key,
-                    "name": name,
-                    "args": args,
-                    "state": "running",
-                    "result": {},
-                    "error": "",
-                    "is_write": decision.is_write,
-                    "latency_ms": int((current - started) * 1000),
-                },
-            )
-            last_heartbeat_at = current
 
     if cancelled_midflight:
         result = _result_error(
@@ -608,20 +537,6 @@ def _invoke_tool(
             "summary": summary,
         }
     )
-    _emit_tool_event(
-        tool_event_cb,
-        {
-            "key": tool_key,
-            "name": name,
-            "args": args,
-            "state": status,
-            "result": result,
-            "error": error,
-            "is_write": decision.is_write,
-            "latency_ms": latency_ms,
-            "summary": summary,
-        },
-    )
     return result
 
 
@@ -629,7 +544,6 @@ def build_chat_tools(
     *,
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
-    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
     """
@@ -662,7 +576,6 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
-                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -688,7 +601,6 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
-                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -729,7 +641,6 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
-                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -797,7 +708,6 @@ def build_chat_agent(
     memory_text: str,
     context_schema: type[Any] | None = None,
     skills_root: Path | None = None,
-    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> tuple[Any, ToolPolicyUsage, list[dict[str, Any]], dict[str, Any]]:
     """
@@ -811,7 +721,6 @@ def build_chat_agent(
     tools, tool_runs, usage = build_chat_tools(
         context=context,
         limiter=limiter,
-        tool_event_cb=tool_event_cb,
         cancel_token=cancel_token,
     )
 

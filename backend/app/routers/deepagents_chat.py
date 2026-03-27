@@ -360,23 +360,13 @@ def deepagents_chat_stream(
     def _event_iter():
         req_id = uuid4().hex[:10]
         started = _now_ms()
-        last_progress_ms = started
         heartbeat_count = 0
         event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         done_token = "__done__"
-        active_tool_keys: set[str] = set()
-        active_tool_keys_lock = threading.Lock()
         run_timeout_ms = int(
             max(
-                5.0,
+                0.1,
                 float(getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 75.0),
-            )
-            * 1000
-        )
-        idle_timeout_ms = int(
-            max(
-                5.0,
-                float(getattr(settings, "deepagents_stream_idle_timeout_seconds", 20.0) or 20.0),
             )
             * 1000
         )
@@ -392,10 +382,8 @@ def deepagents_chat_stream(
             return f"{event}|{'|'.join(clean_ns)}" if clean_ns else event
 
         def _push(event: str, data: Any = None, *, ns: list[str] | None = None) -> None:
-            nonlocal last_progress_ms
             event_name = _event_name(event, ns)
             payload = _json_safe(data) if data is not None else {}
-            last_progress_ms = _now_ms()
             _LOG.debug(
                 "deepagents_stream event req=%s uid=%s event=%s keys=%s",
                 req_id,
@@ -447,23 +435,12 @@ def deepagents_chat_stream(
                 history_turns = normalize_history_turns(getattr(payload, "history", []))
                 images = normalize_image_inputs(getattr(payload, "images", []))
 
-                def _tool_event_cb(tool_event: dict[str, Any]) -> None:
-                    tool_key = str(tool_event.get("key") or "").strip()
-                    tool_state = str(tool_event.get("state") or "").strip().lower()
-                    if tool_key:
-                        with active_tool_keys_lock:
-                            if tool_state in {"running", "pending", "streaming"}:
-                                active_tool_keys.add(tool_key)
-                            else:
-                                active_tool_keys.discard(tool_key)
-
                 agent, usage, tool_runs, files_mapping = build_chat_agent(
                     service=resolved.service,
                     provider=resolved.provider,
                     context=resolved.tool_context,
                     limiter=resolved.limiter,
                     memory_text=resolved.memory_text,
-                    tool_event_cb=_tool_event_cb,
                     cancel_token=cancel_token,
                 )
                 if agent is None:
@@ -531,14 +508,14 @@ def deepagents_chat_stream(
         worker.start()
 
         heartbeat_interval_s = 5.0
+        poll_interval_s = 0.1
+        last_heartbeat_ms = started
         try:
             while True:
                 try:
-                    event, data = event_queue.get(timeout=heartbeat_interval_s)
+                    event, data = event_queue.get(timeout=poll_interval_s)
                 except queue.Empty:
                     now_ms = _now_ms()
-                    with active_tool_keys_lock:
-                        has_active_tools = bool(active_tool_keys)
                     if worker.is_alive() and now_ms - started >= run_timeout_ms:
                         cancel_token.cancelled = True
                         if not forced_stop_emitted:
@@ -551,30 +528,15 @@ def deepagents_chat_stream(
                             )
                             yield _sse_event("done", {"status": done_token})
                         break
-                    if (
-                        worker.is_alive()
-                        and not has_active_tools
-                        and now_ms - last_progress_ms >= idle_timeout_ms
-                    ):
-                        cancel_token.cancelled = True
-                        if not forced_stop_emitted:
-                            forced_stop_emitted = True
-                            yield _sse_event(
-                                "error",
-                                {
-                                    "message": "deepagents_run_idle_timeout: agent run stopped making progress and was cancelled",
-                                },
-                            )
-                            yield _sse_event("done", {"status": done_token})
-                        break
-                    heartbeat_count += 1
-                    yield _sse_event(
-                        "ping",
-                        {
-                            "hb": heartbeat_count,
-                            "active_tools": len(active_tool_keys) if has_active_tools else 0,
-                        },
-                    )
+                    if now_ms - last_heartbeat_ms >= int(heartbeat_interval_s * 1000):
+                        heartbeat_count += 1
+                        last_heartbeat_ms = now_ms
+                        yield _sse_event(
+                            "ping",
+                            {
+                                "hb": heartbeat_count,
+                            },
+                        )
                     if (not worker.is_alive()) and event_queue.empty():
                         yield _sse_event("done", {"status": done_token})
                         break

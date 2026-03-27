@@ -32,7 +32,7 @@
 
 - [ ] 4.1 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 worker 生命周期管理
 - [ ] 4.2 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 SSE 事件转译
-- [ ] 4.3 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 idle/progress/tool-activity 判定
+- [x] 4.3 删除或极限收缩 `backend/app/routers/deepagents_chat.py` 中自定义 idle/progress/tool-activity 判定
 - [ ] 4.4 如果仍保留 FastAPI chat 入口，则只保留鉴权、上下文解析与极薄代理能力
 
 ## 5. 前端切回更原生的官方 useStream 主路径
@@ -54,7 +54,7 @@
 
 - [ ] 7.1 删除与旧自定义 chat 壳强耦合的后端测试
 - [ ] 7.2 删除与旧自定义 transport / timeline / trace 强耦合的前端测试与状态层
-- [ ] 7.3 收缩 `backend/app/services/deepagents/deepagents_graph.py` 中仅为旧壳兜底的逻辑
+- [x] 7.3 收缩 `backend/app/services/deepagents/deepagents_graph.py` 中仅为旧壳兜底的逻辑
 - [x] 7.4 删除迁移后不再需要的兼容代码、旧字段映射与冗余工具事件补层
 
 ## 8. 回归测试与真实链路验证

@@ -488,19 +488,7 @@ def test_deepagents_chat_stream_filters_draft_tool_calls_without_tool_run_custom
             }
 
     def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
-        tool_event_cb = kwargs.get("tool_event_cb")
-        if callable(tool_event_cb):
-            tool_event_cb(
-                {
-                    "key": "web_search:1",
-                    "name": "web_search",
-                    "args": {"query": "stable"},
-                    "state": "completed",
-                    "result": {"ok": True, "total": 1},
-                    "error": "",
-                    "latency_ms": 12,
-                }
-            )
+        _ = kwargs
         return _FakeAgent(), ToolPolicyUsage(), [], {}
 
     monkeypatch.setattr(dag, "build_chat_agent", _fake_build_chat_agent)
@@ -609,7 +597,6 @@ def test_invoke_tool_marks_running_tool_as_cancelled(monkeypatch):
     )
     usage = tr.ToolPolicyUsage()
     tool_runs: list[dict[str, object]] = []
-    tool_events: list[dict[str, object]] = []
     handler_started = threading.Event()
 
     def _slow_read(context, _args):  # noqa: ANN001
@@ -631,7 +618,6 @@ def test_invoke_tool_marks_running_tool_as_cancelled(monkeypatch):
             limiter=limiter,
             usage=usage,
             tool_runs=tool_runs,
-            tool_event_cb=tool_events.append,
             cancel_token=cancel_token,
         )
 
@@ -648,15 +634,13 @@ def test_invoke_tool_marks_running_tool_as_cancelled(monkeypatch):
     assert result["stop_retry"] is True
     assert "cancelled while tool was running" in str(result["error"])
     assert tool_runs[-1]["status"] == "cancelled"
-    assert tool_events[0]["state"] == "running"
-    assert tool_events[-1]["state"] == "cancelled"
 
     time.sleep(0.2)
     tr._reset_tool_executor_for_tests(max_workers=4)
 
 
 @pytest.mark.integration
-def test_deepagents_chat_stream_emits_idle_timeout_and_done(monkeypatch):
+def test_deepagents_chat_stream_emits_run_timeout_and_done(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -666,13 +650,12 @@ def test_deepagents_chat_stream_emits_idle_timeout_and_done(monkeypatch):
 
     _patch_resolved_runtime(monkeypatch, dchat)
     monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
-    monkeypatch.setattr(dchat.settings, "deepagents_stream_idle_timeout_seconds", 0.1, raising=False)
-    monkeypatch.setattr(dchat.settings, "deepagents_run_timeout_seconds", 30.0, raising=False)
+    monkeypatch.setattr(dchat.settings, "deepagents_run_timeout_seconds", 0.1, raising=False)
 
     class _FakeAgent:
         def stream(self, payload, **kwargs):  # noqa: ANN001
             _ = payload, kwargs
-            time.sleep(6.0)
+            time.sleep(0.35)
             if False:
                 yield {}
 
@@ -696,84 +679,8 @@ def test_deepagents_chat_stream_emits_idle_timeout_and_done(monkeypatch):
     error_payload = next(payload for name, payload in events if name == "error")
     done_payload = next(payload for name, payload in events if name == "done")
 
-    assert "deepagents_run_idle_timeout" in str(error_payload.get("message") or "")
+    assert "deepagents_run_timeout" in str(error_payload.get("message") or "")
     assert done_payload["status"] == "__done__"
-
-
-@pytest.mark.integration
-def test_deepagents_chat_stream_does_not_idle_timeout_while_tool_is_running(monkeypatch):
-    client = _create_test_client()
-    headers = _auth_headers(client)
-
-    import app.routers.deepagents_chat as dchat
-    from app.services.deepagents import deepagents_graph as dag
-    from app.services.deepagents.tool_runtime import ToolPolicyUsage
-
-    _patch_resolved_runtime(monkeypatch, dchat)
-    monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
-    monkeypatch.setattr(dchat.settings, "deepagents_stream_idle_timeout_seconds", 0.1, raising=False)
-    monkeypatch.setattr(dchat.settings, "deepagents_run_timeout_seconds", 30.0, raising=False)
-
-    class _FakeAgent:
-        def stream(self, payload, **kwargs):  # noqa: ANN001
-            tool_event_cb = kwargs.pop("_tool_event_cb")
-            _ = payload, kwargs
-            tool_event_cb(
-                {
-                    "key": "web_search:1",
-                    "name": "web_search",
-                    "args": {"query": "github trending"},
-                    "state": "running",
-                    "result": {},
-                    "error": "",
-                    "latency_ms": 0,
-                }
-            )
-            time.sleep(0.35)
-            tool_event_cb(
-                {
-                    "key": "web_search:1",
-                    "name": "web_search",
-                    "args": {"query": "github trending"},
-                    "state": "completed",
-                    "result": {"ok": True, "total": 1},
-                    "error": "",
-                    "latency_ms": 350,
-                }
-            )
-            yield {
-                "type": "values",
-                "ns": ["root"],
-                "data": {"messages": [{"role": "assistant", "content": "ok"}]},
-            }
-
-    def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
-        tool_event_cb = kwargs.get("tool_event_cb")
-
-        class _WrappedAgent(_FakeAgent):
-            def stream(self, payload, **stream_kwargs):  # noqa: ANN001
-                return super().stream(payload, _tool_event_cb=tool_event_cb, **stream_kwargs)
-
-        return _WrappedAgent(), ToolPolicyUsage(), [], {}
-
-    monkeypatch.setattr(dag, "build_chat_agent", _fake_build_chat_agent)
-    monkeypatch.setattr(dchat, "build_chat_agent", _fake_build_chat_agent)
-
-    with client.stream(
-        "POST",
-        "/api/v1/deepagents/chat/stream",
-        json={"query": "tool running timeout test", "use_memory": False, "workspace": "default"},
-        headers=headers,
-    ) as resp:
-        assert resp.status_code == 200, resp.text
-        body = "".join(resp.iter_text())
-
-    events = _parse_sse_events(body)
-    names = [name for name, _ in events]
-    assert "error" not in names
-    assert "done" in names
-    values_payload = next(payload for name, payload in events if name == "values|root")
-    assert values_payload["messages"][0]["content"] == "ok"
 
 
 @pytest.mark.integration
@@ -812,33 +719,10 @@ def test_deepagents_chat_stream_client_disconnect_cancels_worker_and_closes_sess
             while not bool(getattr(captured["cancel_token"], "cancelled", False)):
                 time.sleep(0.02)
             cancel_seen.set()
-            captured["tool_event_cb"](
-                {
-                    "key": "web_search:1",
-                    "name": "web_search",
-                    "args": {"query": "github trending today"},
-                    "state": "cancelled",
-                    "result": {"ok": False, "error": "cancelled"},
-                    "error": "cancelled",
-                    "latency_ms": 25,
-                }
-            )
             worker_finished.set()
 
     def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
         captured["cancel_token"] = kwargs["cancel_token"]
-        captured["tool_event_cb"] = kwargs["tool_event_cb"]
-        kwargs["tool_event_cb"](
-            {
-                "key": "web_search:1",
-                "name": "web_search",
-                "args": {"query": "github trending today"},
-                "state": "running",
-                "result": {},
-                "error": "",
-                "latency_ms": 0,
-            }
-        )
         return _FakeAgent(), ToolPolicyUsage(), [], {}
 
     monkeypatch.setattr(dchat, "build_chat_agent", _fake_build_chat_agent)
