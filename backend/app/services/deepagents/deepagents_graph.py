@@ -199,6 +199,10 @@ def _tool_description(name: str) -> str:
             "Search uploaded attachments for relevant chunks.\n"
             "Arguments: query=<non-empty string>, attachment_ids?<int[]>, top_k=1..20, "
             "mode=('keyword'|'hybrid').\n"
+            "attachment_ids is optional when this run already provides available_attachment_ids in /runtime/capabilities.json; "
+            "the runtime will use those scoped ids automatically.\n"
+            "Always provide a concrete non-empty query that reflects what information you need from the files "
+            "(for example 'project codename deadline deliverables').\n"
             "Do not repeat the same query against the same attachments. If there are no useful hits, say so and stop."
         )
     if name == "google_workspace":
@@ -223,7 +227,7 @@ def _tool_description(name: str) -> str:
 
 
 def _backend_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).parent.parent.parent.parent
 
 
 def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
@@ -278,7 +282,7 @@ def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMount
 
 
 def _get_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
-    key = (str(skills_root.resolve()), str(Path(extra_dir).resolve()) if extra_dir else "")
+    key = (str(skills_root), str(Path(extra_dir)) if extra_dir else "")
     with _SKILL_MOUNT_CACHE_LOCK:
         snapshot = _SKILL_MOUNT_CACHE.get(key)
         if snapshot is None:
@@ -736,14 +740,15 @@ def build_chat_agent(
         "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on.\n"
         "Tool-specific rules:\n"
         "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence.\n"
-        "- attachment_search: search with a concrete query and available attachment ids only; do not repeat the same attachment search.\n"
+        "- attachment_search: when the user asks about uploaded files, call attachment_search with a concrete non-empty query describing the requested facts. "
+        "If this run already scopes uploaded attachments for you, attachment_ids may be omitted and the runtime will apply the scoped ids automatically. "
+        "Do not claim an attachment is unavailable unless attachment_search actually failed in this run.\n"
         "- google_workspace: choose a concrete action and include all required fields before calling; never blindly retry writes.\n"
         "- device: only use status/open_url/open_aelin when the user explicitly asks for desktop or browser navigation; open_url requires a valid http(s) URL.\n"
         "- screen_get: capture only when visual evidence is necessary; avoid repeated screenshots with the same arguments.\n"
         f"{_current_date_context()}\n"
         "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
         "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
-        "Consult /runtime/capabilities.json for the exact tools, skills, and memory files mounted in this run.\n"
         "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
         "Read skills on demand from /skills/... when a matching skill is relevant.\n"
         "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
@@ -771,6 +776,7 @@ def build_chat_agent(
                 "skill_sources": skill_snapshot.skill_sources,
                 "mounted_skills": skill_snapshot.mounted_skills,
                 "memory_files": memory_paths,
+                "available_attachment_ids": list(context.available_attachment_ids or []),
             },
             ensure_ascii=False,
             indent=2,

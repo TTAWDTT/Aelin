@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type BaseMessage } from '@langchain/core/messages'
 import { Client, type AssistantGraph } from '@langchain/langgraph-sdk'
 import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
@@ -6,13 +7,13 @@ import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import { useChatI18n } from '../chatI18n'
 import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
+import type { ChatMessage } from '../chatTypes'
 import type { ChatRuntimeStream, ChatStreamState } from '../executionStreamUtils'
 import { useChatStore } from '../stores/chatStore'
 import {
   buildHumanStreamMessage,
   buildSessionHistoryMessages,
   formatBytes,
-  streamMessagesToChatMessages,
   trimQueryForApi,
   type PendingImage,
 } from './chatStreamHelpers'
@@ -42,79 +43,141 @@ function resolveAgentServerUrl(): string {
   return DEFAULT_AGENT_SERVER_URL
 }
 
-function sameImages(
-  left?: Array<{ dataUrl: string; name: string }>,
-  right?: Array<{ dataUrl: string; name: string }>,
-): boolean {
-  const a = left ?? []
-  const b = right ?? []
-  if (a.length !== b.length) return false
-  for (let index = 0; index < a.length; index += 1) {
-    if (a[index]?.dataUrl !== b[index]?.dataUrl) return false
-    if ((a[index]?.name || '') !== (b[index]?.name || '')) return false
-  }
-  return true
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
 }
 
-function sameChatMessages(
-  left: Array<{
-    id: string
-    role: 'user' | 'assistant'
-    content: string
-    expression?: string
-    citations?: unknown[]
-    actions?: unknown[]
-    images?: Array<{ dataUrl: string; name: string }>
-  }>,
-  right: Array<{
-    id: string
-    role: 'user' | 'assistant'
-    content: string
-    expression?: string
-    citations?: unknown[]
-    actions?: unknown[]
-    images?: Array<{ dataUrl: string; name: string }>
-  }>,
-): boolean {
-  if (left.length !== right.length) return false
-  for (let index = 0; index < left.length; index += 1) {
-    const a = left[index]
-    const b = right[index]
-    if (!a || !b) return false
-    if (a.id !== b.id) return false
-    if (a.role !== b.role) return false
-    if (a.content !== b.content) return false
-    if ((a.expression || '') !== (b.expression || '')) return false
-    if (!sameImages(a.images, b.images)) return false
-    if ((a.citations?.length || 0) !== (b.citations?.length || 0)) return false
-    if ((a.actions?.length || 0) !== (b.actions?.length || 0)) return false
-  }
-  return true
+function normalizeMessageRole(message: BaseMessage): 'user' | 'assistant' | '' {
+  const rawType = typeof (message as any)?.getType === 'function'
+    ? (message as any).getType()
+    : (message as any)?.type
+  const type = String(rawType || '').trim().toLowerCase()
+  if (type === 'human' || type === 'user') return 'user'
+  if (type === 'ai' || type === 'assistant') return 'assistant'
+  return ''
+}
+
+function extractMessageText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  return content
+    .map((item) => {
+      const record = asRecord(item)
+      return record.type === 'text' ? String(record.text || '') : ''
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim()
+}
+
+function extractMessageImages(content: unknown): Array<{ dataUrl: string; name: string }> {
+  if (!Array.isArray(content)) return []
+
+  return content
+    .map((item) => {
+      const record = asRecord(item)
+      if (record.type !== 'image_url') return null
+      const imageUrl = record.image_url
+      if (typeof imageUrl === 'string' && imageUrl.startsWith('data:image/')) {
+        return { dataUrl: imageUrl, name: '' }
+      }
+      const imageRecord = asRecord(imageUrl)
+      const url = String(imageRecord.url || '').trim()
+      if (!url.startsWith('data:image/')) return null
+      return {
+        dataUrl: url,
+        name: String(imageRecord.name || ''),
+      }
+    })
+    .filter((item): item is { dataUrl: string; name: string } => item != null)
+}
+
+function getMessageId(message: BaseMessage, fallback: string): string {
+  const direct = String((message as any)?.id || '').trim()
+  return direct || fallback
+}
+
+function projectRuntimeMessages(
+  runtimeMessages: BaseMessage[],
+  previousMessages: ChatMessage[],
+): ChatMessage[] {
+  const previousById = new Map(previousMessages.map((message) => [message.id, message]))
+  const projected: ChatMessage[] = []
+  const seen = new Set<string>()
+
+  runtimeMessages.forEach((message, index) => {
+    const role = normalizeMessageRole(message)
+    if (role !== 'user' && role !== 'assistant') return
+
+    const id = getMessageId(message, `message:${index}`)
+    const previous = previousById.get(id)
+    const content = extractMessageText((message as any)?.content)
+    const toolCalls = Array.isArray((message as any)?.tool_calls) ? (message as any).tool_calls : []
+    if (role === 'assistant' && !content.trim() && toolCalls.length === 0) return
+
+    const images = role === 'user'
+      ? extractMessageImages((message as any)?.content)
+      : (previous?.images ?? [])
+
+    const nextMessage: ChatMessage = {
+      id,
+      role,
+      content,
+      images: images.length > 0 ? images : previous?.images,
+      timestamp: previous?.timestamp ?? Date.now(),
+      expression: previous?.expression,
+      citations: previous?.citations,
+      actions: previous?.actions,
+    }
+
+    if (seen.has(id)) {
+      const existingIndex = projected.findIndex((item) => item.id === id)
+      if (existingIndex >= 0) projected[existingIndex] = nextMessage
+      return
+    }
+
+    seen.add(id)
+    projected.push(nextMessage)
+  })
+
+  return projected
+}
+
+function createPersistenceSignature(messages: ChatMessage[]): string {
+  return JSON.stringify(
+    messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      expression: message.expression || '',
+      citations: message.citations || [],
+      actions: message.actions || [],
+      images: message.images || [],
+    })),
+  )
 }
 
 export function useChatStream() {
   const sessions = useChatStore((state) => state.sessions)
   const activeSessionId = useChatStore((state) => state.activeSessionId)
-  const isStreaming = useChatStore((state) => state.isStreaming)
   const statusText = useChatStore((state) => state.statusText)
   const createSession = useChatStore((state) => state.createSession)
-  const setStreaming = useChatStore((state) => state.setStreaming)
   const setStatusText = useChatStore((state) => state.setStatusText)
   const setLastErrorCode = useChatStore((state) => state.setLastErrorCode)
   const { t } = useChatI18n()
   const session = sessions.find((item) => item.id === activeSessionId)
-  const sessionMessages = useMemo(
-    () => getSessionMessages(activeSessionId),
-    [activeSessionId, sessions],
-  )
+  const sessionMessages = useMemo(() => getSessionMessages(activeSessionId), [activeSessionId])
   const thinkingLabel = t('status.thinking')
   const [assistantId, setAssistantId] = useState<string>('')
   const [assistantGraph, setAssistantGraph] = useState<AssistantGraph | null>(null)
+  const [streamThreadId, setStreamThreadId] = useState<string | null>(null)
   const assistantIdRef = useRef(assistantId)
   const assistantReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
-  const [streamThreadId, setStreamThreadId] = useState<string | null>(activeSessionId || null)
-  const streamThreadIdRef = useRef<string | null>(streamThreadId)
-  const threadReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
+  const persistedSignatureRef = useRef<string>('')
+  const streamThreadIdRef = useRef<string | null>(null)
 
   const client = useMemo(() => new Client({
     apiUrl: resolveAgentServerUrl(),
@@ -142,12 +205,24 @@ export function useChatStream() {
     onError: (error: unknown) => {
       setStatusText(String((error as Error)?.message || 'Stream error'))
     },
+    onFinish: () => {
+      if (useChatStore.getState().statusText === thinkingLabel) {
+        setStatusText('')
+      }
+    },
+    onStop: () => {
+      setStatusText(t('status.cancelled'))
+    },
   } as any)
   const streamRef = useRef(stream)
 
   useEffect(() => {
     streamRef.current = stream
   }, [stream])
+
+  useEffect(() => {
+    streamThreadIdRef.current = streamThreadId
+  }, [streamThreadId])
 
   useEffect(() => {
     assistantIdRef.current = assistantId
@@ -159,18 +234,6 @@ export function useChatStream() {
       else assistantReadyWaitersRef.current.push(waiter)
     })
   }, [assistantId])
-
-  useEffect(() => {
-    streamThreadIdRef.current = streamThreadId
-    const currentId = String(streamThreadId || '').trim()
-    if (!currentId) return
-    const pending = threadReadyWaitersRef.current
-    threadReadyWaitersRef.current = []
-    pending.forEach((waiter) => {
-      if (waiter.id === currentId) waiter.resolve()
-      else threadReadyWaitersRef.current.push(waiter)
-    })
-  }, [streamThreadId])
 
   useEffect(() => {
     if (assistantId) return
@@ -217,65 +280,65 @@ export function useChatStream() {
     })
   }, [])
 
-  const waitForThreadId = useCallback((expectedId: string) => {
-    if (streamThreadIdRef.current === expectedId) return Promise.resolve()
-    return new Promise<void>((resolve) => {
-      threadReadyWaitersRef.current.push({ id: expectedId, resolve })
-    })
-  }, [])
-
   const ensureThreadReady = useCallback(async (threadId: string) => {
     const nextId = String(threadId || '').trim()
     if (!nextId) return
     await ensureThreadExists(client, nextId)
     if (streamThreadIdRef.current !== nextId) {
+      streamThreadIdRef.current = nextId
       setStreamThreadId(nextId)
-      await waitForThreadId(nextId)
+      streamRef.current.switchThread(nextId)
     }
-  }, [client, waitForThreadId])
+  }, [client])
 
   useEffect(() => {
+    persistedSignatureRef.current = ''
     const nextId = String(activeSessionId || '').trim()
     if (!nextId) {
+      streamThreadIdRef.current = null
       setStreamThreadId(null)
+      streamRef.current.switchThread(null)
       return
     }
+
     let cancelled = false
-    void ensureThreadReady(nextId).catch((error: unknown) => {
-      if (!cancelled) {
-        setStatusText(String((error as Error)?.message || 'Thread bootstrap failed'))
-      }
-    })
+    void ensureThreadExists(client, nextId)
+      .then(() => {
+        if (cancelled) return
+        streamThreadIdRef.current = nextId
+        setStreamThreadId(nextId)
+        streamRef.current.switchThread(nextId)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setStatusText(String((error as Error)?.message || 'Thread bootstrap failed'))
+        }
+      })
     return () => {
       cancelled = true
     }
-  }, [activeSessionId, ensureThreadReady, setStatusText])
+  }, [activeSessionId, client, setStatusText])
 
-  const displayMessages = useMemo(() => {
-    if (!session) return []
-    if (stream.messages.length === 0) return sessionMessages
-    const nextMessages = streamMessagesToChatMessages(stream.messages as any, sessionMessages)
-    return nextMessages.length > 0 ? nextMessages : sessionMessages
-  }, [session, sessionMessages, stream.messages])
+  const messages = useMemo(() => {
+    const runtimeMessages = Array.isArray(stream.messages) ? stream.messages : []
+    const projected = projectRuntimeMessages(runtimeMessages as BaseMessage[], sessionMessages)
+    return projected.length > 0 ? projected : sessionMessages
+  }, [sessionMessages, stream.messages])
 
   useEffect(() => {
-    if (isStreaming !== stream.isLoading) {
-      setStreaming(stream.isLoading)
-    }
-    if (!stream.isLoading && statusText === thinkingLabel) {
+    if (!activeSessionId || stream.isLoading || messages.length === 0) return
+    const signature = `${activeSessionId}:${createPersistenceSignature(messages)}`
+    if (persistedSignatureRef.current === signature) return
+    setSessionMessages(activeSessionId, messages)
+    persistedSignatureRef.current = signature
+  }, [activeSessionId, messages, stream.isLoading])
+
+  useEffect(() => {
+    if (stream.isLoading) return
+    if (statusText === thinkingLabel) {
       setStatusText('')
     }
-  }, [isStreaming, setStreaming, setStatusText, statusText, stream.isLoading, thinkingLabel])
-
-  useEffect(() => {
-    if (!activeSessionId) return
-    if (stream.isLoading) return
-    if (stream.messages.length === 0) return
-
-    if (displayMessages.length === 0) return
-    if (sameChatMessages(displayMessages, sessionMessages)) return
-    setSessionMessages(activeSessionId, displayMessages)
-  }, [activeSessionId, displayMessages, sessionMessages, stream.isLoading, stream.messages.length])
+  }, [setStatusText, statusText, stream.isLoading, thinkingLabel])
 
   const send = useCallback(
     async (text: string, images?: PendingImage[], attachmentIds?: number[]) => {
@@ -286,7 +349,9 @@ export function useChatStream() {
       const currentState = useChatStore.getState()
       const currentSession = currentState.sessions.find((item) => item.id === sessionId)
       const currentSessionMessages = getSessionMessages(sessionId)
-      const normalizedAttachmentIds = Array.from(new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0))).slice(0, 20)
+      const normalizedAttachmentIds = Array.from(
+        new Set((attachmentIds || []).filter((id) => Number.isFinite(id) && id > 0)),
+      ).slice(0, 20)
       const prompt = trimQueryForApi(String(text || '').trim())
       const visibleText =
         prompt
@@ -315,7 +380,6 @@ export function useChatStream() {
         ...buildSessionHistoryMessages(currentSessionMessages),
         humanMessage,
       ] as Array<Record<string, unknown>>
-      currentState.setStreaming(true)
       currentState.setStatusText(t('status.thinking'))
       currentState.setLastErrorCode(null)
 
@@ -337,7 +401,6 @@ export function useChatStream() {
           },
         )
       } catch (error) {
-        currentState.setStreaming(false)
         currentState.setStatusText(String((error as Error)?.message || 'Stream error'))
       }
     },
@@ -346,14 +409,13 @@ export function useChatStream() {
 
   const stop = useCallback(() => {
     void stream.stop()
-    setStreaming(false)
     setStatusText(t('status.cancelled'))
     setLastErrorCode(null)
-  }, [setLastErrorCode, setStatusText, setStreaming, stream, t])
+  }, [setLastErrorCode, setStatusText, stream, t])
 
   const captureAndSend = useCallback(
     async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
-      if (isStreaming) return
+      if (stream.isLoading) return
       setStatusText(
         mode === 'region' ? t('status.capture.region') : t('status.capture.fullscreen'),
       )
@@ -366,19 +428,20 @@ export function useChatStream() {
         throw error
       }
     },
-    [isStreaming, send, setStatusText, t],
+    [send, setStatusText, stream.isLoading, t],
   )
 
   const uploadAttachments = useCallback(
     async (files: File[]): Promise<AttachmentUploadResponse[]> => {
-      if (isStreaming) return []
+      if (stream.isLoading) return []
       const picked = Array.from(files || []).slice(0, MAX_PENDING_ATTACHMENTS)
       if (picked.length === 0) return []
 
       let sessionId = activeSessionId
       if (!sessionId) sessionId = createSession() || useChatStore.getState().activeSessionId
       const resolvedSessionId = String(sessionId || '')
-      const workspace = useChatStore.getState().sessions.find((item) => item.id === sessionId)?.workspace || 'default'
+      const workspace =
+        useChatStore.getState().sessions.find((item) => item.id === sessionId)?.workspace || 'default'
 
       setStatusText(t('status.attach.processing'))
       try {
@@ -404,12 +467,12 @@ export function useChatStream() {
         throw error
       }
     },
-    [activeSessionId, createSession, isStreaming, setStatusText, t],
+    [activeSessionId, createSession, setStatusText, stream.isLoading, t],
   )
 
   const sendWithAttachments = useCallback(
     async (attachments: AttachmentUploadResponse[], textHint = '') => {
-      if (isStreaming) return
+      if (stream.isLoading) return
       const rows = Array.from(attachments || []).slice(0, MAX_PENDING_ATTACHMENTS)
       if (rows.length === 0) return
       const attachmentIds = rows
@@ -426,12 +489,12 @@ export function useChatStream() {
       )
       await send(finalPrompt || '我上传了附件，请先基于附件内容回答。', undefined, attachmentIds)
     },
-    [isStreaming, send],
+    [send, stream.isLoading],
   )
 
   return {
     send,
-    messages: displayMessages,
+    messages,
     captureAndSend,
     uploadAttachments,
     sendWithAttachments,

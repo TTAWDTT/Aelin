@@ -54,6 +54,17 @@ def _runtime_user_id(
     return 0
 
 
+def _context_value(context: DeepAgentsRunContext | dict[str, Any] | None, key: str, default: Any) -> Any:
+    if context is None:
+        return default
+    if isinstance(context, dict):
+        return context.get(key, default)
+    try:
+        return getattr(context, key)
+    except Exception:
+        return default
+
+
 def _placeholder_service() -> LLMService:
     return LLMService(
         AgentConfigOut(
@@ -87,11 +98,20 @@ def _build_placeholder_agent() -> Any:
 def _build_runtime_agent(user_id: int, context: DeepAgentsRunContext | None) -> Any:
     db = create_session()
     try:
+        workspace = _context_value(context, "workspace", "default")
+        raw_attachment_ids = _context_value(context, "attachment_ids", [])
+        _LOG.info(
+            "agent_server_runtime_context user_id=%s workspace=%s attachment_ids=%s context_type=%s",
+            user_id,
+            workspace,
+            raw_attachment_ids,
+            type(context).__name__ if context is not None else "None",
+        )
         resolved = resolve_deepagents_runtime(
             db,
             user_id=user_id,
-            workspace=getattr(context, "workspace", "default"),
-            raw_attachment_ids=getattr(context, "attachment_ids", []),
+            workspace=workspace,
+            raw_attachment_ids=raw_attachment_ids,
             session_factory=create_session,
         )
         agent, _, _, _ = build_chat_agent(
@@ -112,7 +132,7 @@ async def make_graph(runtime: ServerRuntime[DeepAgentsRunContext]):
     execution_runtime = runtime.execution_runtime
     context = execution_runtime.context if execution_runtime is not None else None
     if execution_runtime is None:
-        yield _build_placeholder_agent()
+        yield await asyncio.to_thread(_build_placeholder_agent)
         return
 
     user_id = _runtime_user_id(runtime, context)

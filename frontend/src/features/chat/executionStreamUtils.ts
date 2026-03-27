@@ -12,8 +12,6 @@ export type ChatRuntimeStream = {
   messages?: BaseMessage[]
   values?: ChatStreamState
   isLoading?: boolean
-  toolCalls?: unknown[]
-  activeSubagents?: unknown[]
   subagents?: Map<string, unknown>
   getToolCalls?: (message: BaseMessage) => unknown[]
   getSubagentsByMessage?: (messageId: string) => unknown[]
@@ -49,7 +47,6 @@ export type ExecutionGraphEdge = {
 }
 
 type ExecutionActivity = {
-  key: string
   node: string
   namespace: string
   status: string
@@ -314,7 +311,6 @@ function buildExecutionActivities(rows: MessageRuntimeRow[]): ExecutionActivity[
   return rows
     .filter((row) => row.hasWork && Boolean(row.node))
     .map((row) => ({
-      key: `${row.messageId}:${row.node}`,
       node: row.node,
       namespace: row.namespace,
       status: row.status,

@@ -4,6 +4,7 @@ import json
 import threading
 from dataclasses import dataclass, field
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -68,8 +69,9 @@ def _submit_tool_future(
     context: ToolRuntimeContext,
     args: dict[str, Any],
 ) -> Future:
+    ctx = copy_context()
     try:
-        future = executor.submit(handler, context, args)
+        future = executor.submit(ctx.run, handler, context, args)
     except Exception:
         semaphore.release()
         raise

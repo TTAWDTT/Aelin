@@ -37,7 +37,7 @@ export function ChatTimeline({
       ref={scrollRef}
       className={`min-w-0 flex-1 overflow-y-auto ${
         compact ? 'px-2 py-2.5 max-[500px]:px-1 max-[500px]:py-2' : 'px-2.5 py-3 sm:px-5 sm:py-4'
-      }`}
+      } [overflow-anchor:none]`}
     >
       {isEmpty ? (
         <EmptyChatState onQuickPrompt={onQuickPrompt} />
@@ -81,6 +81,7 @@ export function ChatTimeline({
             </div>
           )}
           {isStreaming && <div className="h-2" />}
+          <div className="h-px [overflow-anchor:auto]" />
         </div>
       )}
     </div>

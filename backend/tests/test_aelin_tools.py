@@ -4,7 +4,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.runnables.config import set_config_context
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.models import AttachmentDocument, Base
 from app.services.deepagents.tool_runtime import (
     ToolCallLimiter,
     ToolPolicyUsage,
@@ -101,6 +106,25 @@ def _tool_context(fake_web: _FakeWebSearch, *, attachment_service=None, availabl
     )
 
 
+def _db_session_factory_with_attachments(*rows: dict[str, object]):
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    db = SessionLocal()
+    try:
+        for row in rows:
+            db.add(AttachmentDocument(**row))
+        db.commit()
+    finally:
+        db.close()
+    return SessionLocal
+
+
 def test_web_search_tool_search_and_fetch():
     fake_web = _FakeWebSearch()
     context = _tool_context(fake_web)
@@ -158,6 +182,162 @@ def test_attachment_search_prefers_explicit_ids():
     assert fake_attachment.calls[0]["attachment_ids"] == [5, 6]
     assert fake_attachment.calls[0]["top_k"] == 6
     assert fake_attachment.calls[0]["mode"] == "hybrid"
+
+
+def test_attachment_search_reads_scoped_ids_from_runnable_config():
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    context = _tool_context(
+        fake_web,
+        attachment_service=fake_attachment,
+        available_attachment_ids=[],
+    )
+
+    with set_config_context({"configurable": {"attachment_ids": [8, "9", 0, -1]}}) as ctx:
+        result = ctx.run(tool_attachment_search, context, {"query": "项目代号"})
+
+    assert result["ok"] is True
+    assert result["attachment_ids"] == [8, 9]
+    assert fake_attachment.calls[0]["attachment_ids"] == [8, 9]
+
+
+def test_attachment_search_reads_scoped_ids_from_langgraph_runtime(monkeypatch):
+    from app.services.tools import tools_files
+
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    context = _tool_context(
+        fake_web,
+        attachment_service=fake_attachment,
+        available_attachment_ids=[],
+    )
+
+    monkeypatch.setattr(
+        tools_files,
+        "get_runtime",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            context=SimpleNamespace(attachment_ids=[41, "42", 0, -1])
+        ),
+    )
+
+    result = tool_attachment_search(context, {"query": "项目代号"})
+
+    assert result["ok"] is True
+    assert result["attachment_ids"] == [41, 42]
+    assert fake_attachment.calls[0]["attachment_ids"] == [41, 42]
+
+
+def test_attachment_search_falls_back_to_thread_scoped_recent_attachments():
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    session_factory = _db_session_factory_with_attachments(
+        {
+            "user_id": 1,
+            "workspace": "default",
+            "session_id": "thread-a",
+            "file_name": "alpha.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "a" * 64,
+            "storage_path": "/tmp/a.pdf",
+            "parse_status": "ready",
+            "summary": "alpha",
+            "metadata_json": "{}",
+        },
+        {
+            "user_id": 1,
+            "workspace": "default",
+            "session_id": "thread-b",
+            "file_name": "beta.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "b" * 64,
+            "storage_path": "/tmp/b.pdf",
+            "parse_status": "ready",
+            "summary": "beta",
+            "metadata_json": "{}",
+        },
+    )
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[],
+        session_factory=session_factory,
+    )
+
+    with set_config_context({"configurable": {"thread_id": "thread-a"}}) as ctx:
+        result = ctx.run(tool_attachment_search, context, {"query": "项目代号"})
+
+    assert result["ok"] is True
+    assert result["attachment_ids"] == [1]
+    assert fake_attachment.calls[0]["attachment_ids"] == [1]
+
+
+def test_attachment_search_falls_back_to_recent_workspace_attachments_without_thread_id():
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    session_factory = _db_session_factory_with_attachments(
+        {
+            "user_id": 1,
+            "workspace": "default",
+            "session_id": "",
+            "file_name": "alpha.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "c" * 64,
+            "storage_path": "/tmp/c.pdf",
+            "parse_status": "ready",
+            "summary": "alpha",
+            "metadata_json": "{}",
+        },
+        {
+            "user_id": 1,
+            "workspace": "default",
+            "session_id": "",
+            "file_name": "beta.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "d" * 64,
+            "storage_path": "/tmp/d.pdf",
+            "parse_status": "ready",
+            "summary": "beta",
+            "metadata_json": "{}",
+        },
+        {
+            "user_id": 1,
+            "workspace": "other",
+            "session_id": "",
+            "file_name": "other.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "e" * 64,
+            "storage_path": "/tmp/e.pdf",
+            "parse_status": "ready",
+            "summary": "other",
+            "metadata_json": "{}",
+        },
+    )
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[],
+        session_factory=session_factory,
+    )
+
+    result = tool_attachment_search(context, {"query": "交付物"})
+
+    assert result["ok"] is True
+    assert result["attachment_ids"] == [1, 2]
+    assert fake_attachment.calls[0]["attachment_ids"] == [1, 2]
 
 
 def test_screen_get_tool_success(monkeypatch):
@@ -599,7 +779,7 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
     )
 
     system_prompt = str(captured.get("system_prompt") or "")
-    assert "/runtime/capabilities.json" in system_prompt
+    assert "attachment_ids may be omitted and the runtime will apply the scoped ids automatically" in system_prompt
     assert "Never claim you searched, opened, read, or cited an external source" in system_prompt
 
 
@@ -768,4 +948,26 @@ def test_deepagents_build_chat_tools_abort_when_cancelled(monkeypatch):
 
     with pytest.raises(dag.DeepAgentsCancelled):
         web_tool.invoke({"action": "search", "query": "deepagents"})
+
+
+def test_deepagents_attachment_tool_preserves_runnable_config_across_thread_pool():
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    context = _tool_context(
+        fake_web,
+        attachment_service=fake_attachment,
+        available_attachment_ids=[],
+    )
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=1, allow_write_tools=False)
+    tools, _tool_runs, _usage = dag.build_chat_tools(context=context, limiter=limiter)
+    attachment_tool = next(t for t in tools if t.name == "attachment_search")
+
+    with set_config_context({"configurable": {"attachment_ids": [31, "32"]}}) as ctx:
+        result = ctx.run(attachment_tool.invoke, {"query": "项目代号"})
+
+    assert result["ok"] is True
+    assert result["attachment_ids"] == [31, 32]
+    assert fake_attachment.calls[0]["attachment_ids"] == [31, 32]
 

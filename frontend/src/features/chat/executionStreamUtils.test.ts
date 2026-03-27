@@ -7,8 +7,6 @@ function createStream(overrides: Partial<ChatRuntimeStream> = {}): ChatRuntimeSt
     messages: [],
     values: { messages: [] },
     isLoading: false,
-    toolCalls: [],
-    activeSubagents: [],
     subagents: new Map(),
     ...overrides,
   }
@@ -85,6 +83,72 @@ describe('executionStreamUtils', () => {
         key: 'branch:search',
         status: 'running',
         currentNode: 'research',
+      }),
+    ])
+  })
+
+  it('reads tool calls only from the official runtime helpers', () => {
+    const message = { id: 'm3', content: 'tool answer' } as any
+    const runtime = getExecutionRuntime(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm3',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-1',
+            status: 'completed',
+            call: {
+              id: 'call-1',
+              name: 'web_search',
+              args: { query: 'github trending' },
+            },
+            result: { answer: 'done' },
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(runtime.tools).toEqual([
+      expect.objectContaining({
+        key: 'call-1',
+        name: 'web_search',
+        state: 'completed',
+      }),
+    ])
+  })
+
+  it('reads subagents only from the official runtime map', () => {
+    const runtime = getExecutionRuntime(
+      createStream({
+        subagents: new Map([
+          ['sa-1', {
+            id: 'sa-1',
+            status: 'running',
+            depth: 1,
+            namespace: ['root', 'research'],
+            toolCall: {
+              id: 'sa-1',
+              args: { subagent_type: 'researcher' },
+            },
+            messages: [{ content: 'looking things up' }],
+          }],
+        ]),
+      }),
+      null,
+    )
+
+    expect(runtime.subagents).toEqual([
+      expect.objectContaining({
+        key: 'sa-1',
+        name: 'researcher',
+        status: 'running',
       }),
     ])
   })

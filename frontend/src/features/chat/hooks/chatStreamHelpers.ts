@@ -1,4 +1,3 @@
-import type { BaseMessage } from '@langchain/core/messages'
 import type { ChatMessage } from '../chatTypes'
 
 const MAX_QUERY_CHARS = 1200
@@ -9,8 +8,6 @@ type StreamMessageLike = {
   id?: string
   type?: string
   content?: unknown
-  tool_calls?: unknown[]
-  tool_call_id?: string
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -19,23 +16,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
-function normalizeMessageType(value: unknown): 'user' | 'assistant' | 'tool' | 'system' | '' {
-  const type = String(value || '').trim().toLowerCase()
-  if (type === 'human' || type === 'user') return 'user'
-  if (type === 'ai' || type === 'assistant') return 'assistant'
-  if (type === 'tool') return 'tool'
-  if (type === 'system') return 'system'
-  return ''
-}
-
-function getMessageId(message: unknown): string {
-  const record = asRecord(message)
-  const direct = record.id
-  if (typeof direct === 'string' && direct.trim()) return direct.trim()
-  return crypto.randomUUID()
-}
-
-export function normalizeAssistantMarkdown(text: string): string {
+function normalizeAssistantMarkdown(text: string): string {
   const normalized = String(text || '').replace(/\r\n/g, '\n')
   return normalized.replace(/^(#{1,6})(\S)/gm, '$1 $2')
 }
@@ -53,7 +34,7 @@ export function trimQueryForApi(text: string): string {
   return `${normalized.slice(0, MAX_QUERY_CHARS - 1)}…`
 }
 
-export function extractTextContent(content: unknown): string {
+function extractTextContent(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
 
@@ -68,7 +49,7 @@ export function extractTextContent(content: unknown): string {
     .trim()
 }
 
-export function extractImageInputs(content: unknown): PendingImage[] {
+function extractImageInputs(content: unknown): PendingImage[] {
   if (!Array.isArray(content)) return []
 
   return content
@@ -124,7 +105,7 @@ export function buildHumanStreamMessage(
   }
 }
 
-export function chatMessageToStreamMessage(message: ChatMessage): StreamMessageLike | null {
+function chatMessageToStreamMessage(message: ChatMessage): StreamMessageLike | null {
   if (message.role === 'user') {
     return buildHumanStreamMessage(message.content, message.images, message.id)
   }
@@ -146,54 +127,4 @@ export function buildSessionHistoryMessages(messages?: ChatMessage[]): StreamMes
       const text = extractTextContent(item.content)
       return Boolean(text || (Array.isArray(item.content) && item.content.length > 0))
     })
-}
-
-export function streamMessagesToChatMessages(
-  streamMessages: BaseMessage[],
-  previousMessages: ChatMessage[],
-): ChatMessage[] {
-  const previousById = new Map(previousMessages.map((message) => [message.id, message]))
-  const next: ChatMessage[] = []
-  const nextIndexById = new Map<string, number>()
-
-  for (const message of streamMessages) {
-    const raw = message as unknown as StreamMessageLike
-    const role = normalizeMessageType(
-      typeof (message as any)?.getType === 'function' ? (message as any).getType() : raw.type,
-    )
-    if (role !== 'user' && role !== 'assistant') continue
-
-    const id = getMessageId(raw)
-    const previous = previousById.get(id)
-    const content = normalizeAssistantMarkdown(extractTextContent((message as any).content ?? raw.content))
-    const images = role === 'user'
-      ? extractImageInputs((message as any).content ?? raw.content)
-      : undefined
-
-    if (role === 'assistant' && !content.trim() && !(raw.tool_calls?.length)) {
-      continue
-    }
-
-    const normalizedMessage: ChatMessage = {
-      id,
-      role,
-      content,
-      images: images?.length ? images : previous?.images,
-      timestamp: previous?.timestamp ?? Date.now(),
-      expression: previous?.expression,
-      citations: previous?.citations,
-      actions: previous?.actions,
-    }
-
-    const existingIndex = nextIndexById.get(id)
-    if (typeof existingIndex === 'number') {
-      next[existingIndex] = normalizedMessage
-      continue
-    }
-
-    nextIndexById.set(id, next.length)
-    next.push(normalizedMessage)
-  }
-
-  return next
 }

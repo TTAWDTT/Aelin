@@ -16,7 +16,7 @@ import { getExecutionRuntime, getMessageToolCallMap } from './executionStreamUti
 import { useExecutionPaneStore } from './stores/executionPaneStore'
 
 export function ChatView() {
-  const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
+  const { sessions, activeSessionId, statusText, createSession } = useChatStore()
   const { send, messages, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream, assistantGraph } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
@@ -27,6 +27,7 @@ export function ChatView() {
     setOpen,
     suppressAutoOpen,
   } = useExecutionPaneStore()
+  const isStreaming = stream.isLoading
   const execution = getExecutionRuntime(stream, assistantGraph)
   const messageToolCalls = getMessageToolCallMap(stream)
   const values =

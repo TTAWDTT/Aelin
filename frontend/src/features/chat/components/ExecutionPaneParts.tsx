@@ -70,7 +70,18 @@ export function GraphBoard({
     }, new Map<number, ExecutionGraphNode[]>()),
   )
     .sort((a, b) => a[0] - b[0])
-    .map(([, bucket]) => bucket.sort((a, b) => a.name.localeCompare(b.name)))
+    .map(([, bucket]) => bucket.sort((left, right) => {
+      const score = (node: ExecutionGraphNode) => {
+        if (node.status === 'running') return 3
+        if (node.status === 'completed') return 2
+        return 1
+      }
+      const statusDiff = score(right) - score(left)
+      if (statusDiff !== 0) return statusDiff
+      const visitDiff = right.visits - left.visits
+      if (visitDiff !== 0) return visitDiff
+      return left.name.localeCompare(right.name)
+    }))
 
   const maxRows = Math.max(...columns.map((column) => column.length))
   const width = Math.max(columns.length, 1) * 220
@@ -104,16 +115,41 @@ export function GraphBoard({
             const to = positionById.get(edge.target)
             if (!from || !to) return null
             const midX = (from.x + to.x) / 2
+            const badgeX = midX
+            const badgeY = (from.y + to.y) / 2
             return (
-              <path
-                key={`${edge.source}:${edge.target}`}
-                d={`M ${from.x + 48} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${to.x - 48} ${to.y}`}
-                stroke={edge.active ? 'var(--color-text)' : 'var(--color-border)'}
-                strokeWidth={edge.active ? 2.6 : 2}
-                strokeLinecap="round"
-                strokeDasharray={edge.conditional ? '6 6' : undefined}
-                opacity={edge.active ? 0.92 : 0.45}
-              />
+              <g key={`${edge.source}:${edge.target}`}>
+                <path
+                  d={`M ${from.x + 48} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${to.x - 48} ${to.y}`}
+                  stroke={edge.active ? 'var(--color-text)' : 'var(--color-border)'}
+                  strokeWidth={edge.active ? 2.6 : 2}
+                  strokeLinecap="round"
+                  strokeDasharray={edge.conditional ? '6 6' : undefined}
+                  opacity={edge.active ? 0.92 : 0.45}
+                />
+                {(edge.active || (edge.traversed ?? 0) > 0) && (
+                  <g>
+                    <rect
+                      x={badgeX - 14}
+                      y={badgeY - 10}
+                      width={28}
+                      height={20}
+                      rx={10}
+                      fill="var(--color-bg-elevated)"
+                      stroke="var(--color-border)"
+                    />
+                    <text
+                      x={badgeX}
+                      y={badgeY + 4}
+                      textAnchor="middle"
+                      fontSize="10"
+                      fill="var(--color-text-muted)"
+                    >
+                      {Math.max(edge.traversed ?? 0, edge.active ? 1 : 0)}
+                    </text>
+                  </g>
+                )}
+              </g>
             )
           })}
         </svg>
@@ -177,6 +213,10 @@ export function GraphBoard({
             </div>
           ))}
         </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+        <GraphBadge>edge badge = traversed count</GraphBadge>
+        {isStreaming && <GraphBadge>running nodes pulse while active</GraphBadge>}
       </div>
     </div>
   )

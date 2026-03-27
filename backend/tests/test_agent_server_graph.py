@@ -81,3 +81,57 @@ def test_agent_server_graph_factory_uses_execution_context(monkeypatch):
     assert captured["workspace"] == "demo"
     assert captured["attachment_ids"] == [11, 12]
     assert captured["context_schema"] is DeepAgentsRunContext
+
+
+def test_agent_server_graph_factory_reads_dict_like_execution_context(monkeypatch):
+    import agent_server.graph as graph_module
+
+    captured: dict[str, object] = {}
+
+    def _fake_resolve_deepagents_runtime(
+        db,
+        *,
+        user_id,
+        workspace,
+        raw_attachment_ids=None,
+        cancel_checker=None,
+        session_factory=None,
+        allow_write_tools=None,
+    ):  # noqa: ANN001
+        _ = db, cancel_checker, session_factory, allow_write_tools
+        captured["user_id"] = user_id
+        captured["workspace"] = workspace
+        captured["attachment_ids"] = list(raw_attachment_ids or [])
+        return SimpleNamespace(
+            service=SimpleNamespace(),
+            provider="openai",
+            tool_context=SimpleNamespace(),
+            limiter=SimpleNamespace(),
+            memory_text="memory",
+        )
+
+    monkeypatch.setattr(graph_module, "resolve_deepagents_runtime", _fake_resolve_deepagents_runtime)
+    monkeypatch.setattr(
+        graph_module,
+        "build_chat_agent",
+        lambda **kwargs: ("compiled-graph", None, None, None),
+    )
+
+    runtime = SimpleNamespace(
+        access_context="threads.create_run",
+        execution_runtime=SimpleNamespace(
+            context={
+                "user_id": 9,
+                "workspace": "dict-demo",
+                "attachment_ids": [21, 22],
+            }
+        ),
+        user={"user_id": 9},
+    )
+
+    graph = asyncio.run(_open_graph(runtime))
+
+    assert graph == "compiled-graph"
+    assert captured["user_id"] == 9
+    assert captured["workspace"] == "dict-demo"
+    assert captured["attachment_ids"] == [21, 22]

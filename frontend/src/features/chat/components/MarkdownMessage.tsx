@@ -1,42 +1,69 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/shared/utils/cn'
+import { useMemo } from 'react'
 
 interface MarkdownMessageProps {
   content: string
   compact?: boolean
 }
 
-function normalizeMarkdownContent(content: string): string {
+function looksLikeTableLine(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return false
+  if (!trimmed.includes('|')) return false
+  return trimmed.startsWith('|') || trimmed.endsWith('|')
+}
+
+function looksLikeTableDivider(line: string): boolean {
+  return /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/.test(line)
+}
+
+export function normalizeMarkdownContent(content: string): string {
   const raw = String(content || '').replace(/\r\n/g, '\n').trim()
   if (!raw) return ''
 
   const lines = raw.split('\n')
   const normalized: string[] = []
 
-  for (const line of lines) {
-    const current = line.replace(/^(#{1,6})(\S)/, '$1 $2')
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const current = line.replace(/^(\s{0,3})(#{1,6})([^\s#])/, '$1$2 $3')
     const isBlockStart =
       /^(#{1,6}\s|```|~~~|---\s*$|\*\*\*\s*$|___\s*$)/.test(current.trim())
+    const previousSource = lines[index - 1] ?? ''
+    const nextSource = lines[index + 1] ?? ''
+    const isTableLine =
+      looksLikeTableLine(current)
+      && (looksLikeTableDivider(nextSource) || looksLikeTableDivider(current) || looksLikeTableDivider(previousSource))
+    const previousIsTableLine =
+      looksLikeTableLine(previousSource)
+      && (looksLikeTableDivider(current) || looksLikeTableDivider(previousSource) || looksLikeTableDivider(lines[index - 2] ?? ''))
     const previous = normalized.at(-1) ?? ''
-    if (isBlockStart && previous.trim()) {
+    if ((isBlockStart || (isTableLine && !previousIsTableLine)) && previous.trim()) {
       normalized.push('')
     }
     normalized.push(current)
+    if (isTableLine) {
+      const nextTrimmed = String(nextSource || '').trim()
+      if (nextTrimmed && !looksLikeTableLine(nextSource) && !looksLikeTableDivider(nextSource)) {
+        normalized.push('')
+      }
+    }
   }
 
   return normalized.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
 export function MarkdownMessage({ content, compact = false }: MarkdownMessageProps) {
-  const normalizedContent = normalizeMarkdownContent(content)
+  const normalizedContent = useMemo(() => normalizeMarkdownContent(content), [content])
 
   return (
     <div
       className={cn(
         'prose prose-sm max-w-none break-words prose-neutral [overflow-wrap:anywhere]',
         '[&_a]:break-all [&_blockquote]:my-3 [&_blockquote]:rounded-r-2xl [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--color-border-strong)] [&_blockquote]:bg-[var(--color-bg-elevated)] [&_blockquote]:px-3 [&_blockquote]:py-2',
-        '[&_code]:break-all [&_li]:my-1 [&_ol]:my-2 [&_p]:my-2 [&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:my-3 [&_table]:max-w-full [&_ul]:my-2',
+        '[&_code]:break-all [&_li]:my-1 [&_ol]:my-2 [&_p]:my-2 [&_pre]:my-3 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:my-3 [&_table]:max-w-full [&_ul]:my-2 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
       )}
       style={{
         fontFamily: 'var(--font-body)',
@@ -47,9 +74,9 @@ export function MarkdownMessage({ content, compact = false }: MarkdownMessagePro
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: ({ children }) => <h1 className="mb-2 mt-3 text-[1.02rem] font-semibold">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-2 mt-3 text-[0.98rem] font-semibold">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-[0.94rem] font-semibold">{children}</h3>,
+          h1: ({ children }) => <h1 className="mb-2 mt-3 text-[1.02rem] font-semibold leading-6">{children}</h1>,
+          h2: ({ children }) => <h2 className="mb-2 mt-3 text-[0.98rem] font-semibold leading-6">{children}</h2>,
+          h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-[0.94rem] font-semibold leading-6">{children}</h3>,
           p: ({ children }) => <p className="leading-7 text-[var(--color-text)]">{children}</p>,
           ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
@@ -66,10 +93,12 @@ export function MarkdownMessage({ content, compact = false }: MarkdownMessagePro
           ),
           table: ({ children }) => (
             <div className="overflow-x-auto rounded-2xl border border-[var(--color-border)]">
-              <table className="min-w-full border-collapse text-left text-[0.85rem]">{children}</table>
+              <table className="min-w-full border-collapse text-left text-[0.85rem] leading-6">{children}</table>
             </div>
           ),
           thead: ({ children }) => <thead className="bg-[var(--color-bg-elevated)]">{children}</thead>,
+          tbody: ({ children }) => <tbody className="divide-y divide-[var(--color-border)]">{children}</tbody>,
+          tr: ({ children }) => <tr className="align-top">{children}</tr>,
           th: ({ children }) => (
             <th className="border-b border-[var(--color-border)] px-3 py-2 font-semibold text-[var(--color-text)]">
               {children}

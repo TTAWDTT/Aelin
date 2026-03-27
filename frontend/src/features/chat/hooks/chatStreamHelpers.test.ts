@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSessionHistoryMessages,
-  normalizeAssistantMarkdown,
+  formatBytes,
+  trimQueryForApi,
 } from './chatStreamHelpers'
 
 describe('chatStreamHelpers', () => {
-  it('normalizes markdown headings with a missing space', () => {
-    expect(normalizeAssistantMarkdown('#Title\n##Subtitle')).toBe('# Title\n## Subtitle')
+  it('formats attachment sizes for the composer', () => {
+    expect(formatBytes(512)).toBe('512 B')
+    expect(formatBytes(2048)).toBe('2.0 KB')
   })
 
   it('preserves multimodal human history messages', () => {
@@ -24,5 +26,13 @@ describe('chatStreamHelpers', () => {
     expect(rows[0]?.id).toBe('user-1')
     expect(rows[0]?.type).toBe('human')
     expect(Array.isArray(rows[0]?.content)).toBe(true)
+  })
+
+  it('trims long prompts before submit payload assembly', () => {
+    const source = 'a'.repeat(1300)
+    const trimmed = trimQueryForApi(source)
+
+    expect(trimmed.length).toBe(1200)
+    expect(trimmed.endsWith('…')).toBe(true)
   })
 })
