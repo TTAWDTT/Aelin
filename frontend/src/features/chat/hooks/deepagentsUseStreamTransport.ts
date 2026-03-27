@@ -137,16 +137,6 @@ function toTransportEvent(
   threadId: string,
   messageOrdinal: number,
 ): TransportStreamEvent | null {
-  if (item.event === 'metadata') {
-    return {
-      event: 'metadata',
-      data: {
-        ...asRecord(parsedPayload),
-        thread_id: threadId,
-      },
-    }
-  }
-
   if (item.event === 'error') {
     const message = String((parsedPayload as Record<string, unknown>).message || 'stream error')
     return {

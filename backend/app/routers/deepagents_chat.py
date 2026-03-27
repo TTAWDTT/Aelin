@@ -453,8 +453,6 @@ def deepagents_chat_stream(
                     )
                     return
 
-                _push("metadata", {"run_id": req_id})
-
                 topology = _serialize_agent_topology(agent)
                 if topology is not None:
                     _push("values", {"topology": topology}, ns=["root"])

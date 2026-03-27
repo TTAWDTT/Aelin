@@ -180,14 +180,10 @@ def test_deepagents_chat_stream_basic(monkeypatch):
 
     events = _parse_sse_events(body)
     names = [name for name, _ in events]
-    assert "metadata" in names
     assert "messages|root|model" in names
     assert "updates|root" in names
     assert "tasks|root" in names
     assert "values|root" in names
-
-    metadata_payload = next(payload for name, payload in events if name == "metadata")
-    assert isinstance(metadata_payload["run_id"], str) and metadata_payload["run_id"]
 
     topology_payload = next(
         payload
