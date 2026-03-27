@@ -295,6 +295,7 @@ export function useChatStream() {
     persistedSignatureRef.current = ''
     const nextId = String(activeSessionId || '').trim()
     if (!nextId) {
+      if (streamThreadIdRef.current == null) return
       streamThreadIdRef.current = null
       setStreamThreadId(null)
       streamRef.current.switchThread(null)
@@ -305,6 +306,7 @@ export function useChatStream() {
     void ensureThreadExists(client, nextId)
       .then(() => {
         if (cancelled) return
+        if (streamThreadIdRef.current === nextId) return
         streamThreadIdRef.current = nextId
         setStreamThreadId(nextId)
         streamRef.current.switchThread(nextId)
