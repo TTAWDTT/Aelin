@@ -64,11 +64,6 @@ export function TurnCard({ turn }: { turn: ExecutionTurn }) {
           <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
             {turn.namespace}
           </div>
-          {turn.preview && (
-            <div className="mt-1 break-words text-[11px] leading-relaxed text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-              {turn.preview}
-            </div>
-          )}
         </div>
         <span className="pt-0.5">{statusIcon(turn.status)}</span>
       </div>

@@ -87,7 +87,6 @@ export type ExecutionTurn = {
   messageId: string
   node: string
   namespace: string
-  preview: string
   status: string
   toolCalls: ExecutionToolCall[]
   subagents: ExecutionSubagent[]
@@ -122,7 +121,6 @@ type MessageRuntimeRow = {
   node: string
   namespace: string
   status: string
-  preview: string
   toolCalls: ExecutionToolCall[]
   subagents: ExecutionSubagent[]
   messageType: string
@@ -337,7 +335,6 @@ function getMessageRuntimeRows(stream: ChatRuntimeStream): MessageRuntimeRow[] {
       node,
       namespace,
       status: isStreaming ? 'running' : 'completed',
-      preview: messagePreview(message),
       toolCalls,
       subagents,
       messageType,
@@ -355,7 +352,6 @@ function buildExecutionTurns(rows: MessageRuntimeRow[]): ExecutionTurn[] {
       messageId: row.messageId,
       node: row.node || row.messageType || 'message',
       namespace: row.namespace,
-      preview: row.preview,
       status: row.status,
       toolCalls: row.toolCalls,
       subagents: row.subagents,
