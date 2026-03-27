@@ -3,12 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.deepagents.tool_runtime import ToolRuntimeContext
+from app.services.foundation.service_utils import normalize_positive_ints
 from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
 
 
 def tool_attachment_search(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, Any]:
-    from app.services.aelin.utils import normalize_positive_ints
-
     query = str(args.get("query") or "").strip()[:500]
     if not query:
         return _result_error("missing query")

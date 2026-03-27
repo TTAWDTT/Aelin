@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Client } from '@langchain/langgraph-sdk'
+import { Client, type AssistantGraph } from '@langchain/langgraph-sdk'
 import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AttachmentUploadResponse } from '@/shared/api/types'
@@ -16,14 +16,15 @@ import {
   trimQueryForApi,
   type PendingImage,
 } from './chatStreamHelpers'
+import {
+  ensureThreadExists,
+  fetchAssistantGraph,
+  findAssistantId,
+} from './chatStreamRuntime'
 
 export type { ChatRuntimeStream, ChatStreamState }
 
 const DEFAULT_AGENT_SERVER_URL = 'http://127.0.0.1:8000'
-const DEEPAGENTS_GRAPH_ID = 'agent'
-
-let deepagentsAssistantIdCache: string | null = null
-let deepagentsAssistantIdPromise: Promise<string> | null = null
 
 function resolveAgentServerUrl(): string {
   const fromEnv = String(import.meta.env.VITE_API_BASE || '').trim()
@@ -91,34 +92,6 @@ function sameChatMessages(
   return true
 }
 
-async function resolveDeepAgentsAssistantId(client: Client): Promise<string> {
-  if (deepagentsAssistantIdCache) return deepagentsAssistantIdCache
-  if (deepagentsAssistantIdPromise) return deepagentsAssistantIdPromise
-
-  deepagentsAssistantIdPromise = client.assistants
-    .search()
-    .then((items) => {
-      const match = items.find((item) => {
-        const graphId = String((item as any)?.graph_id || '').trim()
-        const name = String((item as any)?.name || '').trim()
-        return graphId === DEEPAGENTS_GRAPH_ID || name === DEEPAGENTS_GRAPH_ID
-      })
-      const assistantId = String((match as any)?.assistant_id || '').trim()
-      if (!assistantId) {
-        throw new Error(`Agent Server assistant "${DEEPAGENTS_GRAPH_ID}" not found`)
-      }
-      deepagentsAssistantIdCache = assistantId
-      return assistantId
-    })
-    .finally(() => {
-      if (!deepagentsAssistantIdCache) {
-        deepagentsAssistantIdPromise = null
-      }
-    })
-
-  return deepagentsAssistantIdPromise
-}
-
 export function useChatStream() {
   const sessions = useChatStore((state) => state.sessions)
   const activeSessionId = useChatStore((state) => state.activeSessionId)
@@ -135,7 +108,8 @@ export function useChatStream() {
     [activeSessionId, sessions],
   )
   const thinkingLabel = t('status.thinking')
-  const [assistantId, setAssistantId] = useState<string>(deepagentsAssistantIdCache || '')
+  const [assistantId, setAssistantId] = useState<string>('')
+  const [assistantGraph, setAssistantGraph] = useState<AssistantGraph | null>(null)
   const assistantIdRef = useRef(assistantId)
   const assistantReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
   const [streamThreadId, setStreamThreadId] = useState<string | null>(activeSessionId || null)
@@ -201,13 +175,34 @@ export function useChatStream() {
   useEffect(() => {
     if (assistantId) return
     let cancelled = false
-    void resolveDeepAgentsAssistantId(client)
+    void findAssistantId(client)
       .then((resolved) => {
         if (!cancelled) setAssistantId(resolved)
       })
       .catch((error: unknown) => {
         if (!cancelled) {
           setStatusText(String((error as Error)?.message || 'Assistant lookup failed'))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [assistantId, client, setStatusText])
+
+  useEffect(() => {
+    if (!assistantId) {
+      setAssistantGraph(null)
+      return
+    }
+    let cancelled = false
+    void fetchAssistantGraph(client, assistantId)
+      .then((graph) => {
+        if (!cancelled) setAssistantGraph(graph)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAssistantGraph(null)
+          setStatusText(String((error as Error)?.message || 'Assistant graph lookup failed'))
         }
       })
     return () => {
@@ -232,10 +227,7 @@ export function useChatStream() {
   const ensureThreadReady = useCallback(async (threadId: string) => {
     const nextId = String(threadId || '').trim()
     if (!nextId) return
-    await client.threads.create({
-      threadId: nextId,
-      ifExists: 'do_nothing',
-    })
+    await ensureThreadExists(client, nextId)
     if (streamThreadIdRef.current !== nextId) {
       setStreamThreadId(nextId)
       await waitForThreadId(nextId)
@@ -312,7 +304,7 @@ export function useChatStream() {
 
       await ensureThreadReady(sessionId)
 
-      const resolvedAssistantId = assistantIdRef.current || await resolveDeepAgentsAssistantId(client)
+      const resolvedAssistantId = assistantIdRef.current || await findAssistantId(client)
       if (assistantIdRef.current !== resolvedAssistantId) {
         setAssistantId(resolvedAssistantId)
         await waitForAssistantId(resolvedAssistantId)
@@ -444,6 +436,7 @@ export function useChatStream() {
     uploadAttachments,
     sendWithAttachments,
     stop,
+    assistantGraph,
     stream,
   }
 }

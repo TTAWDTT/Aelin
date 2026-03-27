@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.services.aelin.utils import normalize_positive_ints
+from app.services.foundation.service_utils import normalize_positive_ints
 
 
 class Token(BaseModel):
@@ -36,25 +36,6 @@ class UserOut(BaseModel):
 class AgentMemoryNoteCreate(BaseModel):
     content: str = Field(min_length=1, max_length=500)
     kind: str = Field(default="note", min_length=1, max_length=32)
-
-
-class AgentMemoryNoteOut(BaseModel):
-    id: int
-    kind: str
-    content: str
-    source: Optional[str] = None
-    updated_at: str
-
-
-class AgentFocusItemOut(BaseModel):
-    message_id: int
-    source: str
-    source_label: str
-    sender: str
-    sender_avatar_url: Optional[str] = None
-    title: str
-    received_at: str
-    score: float
 
 
 class ChatRequest(BaseModel):
@@ -203,34 +184,6 @@ class AelinTodoItem(BaseModel):
     contact_id: Optional[int] = None
     message_id: Optional[int] = None
     updated_at: str
-
-
-class AelinMemoryLayerItem(BaseModel):
-    id: str
-    layer: str
-    title: str
-    detail: str = ""
-    source: str = ""
-    confidence: float = 0.5
-    updated_at: str = ""
-    meta: dict[str, str] = Field(default_factory=dict)
-
-
-class AelinMemoryLayers(BaseModel):
-    facts: list[AelinMemoryLayerItem] = Field(default_factory=list)
-    preferences: list[AelinMemoryLayerItem] = Field(default_factory=list)
-    in_progress: list[AelinMemoryLayerItem] = Field(default_factory=list)
-    generated_at: datetime
-
-
-class AelinContextResponse(BaseModel):
-    workspace: str = "default"
-    summary: str = ""
-    notes: list[AgentMemoryNoteOut] = Field(default_factory=list)
-    notes_count: int = 0
-    todos: list[AelinTodoItem] = Field(default_factory=list)
-    memory_layers: AelinMemoryLayers
-    generated_at: datetime
 
 
 class ChatResponse(BaseModel):

@@ -2,10 +2,10 @@ import type { ReactNode } from 'react'
 import { Hammer, Workflow } from 'lucide-react'
 import { cn } from '@/shared/utils/cn'
 import type {
+  ExecutionGraphNode,
   ExecutionNamespaceLane,
   ExecutionSubagent,
   ExecutionToolCall,
-  ExecutionTopologyNode,
 } from '../executionStreamUtils'
 import {
   nodeIcon,
@@ -44,19 +44,19 @@ export function ExecutionTabButton({ id, active, label, disabled, onClick }: Exe
   )
 }
 
-export function TopologyBoard({
+export function GraphBoard({
   nodes,
   edges,
   isStreaming,
 }: {
-  nodes: ExecutionTopologyNode[]
+  nodes: ExecutionGraphNode[]
   edges: Array<{ source: string; target: string; active?: boolean; traversed?: number; conditional?: boolean }>
   isStreaming: boolean
 }) {
   if (nodes.length === 0) {
     return (
       <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-        No topology yet.
+        Runtime did not publish a graph.
       </p>
     )
   }
@@ -67,7 +67,7 @@ export function TopologyBoard({
       bucket.push(node)
       map.set(node.depth, bucket)
       return map
-    }, new Map<number, ExecutionTopologyNode[]>()),
+    }, new Map<number, ExecutionGraphNode[]>()),
   )
     .sort((a, b) => a[0] - b[0])
     .map(([, bucket]) => bucket.sort((a, b) => a.name.localeCompare(b.name)))
@@ -159,13 +159,13 @@ export function TopologyBoard({
                       </div>
                       {(node.visits > 0 || node.toolCalls > 0 || node.subagents > 0) && (
                         <div className="mt-2 flex flex-wrap gap-1">
-                          {node.visits > 0 && <TopologyBadge>{node.visits} hits</TopologyBadge>}
-                          {node.toolCalls > 0 && <TopologyBadge>{node.toolCalls} tools</TopologyBadge>}
-                          {node.subagents > 0 && <TopologyBadge>{node.subagents} subagents</TopologyBadge>}
+                          {node.visits > 0 && <GraphBadge>{node.visits} hits</GraphBadge>}
+                          {node.toolCalls > 0 && <GraphBadge>{node.toolCalls} tools</GraphBadge>}
+                          {node.subagents > 0 && <GraphBadge>{node.subagents} subagents</GraphBadge>}
                           {node.activeNamespaces > 0 && (
-                            <TopologyBadge>
+                            <GraphBadge>
                               {node.activeNamespaces} active path{node.activeNamespaces > 1 ? 's' : ''}
-                            </TopologyBadge>
+                            </GraphBadge>
                           )}
                         </div>
                       )}
@@ -182,7 +182,7 @@ export function TopologyBoard({
   )
 }
 
-function TopologyBadge({ children }: { children: ReactNode }) {
+function GraphBadge({ children }: { children: ReactNode }) {
   return (
     <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]">
       {children}

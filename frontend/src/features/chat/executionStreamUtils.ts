@@ -1,8 +1,8 @@
 import type { BaseMessage } from '@langchain/core/messages'
+import type { AssistantGraph } from '@langchain/langgraph-sdk'
 
 export type ChatStreamState = {
   messages: Array<Record<string, unknown>>
-  topology?: Record<string, unknown>
   answer?: string
   todos?: unknown[]
   [key: string]: unknown
@@ -27,7 +27,7 @@ export type ChatRuntimeStream = {
   } | undefined
 }
 
-export type ExecutionTopologyNode = {
+export type ExecutionGraphNode = {
   id: string
   name: string
   kind: string
@@ -39,19 +39,13 @@ export type ExecutionTopologyNode = {
   status: 'idle' | 'completed' | 'running'
 }
 
-export type ExecutionTopologyEdge = {
+export type ExecutionGraphEdge = {
   source: string
   target: string
   conditional?: boolean
   active: boolean
   traversed: number
   namespaces: number
-}
-
-type BaseTopologyEdge = {
-  source: string
-  target: string
-  conditional: boolean
 }
 
 type ExecutionActivity = {
@@ -93,18 +87,18 @@ export type ExecutionNamespaceLane = {
 }
 
 export type ExecutionRuntime = {
-  topology: {
-    nodes: ExecutionTopologyNode[]
-    edges: ExecutionTopologyEdge[]
+  graph: {
+    nodes: ExecutionGraphNode[]
+    edges: ExecutionGraphEdge[]
   }
   lanes: ExecutionNamespaceLane[]
   tools: ExecutionToolCall[]
   subagents: ExecutionSubagent[]
+  hasOfficialGraph: boolean
   hasExecution: boolean
 }
 
 type MessageRuntimeRow = {
-  key: string
   messageId: string
   node: string
   namespace: string
@@ -305,7 +299,6 @@ function getMessageRuntimeRows(stream: ChatRuntimeStream): MessageRuntimeRow[] {
     const hasWork = Boolean(node) || toolCalls.length > 0 || subagents.length > 0
 
     return {
-      key: `${messageId}:${node || 'message'}`,
       messageId,
       node,
       namespace,
@@ -371,76 +364,33 @@ function computeDepths(
   return depth
 }
 
-function buildExecutionTopology(
-  raw: Record<string, unknown>,
+function buildExecutionGraph(
+  assistantGraph: AssistantGraph | null | undefined,
   activities: ExecutionActivity[],
 ): {
-  nodes: ExecutionTopologyNode[]
-  edges: ExecutionTopologyEdge[]
+  nodes: ExecutionGraphNode[]
+  edges: ExecutionGraphEdge[]
 } {
-  const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : []
-  let rawEdges: BaseTopologyEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
+  const baseNodes = (Array.isArray(assistantGraph?.nodes) ? assistantGraph.nodes : [])
     .map((item) => {
-      const record = asRecord(item)
-      const source = String(record.source || '').trim()
-      const target = String(record.target || '').trim()
-      if (!source || !target) return null
-      return {
-        source,
-        target,
-        conditional: Boolean(record.conditional),
-      }
-    })
-    .filter((item): item is BaseTopologyEdge => item != null)
-
-  let baseNodes = rawNodes
-    .map((item) => {
-      const record = asRecord(item)
-      const id = String(record.id || '').trim()
+      const id = String(item?.id || '').trim()
       if (!id) return null
+      const data = asRecord(item?.data)
       return {
         id,
-        name: String(record.name || id),
-        kind: String(record.kind || 'node'),
+        name: String(item?.name || data.label || data.name || id),
+        kind: String(data.kind || data.type || 'node'),
       }
     })
     .filter((item): item is { id: string; name: string; kind: string } => item != null)
 
-  if (baseNodes.length === 0) {
-    const uniqueNodes = new Map<string, { id: string; name: string; kind: string }>()
-    const derivedEdges = new Map<string, BaseTopologyEdge>()
-    const byNamespace = new Map<string, string[]>()
-
-    for (const activity of activities) {
-      if (!activity.node) continue
-      if (!uniqueNodes.has(activity.node)) {
-        uniqueNodes.set(activity.node, {
-          id: activity.node,
-          name: activity.node,
-          kind: 'node',
-        })
-      }
-      const rows = byNamespace.get(activity.namespace) ?? []
-      rows.push(activity.node)
-      byNamespace.set(activity.namespace, rows)
-    }
-
-    for (const rows of byNamespace.values()) {
-      for (let index = 0; index < rows.length - 1; index += 1) {
-        const source = rows[index]
-        const target = rows[index + 1]
-        if (!source || !target || source === target) continue
-        derivedEdges.set(`${source}->${target}`, {
-          source,
-          target,
-          conditional: false,
-        })
-      }
-    }
-
-    baseNodes = Array.from(uniqueNodes.values())
-    rawEdges = Array.from(derivedEdges.values())
-  }
+  const rawEdges = (Array.isArray(assistantGraph?.edges) ? assistantGraph.edges : [])
+    .map((edge) => ({
+      source: String(edge?.source || '').trim(),
+      target: String(edge?.target || '').trim(),
+      conditional: Boolean(edge?.conditional),
+    }))
+    .filter((edge) => edge.source && edge.target)
 
   const depths = computeDepths(baseNodes, rawEdges)
   const nodeIds = new Set(baseNodes.map((node) => node.id))
@@ -551,10 +501,14 @@ export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, Ex
   return new Map(entries)
 }
 
-export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
+export function getExecutionRuntime(
+  stream: ChatRuntimeStream,
+  assistantGraph?: AssistantGraph | null,
+): ExecutionRuntime {
   const rows = getMessageRuntimeRows(stream)
   const activities = buildExecutionActivities(rows)
-  const topology = buildExecutionTopology(asRecord(stream.values?.topology), activities)
+  const lanes = buildExecutionLanes(activities)
+  const graph = buildExecutionGraph(assistantGraph, activities)
   const subagents = getRuntimeSubagents(stream)
   const tools = Array.from(
     new Map(
@@ -563,17 +517,20 @@ export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime
         .map((tool) => [tool.key, tool] as const),
     ).values(),
   )
+  const hasOfficialGraph = graph.nodes.length > 0 || graph.edges.length > 0
   const hasExecution =
-    topology.nodes.length > 0
+    hasOfficialGraph
     || tools.length > 0
     || subagents.length > 0
+    || lanes.length > 0
     || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
 
   return {
-    topology,
-    lanes: buildExecutionLanes(activities),
+    graph,
+    lanes,
     tools,
     subagents,
+    hasOfficialGraph,
     hasExecution,
   }
 }

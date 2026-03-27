@@ -23,15 +23,16 @@ export function ChatStatusBar({
 }: ChatStatusBarProps) {
   const { t, locale } = useChatI18n()
   const { open, setOpen, setSuppressAutoOpen } = useExecutionPaneStore()
-  const { topology, tools, subagents, hasExecution: hasRuns } = execution
+  const { hasOfficialGraph, lanes, tools, subagents, hasExecution: hasRuns } = execution
   const canOpenExecution =
     Boolean(onOpenExecution)
     && (
       isStreaming
-      || hasRuns
-      || topology.nodes.length > 0
+      || hasOfficialGraph
+      || lanes.length > 0
       || tools.length > 0
       || subagents.length > 0
+      || hasRuns
     )
 
   if (!isStreaming && !statusText && !hasRuns && !canOpenExecution) return null

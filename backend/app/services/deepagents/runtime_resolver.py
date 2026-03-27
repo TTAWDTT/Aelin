@@ -6,20 +6,20 @@ from typing import Callable
 from sqlalchemy.orm import Session
 
 from app.db import create_session
-from app.services.aelin.core_support import (
-    _get_agents_memory_text_for_chat,
-    _scoped_web_search_service,
+from app.services.deepagents.runtime_support import (
+    get_agents_memory_text_for_chat,
+    scoped_web_search_service,
 )
-from app.services.aelin.runtime import (
+from app.services.foundation.agent_config_service import (
     normalize_workspace,
     resolve_llm_service_for_user_id,
 )
-from app.services.aelin.utils import normalize_positive_ints
 from app.services.deepagents.tool_runtime import (
     ToolCallLimiter,
     ToolRuntimeContext,
     build_tool_runtime_context,
 )
+from app.services.foundation.service_utils import normalize_positive_ints
 from app.services.foundation.llm import LLMService
 from app.settings import settings
 
@@ -72,7 +72,7 @@ def resolve_deepagents_runtime(
     workspace_norm = normalize_workspace(workspace)
     attachment_ids = normalize_attachment_ids(raw_attachment_ids)
     service, provider = resolve_llm_service_for_user_id(db, int(user_id))
-    memory_text = _get_agents_memory_text_for_chat(
+    memory_text = get_agents_memory_text_for_chat(
         db,
         int(user_id),
         workspace=workspace_norm,
@@ -80,7 +80,7 @@ def resolve_deepagents_runtime(
     tool_context = build_tool_runtime_context(
         user_id=int(user_id),
         workspace=workspace_norm,
-        web_search_service=_scoped_web_search_service(
+        web_search_service=scoped_web_search_service(
             getattr(service.config, "web_search_proxy_url", ""),
         ),
         available_attachment_ids=attachment_ids,

@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.models import User
 from app.schemas import ChatAction, ChatRequest, ChatResponse
-from app.services.aelin.expressions import _pick_expression
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.deepagents_graph import run_deepagents_loop
 from app.services.deepagents.input_mapping import (
@@ -50,7 +49,7 @@ def _map_actions(raw_actions: list[dict[str, Any]]) -> list[ChatAction]:
     return actions
 
 
-def _try_deepagents_chat(
+def _try_agent_server_chat(
     payload: ChatRequest,
     db: Session,
     current_user: User,
@@ -167,10 +166,10 @@ def _try_deepagents_chat(
 def _build_no_result_response(
     payload: ChatRequest,
 ) -> ChatResponse:
+    del payload
     answer = _NO_RESULT_ANSWER
     return ChatResponse(
         answer=answer,
-        expression=_pick_expression(payload.query, answer),
         citations=[],
         actions=[],
         memory_summary="",
@@ -193,7 +192,7 @@ def run_chat_request(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> ChatResponse:
-    response = _try_deepagents_chat(
+    response = _try_agent_server_chat(
         payload,
         db,
         current_user,

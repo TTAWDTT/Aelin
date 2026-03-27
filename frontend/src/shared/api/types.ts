@@ -36,28 +36,10 @@ export interface ChatAction {
   payload?: Record<string, string>
 }
 
-/* ─── Aelin Context ─── */
-export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }
-export interface MemoryLayerItem {
-  id: string; layer: string; title: string; detail?: string
-  source?: string; confidence: number; updated_at?: string
-  meta?: Record<string, string>
-}
-export interface MemoryLayers {
-  facts: MemoryLayerItem[]; preferences: MemoryLayerItem[]
-  in_progress: MemoryLayerItem[]; generated_at: string
-}
 export interface TodoItem {
   id: number; title: string; detail?: string; done: boolean
   due_at?: string; priority: string
   contact_id?: number; message_id?: number; updated_at: string
-}
-export interface ContextResponse {
-  workspace: string; summary: string
-  notes: AgentMemoryNoteOut[]; notes_count: number
-  todos: TodoItem[]
-  memory_layers: MemoryLayers
-  generated_at: string
 }
 
 export interface BrowserConfirmRequest {

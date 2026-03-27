@@ -91,15 +91,13 @@ class AgentMemoryService:
        DeepAgents agent loop 仅依赖这一文件视图，不会再直接触碰任何
        DB 记忆模型，也不会再经过“summary -> AGENTS.md”的桥接。
 
-    2. UI / 工具视图（仅用于 context_get / profile 等工具以及 /aelin/context）
+    2. UI / 工具视图（仅用于 context_get / profile 等工具）
        - `get_summary` / `list_notes` / `list_todos`
        - `build_memory_layers_from_items`
        - `add_note` 及若干 append_* 帮助函数
 
-    这些 helper 只为上下文 / 画像 / 待办视图提供投影，不影响 DeepAgents 的主
-    agent loop 行为。未来如果继续瘦身 UI pipeline，可以将它们迁移到专门的
-    LegacyContextViewService 或直接删除；在此之前，它们作为基于 AGENTS.md
-    的轻量投影层保留。
+    这些 helper 只为画像 / 待办 / 记忆工具提供投影，不影响 DeepAgents 的主
+    agent loop 行为。
     """
     # === DeepAgents chat-loop helpers (AGENTS.md IO) ===
 

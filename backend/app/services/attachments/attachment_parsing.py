@@ -18,7 +18,7 @@ def normalize_blocks_to_chunks(
     safe_json: Callable[[Any], str],
 ) -> list[dict[str, Any]]:
     """
-    Helper used by AelinAttachmentService to convert parsed blocks into
+Helper used by AttachmentService to convert parsed blocks into
     chunk rows, delegating the actual chunk splitting logic.
     """
     from collections import Counter
@@ -40,4 +40,3 @@ def normalize_blocks_to_chunks(
             )
             chunk_idx += 1
     return rows
-

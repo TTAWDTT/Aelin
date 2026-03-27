@@ -13,10 +13,9 @@ from app.db import get_engine
 from app.models import Base
 from app.routers import (
     agent,
-    aelin_chat,
-    aelin_context,
     aelin_device,
     aelin_remote_control,
+    attachments,
     auth,
 )
 from app.settings import settings
@@ -119,8 +118,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(agent.router, prefix="/api/v1")
-    app.include_router(aelin_chat.router, prefix="/api/v1")
-    app.include_router(aelin_context.router, prefix="/api/v1")
+    app.include_router(attachments.router, prefix="/api/v1")
     app.include_router(aelin_device.router, prefix="/api/v1")
     app.include_router(aelin_remote_control.router, prefix="/api/v1")
 

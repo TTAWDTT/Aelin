@@ -5,11 +5,11 @@ import type { ExecutionRuntime } from '../executionStreamUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import {
   ExecutionTabButton,
+  GraphBoard,
   JsonBlock,
   NamespaceLaneCard,
   SubagentCard,
   ToolCard,
-  TopologyBoard,
 } from './ExecutionPaneParts'
 import {
   asRecord,
@@ -35,7 +35,7 @@ export function ExecutionPane({
 }: ExecutionPaneProps) {
   const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
-  const { topology, lanes, tools, hasExecution } = runtime
+  const { tools, hasExecution } = runtime
   const todos = Array.isArray(values.todos) ? values.todos : []
   const hasStateSnapshot = Object.keys(values).some((key) => key !== 'messages')
   const [tab, setTab] = useState<ExecutionTab>('graph')
@@ -134,28 +134,37 @@ function GraphTab({
   locale: string
   emptyDetail: string
 }) {
-  const { topology, lanes, subagents } = runtime
+  const { graph, lanes, subagents, hasOfficialGraph } = runtime
 
   return (
     <div id="execution-pane-graph" className="space-y-2.5 text-[11px]">
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
         <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-          <span className="font-medium">Topology</span>
-          <span>{topology.nodes.length} nodes · {topology.edges.length} edges</span>
+          <span className="font-medium">Static graph</span>
+          <span>{graph.nodes.length} nodes · {graph.edges.length} edges</span>
         </div>
-        <TopologyBoard nodes={topology.nodes} edges={topology.edges} isStreaming={isStreaming} />
-        {lanes.length > 0 && (
-          <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-2">
-            <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Live paths
-            </div>
+        <GraphBoard nodes={graph.nodes} edges={graph.edges} isStreaming={isStreaming} />
+        {!hasOfficialGraph && (
+          <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+            Runtime did not publish a graph.
+          </p>
+        )}
+        <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-2">
+          <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+            Live paths
+          </div>
+          {lanes.length > 0 ? (
             <div className="grid gap-2">
               {lanes.map((lane) => (
                 <NamespaceLaneCard key={lane.key} lane={lane} />
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              {emptyDetail}
+            </p>
+          )}
+        </div>
       </section>
 
       {subagents.length > 0 && (
@@ -172,7 +181,7 @@ function GraphTab({
         </section>
       )}
 
-      {subagents.length === 0 && lanes.length === 0 && (
+      {subagents.length === 0 && lanes.length === 0 && !hasOfficialGraph && (
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
           <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
             {emptyDetail}

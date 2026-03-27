@@ -11,11 +11,14 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.models import User
 from app.schemas import ChatRequest, ChatResponse, RemoteControlExecuteRequest
-from app.services.aelin.core import is_deepagents_no_result_response, run_chat_request
 from app.services.device import device_actions
 from app.services.device.device_contract import (
     SUPPORTED_DEEPAGENTS_TOOLS,
     SUPPORTED_DEVICE_ACTIONS,
+)
+from app.services.device.remote_control_chat_adapter import (
+    is_deepagents_no_result_response,
+    run_chat_request,
 )
 from app.settings import settings
 

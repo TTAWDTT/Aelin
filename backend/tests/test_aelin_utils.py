@@ -1,4 +1,4 @@
-from app.services.aelin.utils import escape_sql_like, normalize_positive_ints
+from app.services.foundation.service_utils import escape_sql_like, normalize_positive_ints
 
 
 def test_normalize_positive_ints_filters_and_caps():

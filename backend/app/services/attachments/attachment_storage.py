@@ -8,7 +8,7 @@ def write_storage_if_missing(storage_path: Path, content: bytes) -> bool:
     """
     Atomically write attachment bytes to disk if the target path does not exist.
 
-    This is extracted from AelinAttachmentService to keep the main service
+This is extracted from AttachmentService to keep the main service
     focused on orchestration rather than low-level filesystem details.
     """
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -41,4 +41,3 @@ def write_storage_if_missing(storage_path: Path, content: bytes) -> bool:
             pass
         raise
     return True
-

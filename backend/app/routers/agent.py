@@ -8,7 +8,7 @@ from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import AgentConfigOut, AgentConfigUpdate, AgentTestResponse, ModelCatalogResponse
-from app.services.aelin.runtime import (
+from app.services.foundation.agent_config_service import (
     config_out as runtime_config_out,
     resolve_llm_service_for_user_id,
 )

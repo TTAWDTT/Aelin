@@ -37,7 +37,7 @@ def test_llm_service_uses_configured_http_client(monkeypatch):
     assert http_client._transport._pool._ssl_context.check_hostname is False
 
 
-def test_deepagents_chat_model_reuses_llm_http_client(monkeypatch):
+def test_agent_server_chat_model_reuses_llm_http_client(monkeypatch):
     captured: dict[str, object] = {}
 
     class _FakeChatOpenAI:
