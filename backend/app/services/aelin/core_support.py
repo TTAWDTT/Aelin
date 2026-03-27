@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -23,6 +24,8 @@ _AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES = max(
     0,
     int(getattr(settings, "aelin_base_context_cache_max_entries", 128) or 128),
 )
+_BASE_CONTEXT_CACHE_LOCK = threading.Lock()
+_BASE_CONTEXT_CACHE: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 
 
 def _scoped_web_search_service(proxy_url: str = "") -> WebSearchService:
@@ -49,13 +52,6 @@ def _build_context_bundle(db: Session, user_id: int, *, workspace: str, query: s
 
 def _build_cached_base_context_bundle(db: Session, user_id: int, *, workspace: str) -> dict[str, Any]:
     workspace_norm = _normalize_workspace(workspace)
-    # NOTE: the cache itself is owned by aelin_core; this helper only forwards
-    # the call to the context service with normalized parameters.
-    from app.services.aelin.core import (  # circular import safe at runtime
-        _base_context_cache,
-        _base_context_cache_lock,
-    )
-
     return _build_cached_base_context_bundle_service(
         db,
         user_id=user_id,
@@ -63,8 +59,8 @@ def _build_cached_base_context_bundle(db: Session, user_id: int, *, workspace: s
         memory_service=_memory,
         ttl_seconds=_AELIN_BASE_CONTEXT_CACHE_TTL_SECONDS,
         max_entries=_AELIN_BASE_CONTEXT_CACHE_MAX_ENTRIES,
-        cache=_base_context_cache,
-        lock=_base_context_cache_lock,
+        cache=_BASE_CONTEXT_CACHE,
+        lock=_BASE_CONTEXT_CACHE_LOCK,
     )
 
 

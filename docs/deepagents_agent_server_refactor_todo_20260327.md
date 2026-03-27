@@ -22,7 +22,7 @@
 ## 3. remote-control / device / attachments / skills 保持完整
 
 - [ ] 3.1 收敛 `remote-control` 核心业务层，保证 HTTP API 与 DeepAgents tool 共用同一实现
-- [ ] 3.2 保持 `remote-control` 独立 API 可用
+- [x] 3.2 保持 `remote-control` 独立 API 可用
 - [x] 3.3 保持 device / `screen_get` 工具链可用
 - [x] 3.4 保持 attachment 上传接口可用
 - [x] 3.5 保持 attachment 检索 tool 在新 runtime 下可用
@@ -55,7 +55,7 @@
 - [ ] 7.1 删除与旧自定义 chat 壳强耦合的后端测试
 - [ ] 7.2 删除与旧自定义 transport / timeline / trace 强耦合的前端测试与状态层
 - [ ] 7.3 收缩 `backend/app/services/deepagents/deepagents_graph.py` 中仅为旧壳兜底的逻辑
-- [ ] 7.4 删除迁移后不再需要的兼容代码、旧字段映射与冗余工具事件补层
+- [x] 7.4 删除迁移后不再需要的兼容代码、旧字段映射与冗余工具事件补层
 
 ## 8. 回归测试与真实链路验证
 

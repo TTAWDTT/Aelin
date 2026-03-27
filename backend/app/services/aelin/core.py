@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter
 from sqlalchemy.orm import Session
 
 from app.models import User
@@ -24,11 +22,7 @@ from app.services.deepagents.runtime_resolver import (
     resolve_deepagents_runtime,
 )
 
-router = APIRouter(prefix="/aelin", tags=["aelin"])
 _log = logging.getLogger(__name__)
-
-_base_context_cache_lock = threading.Lock()
-_base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 _NO_RESULT_ANSWER = "当前会话使用 DeepAgents，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
 
 

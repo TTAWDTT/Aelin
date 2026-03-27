@@ -4,12 +4,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.services.deepagents.tool_runtime import ToolRuntimeContext
+from app.services.device.device_contract import build_device_status_contract
 from app.services.device.device_center import (
     activate_desktop_module,
     capture_device_screen as device_capture_screen,
     DesktopPluginActionError,
     DeviceScreenCaptureError,
-    device_status_snapshot,
     open_desktop_external_url,
 )
 from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
@@ -52,7 +52,7 @@ def tool_device(context: ToolRuntimeContext, args: dict[str, Any]) -> dict[str, 
 
     action = str(args.get("action") or "").strip().lower()
     if action == "status":
-        snapshot = device_status_snapshot()
+        snapshot = build_device_status_contract()
         return _result_ok(
             platform=str(snapshot.get("platform") or "unknown"),
             capabilities=dict(snapshot.get("capabilities") or {}),

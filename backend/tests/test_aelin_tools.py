@@ -193,7 +193,7 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
 
     monkeypatch.setattr(
         tools_device,
-        "device_status_snapshot",
+        "build_device_status_contract",
         lambda: {
             "platform": "windows",
             "capabilities": {"desktop_open_url": True, "desktop_activate_module": False},

@@ -6,8 +6,6 @@ from app.services.aelin.expressions import (
     _extract_expression_tag,
     _pick_expression,
 )
-
-import app.routers.aelin as aelin_router
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
 
