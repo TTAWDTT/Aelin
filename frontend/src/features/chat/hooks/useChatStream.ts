@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import type { AnyStreamCustomOptions } from '@langchain/langgraph-sdk/ui'
-import { useStream } from '@langchain/react'
+import { FetchStreamTransport, useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
 import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
@@ -16,7 +16,6 @@ import {
   trimQueryForApi,
   type PendingImage,
 } from './chatStreamHelpers'
-import { DeepAgentsUseStreamTransport } from './deepagentsUseStreamTransport'
 
 export type { ChatRuntimeStream, ChatStreamState }
 
@@ -87,15 +86,17 @@ export function useChatStream() {
   )
   const thinkingLabel = t('status.thinking')
 
-  const transport = useMemo(() => new DeepAgentsUseStreamTransport({
+  const transport = useMemo(() => new FetchStreamTransport({
     apiUrl: `${import.meta.env.VITE_API_BASE || ''}/api/v1/deepagents/chat/stream`,
-    getToken: () => localStorage.getItem('token'),
-    getWorkspace: (threadId) => {
-      const state = useChatStore.getState()
-      const target = state.sessions.find((item) => item.id === threadId)
-      return target?.workspace || 'default'
+    onRequest: async (_url, init) => {
+      const headers = new Headers(init.headers ?? {})
+      const token = localStorage.getItem('token')
+      if (token) headers.set('Authorization', `Bearer ${token}`)
+      return {
+        ...init,
+        headers,
+      }
     },
-    getSource: () => 'chat_ui',
   }), [])
 
   const streamOptions: AnyStreamCustomOptions<ChatStreamState> = {
@@ -165,13 +166,17 @@ export function useChatStream() {
       }
 
       const humanMessage = buildHumanStreamMessage(prompt, images)
+      const inputMessages = [
+        ...buildSessionHistoryMessages(currentSessionMessages),
+        humanMessage,
+      ] as Array<Record<string, unknown>>
       currentState.setStreaming(true)
       currentState.setStatusText(t('status.thinking'))
       currentState.setLastErrorCode(null)
 
       try {
         await stream.submit(
-          { messages: [humanMessage] as any },
+          { messages: inputMessages as any },
           {
             context: {
               workspace: currentSession?.workspace || 'default',
@@ -180,10 +185,7 @@ export function useChatStream() {
             } as any,
             optimisticValues: (prev) => ({
               ...(prev || {}),
-              messages: [
-                ...(((prev?.messages as Array<Record<string, unknown>> | undefined) ?? buildSessionHistoryMessages(currentSessionMessages)) as Array<Record<string, unknown>>),
-                humanMessage as any,
-              ],
+              messages: inputMessages,
             }),
           },
         )

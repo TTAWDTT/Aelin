@@ -37,8 +37,8 @@
 
 ## 5. 前端切回更原生的官方 useStream 主路径
 
-- [ ] 5.1 盘点并删除 `deepagentsUseStreamTransport.ts` 中仅为自定义协议存在的补层
-- [ ] 5.2 收薄 `useChatStream.ts`，让消息流主要依赖官方 thread / run / stream 语义
+- [x] 5.1 盘点并删除 `deepagentsUseStreamTransport.ts` 中仅为自定义协议存在的补层
+- [x] 5.2 收薄 `useChatStream.ts`，让消息流主要依赖官方 thread / run / stream 语义
 - [ ] 5.3 让执行面板直接消费官方 `messages / subagents / values.todos / tasks` 数据
 - [ ] 5.4 删除 `executionStreamUtils.ts` 中仅用于自定义 timeline / graph 推断的逻辑
 - [ ] 5.5 保持流式输出、停止生成、会话切换仍然可用

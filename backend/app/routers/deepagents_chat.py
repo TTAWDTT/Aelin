@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import queue
 import threading
@@ -18,8 +19,10 @@ from app.services.aelin.streaming import _now_ms, _sse_event
 from app.services.deepagents.deepagents_graph import build_chat_agent
 from app.services.deepagents.input_mapping import (
     build_invoke_payload,
+    build_invoke_payload_from_messages,
     normalize_history_turns,
     normalize_image_inputs,
+    normalize_stream_messages,
 )
 from app.services.deepagents.output_utils import message_to_text
 from app.services.deepagents.cancel_utils import is_cancelled
@@ -31,6 +34,19 @@ from app.settings import settings
 
 router = APIRouter(prefix="/deepagents", tags=["deepagents"])
 _LOG = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ParsedDeepAgentsStreamRequest:
+    source: str
+    workspace: str
+    attachment_ids: list[int]
+    query_preview: str
+    invoke_messages: list[dict[str, Any]] | None = None
+    query: str = ""
+    query_message_id: str = ""
+    history_turns: list[dict[str, str]] | None = None
+    images: list[dict[str, str]] | None = None
 
 
 def _as_record(value: Any) -> dict[str, Any]:
@@ -223,6 +239,64 @@ def _strip_files_payload(value: Any) -> Any:
     return payload
 
 
+def _normalize_attachment_ids(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    out: list[int] = []
+    for raw in value[:20]:
+        try:
+            parsed = int(raw)
+        except Exception:
+            continue
+        if parsed <= 0 or parsed in out:
+            continue
+        out.append(parsed)
+    return out
+
+
+def _preview_from_messages(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if str(message.get("role") or "").strip().lower() != "user":
+            continue
+        preview = " ".join(message_to_text(message).split())[:120]
+        if preview:
+            return preview
+    return ""
+
+
+def _parse_stream_request(raw_payload: Any) -> ParsedDeepAgentsStreamRequest:
+    payload_record = _as_record(raw_payload)
+    input_record = _as_record(payload_record.get("input"))
+    context_record = _as_record(payload_record.get("context"))
+
+    if isinstance(input_record.get("messages"), list):
+        invoke_messages = normalize_stream_messages(input_record.get("messages"))
+        workspace = str(context_record.get("workspace") or "default").strip() or "default"
+        source = str(context_record.get("source") or "chat_ui").strip().lower()[:32] or "chat_ui"
+        attachment_ids = _normalize_attachment_ids(context_record.get("attachment_ids"))
+        return ParsedDeepAgentsStreamRequest(
+            source=source,
+            workspace=workspace,
+            attachment_ids=attachment_ids,
+            query_preview=_preview_from_messages(invoke_messages),
+            invoke_messages=invoke_messages,
+        )
+
+    payload = ChatRequest.model_validate(payload_record)
+    history_turns = normalize_history_turns(getattr(payload, "history", []))
+    images = normalize_image_inputs(getattr(payload, "images", []))
+    return ParsedDeepAgentsStreamRequest(
+        source=str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32],
+        workspace=str(getattr(payload, "workspace", "default") or "default"),
+        attachment_ids=list(getattr(payload, "attachment_ids", []) or []),
+        query_preview=" ".join(str(payload.query or "").split())[:120],
+        query=str(payload.query or ""),
+        query_message_id=str(getattr(payload, "query_message_id", "") or ""),
+        history_turns=history_turns,
+        images=images,
+    )
+
+
 def _serialize_stream_part(chunk: Any) -> tuple[str, Any, list[str]] | None:
     if not isinstance(chunk, dict):
         return None
@@ -345,7 +419,7 @@ def _serialize_agent_topology(agent: Any) -> dict[str, Any] | None:
 
 @router.post("/chat/stream")
 def deepagents_chat_stream(
-    payload: ChatRequest,
+    payload: dict[str, Any],
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -358,6 +432,7 @@ def deepagents_chat_stream(
     """
 
     def _event_iter():
+        stream_request = _parse_stream_request(payload)
         req_id = uuid4().hex[:10]
         started = _now_ms()
         heartbeat_count = 0
@@ -401,25 +476,23 @@ def deepagents_chat_stream(
         def _worker() -> None:
             worker_db = create_session()
             try:
-                source = str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32]
                 resolved = resolve_deepagents_runtime(
                     worker_db,
                     user_id=int(current_user.id),
-                    workspace=str(getattr(payload, "workspace", "default") or "default"),
-                    raw_attachment_ids=getattr(payload, "attachment_ids", []),
+                    workspace=stream_request.workspace,
+                    raw_attachment_ids=stream_request.attachment_ids,
                     cancel_checker=lambda: is_cancelled(cancel_token),
                     session_factory=create_session,
                 )
                 workspace = resolved.workspace
-                query_preview = " ".join(str(payload.query or "").split())[:120]
 
                 _LOG.info(
                     "deepagents_stream worker_start req=%s uid=%s source=%s workspace=%s query=%s",
                     req_id,
                     int(current_user.id),
-                    source,
+                    stream_request.source,
                     workspace,
-                    query_preview,
+                    stream_request.query_preview,
                 )
 
                 if resolved.provider == "rule_based" or not resolved.service.is_configured():
@@ -431,9 +504,6 @@ def deepagents_chat_stream(
                         },
                     )
                     return
-
-                history_turns = normalize_history_turns(getattr(payload, "history", []))
-                images = normalize_image_inputs(getattr(payload, "images", []))
 
                 agent, usage, tool_runs, files_mapping = build_chat_agent(
                     service=resolved.service,
@@ -457,14 +527,19 @@ def deepagents_chat_stream(
                 if topology is not None:
                     _push("values", {"topology": topology}, ns=["root"])
 
-                # 构造 DeepAgents 期望的消息格式。
-                invoke_payload = build_invoke_payload(
-                    query=payload.query,
-                    query_message_id=getattr(payload, "query_message_id", ""),
-                    history_turns=history_turns,
-                    images=images,
-                    files_mapping=files_mapping,
-                )
+                if stream_request.invoke_messages is not None:
+                    invoke_payload = build_invoke_payload_from_messages(
+                        messages=stream_request.invoke_messages,
+                        files_mapping=files_mapping,
+                    )
+                else:
+                    invoke_payload = build_invoke_payload(
+                        query=stream_request.query,
+                        query_message_id=stream_request.query_message_id,
+                        history_turns=stream_request.history_turns,
+                        images=stream_request.images,
+                        files_mapping=files_mapping,
+                    )
 
                 for chunk in agent.stream(
                     invoke_payload,

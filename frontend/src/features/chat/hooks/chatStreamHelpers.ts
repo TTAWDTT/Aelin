@@ -1,5 +1,4 @@
 import type { BaseMessage } from '@langchain/core/messages'
-import type { ChatRequest } from '@/shared/api/types'
 import type { ChatMessage } from '../chatTypes'
 
 const MAX_QUERY_CHARS = 1200
@@ -34,26 +33,6 @@ function getMessageId(message: unknown): string {
   const direct = record.id
   if (typeof direct === 'string' && direct.trim()) return direct.trim()
   return crypto.randomUUID()
-}
-
-function dedupeStreamMessages(messages: StreamMessageLike[]): StreamMessageLike[] {
-  const byId = new Map<string, StreamMessageLike>()
-  const orderedIds: string[] = []
-
-  for (const message of messages) {
-    const id = String(message.id || '').trim()
-    if (!id) {
-      orderedIds.push(crypto.randomUUID())
-      byId.set(orderedIds[orderedIds.length - 1], message)
-      continue
-    }
-    if (!byId.has(id)) orderedIds.push(id)
-    byId.set(id, message)
-  }
-
-  return orderedIds
-    .map((id) => byId.get(id))
-    .filter((item): item is StreamMessageLike => item != null)
 }
 
 export function normalizeAssistantMarkdown(text: string): string {
@@ -167,67 +146,6 @@ export function buildSessionHistoryMessages(messages?: ChatMessage[]): StreamMes
       const text = extractTextContent(item.content)
       return Boolean(text || (Array.isArray(item.content) && item.content.length > 0))
     })
-}
-
-export function buildChatRequestFromStream(params: {
-  historyMessages: StreamMessageLike[]
-  inputMessages: StreamMessageLike[]
-  workspace: string
-  attachmentIds: number[]
-  source?: string
-}): ChatRequest {
-  const fullMessages = dedupeStreamMessages([
-    ...params.historyMessages,
-    ...params.inputMessages,
-  ])
-  const lastUserIndex = [...fullMessages]
-    .map((message, index) => ({ message, index }))
-    .reverse()
-    .find(({ message }) => normalizeMessageType(message.type) === 'user')
-    ?.index
-
-  const latestUser = typeof lastUserIndex === 'number' ? fullMessages[lastUserIndex] : undefined
-  const historyMessages = typeof lastUserIndex === 'number'
-    ? fullMessages.slice(0, lastUserIndex)
-    : fullMessages
-
-  const history = historyMessages
-    .map((message) => {
-      const role = normalizeMessageType(message.type)
-      if (!role || role === 'tool') return null
-      const content = extractTextContent(message.content)
-      if (!content) return null
-      const id = String(message.id || '').trim()
-      return {
-        ...(id ? { id } : {}),
-        role: role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'system',
-        content,
-      }
-    })
-    .filter((item): item is { id?: string; role: 'user' | 'assistant' | 'system'; content: string } => item != null)
-
-  const query = trimQueryForApi(extractTextContent(latestUser?.content))
-  const images = extractImageInputs(latestUser?.content).map((image) => ({
-    data_url: image.dataUrl,
-    name: image.name,
-  }))
-  const queryMessageId = String(latestUser?.id || '').trim()
-
-  return {
-    query:
-      query ||
-      (images.length > 0
-        ? '请结合这些图片给我一个简短说明。'
-        : params.attachmentIds.length > 0
-          ? '请先基于我上传的附件内容给出结论和建议。'
-          : ''),
-    query_message_id: queryMessageId,
-    source: params.source || 'chat_ui',
-    workspace: params.workspace || 'default',
-    history,
-    images,
-    attachment_ids: params.attachmentIds,
-  }
 }
 
 export function streamMessagesToChatMessages(

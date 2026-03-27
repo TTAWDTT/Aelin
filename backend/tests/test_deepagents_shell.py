@@ -225,7 +225,7 @@ def test_deepagents_chat_stream_basic(monkeypatch):
 
 
 @pytest.mark.integration
-def test_deepagents_chat_stream_accepts_pydantic_history(monkeypatch):
+def test_deepagents_chat_stream_accepts_fetch_transport_payload(monkeypatch):
     client = _create_test_client()
     headers = _auth_headers(client)
 
@@ -263,13 +263,18 @@ def test_deepagents_chat_stream_accepts_pydantic_history(monkeypatch):
         "POST",
         "/api/v1/deepagents/chat/stream",
         json={
-            "query": "你好呀",
-            "use_memory": False,
-            "workspace": "default",
-            "history": [
-                {"role": "user", "content": "上一轮问题"},
-                {"role": "assistant", "content": "上一轮回答"},
-            ],
+            "input": {
+                "messages": [
+                    {"id": "m-user-1", "type": "human", "content": "上一轮问题"},
+                    {"id": "m-ai-1", "type": "ai", "content": "上一轮回答"},
+                    {"id": "m-user-2", "type": "human", "content": "你好呀"},
+                ],
+            },
+            "context": {
+                "workspace": "default",
+                "source": "chat_ui",
+                "attachment_ids": [9, 9, 3],
+            },
         },
         headers=headers,
     ) as resp:
@@ -280,9 +285,9 @@ def test_deepagents_chat_stream_accepts_pydantic_history(monkeypatch):
     assert isinstance(payload, dict)
     messages = payload.get("messages")
     assert isinstance(messages, list)
-    assert messages[0] == {"role": "user", "content": "上一轮问题"}
-    assert messages[1] == {"role": "assistant", "content": "上一轮回答"}
-    assert messages[-1] == {"role": "user", "content": "你好呀"}
+    assert messages[0] == {"id": "m-user-1", "role": "user", "content": "上一轮问题"}
+    assert messages[1] == {"id": "m-ai-1", "role": "assistant", "content": "上一轮回答"}
+    assert messages[-1] == {"id": "m-user-2", "role": "user", "content": "你好呀"}
     assert captured["stream_kwargs"] == {
         "stream_mode": ["messages", "updates", "tasks", "values"],
         "version": "v2",
