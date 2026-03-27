@@ -795,6 +795,7 @@ def build_chat_agent(
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
     memory_text: str,
+    context_schema: type[Any] | None = None,
     skills_root: Path | None = None,
     tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
@@ -875,6 +876,7 @@ def build_chat_agent(
         tools=tools,
         skills=skill_snapshot.skill_sources or None,
         memory=memory_paths or None,
+        context_schema=context_schema,
     )
     return agent, usage, tool_runs, files
 

@@ -35,6 +35,44 @@ def _parse_sse_events(body: str) -> list[tuple[str, dict]]:
     return events
 
 
+def _patch_resolved_runtime(monkeypatch, dchat, captured: dict[str, object] | None = None):
+    def _fake_resolve_deepagents_runtime(
+        db,
+        *,
+        user_id,
+        workspace,
+        raw_attachment_ids=None,
+        cancel_checker=None,
+        session_factory=None,
+        allow_write_tools=None,
+    ):  # noqa: ANN001
+        _ = allow_write_tools
+        if captured is not None:
+            captured["db"] = db
+        attachment_ids = list(raw_attachment_ids or [])
+        return SimpleNamespace(
+            user_id=int(user_id),
+            workspace=str(workspace),
+            attachment_ids=attachment_ids,
+            service=SimpleNamespace(
+                is_configured=lambda: True,
+                config=SimpleNamespace(web_search_proxy_url=""),
+            ),
+            provider="openai",
+            memory_text="",
+            tool_context=SimpleNamespace(
+                user_id=int(user_id),
+                workspace=str(workspace),
+                available_attachment_ids=attachment_ids,
+                cancel_checker=cancel_checker,
+                session_factory=session_factory,
+            ),
+            limiter=SimpleNamespace(),
+        )
+
+    monkeypatch.setattr(dchat, "resolve_deepagents_runtime", _fake_resolve_deepagents_runtime)
+
+
 @pytest.mark.integration
 def test_deepagents_chat_stream_basic(monkeypatch):
     """Ensure /api/v1/deepagents/chat/stream emits near-native v2 events."""
@@ -46,13 +84,7 @@ def test_deepagents_chat_stream_basic(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.tool_runtime import ToolPolicyUsage
 
-    monkeypatch.setattr(
-        dchat,
-        "_resolve_llm_service",
-        lambda db, user: (SimpleNamespace(is_configured=lambda: True, config=SimpleNamespace(web_search_proxy_url="")), "openai"),
-    )
-    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
-    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    _patch_resolved_runtime(monkeypatch, dchat)
     monkeypatch.setattr(
         dchat,
         "_serialize_agent_topology",
@@ -205,13 +237,7 @@ def test_deepagents_chat_stream_accepts_pydantic_history(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.tool_runtime import ToolPolicyUsage
 
-    monkeypatch.setattr(
-        dchat,
-        "_resolve_llm_service",
-        lambda db, user: (SimpleNamespace(is_configured=lambda: True, config=SimpleNamespace(web_search_proxy_url="")), "openai"),
-    )
-    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
-    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    _patch_resolved_runtime(monkeypatch, dchat)
 
     captured: dict[str, object] = {}
 
@@ -352,20 +378,7 @@ def test_deepagents_chat_stream_worker_uses_owned_session(monkeypatch):
     worker_session.close = _fake_close
 
     monkeypatch.setattr(dchat, "create_session", lambda: worker_session)
-    def _fake_resolve_llm_service(db, user):  # noqa: ANN001
-        _ = user
-        captured["db"] = db
-        return (
-            SimpleNamespace(
-                is_configured=lambda: True,
-                config=SimpleNamespace(web_search_proxy_url=""),
-            ),
-            "openai",
-        )
-
-    monkeypatch.setattr(dchat, "_resolve_llm_service", _fake_resolve_llm_service)
-    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
-    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    _patch_resolved_runtime(monkeypatch, dchat, captured)
     monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
 
     class _FakeAgent:
@@ -446,13 +459,7 @@ def test_deepagents_chat_stream_filters_draft_tool_calls_without_tool_run_custom
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.tool_runtime import ToolPolicyUsage
 
-    monkeypatch.setattr(
-        dchat,
-        "_resolve_llm_service",
-        lambda db, user: (SimpleNamespace(is_configured=lambda: True, config=SimpleNamespace(web_search_proxy_url="")), "openai"),
-    )
-    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
-    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    _patch_resolved_runtime(monkeypatch, dchat)
     monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
 
     class _FakeAgent:
@@ -657,19 +664,7 @@ def test_deepagents_chat_stream_emits_idle_timeout_and_done(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.tool_runtime import ToolPolicyUsage
 
-    monkeypatch.setattr(
-        dchat,
-        "_resolve_llm_service",
-        lambda db, user: (
-            SimpleNamespace(
-                is_configured=lambda: True,
-                config=SimpleNamespace(web_search_proxy_url=""),
-            ),
-            "openai",
-        ),
-    )
-    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
-    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    _patch_resolved_runtime(monkeypatch, dchat)
     monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
     monkeypatch.setattr(dchat.settings, "deepagents_stream_idle_timeout_seconds", 0.1, raising=False)
     monkeypatch.setattr(dchat.settings, "deepagents_run_timeout_seconds", 30.0, raising=False)
@@ -714,19 +709,7 @@ def test_deepagents_chat_stream_does_not_idle_timeout_while_tool_is_running(monk
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.tool_runtime import ToolPolicyUsage
 
-    monkeypatch.setattr(
-        dchat,
-        "_resolve_llm_service",
-        lambda db, user: (
-            SimpleNamespace(
-                is_configured=lambda: True,
-                config=SimpleNamespace(web_search_proxy_url=""),
-            ),
-            "openai",
-        ),
-    )
-    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
-    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    _patch_resolved_runtime(monkeypatch, dchat)
     monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
     monkeypatch.setattr(dchat.settings, "deepagents_stream_idle_timeout_seconds", 0.1, raising=False)
     monkeypatch.setattr(dchat.settings, "deepagents_run_timeout_seconds", 30.0, raising=False)
@@ -812,19 +795,7 @@ def test_deepagents_chat_stream_client_disconnect_cancels_worker_and_closes_sess
     worker_session.close = _fake_close
 
     monkeypatch.setattr(dchat, "create_session", lambda: worker_session)
-    monkeypatch.setattr(
-        dchat,
-        "_resolve_llm_service",
-        lambda db, user: (
-            SimpleNamespace(
-                is_configured=lambda: True,
-                config=SimpleNamespace(web_search_proxy_url=""),
-            ),
-            "openai",
-        ),
-    )
-    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
-    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    _patch_resolved_runtime(monkeypatch, dchat, captured)
     monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
 
     class _FakeAgent:

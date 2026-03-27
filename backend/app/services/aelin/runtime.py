@@ -44,12 +44,16 @@ def config_out(db: Session, user_id: int) -> AgentConfigOut:
 
 
 def resolve_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
-    config = config_out(db, user.id)
+    return resolve_llm_service_for_user_id(db, int(user.id))
+
+
+def resolve_llm_service_for_user_id(db: Session, user_id: int) -> tuple[LLMService, str]:
+    config = config_out(db, int(user_id))
     provider = (config.provider or "rule_based").lower()
     if provider in {"rule_based", "rule-based", "builtin", "local"}:
         return LLMService(config, None), "rule_based"
 
-    stored = crud.get_agent_config(db, user_id=user.id)
+    stored = crud.get_agent_config(db, user_id=int(user_id))
     api_key = decrypt_optional(stored.api_key if stored else None) if stored else None
     if not api_key or not (config.base_url or "").strip():
         return LLMService(config, None), "openai"

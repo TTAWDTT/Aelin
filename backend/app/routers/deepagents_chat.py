@@ -14,16 +14,7 @@ from app.db import create_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import ChatRequest
-from app.services.aelin.runtime import (
-    normalize_workspace as _normalize_workspace,
-    resolve_llm_service as _resolve_llm_service,
-)
 from app.services.aelin.streaming import _now_ms, _sse_event
-from app.services.aelin.utils import normalize_positive_ints
-from app.services.aelin.core_support import (
-    _get_agents_memory_text_for_chat,
-    _scoped_web_search_service,
-)
 from app.services.deepagents.deepagents_graph import build_chat_agent
 from app.services.deepagents.input_mapping import (
     build_invoke_payload,
@@ -32,9 +23,8 @@ from app.services.deepagents.input_mapping import (
 )
 from app.services.deepagents.output_utils import message_to_text
 from app.services.deepagents.cancel_utils import is_cancelled
-from app.services.deepagents.tool_runtime import (
-    ToolCallLimiter,
-    build_tool_runtime_context,
+from app.services.deepagents.runtime_resolver import (
+    resolve_deepagents_runtime,
 )
 from app.settings import settings
 
@@ -424,7 +414,15 @@ def deepagents_chat_stream(
             worker_db = create_session()
             try:
                 source = str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32]
-                workspace = _normalize_workspace(payload.workspace)
+                resolved = resolve_deepagents_runtime(
+                    worker_db,
+                    user_id=int(current_user.id),
+                    workspace=str(getattr(payload, "workspace", "default") or "default"),
+                    raw_attachment_ids=getattr(payload, "attachment_ids", []),
+                    cancel_checker=lambda: is_cancelled(cancel_token),
+                    session_factory=create_session,
+                )
+                workspace = resolved.workspace
                 query_preview = " ".join(str(payload.query or "").split())[:120]
 
                 _LOG.info(
@@ -436,60 +434,18 @@ def deepagents_chat_stream(
                     query_preview,
                 )
 
-                # 为 DeepAgents 构造 LLM 服务与工具运行时上下文。
-                service, provider = _resolve_llm_service(worker_db, current_user)
-                if provider == "rule_based" or not service.is_configured():
+                if resolved.provider == "rule_based" or not resolved.service.is_configured():
                     _push(
                         "error",
                         {
                             "message": "llm_not_configured",
-                            "provider": provider,
+                            "provider": resolved.provider,
                         },
                     )
                     return
 
-                agents_memory_text = _get_agents_memory_text_for_chat(
-                    worker_db,
-                    current_user.id,
-                    workspace=workspace,
-                )
                 history_turns = normalize_history_turns(getattr(payload, "history", []))
                 images = normalize_image_inputs(getattr(payload, "images", []))
-
-                attachment_ids = normalize_positive_ints(
-                    getattr(payload, "attachment_ids", []),
-                    cap=20,
-                )
-
-                tool_context = build_tool_runtime_context(
-                    user_id=current_user.id,
-                    workspace=workspace,
-                    web_search_service=_scoped_web_search_service(
-                        getattr(service.config, "web_search_proxy_url", ""),
-                    ),
-                    available_attachment_ids=attachment_ids,
-                    cancel_checker=lambda: is_cancelled(cancel_token),
-                    session_factory=create_session,
-                )
-
-                allow_write_tools = bool(
-                    getattr(settings, "deepagents_allow_write_tools", False)
-                )
-                limiter = ToolCallLimiter(
-                    max_tool_calls=int(
-                        getattr(settings, "deepagents_max_tool_calls", 512) or 512
-                    ),
-                    max_write_calls=int(
-                        getattr(settings, "deepagents_max_write_calls", 128) or 128
-                    ),
-                    allow_write_tools=allow_write_tools,
-                    consecutive_failures_limit=int(
-                        getattr(settings, "deepagents_consecutive_failures_limit", 3) or 3
-                    ),
-                    consecutive_no_progress_limit=int(
-                        getattr(settings, "deepagents_consecutive_no_progress_limit", 2) or 2
-                    ),
-                )
 
                 def _tool_event_cb(tool_event: dict[str, Any]) -> None:
                     tool_key = str(tool_event.get("key") or "").strip()
@@ -502,11 +458,11 @@ def deepagents_chat_stream(
                                 active_tool_keys.discard(tool_key)
 
                 agent, usage, tool_runs, files_mapping = build_chat_agent(
-                    service=service,
-                    provider=provider,
-                    context=tool_context,
-                    limiter=limiter,
-                    memory_text=agents_memory_text,
+                    service=resolved.service,
+                    provider=resolved.provider,
+                    context=resolved.tool_context,
+                    limiter=resolved.limiter,
+                    memory_text=resolved.memory_text,
                     tool_event_cb=_tool_event_cb,
                     cancel_token=cancel_token,
                 )
@@ -515,7 +471,7 @@ def deepagents_chat_stream(
                         "error",
                         {
                             "message": "llm_not_configured",
-                            "provider": provider,
+                            "provider": resolved.provider,
                         },
                     )
                     return
