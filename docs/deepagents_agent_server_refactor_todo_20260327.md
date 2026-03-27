@@ -21,7 +21,7 @@
 
 ## 3. remote-control / device / attachments / skills 保持完整
 
-- [ ] 3.1 收敛 `remote-control` 核心业务层，保证 HTTP API 与 DeepAgents tool 共用同一实现
+- [x] 3.1 收敛 `remote-control` 核心业务层，保证 HTTP API 与 DeepAgents tool 共用同一实现
 - [x] 3.2 保持 `remote-control` 独立 API 可用
 - [x] 3.3 保持 device / `screen_get` 工具链可用
 - [x] 3.4 保持 attachment 上传接口可用

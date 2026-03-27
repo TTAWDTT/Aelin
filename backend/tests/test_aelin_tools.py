@@ -167,8 +167,8 @@ def test_screen_get_tool_success(monkeypatch):
     context = _tool_context(fake_web)
 
     monkeypatch.setattr(
-        tools_device,
-        "device_capture_screen",
+        tools_device.device_actions,
+        "capture_device_screen",
         lambda **kwargs: {
             "data_url": "data:image/jpeg;base64,QUJDRA==",
             "name": "screen-demo.jpg",
@@ -192,7 +192,7 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
     context = _tool_context(fake_web)
 
     monkeypatch.setattr(
-        tools_device,
+        tools_device.device_actions,
         "build_device_status_contract",
         lambda: {
             "platform": "windows",
@@ -203,12 +203,12 @@ def test_device_tool_supports_supported_device_actions(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        tools_device,
+        tools_device.device_actions,
         "open_desktop_external_url",
         lambda url: {"url": url, "opened": True, "detail": "ok"},
     )
     monkeypatch.setattr(
-        tools_device,
+        tools_device.device_actions,
         "activate_desktop_module",
         lambda route: {"route": route, "opened": True, "detail": "ok"},
     )
@@ -234,7 +234,7 @@ def test_device_open_url_rejects_non_http_schemes(monkeypatch):
     opened_urls: list[str] = []
 
     monkeypatch.setattr(
-        tools_device,
+        tools_device.device_actions,
         "open_desktop_external_url",
         lambda url: opened_urls.append(url) or {"url": url, "opened": True, "detail": "ok"},
     )
