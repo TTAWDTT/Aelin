@@ -82,14 +82,22 @@ class _FakeAttachmentService:
         }
 
 
+class _FakeSession:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _tool_context(fake_web: _FakeWebSearch, *, attachment_service=None, available_attachment_ids=None):
     return build_tool_runtime_context(
-        db=None,  # type: ignore[arg-type]
         user_id=1,
         workspace="default",
         web_search_service=fake_web,  # type: ignore[arg-type]
         attachment_service=attachment_service,  # type: ignore[arg-type]
         available_attachment_ids=available_attachment_ids,
+        session_factory=_FakeSession,
     )
 
 
