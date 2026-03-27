@@ -2618,10 +2618,32 @@ function probePythonRunner(candidate, cwd, env) {
       const reason = String(probe.stderr || probe.stdout || "").trim();
       return { ok: false, reason: reason || `exit code ${probe.status}` };
     }
-    return { ok: true };
+    return {
+      ok: true,
+      pythonPath: String(probe.stdout || "").trim(),
+    };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function resolveLangGraphExecutable(pythonPath) {
+  const normalized = String(pythonPath || "").trim();
+  if (!normalized) return "";
+  const pythonDir = path.dirname(normalized);
+  const candidates = process.platform === "win32"
+    ? [
+        path.join(pythonDir, "Scripts", "langgraph.exe"),
+        path.join(pythonDir, "Scripts", "langgraph"),
+      ]
+    : [
+        path.join(pythonDir, "langgraph"),
+        path.join(pythonDir, "bin", "langgraph"),
+      ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "";
 }
 
 function stripAnsiCodes(text) {
@@ -2724,21 +2746,43 @@ function startBackend() {
       continue;
     }
     safeConsoleLog(`[backend] Python runner selected: ${candidate.label}`);
+    const langgraphExecutable = resolveLangGraphExecutable(probe.pythonPath);
+    const launch = langgraphExecutable
+      ? {
+          command: langgraphExecutable,
+          args: [
+            "dev",
+            "--config",
+            "langgraph.json",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            String(backendPort),
+            "--no-browser",
+          ],
+          label: langgraphExecutable,
+        }
+      : {
+          command: candidate.command,
+          args: [
+            ...candidate.args,
+            "-m",
+            "langgraph_cli",
+            "dev",
+            "--config",
+            "langgraph.json",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            String(backendPort),
+            "--no-browser",
+          ],
+          label: `${candidate.label} -m langgraph_cli`,
+        };
+    safeConsoleLog(`[backend] LangGraph launcher selected: ${launch.label}`);
     backendProc = spawn(
-      candidate.command,
-      [
-        ...candidate.args,
-        "-m",
-        "langgraph",
-        "dev",
-        "--config",
-        "langgraph.json",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(backendPort),
-        "--no-browser",
-      ],
+      launch.command,
+      launch.args,
       {
         cwd: root,
         env,
