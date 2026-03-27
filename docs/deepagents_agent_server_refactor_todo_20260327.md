@@ -320,7 +320,7 @@
 
 ## 八、终局文档
 
-- [ ] 修改 [docs/deepagents_arch.md](/D:/Github/Aelin/docs/deepagents_arch.md)
+- [x] 修改 [docs/deepagents_arch.md](/D:/Github/Aelin/docs/deepagents_arch.md)
   - 明确写清楚终局架构：
     - 聊天 = Agent Server
     - FastAPI = 业务 API
@@ -328,7 +328,7 @@
     - 运行态 = `useStream`
     - 不再存在自定义 chat transport
 
-- [ ] 更新 README 系列文档
+- [x] 更新 README 系列文档
   - [README.md](/D:/Github/Aelin/README.md)
   - [README.en.md](/D:/Github/Aelin/README.en.md)
   - [README.zh-CN.md](/D:/Github/Aelin/README.zh-CN.md)

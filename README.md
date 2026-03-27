@@ -24,7 +24,7 @@
 - **File-Based Memory** - Long-term memory is mounted from `/memory/AGENTS.md`.
 - **Skills Runtime** - Built-in skills live in `backend/deepagents_skills/`, with optional external skill mounting.
 - **Desktop Runtime** - Electron shell for local usage and device integration.
-- **Backend Architecture** - The backend now runs as an official LangGraph Agent Server (`/assistants`, `/threads`, `/runs`) with Aelin product routes mounted alongside it (`/api/v1/aelin/*`, `/api/v1/agent/*`). For extensions and custom agents, prefer editing the DeepAgents graph/skills and see both `docs/deepagents_arch.md` and the official DeepAgents documentation.
+- **Backend Architecture** - The backend now runs as an official LangGraph Agent Server (`/assistants`, `/threads`, `/runs`) with product routes mounted alongside it (`/api/v1/agent/*`, `/api/v1/attachments/*`, `/api/v1/aelin/device/*`, `/api/v1/aelin/remote-control/*`). For extensions and custom agents, prefer editing the DeepAgents graph/skills and see both `docs/deepagents_arch.md` and the official DeepAgents documentation.
 
 ## Repository Layout
 
@@ -92,6 +92,14 @@ npm run dist
   - `AELIN_GOOGLE_WORKSPACE_CLI_BIN`
 
 Do not commit API keys, OAuth secrets, or local database artifacts.
+
+## Product APIs
+
+- Agent config and connectivity: `/api/v1/agent/*`
+- Attachment upload: `/api/v1/attachments/upload`
+- File-memory preview: `/api/v1/attachments/file-memory/content`
+- Device helpers: `/api/v1/aelin/device/*`
+- Remote control: `/api/v1/aelin/remote-control/*`
 
 ## Documentation
 

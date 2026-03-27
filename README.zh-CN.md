@@ -7,7 +7,7 @@ Aelin 现在是一个以 DeepAgents 为唯一 Agent 内核的 AI 工作台，提
 - Aelin 是产品壳，DeepAgents 是唯一 agent loop。
 - 运行时强调“真实工具结果优先”，避免壳层再发明一套语义状态机。
 - 支持 Web 与 Desktop 两种运行方式。
-- 后端 = 官方 LangGraph Agent Server（`/assistants`、`/threads`、`/runs`）+ 挂载其上的 Aelin 产品 API（`/api/v1/aelin/*`、`/api/v1/agent/*`）；二次开发时建议优先参考 DeepAgents 官方文档与本仓库的 `docs/deepagents_arch.md`，在 DeepAgents 的 graph/skills 层扩展能力。
+- 后端 = 官方 LangGraph Agent Server（`/assistants`、`/threads`、`/runs`）+ 挂载其上的产品 API（`/api/v1/agent/*`、`/api/v1/attachments/*`、`/api/v1/aelin/device/*`、`/api/v1/aelin/remote-control/*`）；二次开发时建议优先参考 DeepAgents 官方文档与本仓库的 `docs/deepagents_arch.md`，在 DeepAgents 的 graph/skills 层扩展能力。
 
 ## 2. 核心能力
 
@@ -77,13 +77,21 @@ npm run dist
 
 不要提交 API Key、OAuth Secret、数据库文件等敏感内容。
 
-## 7. 贡献规范
+## 7. 产品 API
+
+- Agent 配置与连通性测试：`/api/v1/agent/*`
+- 附件上传：`/api/v1/attachments/upload`
+- 文件记忆查看：`/api/v1/attachments/file-memory/content`
+- 设备辅助接口：`/api/v1/aelin/device/*`
+- 远程控制接口：`/api/v1/aelin/remote-control/*`
+
+## 8. 贡献规范
 
 - 建议采用 Conventional Commits：`feat(scope): ...`、`fix(scope): ...`、`docs: ...`。
 - 提交 PR 前至少执行 `pytest -q`，并根据改动运行前端/桌面构建验证。
 - 协作规范见 [AGENTS.md](AGENTS.md)。
 
-## 8. 参考文档
+## 9. 参考文档
 
 - [README.en.md](README.en.md)
 - [docs/INDEX.md](docs/INDEX.md)

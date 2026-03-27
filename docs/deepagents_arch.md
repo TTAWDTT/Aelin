@@ -12,7 +12,7 @@ Aelin 现在的主链是：
   - 认证与用户隔离
   - provider / workspace / attachment 上下文解析
   - `/api/v1/agent/*` 配置接口
-  - `/api/v1/aelin/*` 产品接口（attachments、device、remote control、context）
+  - 业务产品接口（`/api/v1/attachments/*`、`/api/v1/aelin/device/*`、`/api/v1/aelin/remote-control/*`）
 
 也就是说，主链已经从：
 
@@ -120,12 +120,12 @@ DeepAgents 记忆现在只认：
 - 旧上下文 bundle 参与 agent 主链
 - openviking / plane / proactive 时代的额外上下文拼装
 
-### 4.3 `/aelin/context` 的定位
+### 4.3 记忆投影的边界
 
-`GET /api/v1/aelin/context` 仍然保留，但它现在只是一个 UI 视图接口：
+聊天主链不再存在独立的 `/aelin/context` 壳接口。
 
-- 用于把 AGENTS.md 投影成 `summary / notes / todos / memory_layers`
-- 不再反向参与 DeepAgents 聊天主链
+- AGENTS.md 直接作为 DeepAgents 记忆正文挂载
+- 如果未来需要单独的 UI 记忆视图，也只能作为只读产品 API，不得反向参与聊天主链
 
 ---
 
@@ -172,11 +172,9 @@ skills 根目录：
 
 - `/api/v1/agent/*`
   - provider / base_url / model / key 配置
-- `/api/v1/aelin/context`
-  - AGENTS.md 的 UI 投影视图
-- `/api/v1/aelin/attachments/upload`
+- `/api/v1/attachments/upload`
   - 附件导入
-- `/api/v1/aelin/memory/file-memory/content`
+- `/api/v1/attachments/file-memory/content`
   - 文件记忆查看
 - `/api/v1/aelin/device/*`
   - 屏幕抓取与设备能力
@@ -185,7 +183,7 @@ skills 根目录：
 
 另外还保留一个同步包装层：
 
-- [core.py](D:/Github/Aelin/backend/app/services/aelin/core.py)
+- [remote_control_chat_adapter.py](D:/Github/Aelin/backend/app/services/device/remote_control_chat_adapter.py)
 
 它的职责是：
 
@@ -208,6 +206,7 @@ skills 根目录：
 - 前端 `tool_trace` 依赖
 - 前端 `memory_summary` 依赖
 - 旧 `/api/v1/aelin/chat` 前端主调用路径
+- `/api/v1/aelin/context`
 
 ---
 
