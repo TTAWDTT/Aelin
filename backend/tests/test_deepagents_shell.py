@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from types import SimpleNamespace
 from pathlib import Path
@@ -584,6 +585,69 @@ def test_invoke_tool_timeout_marks_write_unknown_and_uses_bounded_executor(monke
         tr._reset_tool_executor_for_tests(max_workers=4)
 
 
+def test_invoke_tool_marks_running_tool_as_cancelled(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents import tool_runtime as tr
+
+    tr._reset_tool_executor_for_tests(max_workers=1)
+    monkeypatch.setattr(dag.settings, "deepagents_tool_timeout_seconds", 5.0, raising=False)
+
+    cancel_token = SimpleNamespace(cancelled=False)
+    limiter = tr.ToolCallLimiter(
+        max_tool_calls=10,
+        max_write_calls=10,
+        allow_write_tools=True,
+        consecutive_failures_limit=3,
+        consecutive_no_progress_limit=2,
+    )
+    usage = tr.ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+    tool_events: list[dict[str, object]] = []
+    handler_started = threading.Event()
+
+    def _slow_read(context, _args):  # noqa: ANN001
+        handler_started.set()
+        while not context.cancel_checker():
+            time.sleep(0.02)
+        time.sleep(1.0)
+        return {"ok": True, "content": "late result"}
+
+    context = SimpleNamespace(cancel_checker=lambda: bool(cancel_token.cancelled))
+    result_holder: dict[str, object] = {}
+
+    def _run_tool() -> None:
+        result_holder["result"] = dag._invoke_tool(
+            name="web_search",
+            args={"query": "github trending today"},
+            handler=_slow_read,
+            context=context,
+            limiter=limiter,
+            usage=usage,
+            tool_runs=tool_runs,
+            tool_event_cb=tool_events.append,
+            cancel_token=cancel_token,
+        )
+
+    worker = threading.Thread(target=_run_tool, daemon=True)
+    worker.start()
+    assert handler_started.wait(timeout=1.0)
+    cancel_token.cancelled = True
+    worker.join(timeout=2.0)
+
+    assert worker.is_alive() is False
+    result = result_holder["result"]
+    assert isinstance(result, dict)
+    assert result["ok"] is False
+    assert result["stop_retry"] is True
+    assert "cancelled while tool was running" in str(result["error"])
+    assert tool_runs[-1]["status"] == "cancelled"
+    assert tool_events[0]["state"] == "running"
+    assert tool_events[-1]["state"] == "cancelled"
+
+    time.sleep(0.2)
+    tr._reset_tool_executor_for_tests(max_workers=4)
+
+
 @pytest.mark.integration
 def test_deepagents_chat_stream_emits_idle_timeout_and_done(monkeypatch):
     client = _create_test_client()
@@ -727,3 +791,98 @@ def test_deepagents_chat_stream_does_not_idle_timeout_while_tool_is_running(monk
     assert "done" in names
     values_payload = next(payload for name, payload in events if name == "values|root")
     assert values_payload["messages"][0]["content"] == "ok"
+
+
+@pytest.mark.integration
+def test_deepagents_chat_stream_client_disconnect_cancels_worker_and_closes_session(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    import app.routers.deepagents_chat as dchat
+    from app.services.deepagents.tool_runtime import ToolPolicyUsage
+
+    cancel_seen = threading.Event()
+    worker_finished = threading.Event()
+    worker_session = SimpleNamespace(closed=False)
+    captured: dict[str, object] = {}
+
+    def _fake_close():
+        worker_session.closed = True
+
+    worker_session.close = _fake_close
+
+    monkeypatch.setattr(dchat, "create_session", lambda: worker_session)
+    monkeypatch.setattr(
+        dchat,
+        "_resolve_llm_service",
+        lambda db, user: (
+            SimpleNamespace(
+                is_configured=lambda: True,
+                config=SimpleNamespace(web_search_proxy_url=""),
+            ),
+            "openai",
+        ),
+    )
+    monkeypatch.setattr(dchat, "_get_agents_memory_text_for_chat", lambda db, user_id, workspace: "")
+    monkeypatch.setattr(dchat, "_scoped_web_search_service", lambda proxy_url: None)
+    monkeypatch.setattr(dchat, "_serialize_agent_topology", lambda agent: None)
+
+    class _FakeAgent:
+        def stream(self, payload, **kwargs):  # noqa: ANN001
+            _ = payload, kwargs
+            yield {
+                "type": "messages",
+                "ns": ["root", "model"],
+                "data": (
+                    SimpleNamespace(id="msg-1", type="ai", content="hello"),
+                    {"langgraph_node": "model"},
+                ),
+            }
+            while not bool(getattr(captured["cancel_token"], "cancelled", False)):
+                time.sleep(0.02)
+            cancel_seen.set()
+            captured["tool_event_cb"](
+                {
+                    "key": "web_search:1",
+                    "name": "web_search",
+                    "args": {"query": "github trending today"},
+                    "state": "cancelled",
+                    "result": {"ok": False, "error": "cancelled"},
+                    "error": "cancelled",
+                    "latency_ms": 25,
+                }
+            )
+            worker_finished.set()
+
+    def _fake_build_chat_agent(**kwargs):  # noqa: ANN001
+        captured["cancel_token"] = kwargs["cancel_token"]
+        captured["tool_event_cb"] = kwargs["tool_event_cb"]
+        kwargs["tool_event_cb"](
+            {
+                "key": "web_search:1",
+                "name": "web_search",
+                "args": {"query": "github trending today"},
+                "state": "running",
+                "result": {},
+                "error": "",
+                "latency_ms": 0,
+            }
+        )
+        return _FakeAgent(), ToolPolicyUsage(), [], {}
+
+    monkeypatch.setattr(dchat, "build_chat_agent", _fake_build_chat_agent)
+
+    with client.stream(
+        "POST",
+        "/api/v1/deepagents/chat/stream",
+        json={"query": "帮我看看今天的GitHub trending", "use_memory": False, "workspace": "default"},
+        headers=headers,
+    ) as resp:
+        assert resp.status_code == 200, resp.text
+        chunks = resp.iter_text()
+        first_chunk = next(chunks)
+        assert "event:" in first_chunk
+
+    assert cancel_seen.wait(timeout=2.0)
+    assert worker_finished.wait(timeout=2.0)
+    assert worker_session.closed is True
