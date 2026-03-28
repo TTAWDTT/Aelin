@@ -30,6 +30,8 @@ export function ChatView() {
   const isStreaming = stream.isLoading
   const execution = getExecutionRuntime(stream, assistantGraph)
   const messageToolCalls = getMessageToolCallMap(stream)
+  const lastMessage = messages.at(-1)
+  const hasAssistantReplyStarted = lastMessage?.role === 'assistant'
   const values =
     stream.values && typeof stream.values === 'object' && !Array.isArray(stream.values)
       ? stream.values
@@ -99,6 +101,7 @@ export function ChatView() {
           <ChatStatusBar
             isStreaming={isStreaming}
             statusText={statusText}
+            hasAssistantReplyStarted={hasAssistantReplyStarted}
             compact={compact}
             execution={execution}
             onOpenExecution={() => setOpen(true)}

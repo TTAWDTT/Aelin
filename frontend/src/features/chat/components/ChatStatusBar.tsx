@@ -9,6 +9,7 @@ import { useExecutionPaneStore } from '../stores/executionPaneStore'
 interface ChatStatusBarProps {
   isStreaming: boolean
   statusText: string
+  hasAssistantReplyStarted?: boolean
   compact?: boolean
   execution: ExecutionRuntime
   onOpenExecution?: () => void
@@ -17,6 +18,7 @@ interface ChatStatusBarProps {
 export function ChatStatusBar({
   isStreaming,
   statusText,
+  hasAssistantReplyStarted = false,
   compact = false,
   execution,
   onOpenExecution,
@@ -39,7 +41,6 @@ export function ChatStatusBar({
 
   const toolNames = Array.from(new Set(tools.map((call) => call.name).filter(Boolean)))
   const joinedTools = toolNames.slice(0, 4).join(' · ')
-  const fallback = t('timeline.generating')
   const normalizedStatusText = statusText.trim()
   const isGenericThinking = normalizedStatusText === t('status.thinking')
 
@@ -59,9 +60,15 @@ export function ChatStatusBar({
       count: tools.length || 1,
       tools: joinedTools,
     })
+  } else if (!text && !isStreaming && hasRuns) {
+    text = t('status.execution.available')
   }
 
-  const displayText = text || fallback
+  const displayText =
+    text
+    || (isStreaming && !hasAssistantReplyStarted ? t('timeline.generating') : '')
+
+  if (!displayText) return null
 
   return (
     <div
@@ -69,7 +76,11 @@ export function ChatStatusBar({
         compact ? 'px-0.5 py-1.5 text-[11px]' : 'px-1 py-2 text-xs'
       }`}
     >
-      <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-text)]" />
+      <div
+        className={`h-1.5 w-1.5 rounded-full ${
+          isStreaming ? 'animate-pulse bg-[var(--color-text)]' : 'bg-[var(--color-text-muted)]'
+        }`}
+      />
       <span className="min-w-0 flex-1 truncate" title={displayText}>
         {displayText}
       </span>

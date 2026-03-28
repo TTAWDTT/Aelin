@@ -27,8 +27,11 @@ export function ChatTimeline({
   onQuickPrompt,
 }: ChatTimelineProps) {
   const isEmpty = messages.length === 0
-  const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
   const lastMessage = messages.at(-1)
+  const activeAssistantId =
+    isStreaming && lastMessage?.role === 'assistant'
+      ? lastMessage.id
+      : ''
   const showPendingAssistant = isStreaming && lastMessage?.role !== 'assistant'
   const { t } = useChatI18n()
 
@@ -53,7 +56,7 @@ export function ChatTimeline({
                 <MessageBubble
                   message={message}
                   toolCalls={toolCallsByMessage?.get(message.id) ?? []}
-                  isThinking={isStreaming && message.id === lastAssistantId}
+                  isThinking={Boolean(activeAssistantId) && message.id === activeAssistantId}
                   thinkingText={statusText}
                   compact={compact}
                   viewportWidth={viewportWidth}
