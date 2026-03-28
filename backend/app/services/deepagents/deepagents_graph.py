@@ -177,6 +177,7 @@ def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
             api_key=api_key,
             base_url=base_url,
             http_client=service.create_http_client(),
+            http_async_client=service.create_async_http_client(),
             timeout=getattr(service, "timeout_seconds", 90.0),
             max_retries=1,
         )

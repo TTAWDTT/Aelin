@@ -70,8 +70,27 @@ class LLMService:
             timeout=timeout,
         )
 
+    @staticmethod
+    def build_async_http_client(*, timeout_seconds: float | None = None) -> httpx.AsyncClient:
+        timeout = timeout_seconds if timeout_seconds is not None else max(
+            5.0,
+            float(getattr(settings, "llm_request_timeout_seconds", 90.0)),
+        )
+        return httpx.AsyncClient(
+            verify=LLMService.resolve_verify_ssl(),
+            follow_redirects=True,
+            timeout=timeout,
+        )
+
     def create_http_client(self) -> httpx.Client:
         return httpx.Client(
+            verify=self.resolve_verify_ssl(self.config),
+            follow_redirects=True,
+            timeout=self.timeout_seconds,
+        )
+
+    def create_async_http_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
             verify=self.resolve_verify_ssl(self.config),
             follow_redirects=True,
             timeout=self.timeout_seconds,
