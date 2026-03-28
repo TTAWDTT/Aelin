@@ -101,7 +101,7 @@ export function buildHumanStreamMessage(
   return {
     id: messageId,
     type: 'human',
-    content: blocks.length > 1 ? blocks : trimmed,
+    content: blocks.length > 0 ? blocks : trimmed,
   }
 }
 

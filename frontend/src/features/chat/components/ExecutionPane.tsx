@@ -51,13 +51,13 @@ export function ExecutionPane({
       aria-label={label}
       className={cn(
         'flex shrink-0 flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] transition-[width,height] duration-200',
-        compact ? 'mt-1 w-full border-t border-[var(--color-border)]' : 'hidden min-w-0 max-w-md lg:flex',
+        compact ? 'mt-1 w-full border-t border-[var(--color-border)]' : 'hidden min-w-0 max-w-[560px] lg:flex',
         compact
           ? open
-            ? 'h-72'
+            ? 'h-80'
             : 'h-7'
           : open
-            ? 'w-[380px]'
+            ? 'w-[min(46vw,540px)]'
             : 'w-0',
       )}
     >
@@ -138,10 +138,30 @@ function GraphTab({
 
   return (
     <div id="execution-pane-graph" className="space-y-2.5 text-[11px]">
-      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
-        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-          <span className="font-medium">Static graph</span>
-          <span>{graph.nodes.length} nodes · {graph.edges.length} edges</span>
+      <section className="overflow-hidden rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+              Runtime graph
+            </div>
+            <div className="mt-1 text-[15px] font-semibold text-[var(--color-text)]">
+              Execution topology
+            </div>
+            <p className="mt-1 max-w-[44ch] text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              A live execution map that highlights the active path instead of showing the graph as a static wireframe.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1">
+              {graph.nodes.length} nodes
+            </span>
+            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1">
+              {graph.edges.length} edges
+            </span>
+            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1">
+              {isStreaming ? 'live' : 'settled'}
+            </span>
+          </div>
         </div>
         <GraphBoard nodes={graph.nodes} edges={graph.edges} isStreaming={isStreaming} />
         {!hasOfficialGraph && (
@@ -149,9 +169,21 @@ function GraphTab({
             Runtime did not publish a graph.
           </p>
         )}
-        <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-2">
+      </section>
+
+      <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)] p-3">
+        <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+          <div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Live paths</div>
+            <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Branch activity</div>
+          </div>
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
+            {lanes.length}
+          </span>
+        </div>
+        <div className="mt-3 space-y-2">
           <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-            Live paths
+            Active branches
           </div>
           {lanes.length > 0 ? (
             <div className="grid gap-2">
@@ -168,10 +200,15 @@ function GraphTab({
       </section>
 
       {subagents.length > 0 && (
-        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)] p-3">
           <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-            <span className="font-medium">Subagents</span>
-            <span>{locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}</span>
+            <div>
+              <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Subagents</div>
+              <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Delegation stream</div>
+            </div>
+            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
+              {locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}
+            </span>
           </div>
           <div className="mt-2 space-y-2">
             {subagents.map((subagent) => (

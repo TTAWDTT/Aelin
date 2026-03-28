@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildHumanStreamMessage,
   buildSessionHistoryMessages,
   formatBytes,
   trimQueryForApi,
@@ -26,6 +27,21 @@ describe('chatStreamHelpers', () => {
     expect(rows[0]?.id).toBe('user-1')
     expect(rows[0]?.type).toBe('human')
     expect(Array.isArray(rows[0]?.content)).toBe(true)
+  })
+
+  it('keeps image-only human messages as multimodal blocks', () => {
+    const row = buildHumanStreamMessage('', [
+      { dataUrl: 'data:image/png;base64,abc', name: 'demo.png' },
+    ], 'user-image-only')
+
+    expect(row.id).toBe('user-image-only')
+    expect(row.type).toBe('human')
+    expect(row.content).toEqual([
+      {
+        type: 'image_url',
+        image_url: { url: 'data:image/png;base64,abc' },
+      },
+    ])
   })
 
   it('trims long prompts before submit payload assembly', () => {

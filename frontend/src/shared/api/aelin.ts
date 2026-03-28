@@ -1,9 +1,6 @@
 import { fetchFormData, fetchJson } from './client'
 import type {
   AttachmentUploadResponse,
-  BrowserConfirmRequest,
-  BrowserConfirmResponse,
-  BrowserLoginCheckpointListResponse,
   DeviceCapabilitiesResponse,
   DeviceScreenCaptureRequest,
   DeviceScreenCaptureResponse,
@@ -19,14 +16,6 @@ export const aelinApi = {
     }
     return fetchFormData<AttachmentUploadResponse>('/api/v1/attachments/upload', fd)
   },
-
-  confirmBrowserAction: (body: BrowserConfirmRequest) =>
-    fetchJson<BrowserConfirmResponse>('/api/v1/aelin/agent/browser/confirm', { method: 'POST', body: JSON.stringify(body) }),
-
-  browserLoginCheckpoints: (workspace = 'default', status = 'awaiting_login,continue_failed', limit = 20) =>
-    fetchJson<BrowserLoginCheckpointListResponse>(
-      `/api/v1/aelin/agent/browser/login-checkpoints?workspace=${encodeURIComponent(workspace)}&status=${encodeURIComponent(status)}&limit=${limit}`,
-    ),
 
   // Device
   deviceCapabilities: () =>

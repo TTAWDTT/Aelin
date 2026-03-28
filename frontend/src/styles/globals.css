@@ -50,6 +50,20 @@
   --color-primary-soft: #222222;
   --color-primary-soft-hover: #000000;
   --color-primary-soft-text: #ffffff;
+  --graph-surface-outer: #f6f8fb;
+  --graph-surface-inner: linear-gradient(180deg, #ffffff 0%, #f4f7fb 100%);
+  --graph-grid: rgba(50, 72, 108, 0.08);
+  --graph-orbit: rgba(47, 88, 170, 0.08);
+  --graph-shadow: rgba(19, 29, 47, 0.12);
+  --graph-edge-idle: rgba(78, 98, 133, 0.22);
+  --graph-edge-active: #2f6feb;
+  --graph-node-neutral: #53627d;
+  --graph-node-start: #2f7d66;
+  --graph-node-end: #8a5cf6;
+  --graph-node-tool: #cb7a25;
+  --graph-node-model: #2176ae;
+  --graph-node-middleware: #b1487a;
+  --graph-node-patch: #7b57c9;
   --radius-sm: 10px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -79,6 +93,20 @@
   --color-primary-soft: #f5f5f5;
   --color-primary-soft-hover: #ffffff;
   --color-primary-soft-text: #111111;
+  --graph-surface-outer: #161a21;
+  --graph-surface-inner: linear-gradient(180deg, #202631 0%, #171c25 100%);
+  --graph-grid: rgba(255, 255, 255, 0.05);
+  --graph-orbit: rgba(86, 134, 255, 0.12);
+  --graph-shadow: rgba(0, 0, 0, 0.42);
+  --graph-edge-idle: rgba(255, 255, 255, 0.2);
+  --graph-edge-active: #7cb4ff;
+  --graph-node-neutral: #93a8cf;
+  --graph-node-start: #69d7b4;
+  --graph-node-end: #bf9fff;
+  --graph-node-tool: #f1b44a;
+  --graph-node-model: #67d4ff;
+  --graph-node-middleware: #ff8dc3;
+  --graph-node-patch: #d08cff;
 }
 
 html, body, #root {
@@ -135,6 +163,33 @@ code, pre, .font-mono {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+@keyframes aelin-graph-pan {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(28px, 28px, 0); }
+}
+
+@keyframes aelin-graph-flow {
+  0% { stroke-dashoffset: 22; }
+  100% { stroke-dashoffset: 0; }
+}
+
+@keyframes aelin-graph-node-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.015); }
+}
+
+.aelin-graph-grid {
+  animation: aelin-graph-pan 18s linear infinite;
+}
+
+.aelin-graph-flow {
+  animation: aelin-graph-flow 1.35s linear infinite;
+}
+
+.aelin-graph-node--running {
+  animation: aelin-graph-node-pulse 2.2s ease-in-out infinite;
 }
 
 .aelin-app {

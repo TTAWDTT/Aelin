@@ -41,50 +41,6 @@ export interface TodoItem {
   due_at?: string; priority: string
   contact_id?: number; message_id?: number; updated_at: string
 }
-
-export interface BrowserConfirmRequest {
-  workspace?: string
-  action_kind?: string
-  action?: string
-  profile_id?: string
-  login_request_id?: string
-  resume_request?: Record<string, unknown>
-  resume_query?: string
-  continue_after_confirm?: boolean
-  next_call?: Record<string, unknown>
-}
-export interface BrowserConfirmResponse {
-  ok: boolean
-  message: string
-  requires_followup: boolean
-  profile_id?: string
-  login_request_id?: string
-  login_state?: Record<string, unknown>
-  tool_result: Record<string, unknown>
-  continued: boolean
-  continuation_error: string
-  followup_result: Record<string, unknown>
-  generated_at: string
-}
-export interface BrowserLoginCheckpointItem {
-  request_id: string
-  profile_id?: string
-  workspace?: string
-  domain?: string
-  reason?: string
-  status?: string
-  next_call?: Record<string, unknown>
-  resume_query?: string
-  resume_request?: Record<string, unknown>
-  continue_after_confirm?: boolean
-  created_at?: number
-  updated_at?: number
-}
-export interface BrowserLoginCheckpointListResponse {
-  total: number
-  items: BrowserLoginCheckpointItem[]
-  generated_at: string
-}
 export interface FileMemoryItem {
   path: string; title: string; preview: string; score: number
   updated_at: string; canonical_id: string; target: string

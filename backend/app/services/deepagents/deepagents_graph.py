@@ -10,14 +10,21 @@ from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+import httpx
 from langchain_openai import ChatOpenAI
 
 from deepagents import create_deep_agent
+from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import create_file_data
 from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
+from app.services.deepagents.managed_backend import ManagedCompositeBackend
+from app.services.deepagents.model_timeout_middleware import (
+    DeepAgentsModelTimeoutMiddleware,
+    DeepAgentsToolMessageSanitizerMiddleware,
+)
 from app.services.deepagents.tool_runtime import (
     _acquire_tool_executor_slot,
     _submit_tool_future,
@@ -89,7 +96,6 @@ class DeepAgentsLoopResult:
 
 @dataclass(frozen=True)
 class SkillMountSnapshot:
-    skill_files: dict[str, str]
     skill_sources: list[str]
     mounted_skills: list[str]
 
@@ -149,6 +155,31 @@ class GoogleWorkspaceToolInput(BaseModel):
     docs_content: str | None = None
 
 
+def _build_deepagents_http_timeout(service: LLMService) -> httpx.Timeout:
+    request_timeout = max(5.0, float(getattr(service, "timeout_seconds", 90.0) or 90.0))
+    read_timeout = max(
+        5.0,
+        float(getattr(settings, "deepagents_stream_idle_timeout_seconds", request_timeout) or request_timeout),
+    )
+    effective_read_timeout = min(request_timeout, read_timeout)
+    return httpx.Timeout(
+        connect=request_timeout,
+        read=effective_read_timeout,
+        write=request_timeout,
+        pool=request_timeout,
+    )
+
+
+def _build_agent_middleware() -> list[Any]:
+    middleware: list[Any] = [
+        DeepAgentsToolMessageSanitizerMiddleware(),
+    ]
+    timeout_seconds = float(getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 0.0)
+    if timeout_seconds > 0:
+        middleware.append(DeepAgentsModelTimeoutMiddleware(timeout_seconds=timeout_seconds))
+    return middleware
+
+
 def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
     """
     Centralised helper to construct the ChatModel used by DeepAgents.
@@ -171,14 +202,26 @@ def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
             _log.warning("build_chat_model_missing_api_key provider=%s", provider)
             return None
 
+        http_timeout = _build_deepagents_http_timeout(service)
+        verify_ssl = LLMService.resolve_verify_ssl(getattr(service, "config", None))
+        request_timeout = max(5.0, float(getattr(service, "timeout_seconds", 90.0) or 90.0))
+
         return ChatOpenAI(
             model=model_name,
             temperature=temperature,
             api_key=api_key,
             base_url=base_url,
-            http_client=service.create_http_client(),
-            http_async_client=service.create_async_http_client(),
-            timeout=getattr(service, "timeout_seconds", 90.0),
+            http_client=httpx.Client(
+                verify=verify_ssl,
+                follow_redirects=True,
+                timeout=http_timeout,
+            ),
+            http_async_client=httpx.AsyncClient(
+                verify=verify_ssl,
+                follow_redirects=True,
+                timeout=http_timeout,
+            ),
+            timeout=request_timeout,
             max_retries=1,
         )
     except Exception as exc:  # noqa: BLE001
@@ -232,12 +275,11 @@ def _backend_root() -> Path:
 
 
 def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
-    skill_files: dict[str, str] = {}
     skill_sources: list[str] = []
     mounted_skills: list[str] = []
 
     def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
-        nonlocal skill_files, skill_sources, mounted_skills
+        nonlocal skill_sources, mounted_skills
 
         if not root.is_dir():
             return
@@ -250,23 +292,8 @@ def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMount
             if not skill_md.is_file():
                 continue
 
-            skill_dir_name = subdir.name.replace("_", "-")
-            virtual_dir = f"{virtual_root}{skill_dir_name}/"
-            mounted_any_file = False
-            for file_path in subdir.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                try:
-                    text = file_path.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                relative_path = file_path.relative_to(subdir).as_posix()
-                skill_files[f"{virtual_dir}{relative_path}"] = text
-                mounted_any_file = True
-
-            if mounted_any_file:
-                has_any = True
-                mounted_skills.append(f"{virtual_root}{skill_dir_name}/")
+            has_any = True
+            mounted_skills.append(f"{virtual_root}{subdir.name}/")
 
         if has_any and virtual_root not in skill_sources:
             skill_sources.append(virtual_root)
@@ -276,7 +303,6 @@ def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMount
         _mount_skills_from_root(Path(extra_dir), "/skills/external/")
 
     return SkillMountSnapshot(
-        skill_files=dict(skill_files),
         skill_sources=list(skill_sources),
         mounted_skills=list(mounted_skills),
     )
@@ -322,6 +348,44 @@ def _parse_capabilities_file(files_mapping: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _build_agent_backend_factory(
+    *,
+    user_id: int,
+    workspace: str,
+    skills_root: Path,
+    extra_dir: str,
+    seed_files: dict[str, Any] | None = None,
+) -> Callable[[Any], ManagedCompositeBackend]:
+    routes: dict[str, Any] = {}
+
+    if skills_root.is_dir():
+        routes["/skills/aelin/"] = FilesystemBackend(
+            root_dir=skills_root,
+            virtual_mode=True,
+        )
+
+    extra_root = Path(extra_dir) if extra_dir else None
+    if extra_root is not None and extra_root.is_dir():
+        routes["/skills/external/"] = FilesystemBackend(
+            root_dir=extra_root,
+            virtual_mode=True,
+        )
+
+    write_file_max_chars = int(getattr(settings, "deepagents_write_file_max_chars", 50000) or 50000)
+
+    def _factory(runtime: Any) -> ManagedCompositeBackend:
+        return ManagedCompositeBackend(
+            default=StateBackend(runtime),
+            routes=dict(routes),
+            write_file_max_chars=write_file_max_chars,
+            user_id=user_id,
+            workspace=workspace,
+            seed_files=dict(seed_files or {}),
+        )
+
+    return _factory
 
 
 def _loop_result(
@@ -717,7 +781,7 @@ def build_chat_agent(
 ) -> tuple[Any, ToolPolicyUsage, list[dict[str, Any]], dict[str, Any]]:
     """
     Construct a DeepAgents chat agent along with tool usage trackers and
-    virtual file mounts for skills + AGENTS.md memory.
+    dynamic thread files for memory + runtime capabilities.
     """
     chat_model = _build_chat_model(service, provider)
     if chat_model is None:
@@ -759,7 +823,6 @@ def build_chat_agent(
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
     skill_snapshot = _get_skill_mount_snapshot(skills_root, extra_dir)
-
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []
     if memory_text.strip():
@@ -768,7 +831,7 @@ def build_chat_agent(
         memory_paths.append(mem_path)
 
     files: dict[str, Any] = {}
-    for path, text in {**skill_snapshot.skill_files, **memory_files}.items():
+    for path, text in memory_files.items():
         files[path] = create_file_data(text)
     files["/runtime/capabilities.json"] = create_file_data(
         json.dumps(
@@ -785,11 +848,20 @@ def build_chat_agent(
         )
     )
 
+    backend_factory = _build_agent_backend_factory(
+        user_id=int(getattr(context, "user_id", 0) or 0),
+        workspace=str(getattr(context, "workspace", "default") or "default"),
+        skills_root=skills_root,
+        extra_dir=extra_dir,
+        seed_files=files,
+    )
+
     agent = create_deep_agent(
         model=chat_model,
         system_prompt=system_prompt,
-        backend=StateBackend,
+        backend=backend_factory,
         tools=tools,
+        middleware=_build_agent_middleware(),
         skills=skill_snapshot.skill_sources or None,
         memory=memory_paths or None,
         context_schema=context_schema,

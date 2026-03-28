@@ -2560,6 +2560,11 @@ async function hasHealthyExistingBackend() {
   return okCode === 200;
 }
 
+async function hasHealthyExistingFrontend() {
+  const rootCode = await requestStatus(`http://127.0.0.1:${frontendPort}`);
+  return rootCode === 200;
+}
+
 function cleanupLangGraphTempFiles(rootDir) {
   const tempDir = path.join(rootDir, ".langgraph_api");
   if (!fs.existsSync(tempDir)) return;
@@ -2737,6 +2742,8 @@ async function startBackend() {
       `http://localhost:${frontendPort}`,
       "http://127.0.0.1:5173",
       "http://localhost:5173",
+      "http://127.0.0.1:5174",
+      "http://localhost:5174",
     ].join(","),
     AELIN_BROWSER_TOOL_HEADLESS: process.env.AELIN_BROWSER_TOOL_HEADLESS || "0",
     AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
@@ -2859,9 +2866,13 @@ async function startBackend() {
   });
 }
 
-function startFrontendDev() {
+async function startFrontendDev() {
   if (process.env.AELIN_DESKTOP_SKIP_FRONTEND_DEV === "1") return;
-  const cmd = `npm run dev -- --host 127.0.0.1 --port ${frontendPort}`;
+  if (await hasHealthyExistingFrontend()) {
+    safeConsoleLog(`[frontend] Reusing existing frontend at http://127.0.0.1:${frontendPort}`);
+    return;
+  }
+  const cmd = `npm run dev -- --host 127.0.0.1 --port ${frontendPort} --strictPort`;
   frontendDevProc = spawnViaCmd(cmd, {
     cwd: frontendDir(),
     windowsHide: true,
@@ -3747,7 +3758,7 @@ async function boot() {
   }
 
   if (isDev) {
-    startFrontendDev();
+    await startFrontendDev();
   } else {
     startFrontendServer();
   }

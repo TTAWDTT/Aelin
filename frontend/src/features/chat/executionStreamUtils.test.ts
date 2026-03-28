@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AssistantGraph } from '@langchain/langgraph-sdk'
 import { getExecutionRuntime, type ChatRuntimeStream } from './executionStreamUtils'
+import { buildMessageArtifactMap, extractArtifactsFromState } from './artifactUtils'
 
 function createStream(overrides: Partial<ChatRuntimeStream> = {}): ChatRuntimeStream {
   return {
@@ -149,6 +150,177 @@ describe('executionStreamUtils', () => {
         key: 'sa-1',
         name: 'researcher',
         status: 'running',
+      }),
+    ])
+  })
+
+  it('builds live summary from running tools and todos', () => {
+    const message = { id: 'm4', content: 'working' } as any
+    const runtime = getExecutionRuntime(
+      createStream({
+        isLoading: true,
+        values: {
+          messages: [],
+          todos: [
+            { id: 'todo-1', title: 'Collect references', done: false },
+          ],
+        },
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm4',
+          streamMetadata: {
+            langgraph_node: 'research',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-1',
+            status: 'running',
+            call: {
+              id: 'call-1',
+              name: 'web_search',
+              args: { query: 'tongji sakura festival' },
+            },
+            result: null,
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(runtime.live.currentNode).toBe('research')
+    expect(runtime.live.runningTools).toEqual([
+      expect.objectContaining({ key: 'call-1', name: 'web_search', state: 'running' }),
+    ])
+    expect(runtime.todos).toEqual([
+      expect.objectContaining({ key: 'todo-1', title: 'Collect references', status: 'pending' }),
+    ])
+  })
+
+  it('marks the latest pending tool call as preparing while args are still streaming', () => {
+    const message = { id: 'm5', content: 'working', type: 'ai' } as any
+    const runtime = getExecutionRuntime(
+      createStream({
+        isLoading: true,
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm5',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-prepare',
+            status: 'pending',
+            call: {
+              id: 'call-prepare',
+              name: 'write_file',
+              args: { file_path: '/poster.html', content: '<html>' },
+            },
+            result: null,
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(runtime.tools).toEqual([
+      expect.objectContaining({
+        key: 'call-prepare',
+        name: 'write_file',
+        state: 'preparing',
+      }),
+    ])
+    expect(runtime.live.runningTools).toEqual([
+      expect.objectContaining({ key: 'call-prepare', state: 'preparing' }),
+    ])
+  })
+
+  it('extracts state-backed artifacts and maps them to write_file tool calls', () => {
+    const values = {
+      messages: [],
+      files: {
+        '/poster.html': {
+          content: ['<html><body>Poster</body></html>'],
+          created_at: '2026-03-29T00:00:00Z',
+          modified_at: '2026-03-29T00:00:01Z',
+        },
+      },
+    }
+    const artifactsByPath = extractArtifactsFromState(values)
+    const artifactMap = buildMessageArtifactMap(
+      new Map([
+        ['m1', [{
+          key: 'call-1',
+          name: 'write_file',
+          state: 'completed',
+          args: '{"file_path":"/poster.html"}',
+          result: '',
+          filePath: '/poster.html',
+        }]],
+      ]),
+      artifactsByPath,
+    )
+
+    expect(artifactsByPath.get('/poster.html')).toEqual(
+      expect.objectContaining({
+        name: 'poster.html',
+        mimeType: 'text/html',
+        previewKind: 'html',
+      }),
+    )
+    expect(artifactMap.get('m1')).toEqual([
+      expect.objectContaining({
+        path: '/poster.html',
+        name: 'poster.html',
+      }),
+    ])
+  })
+
+  it('marks earlier pending tool calls as running once execution has moved past arg generation', () => {
+    const messages = [
+      { id: 'm6', content: 'tool call', type: 'ai' } as any,
+      { id: 'm7', content: 'next ai chunk', type: 'ai' } as any,
+    ]
+    const runtime = getExecutionRuntime(
+      createStream({
+        isLoading: true,
+        messages,
+        getMessagesMetadata: (_message, index) => ({
+          messageId: index === 0 ? 'm6' : 'm7',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: (message) => (
+          (message as any).id === 'm6'
+            ? [
+                {
+                  id: 'call-running',
+                  status: 'pending',
+                  call: {
+                    id: 'call-running',
+                    name: 'web_search',
+                    args: { query: 'tongji sakura festival' },
+                  },
+                  result: null,
+                },
+              ]
+            : []
+        ),
+      }),
+      null,
+    )
+
+    expect(runtime.tools).toEqual([
+      expect.objectContaining({
+        key: 'call-running',
+        name: 'web_search',
+        state: 'running',
       }),
     ])
   })
