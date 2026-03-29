@@ -23,9 +23,9 @@ from sqlalchemy.orm import Session
 
 from app.models import AttachmentChunk, AttachmentDocument
 from app.settings import settings
-from app.services.aelin.utils import escape_sql_like, normalize_positive_ints
 from app.services.attachments.attachment_storage import write_storage_if_missing
 from app.services.attachments.attachment_parsing import ParsedBlock, normalize_blocks_to_chunks
+from app.services.foundation.service_utils import escape_sql_like, normalize_positive_ints
 
 try:
     from defusedxml import ElementTree as _SAFE_ET  # type: ignore
@@ -77,7 +77,7 @@ class AttachmentIngestError(RuntimeError):
         self.message = str(message or "attachment ingest failed").strip() or "attachment ingest failed"
 
 
-class AelinAttachmentService:
+class AttachmentService:
     def __init__(self) -> None:
         root = Path(str(getattr(settings, "aelin_attachment_storage_dir", "./data/aelin_attachments") or "./data/aelin_attachments"))
         self._root = root
@@ -1358,15 +1358,15 @@ class AelinAttachmentService:
             "attachment_ids": sorted(allowed_ids),
         }
 
-_ATTACHMENT_SERVICE_SINGLETON: AelinAttachmentService | None = None
+_ATTACHMENT_SERVICE_SINGLETON: AttachmentService | None = None
 _ATTACHMENT_SERVICE_LOCK = threading.Lock()
 
 
-def get_aelin_attachment_service() -> AelinAttachmentService:
+def get_attachment_service() -> AttachmentService:
     global _ATTACHMENT_SERVICE_SINGLETON
     if _ATTACHMENT_SERVICE_SINGLETON is None:
         with _ATTACHMENT_SERVICE_LOCK:
             if _ATTACHMENT_SERVICE_SINGLETON is None:
-                _ATTACHMENT_SERVICE_SINGLETON = AelinAttachmentService()
+                _ATTACHMENT_SERVICE_SINGLETON = AttachmentService()
     return _ATTACHMENT_SERVICE_SINGLETON
 

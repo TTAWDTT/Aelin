@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
@@ -14,10 +14,12 @@ import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
 import { getExecutionRuntime, getMessageToolCallMap } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
+import { ArtifactPreviewDialog } from './components/ArtifactPreviewDialog'
+import { buildMessageArtifactMap, extractArtifactsFromState, type ChatArtifact } from './artifactUtils'
 
 export function ChatView() {
-  const { sessions, activeSessionId, isStreaming, statusText, createSession } = useChatStore()
-  const { send, messages, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream } = useChatStream()
+  const { sessions, activeSessionId, statusText, createSession } = useChatStore()
+  const { send, messages, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream, assistantGraph } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
   const viewportWidth = useViewportWidth()
@@ -27,12 +29,21 @@ export function ChatView() {
     setOpen,
     suppressAutoOpen,
   } = useExecutionPaneStore()
-  const execution = getExecutionRuntime(stream)
+  const isStreaming = stream.isLoading
+  const execution = getExecutionRuntime(stream, assistantGraph)
   const messageToolCalls = getMessageToolCallMap(stream)
+  const [selectedArtifact, setSelectedArtifact] = useState<ChatArtifact | null>(null)
+  const lastMessage = messages.at(-1)
+  const hasAssistantReplyStarted = lastMessage?.role === 'assistant'
   const values =
     stream.values && typeof stream.values === 'object' && !Array.isArray(stream.values)
       ? stream.values
       : {}
+  const artifactsByPath = useMemo(() => extractArtifactsFromState(values), [values])
+  const artifactsByMessage = useMemo(
+    () => buildMessageArtifactMap(messageToolCalls, artifactsByPath),
+    [artifactsByPath, messageToolCalls],
+  )
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -98,6 +109,7 @@ export function ChatView() {
           <ChatStatusBar
             isStreaming={isStreaming}
             statusText={statusText}
+            hasAssistantReplyStarted={hasAssistantReplyStarted}
             compact={compact}
             execution={execution}
             onOpenExecution={() => setOpen(true)}
@@ -110,7 +122,10 @@ export function ChatView() {
             compact={compact}
             viewportWidth={viewportWidth}
             toolCallsByMessage={messageToolCalls}
+            artifactsByMessage={artifactsByMessage}
+            liveSummary={execution.live}
             onQuickPrompt={handleSend}
+            onOpenArtifact={setSelectedArtifact}
           />
           <ComposerBar
             onSend={handleSend}
@@ -125,6 +140,13 @@ export function ChatView() {
         </section>
         <ExecutionPane runtime={execution} values={values} isStreaming={isStreaming} compact={compact} />
       </div>
+      <ArtifactPreviewDialog
+        artifact={selectedArtifact}
+        open={selectedArtifact != null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedArtifact(null)
+        }}
+      />
     </PageScaffold>
   )
 }

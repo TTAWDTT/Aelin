@@ -11,20 +11,16 @@ from sqlalchemy.orm import Session
 from app import crud
 from app.models import User
 from app.schemas import ChatRequest, ChatResponse, RemoteControlExecuteRequest
-from app.services.aelin.core import is_deepagents_no_result_response, run_chat_request
-from app.services.device.device_center import device_status_snapshot
+from app.services.device import device_actions
+from app.services.device.device_contract import (
+    SUPPORTED_DEEPAGENTS_TOOLS,
+    SUPPORTED_DEVICE_ACTIONS,
+)
+from app.services.device.remote_control_chat_adapter import (
+    is_deepagents_no_result_response,
+    run_chat_request,
+)
 from app.settings import settings
-
-_SUPPORTED_TOOLS = [
-    "device",
-    "screen_get",
-]
-
-_SUPPORTED_DEVICE_ACTIONS = [
-    "status",
-    "open_url",
-    "open_aelin",
-]
 
 
 @dataclass(slots=True)
@@ -94,15 +90,15 @@ def build_remote_chat_request(
 
 
 def build_remote_control_status() -> dict[str, Any]:
-    snapshot = device_status_snapshot()
+    tool_status = device_actions.device_status_result()
     return {
         "enabled": True,
         "source": "remote_control",
-        "capabilities": dict(snapshot.get("capabilities") or {}),
-        "notes": list(snapshot.get("notes") or []),
-        "supported_tools": list(_SUPPORTED_TOOLS),
-        "supported_device_actions": list(_SUPPORTED_DEVICE_ACTIONS),
-        "desktop_plugin_reachable": bool(snapshot.get("desktop_plugin_reachable")),
+        "capabilities": dict(tool_status.get("capabilities") or {}),
+        "notes": list(tool_status.get("notes") or []),
+        "supported_tools": list(SUPPORTED_DEEPAGENTS_TOOLS),
+        "supported_device_actions": list(SUPPORTED_DEVICE_ACTIONS),
+        "desktop_plugin_reachable": bool(tool_status.get("desktop_plugin_reachable")),
         "generated_at": datetime.now(timezone.utc),
     }
 

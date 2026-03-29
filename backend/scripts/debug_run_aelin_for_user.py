@@ -16,35 +16,37 @@ from sqlalchemy import text
 from app.db import create_session
 from app.models import User
 from app.schemas import ChatRequest
-from app.services.aelin.core import run_chat_request
+from app.services.device.remote_control_chat_adapter import run_chat_request
 from app.settings import settings
 
 
 def run_for_user(user_id: int, name: str, query: str) -> None:
     db = create_session()
-    user = db.get(User, user_id)
-    if user is None:
-        print(f"[user {user_id}] not found")
-        return
-    print(f"\n=== [{name}] Aelin chat for user {user.id} {user.email!r} ===")
-payload = ChatRequest(
+    try:
+        user = db.get(User, user_id)
+        if user is None:
+            print(f"[user {user_id}] not found")
+            return
+        print(f"\n=== [{name}] Aelin chat for user {user.id} {user.email!r} ===")
+        payload = ChatRequest(
         query=query,
         workspace="default",
         use_memory=True,
         images=[],
         history=[],
-    )
+        )
 
-    def _event_cb(kind: str, payload: dict) -> None:
-        if kind == "trace":
-            step = payload.get("step") or {}
-            print("TRACE:", step.get("stage"), step.get("status"), "-", step.get("detail"))
+        def _event_cb(kind: str, payload: dict) -> None:
+            if kind == "trace":
+                step = payload.get("step") or {}
+                print("TRACE:", step.get("stage"), step.get("status"), "-", step.get("detail"))
 
-    resp = run_chat_request(payload, db, user, event_cb=_event_cb, cancel_token=None)
-    print("ANSWER:", repr(resp.answer))
-    print("EXPRESSION:", resp.expression)
-    print("TOOL_TRACE_STAGES:", {s.stage for s in resp.tool_trace})
-    print("GENERATED_AT:", resp.generated_at.astimezone(timezone.utc))
+        resp = run_chat_request(payload, db, user, event_cb=_event_cb, cancel_token=None)
+        print("ANSWER:", repr(resp.answer))
+        print("ACTIONS:", [action.kind for action in resp.actions])
+        print("GENERATED_AT:", resp.generated_at.astimezone(timezone.utc))
+    finally:
+        db.close()
 
 
 def main() -> None:

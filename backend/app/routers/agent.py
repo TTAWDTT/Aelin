@@ -8,58 +8,25 @@ from app.db import get_session
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import AgentConfigOut, AgentConfigUpdate, AgentTestResponse, ModelCatalogResponse
-from app.services.foundation.encryption import decrypt_optional
-from app.services.foundation.llm import LLMService
+from app.services.foundation.agent_config_service import (
+    config_out as runtime_config_out,
+    resolve_llm_service_for_user_id,
+)
 from app.services.foundation.model_catalog import get_model_catalog
-from app.settings import settings
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-def _default_config() -> AgentConfigOut:
-    return AgentConfigOut(
-        provider="rule_based",
-        base_url="https://api.openai.com/v1",
-        model="gpt-4o-mini",
-        temperature=0.2,
-        verify_ssl=bool(getattr(settings, "llm_verify_ssl", True)),
-        has_api_key=False,
-        web_search_proxy_url="",
-    )
-
-
-def _config_out(db: Session, user_id: int) -> AgentConfigOut:
-    config = crud.get_agent_config(db, user_id=user_id)
-    if config is None:
-        return _default_config()
-
-    api_key = decrypt_optional(config.api_key)
-    return AgentConfigOut(
-        provider=(config.provider or "rule_based").lower(),
-        base_url=config.base_url or "https://api.openai.com/v1",
-        model=config.model or "gpt-4o-mini",
-        temperature=float(config.temperature or 0.2),
-        verify_ssl=bool(getattr(config, "verify_ssl", True)),
-        has_api_key=bool(api_key),
-        web_search_proxy_url=str(config.web_search_proxy_url or ""),
-    )
-
-
-def _get_llm_service(db: Session, user: User) -> tuple[LLMService, str]:
-    config = _config_out(db, user.id)
+def _get_llm_service(db: Session, user: User):
+    config = runtime_config_out(db, user.id)
+    service, provider = resolve_llm_service_for_user_id(db, int(user.id))
     provider = (config.provider or "rule_based").lower()
-
     if provider in {"rule_based", "rule-based", "builtin", "local"}:
-        return LLMService(config, None), "rule_based"
-
-    stored = crud.get_agent_config(db, user_id=user.id)
-    api_key = decrypt_optional(stored.api_key if stored else None) if stored else None
-
-    if not api_key:
+        return service, "rule_based"
+    if not config.has_api_key:
         raise HTTPException(status_code=400, detail="请先在设置里配置 Agent API Key")
     if not (config.base_url or "").strip():
         raise HTTPException(status_code=400, detail="请先在设置里配置 Agent Base URL")
-
-    return LLMService(config, api_key), "openai"
+    return service, "openai"
 
 
 @router.get("/catalog", response_model=ModelCatalogResponse)
@@ -72,7 +39,7 @@ def get_agent_config(
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    return _config_out(db, current_user.id)
+    return runtime_config_out(db, current_user.id)
 
 
 @router.patch("/config", response_model=AgentConfigOut)
@@ -97,16 +64,8 @@ def update_agent_config(
         api_key=payload.api_key,
         web_search_proxy_url=payload.web_search_proxy_url,
     )
-    api_key = decrypt_optional(config.api_key)
-    return AgentConfigOut(
-        provider=config.provider,
-        base_url=config.base_url,
-        model=config.model,
-        temperature=float(config.temperature),
-        verify_ssl=bool(getattr(config, "verify_ssl", True)),
-        has_api_key=bool(api_key),
-        web_search_proxy_url=str(config.web_search_proxy_url or ""),
-    )
+    _ = config
+    return runtime_config_out(db, current_user.id)
 
 
 @router.post("/test", response_model=AgentTestResponse)

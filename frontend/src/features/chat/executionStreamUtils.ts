@@ -1,8 +1,8 @@
 import type { BaseMessage } from '@langchain/core/messages'
+import type { AssistantGraph } from '@langchain/langgraph-sdk'
 
 export type ChatStreamState = {
   messages: Array<Record<string, unknown>>
-  topology?: Record<string, unknown>
   answer?: string
   todos?: unknown[]
   [key: string]: unknown
@@ -12,8 +12,6 @@ export type ChatRuntimeStream = {
   messages?: BaseMessage[]
   values?: ChatStreamState
   isLoading?: boolean
-  toolCalls?: unknown[]
-  activeSubagents?: unknown[]
   subagents?: Map<string, unknown>
   getToolCalls?: (message: BaseMessage) => unknown[]
   getSubagentsByMessage?: (messageId: string) => unknown[]
@@ -27,7 +25,7 @@ export type ChatRuntimeStream = {
   } | undefined
 }
 
-export type ExecutionTopologyNode = {
+export type ExecutionGraphNode = {
   id: string
   name: string
   kind: string
@@ -39,7 +37,7 @@ export type ExecutionTopologyNode = {
   status: 'idle' | 'completed' | 'running'
 }
 
-export type ExecutionTopologyEdge = {
+export type ExecutionGraphEdge = {
   source: string
   target: string
   conditional?: boolean
@@ -48,14 +46,7 @@ export type ExecutionTopologyEdge = {
   namespaces: number
 }
 
-type BaseTopologyEdge = {
-  source: string
-  target: string
-  conditional: boolean
-}
-
 type ExecutionActivity = {
-  key: string
   node: string
   namespace: string
   status: string
@@ -69,6 +60,14 @@ export type ExecutionToolCall = {
   state: string
   args: string
   result: string
+  filePath?: string
+}
+
+export type ExecutionTodoItem = {
+  key: string
+  title: string
+  detail?: string
+  status: 'pending' | 'completed'
 }
 
 export type ExecutionSubagent = {
@@ -82,18 +81,6 @@ export type ExecutionSubagent = {
   preview?: string
 }
 
-export type ExecutionTurn = {
-  key: string
-  messageId: string
-  node: string
-  namespace: string
-  preview: string
-  status: string
-  toolCalls: ExecutionToolCall[]
-  subagents: ExecutionSubagent[]
-  isStreaming: boolean
-}
-
 export type ExecutionNamespaceLane = {
   key: string
   label: string
@@ -105,29 +92,42 @@ export type ExecutionNamespaceLane = {
 }
 
 export type ExecutionRuntime = {
-  topology: {
-    nodes: ExecutionTopologyNode[]
-    edges: ExecutionTopologyEdge[]
+  graph: {
+    nodes: ExecutionGraphNode[]
+    edges: ExecutionGraphEdge[]
   }
   lanes: ExecutionNamespaceLane[]
-  turns: ExecutionTurn[]
   tools: ExecutionToolCall[]
   subagents: ExecutionSubagent[]
+  todos: ExecutionTodoItem[]
+  live: ExecutionLiveSummary
+  hasOfficialGraph: boolean
   hasExecution: boolean
 }
 
+export type ExecutionLiveSummary = {
+  currentNode?: string
+  currentNamespace?: string
+  runningTools: ExecutionToolCall[]
+  runningToolCount: number
+  recentCompletedTools: ExecutionToolCall[]
+  recentCompletedToolCount: number
+  runningSubagents: ExecutionSubagent[]
+  runningSubagentCount: number
+  recentCompletedSubagents: ExecutionSubagent[]
+  recentCompletedSubagentCount: number
+  todos: ExecutionTodoItem[]
+  todoCount: number
+}
+
 type MessageRuntimeRow = {
-  key: string
   messageId: string
   node: string
   namespace: string
   status: string
-  preview: string
   toolCalls: ExecutionToolCall[]
   subagents: ExecutionSubagent[]
-  messageType: string
   hasWork: boolean
-  isStreaming: boolean
 }
 
 const GENERIC_TOOL_NAMES = new Set(['', 'tool'])
@@ -157,6 +157,16 @@ function normalizeStatus(value: unknown, fallback = 'idle'): string {
   return text || fallback
 }
 
+function isActiveStatus(value: unknown): boolean {
+  const status = normalizeStatus(value)
+  return status === 'running' || status === 'pending' || status === 'streaming' || status === 'preparing'
+}
+
+function isCompletedStatus(value: unknown): boolean {
+  const status = normalizeStatus(value)
+  return status === 'completed' || status === 'success'
+}
+
 function hasMeaningfulArgsText(value: string): boolean {
   const text = String(value || '').trim()
   return Boolean(text) && text !== '{}' && text !== '[]' && text !== 'null'
@@ -172,14 +182,6 @@ function shouldDisplayToolCall(tool: ExecutionToolCall, hasStableId: boolean): b
   if (hasMeaningfulArgsText(tool.args)) return true
   if (isSettledToolState(tool.state)) return true
   return !GENERIC_TOOL_NAMES.has(tool.name.toLowerCase())
-}
-
-function messageTypeOf(message: BaseMessage): string {
-  const value =
-    typeof (message as any)?.getType === 'function'
-      ? (message as any).getType()
-      : (message as any)?.type
-  return String(value || '').trim().toLowerCase()
 }
 
 function messagePreview(message: BaseMessage): string {
@@ -198,6 +200,24 @@ function messagePreview(message: BaseMessage): string {
   return ''
 }
 
+function buildExecutionTodos(values: Record<string, unknown>): ExecutionTodoItem[] {
+  const rawTodos = Array.isArray(values.todos) ? values.todos : []
+  const items: ExecutionTodoItem[] = []
+  rawTodos.forEach((item, index) => {
+    const record = asRecord(item)
+    const title = String(record.title || record.content || `Todo ${index + 1}`).trim()
+    if (!title) return
+    const detail = compactText(record.detail || record.description || '', 180)
+    items.push({
+      key: String(record.id || record.key || `todo:${index}`),
+      title,
+      detail: detail || undefined,
+      status: Boolean(record.done) ? 'completed' : 'pending',
+    })
+  })
+  return items
+}
+
 function createMetadataReader(stream: ChatRuntimeStream) {
   return typeof stream.getMessagesMetadata === 'function'
     ? stream.getMessagesMetadata.bind(stream)
@@ -212,7 +232,12 @@ function getMessageId(message: BaseMessage, metadataMessageId: string | undefine
   return `message:${index}`
 }
 
-function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage): ExecutionToolCall[] {
+function getToolCallsForMessage(
+  stream: ChatRuntimeStream,
+  message: BaseMessage,
+  index: number,
+  messageCount: number,
+): ExecutionToolCall[] {
   if (!stream.getToolCalls) return []
   const rows = (() => {
     try {
@@ -223,17 +248,23 @@ function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage)
   })()
   const deduped = new Map<string, ExecutionToolCall & { hasStableId: boolean }>()
 
+  const isLatestMessage = index === messageCount - 1
+
   rows.forEach((item, index) => {
     const record = asRecord(item)
     const call = asRecord(record.call)
     const callId = String(record.id || call.id || '').trim()
     const result = record.result
+    const helperState = normalizeStatus(record.status || record.state, result == null ? 'pending' : 'completed')
+    const isPendingWithoutResult = helperState === 'pending' && result == null
+    const isPreparingArgs = isPendingWithoutResult && Boolean(stream.isLoading) && isLatestMessage
     const tool = {
       key: callId || `${String(call.name || record.name || 'tool').trim() || 'tool'}:${index}`,
       name: String(call.name || record.name || 'tool').trim() || 'tool',
-      state: normalizeStatus(record.status || record.state, result == null ? 'running' : 'completed'),
+      state: isPreparingArgs ? 'preparing' : isPendingWithoutResult ? 'running' : helperState,
       args: call.args == null ? '' : stableJson(call.args, 160),
       result: result == null ? '' : stableJson(result, 180),
+      filePath: extractToolFilePath(call.args, result),
       hasStableId: Boolean(callId),
     }
 
@@ -257,6 +288,23 @@ function getToolCallsForMessage(stream: ChatRuntimeStream, message: BaseMessage)
   })
 
   return Array.from(deduped.values()).map(({ hasStableId: _hasStableId, ...tool }) => tool)
+}
+
+function extractToolFilePath(args: unknown, result: unknown): string | undefined {
+  const argRecord = asRecord(args)
+  const resultRecord = asRecord(result)
+  const candidates = [
+    argRecord.file_path,
+    argRecord.path,
+    resultRecord.file_path,
+    resultRecord.path,
+  ]
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim()
+    if (!text.startsWith('/')) continue
+    return text
+  }
+  return undefined
 }
 
 function getSubagentsForMessage(stream: ChatRuntimeStream, messageId: string): ExecutionSubagent[] {
@@ -312,14 +360,12 @@ function getRuntimeSubagents(stream: ChatRuntimeStream): ExecutionSubagent[] {
 function getMessageRuntimeRows(stream: ChatRuntimeStream): MessageRuntimeRow[] {
   const messages = Array.isArray(stream.messages) ? stream.messages : []
   const readMetadata = createMetadataReader(stream)
-  const lastIndex = messages.length - 1
 
   return messages.map((message, index) => {
     const metadata = readMetadata(message, index)
     const streamMetadata = asRecord(metadata?.streamMetadata)
-    const messageType = messageTypeOf(message)
     const messageId = getMessageId(message, metadata?.messageId, index)
-    const toolCalls = getToolCallsForMessage(stream, message)
+    const toolCalls = getToolCallsForMessage(stream, message, index, messages.length)
     const subagents = getSubagentsForMessage(stream, messageId)
     const node = String(streamMetadata.langgraph_node || '').trim()
     const namespace = String(
@@ -328,46 +374,24 @@ function getMessageRuntimeRows(stream: ChatRuntimeStream): MessageRuntimeRow[] {
       || metadata?.branch
       || 'root',
     )
-    const isStreaming = Boolean(stream.isLoading) && index === lastIndex
     const hasWork = Boolean(node) || toolCalls.length > 0 || subagents.length > 0
 
     return {
-      key: `${messageId}:${node || messageType || 'turn'}`,
       messageId,
       node,
       namespace,
-      status: isStreaming ? 'running' : 'completed',
-      preview: messagePreview(message),
+      status: Boolean(stream.isLoading) && index === messages.length - 1 ? 'running' : 'completed',
       toolCalls,
       subagents,
-      messageType,
       hasWork,
-      isStreaming,
     }
   })
-}
-
-function buildExecutionTurns(rows: MessageRuntimeRow[]): ExecutionTurn[] {
-  return rows
-    .filter((row) => row.hasWork && (Boolean(row.node) || row.messageType === 'ai'))
-    .map((row) => ({
-      key: row.key,
-      messageId: row.messageId,
-      node: row.node || row.messageType || 'message',
-      namespace: row.namespace,
-      preview: row.preview,
-      status: row.status,
-      toolCalls: row.toolCalls,
-      subagents: row.subagents,
-      isStreaming: row.isStreaming,
-    }))
 }
 
 function buildExecutionActivities(rows: MessageRuntimeRow[]): ExecutionActivity[] {
   return rows
     .filter((row) => row.hasWork && Boolean(row.node))
     .map((row) => ({
-      key: `${row.messageId}:${row.node}`,
       node: row.node,
       namespace: row.namespace,
       status: row.status,
@@ -417,40 +441,33 @@ function computeDepths(
   return depth
 }
 
-function buildExecutionTopology(
-  raw: Record<string, unknown>,
+function buildExecutionGraph(
+  assistantGraph: AssistantGraph | null | undefined,
   activities: ExecutionActivity[],
 ): {
-  nodes: ExecutionTopologyNode[]
-  edges: ExecutionTopologyEdge[]
+  nodes: ExecutionGraphNode[]
+  edges: ExecutionGraphEdge[]
 } {
-  const rawNodes = Array.isArray(raw.nodes) ? raw.nodes : []
-  const rawEdges: BaseTopologyEdge[] = (Array.isArray(raw.edges) ? raw.edges : [])
+  const baseNodes = (Array.isArray(assistantGraph?.nodes) ? assistantGraph.nodes : [])
     .map((item) => {
-      const record = asRecord(item)
-      const source = String(record.source || '').trim()
-      const target = String(record.target || '').trim()
-      if (!source || !target) return null
-      return {
-        source,
-        target,
-        conditional: Boolean(record.conditional),
-      }
-    })
-    .filter((item): item is BaseTopologyEdge => item != null)
-
-  const baseNodes = rawNodes
-    .map((item) => {
-      const record = asRecord(item)
-      const id = String(record.id || '').trim()
+      const id = String(item?.id || '').trim()
       if (!id) return null
+      const data = asRecord(item?.data)
       return {
         id,
-        name: String(record.name || id),
-        kind: String(record.kind || 'node'),
+        name: String(item?.name || data.label || data.name || id),
+        kind: String(data.kind || data.type || 'node'),
       }
     })
     .filter((item): item is { id: string; name: string; kind: string } => item != null)
+
+  const rawEdges = (Array.isArray(assistantGraph?.edges) ? assistantGraph.edges : [])
+    .map((edge) => ({
+      source: String(edge?.source || '').trim(),
+      target: String(edge?.target || '').trim(),
+      conditional: Boolean(edge?.conditional),
+    }))
+    .filter((edge) => edge.source && edge.target)
 
   const depths = computeDepths(baseNodes, rawEdges)
   const nodeIds = new Set(baseNodes.map((node) => node.id))
@@ -554,8 +571,46 @@ function buildExecutionLanes(activities: ExecutionActivity[]): ExecutionNamespac
     })
 }
 
-export function getExecutionTurns(stream: ChatRuntimeStream): ExecutionTurn[] {
-  return buildExecutionTurns(getMessageRuntimeRows(stream))
+function dedupeToolCalls(tools: ExecutionToolCall[]): ExecutionToolCall[] {
+  const map = new Map<string, ExecutionToolCall>()
+  tools.forEach((tool) => {
+    map.set(tool.key, tool)
+  })
+  return Array.from(map.values())
+}
+
+function buildExecutionLiveSummary(
+  lanes: ExecutionNamespaceLane[],
+  tools: ExecutionToolCall[],
+  subagents: ExecutionSubagent[],
+  todos: ExecutionTodoItem[],
+): ExecutionLiveSummary {
+  const runningLane = lanes.find((item) => item.status === 'running')
+  const allRunningTools = tools.filter((tool) => isActiveStatus(tool.state))
+  const allRecentCompletedTools = tools
+    .filter((tool) => isCompletedStatus(tool.state))
+    .slice(-2)
+    .reverse()
+  const allRunningSubagents = subagents.filter((item) => isActiveStatus(item.status))
+  const allRecentCompletedSubagents = subagents
+    .filter((item) => isCompletedStatus(item.status))
+    .slice(-2)
+    .reverse()
+
+  return {
+    currentNode: runningLane?.currentNode,
+    currentNamespace: runningLane?.key,
+    runningTools: allRunningTools.slice(0, 3),
+    runningToolCount: allRunningTools.length,
+    recentCompletedTools: allRecentCompletedTools,
+    recentCompletedToolCount: allRecentCompletedTools.length,
+    runningSubagents: allRunningSubagents.slice(0, 2),
+    runningSubagentCount: allRunningSubagents.length,
+    recentCompletedSubagents: allRecentCompletedSubagents,
+    recentCompletedSubagentCount: allRecentCompletedSubagents.length,
+    todos: todos.slice(0, 5),
+    todoCount: todos.length,
+  }
 }
 
 export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, ExecutionToolCall[]> {
@@ -565,27 +620,36 @@ export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, Ex
   return new Map(entries)
 }
 
-export function getExecutionRuntime(stream: ChatRuntimeStream): ExecutionRuntime {
+export function getExecutionRuntime(
+  stream: ChatRuntimeStream,
+  assistantGraph?: AssistantGraph | null,
+): ExecutionRuntime {
   const rows = getMessageRuntimeRows(stream)
-  const turns = buildExecutionTurns(rows).map((turn) => ({
-    ...turn,
-    toolCalls: Array.from(new Map(turn.toolCalls.map((tool) => [tool.key, tool])).values()),
-  }))
   const activities = buildExecutionActivities(rows)
-  const topology = buildExecutionTopology(asRecord(stream.values?.topology), activities)
+  const lanes = buildExecutionLanes(activities)
+  const graph = buildExecutionGraph(assistantGraph, activities)
   const subagents = getRuntimeSubagents(stream)
-  const tools = turns.flatMap((turn) => turn.toolCalls)
+  const values = asRecord(stream.values)
+  const todos = buildExecutionTodos(values)
+  const tools = dedupeToolCalls(rows.flatMap((row) => row.toolCalls))
+  const live = buildExecutionLiveSummary(lanes, tools, subagents, todos)
+  const hasOfficialGraph = graph.nodes.length > 0 || graph.edges.length > 0
   const hasExecution =
-    topology.nodes.length > 0
-    || turns.length > 0
-    || Object.keys(asRecord(stream.values)).some((key) => key !== 'messages')
+    hasOfficialGraph
+    || tools.length > 0
+    || subagents.length > 0
+    || todos.length > 0
+    || lanes.length > 0
+    || Object.keys(values).some((key) => key !== 'messages')
 
   return {
-    topology,
-    lanes: buildExecutionLanes(activities),
-    turns,
+    graph,
+    lanes,
     tools,
     subagents,
+    todos,
+    live,
+    hasOfficialGraph,
     hasExecution,
   }
 }
@@ -597,21 +661,24 @@ export function summarizeExecutionStatus(
     fallback: string
   },
 ): string {
-  const runningSubagents = runtime.subagents.filter((item) => item.status === 'running' || item.status === 'pending').length
+  const runningSubagents = runtime.live.runningSubagents.length
   if (runningSubagents > 0) {
     return runningSubagents === 1
       ? '正在运行 1 个子代理…'
       : `正在运行 ${runningSubagents} 个子代理…`
   }
 
-  const activeTools = runtime.tools.filter((item) => item.state === 'running' || item.state === 'pending')
+  const activeTools = runtime.live.runningTools
   if (activeTools.length > 0) {
     return `正在调用工具… ${activeTools.slice(0, 3).map((item) => item.name).join(' · ')}`
   }
 
-  const last = runtime.turns.at(-1)
-  if (options.isLoading && last?.node) {
-    return `正在执行 ${last.node}…`
+  if (options.isLoading && runtime.live.currentNode) {
+    return `正在执行 ${runtime.live.currentNode}…`
+  }
+
+  if (!options.isLoading && runtime.live.recentCompletedTools.length > 0) {
+    return `已完成 ${runtime.live.recentCompletedTools.map((item) => item.name).join(' · ')}`
   }
 
   return options.fallback

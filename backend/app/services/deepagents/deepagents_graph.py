@@ -10,14 +10,21 @@ from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+import httpx
 from langchain_openai import ChatOpenAI
 
 from deepagents import create_deep_agent
+from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import create_file_data
 from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
+from app.services.deepagents.managed_backend import ManagedCompositeBackend
+from app.services.deepagents.model_timeout_middleware import (
+    DeepAgentsModelTimeoutMiddleware,
+    DeepAgentsToolMessageSanitizerMiddleware,
+)
 from app.services.deepagents.tool_runtime import (
     _acquire_tool_executor_slot,
     _submit_tool_future,
@@ -89,7 +96,6 @@ class DeepAgentsLoopResult:
 
 @dataclass(frozen=True)
 class SkillMountSnapshot:
-    skill_files: dict[str, str]
     skill_sources: list[str]
     mounted_skills: list[str]
 
@@ -149,6 +155,31 @@ class GoogleWorkspaceToolInput(BaseModel):
     docs_content: str | None = None
 
 
+def _build_deepagents_http_timeout(service: LLMService) -> httpx.Timeout:
+    request_timeout = max(5.0, float(getattr(service, "timeout_seconds", 90.0) or 90.0))
+    read_timeout = max(
+        5.0,
+        float(getattr(settings, "deepagents_stream_idle_timeout_seconds", request_timeout) or request_timeout),
+    )
+    effective_read_timeout = min(request_timeout, read_timeout)
+    return httpx.Timeout(
+        connect=request_timeout,
+        read=effective_read_timeout,
+        write=request_timeout,
+        pool=request_timeout,
+    )
+
+
+def _build_agent_middleware() -> list[Any]:
+    middleware: list[Any] = [
+        DeepAgentsToolMessageSanitizerMiddleware(),
+    ]
+    timeout_seconds = float(getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 0.0)
+    if timeout_seconds > 0:
+        middleware.append(DeepAgentsModelTimeoutMiddleware(timeout_seconds=timeout_seconds))
+    return middleware
+
+
 def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
     """
     Centralised helper to construct the ChatModel used by DeepAgents.
@@ -171,13 +202,26 @@ def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
             _log.warning("build_chat_model_missing_api_key provider=%s", provider)
             return None
 
+        http_timeout = _build_deepagents_http_timeout(service)
+        verify_ssl = LLMService.resolve_verify_ssl(getattr(service, "config", None))
+        request_timeout = max(5.0, float(getattr(service, "timeout_seconds", 90.0) or 90.0))
+
         return ChatOpenAI(
             model=model_name,
             temperature=temperature,
             api_key=api_key,
             base_url=base_url,
-            http_client=service.create_http_client(),
-            timeout=getattr(service, "timeout_seconds", 90.0),
+            http_client=httpx.Client(
+                verify=verify_ssl,
+                follow_redirects=True,
+                timeout=http_timeout,
+            ),
+            http_async_client=httpx.AsyncClient(
+                verify=verify_ssl,
+                follow_redirects=True,
+                timeout=http_timeout,
+            ),
+            timeout=request_timeout,
             max_retries=1,
         )
     except Exception as exc:  # noqa: BLE001
@@ -199,6 +243,10 @@ def _tool_description(name: str) -> str:
             "Search uploaded attachments for relevant chunks.\n"
             "Arguments: query=<non-empty string>, attachment_ids?<int[]>, top_k=1..20, "
             "mode=('keyword'|'hybrid').\n"
+            "attachment_ids is optional when this run already provides available_attachment_ids in /runtime/capabilities.json; "
+            "the runtime will use those scoped ids automatically.\n"
+            "Always provide a concrete non-empty query that reflects what information you need from the files "
+            "(for example 'project codename deadline deliverables').\n"
             "Do not repeat the same query against the same attachments. If there are no useful hits, say so and stop."
         )
     if name == "google_workspace":
@@ -223,16 +271,15 @@ def _tool_description(name: str) -> str:
 
 
 def _backend_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).parent.parent.parent.parent
 
 
 def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
-    skill_files: dict[str, str] = {}
     skill_sources: list[str] = []
     mounted_skills: list[str] = []
 
     def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
-        nonlocal skill_files, skill_sources, mounted_skills
+        nonlocal skill_sources, mounted_skills
 
         if not root.is_dir():
             return
@@ -245,23 +292,8 @@ def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMount
             if not skill_md.is_file():
                 continue
 
-            skill_dir_name = subdir.name.replace("_", "-")
-            virtual_dir = f"{virtual_root}{skill_dir_name}/"
-            mounted_any_file = False
-            for file_path in subdir.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                try:
-                    text = file_path.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                relative_path = file_path.relative_to(subdir).as_posix()
-                skill_files[f"{virtual_dir}{relative_path}"] = text
-                mounted_any_file = True
-
-            if mounted_any_file:
-                has_any = True
-                mounted_skills.append(f"{virtual_root}{skill_dir_name}/")
+            has_any = True
+            mounted_skills.append(f"{virtual_root}{subdir.name}/")
 
         if has_any and virtual_root not in skill_sources:
             skill_sources.append(virtual_root)
@@ -271,14 +303,13 @@ def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMount
         _mount_skills_from_root(Path(extra_dir), "/skills/external/")
 
     return SkillMountSnapshot(
-        skill_files=dict(skill_files),
         skill_sources=list(skill_sources),
         mounted_skills=list(mounted_skills),
     )
 
 
 def _get_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
-    key = (str(skills_root.resolve()), str(Path(extra_dir).resolve()) if extra_dir else "")
+    key = (str(skills_root), str(Path(extra_dir)) if extra_dir else "")
     with _SKILL_MOUNT_CACHE_LOCK:
         snapshot = _SKILL_MOUNT_CACHE.get(key)
         if snapshot is None:
@@ -319,6 +350,44 @@ def _parse_capabilities_file(files_mapping: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _build_agent_backend_factory(
+    *,
+    user_id: int,
+    workspace: str,
+    skills_root: Path,
+    extra_dir: str,
+    seed_files: dict[str, Any] | None = None,
+) -> Callable[[Any], ManagedCompositeBackend]:
+    routes: dict[str, Any] = {}
+
+    if skills_root.is_dir():
+        routes["/skills/aelin/"] = FilesystemBackend(
+            root_dir=skills_root,
+            virtual_mode=True,
+        )
+
+    extra_root = Path(extra_dir) if extra_dir else None
+    if extra_root is not None and extra_root.is_dir():
+        routes["/skills/external/"] = FilesystemBackend(
+            root_dir=extra_root,
+            virtual_mode=True,
+        )
+
+    write_file_max_chars = int(getattr(settings, "deepagents_write_file_max_chars", 50000) or 50000)
+
+    def _factory(runtime: Any) -> ManagedCompositeBackend:
+        return ManagedCompositeBackend(
+            default=StateBackend(runtime),
+            routes=dict(routes),
+            write_file_max_chars=write_file_max_chars,
+            user_id=user_id,
+            workspace=workspace,
+            seed_files=dict(seed_files or {}),
+        )
+
+    return _factory
+
+
 def _loop_result(
     *,
     ok: bool,
@@ -344,18 +413,6 @@ def _loop_result(
     )
 
 
-def _emit_tool_event(
-    callback: Callable[[dict[str, Any]], None] | None,
-    payload: dict[str, Any],
-) -> None:
-    if callback is None:
-        return
-    try:
-        callback(payload)
-    except Exception:
-        pass
-
-
 def _invoke_tool(
     *,
     name: str,
@@ -365,7 +422,6 @@ def _invoke_tool(
     limiter: ToolCallLimiter,
     usage: ToolPolicyUsage,
     tool_runs: list[dict[str, Any]],
-    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> dict[str, Any]:
     from time import perf_counter
@@ -395,19 +451,6 @@ def _invoke_tool(
                 "latency_ms": latency_ms,
                 "summary": f"{name} denied: {decision.reason[:160]}",
             }
-        )
-        _emit_tool_event(
-            tool_event_cb,
-            {
-                "key": tool_key,
-                "name": name,
-                "args": args,
-                "state": "denied",
-                "result": result,
-                "error": decision.reason,
-                "is_write": decision.is_write,
-                "latency_ms": latency_ms,
-            },
         )
         return result
 
@@ -443,39 +486,12 @@ def _invoke_tool(
                 "summary": f"{name} busy: prior tool calls are still draining",
             }
         )
-        _emit_tool_event(
-            tool_event_cb,
-            {
-                "key": tool_key,
-                "name": name,
-                "args": args,
-                "state": "busy",
-                "result": result,
-                "error": str(result["error"]),
-                "is_write": decision.is_write,
-                "latency_ms": latency_ms,
-                "summary": f"{name} busy: prior tool calls are still draining",
-            },
-        )
         return result
 
     executor, semaphore = slot
 
     usage.note_invocation(name, args)
     tool_key = f"{name}:{call_index}"
-    _emit_tool_event(
-        tool_event_cb,
-        {
-            "key": tool_key,
-            "name": name,
-            "args": args,
-            "state": "running",
-            "result": {},
-            "error": "",
-            "is_write": decision.is_write,
-            "latency_ms": 0,
-        },
-    )
     result: dict[str, Any]
     future = _submit_tool_future(executor, semaphore, handler, context, args)
 
@@ -484,8 +500,6 @@ def _invoke_tool(
         float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
     )
     wait_slice_seconds = 0.5
-    heartbeat_interval_seconds = 3.0
-    last_heartbeat_at = started
     cancelled_midflight = False
     deadline = started + timeout_seconds
 
@@ -505,22 +519,6 @@ def _invoke_tool(
         if is_cancelled(cancel_token):
             cancelled_midflight = True
             break
-        current = perf_counter()
-        if current - last_heartbeat_at >= heartbeat_interval_seconds:
-            _emit_tool_event(
-                tool_event_cb,
-                {
-                    "key": tool_key,
-                    "name": name,
-                    "args": args,
-                    "state": "running",
-                    "result": {},
-                    "error": "",
-                    "is_write": decision.is_write,
-                    "latency_ms": int((current - started) * 1000),
-                },
-            )
-            last_heartbeat_at = current
 
     if cancelled_midflight:
         result = _result_error(
@@ -608,20 +606,6 @@ def _invoke_tool(
             "summary": summary,
         }
     )
-    _emit_tool_event(
-        tool_event_cb,
-        {
-            "key": tool_key,
-            "name": name,
-            "args": args,
-            "state": status,
-            "result": result,
-            "error": error,
-            "is_write": decision.is_write,
-            "latency_ms": latency_ms,
-            "summary": summary,
-        },
-    )
     return result
 
 
@@ -629,7 +613,6 @@ def build_chat_tools(
     *,
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
-    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
     """
@@ -662,7 +645,6 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
-                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -688,7 +670,6 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
-                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -729,7 +710,6 @@ def build_chat_tools(
                 limiter=limiter,
                 usage=usage,
                 tool_runs=tool_runs,
-                tool_event_cb=tool_event_cb,
                 cancel_token=cancel_token,
             )
 
@@ -795,13 +775,13 @@ def build_chat_agent(
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
     memory_text: str,
+    context_schema: type[Any] | None = None,
     skills_root: Path | None = None,
-    tool_event_cb: Callable[[dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> tuple[Any, ToolPolicyUsage, list[dict[str, Any]], dict[str, Any]]:
     """
     Construct a DeepAgents chat agent along with tool usage trackers and
-    virtual file mounts for skills + AGENTS.md memory.
+    dynamic thread files for memory + runtime capabilities.
     """
     chat_model = _build_chat_model(service, provider)
     if chat_model is None:
@@ -810,7 +790,6 @@ def build_chat_agent(
     tools, tool_runs, usage = build_chat_tools(
         context=context,
         limiter=limiter,
-        tool_event_cb=tool_event_cb,
         cancel_token=cancel_token,
     )
 
@@ -826,14 +805,15 @@ def build_chat_agent(
         "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on.\n"
         "Tool-specific rules:\n"
         "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence.\n"
-        "- attachment_search: search with a concrete query and available attachment ids only; do not repeat the same attachment search.\n"
+        "- attachment_search: when the user asks about uploaded files, call attachment_search with a concrete non-empty query describing the requested facts. "
+        "If this run already scopes uploaded attachments for you, attachment_ids may be omitted and the runtime will apply the scoped ids automatically. "
+        "Do not claim an attachment is unavailable unless attachment_search actually failed in this run.\n"
         "- google_workspace: choose a concrete action and include all required fields before calling; never blindly retry writes.\n"
         "- device: only use status/open_url/open_aelin when the user explicitly asks for desktop or browser navigation; open_url requires a valid http(s) URL.\n"
         "- screen_get: capture only when visual evidence is necessary; avoid repeated screenshots with the same arguments.\n"
         f"{_current_date_context()}\n"
         "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
         "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
-        "Consult /runtime/capabilities.json for the exact tools, skills, and memory files mounted in this run.\n"
         "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
         "Read skills on demand from /skills/... when a matching skill is relevant.\n"
         "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
@@ -843,7 +823,6 @@ def build_chat_agent(
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
     skill_snapshot = _get_skill_mount_snapshot(skills_root, extra_dir)
-
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []
     if memory_text.strip():
@@ -852,7 +831,7 @@ def build_chat_agent(
         memory_paths.append(mem_path)
 
     files: dict[str, Any] = {}
-    for path, text in {**skill_snapshot.skill_files, **memory_files}.items():
+    for path, text in memory_files.items():
         files[path] = create_file_data(text)
     files["/runtime/capabilities.json"] = create_file_data(
         json.dumps(
@@ -861,6 +840,7 @@ def build_chat_agent(
                 "skill_sources": skill_snapshot.skill_sources,
                 "mounted_skills": skill_snapshot.mounted_skills,
                 "memory_files": memory_paths,
+                "available_attachment_ids": list(context.available_attachment_ids or []),
             },
             ensure_ascii=False,
             indent=2,
@@ -868,13 +848,23 @@ def build_chat_agent(
         )
     )
 
+    backend_factory = _build_agent_backend_factory(
+        user_id=int(getattr(context, "user_id", 0) or 0),
+        workspace=str(getattr(context, "workspace", "default") or "default"),
+        skills_root=skills_root,
+        extra_dir=extra_dir,
+        seed_files=files,
+    )
+
     agent = create_deep_agent(
         model=chat_model,
         system_prompt=system_prompt,
-        backend=StateBackend,
+        backend=backend_factory,
         tools=tools,
+        middleware=_build_agent_middleware(),
         skills=skill_snapshot.skill_sources or None,
         memory=memory_paths or None,
+        context_schema=context_schema,
     )
     return agent, usage, tool_runs, files
 

@@ -36,72 +36,10 @@ export interface ChatAction {
   payload?: Record<string, string>
 }
 
-/* ─── Aelin Context ─── */
-export interface AgentMemoryNoteOut { id: number; kind: string; content: string; source?: string; updated_at: string }
-export interface MemoryLayerItem {
-  id: string; layer: string; title: string; detail?: string
-  source?: string; confidence: number; updated_at?: string
-  meta?: Record<string, string>
-}
-export interface MemoryLayers {
-  facts: MemoryLayerItem[]; preferences: MemoryLayerItem[]
-  in_progress: MemoryLayerItem[]; generated_at: string
-}
 export interface TodoItem {
   id: number; title: string; detail?: string; done: boolean
   due_at?: string; priority: string
   contact_id?: number; message_id?: number; updated_at: string
-}
-export interface ContextResponse {
-  workspace: string; summary: string
-  notes: AgentMemoryNoteOut[]; notes_count: number
-  todos: TodoItem[]
-  memory_layers: MemoryLayers
-  generated_at: string
-}
-
-export interface BrowserConfirmRequest {
-  workspace?: string
-  action_kind?: string
-  action?: string
-  profile_id?: string
-  login_request_id?: string
-  resume_request?: Record<string, unknown>
-  resume_query?: string
-  continue_after_confirm?: boolean
-  next_call?: Record<string, unknown>
-}
-export interface BrowserConfirmResponse {
-  ok: boolean
-  message: string
-  requires_followup: boolean
-  profile_id?: string
-  login_request_id?: string
-  login_state?: Record<string, unknown>
-  tool_result: Record<string, unknown>
-  continued: boolean
-  continuation_error: string
-  followup_result: Record<string, unknown>
-  generated_at: string
-}
-export interface BrowserLoginCheckpointItem {
-  request_id: string
-  profile_id?: string
-  workspace?: string
-  domain?: string
-  reason?: string
-  status?: string
-  next_call?: Record<string, unknown>
-  resume_query?: string
-  resume_request?: Record<string, unknown>
-  continue_after_confirm?: boolean
-  created_at?: number
-  updated_at?: number
-}
-export interface BrowserLoginCheckpointListResponse {
-  total: number
-  items: BrowserLoginCheckpointItem[]
-  generated_at: string
 }
 export interface FileMemoryItem {
   path: string; title: string; preview: string; score: number

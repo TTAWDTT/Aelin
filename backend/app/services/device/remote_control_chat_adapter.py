@@ -1,46 +1,28 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter
 from sqlalchemy.orm import Session
 
 from app.models import User
 from app.schemas import ChatAction, ChatRequest, ChatResponse
-from app.services.aelin.core_support import (
-    _get_agents_memory_text_for_chat,
-    _scoped_web_search_service,
-)
-from app.services.aelin.expressions import _pick_expression
-from app.services.aelin.runtime import (
-    normalize_workspace as _normalize_workspace,
-    resolve_llm_service as _resolve_llm_service,
-)
-from app.services.aelin.utils import normalize_positive_ints
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.deepagents_graph import run_deepagents_loop
 from app.services.deepagents.input_mapping import (
     normalize_history_turns,
     normalize_image_inputs,
 )
-from app.services.deepagents.tool_runtime import ToolCallLimiter, build_tool_runtime_context
-from app.settings import settings
+from app.services.deepagents.runtime_resolver import (
+    build_tool_call_limiter,
+    resolve_deepagents_runtime,
+)
 
-router = APIRouter(prefix="/aelin", tags=["aelin"])
 _log = logging.getLogger(__name__)
-
-_base_context_cache_lock = threading.Lock()
-_base_context_cache: dict[tuple[int, str], tuple[float, dict[str, Any]]] = {}
 _NO_RESULT_ANSWER = "当前会话使用 DeepAgents，但本轮未获得可用结果。请稍后重试，或检查模型配置后再试。"
-
-
-def _normalize_attachment_ids(raw_ids: list[Any]) -> list[int]:
-    return normalize_positive_ints(raw_ids, cap=20)
 
 
 def _map_actions(raw_actions: list[dict[str, Any]]) -> list[ChatAction]:
@@ -67,7 +49,7 @@ def _map_actions(raw_actions: list[dict[str, Any]]) -> list[ChatAction]:
     return actions
 
 
-def _try_deepagents_chat(
+def _try_agent_server_chat(
     payload: ChatRequest,
     db: Session,
     current_user: User,
@@ -82,34 +64,36 @@ def _try_deepagents_chat(
 
     preflight_started = time.perf_counter()
     source = str(getattr(payload, "source", "chat_ui") or "chat_ui")[:32]
-    workspace = _normalize_workspace(payload.workspace)
+    workspace = str(getattr(payload, "workspace", "default") or "default")
     query_preview = " ".join(str(payload.query or "").split())[:120]
 
     resolve_started = time.perf_counter()
-    service, provider = _resolve_llm_service(db, current_user)
+    resolved = resolve_deepagents_runtime(
+        db,
+        user_id=int(current_user.id),
+        workspace=workspace,
+        raw_attachment_ids=getattr(payload, "attachment_ids", []),
+        cancel_checker=lambda: is_cancelled(cancel_token),
+    )
     _log.info(
         "deepagents preflight phase=resolve_service user_id=%s source=%s workspace=%s provider=%s latency_ms=%s query=%s",
         int(current_user.id),
         source,
-        workspace,
-        str(provider or ""),
+        resolved.workspace,
+        str(resolved.provider or ""),
         int((time.perf_counter() - resolve_started) * 1000),
         query_preview,
     )
-    if provider == "rule_based" or not service.is_configured():
+    if resolved.provider == "rule_based" or not resolved.service.is_configured():
         return None
 
     summary_started = time.perf_counter()
-    agents_memory_text = _get_agents_memory_text_for_chat(
-        db,
-        current_user.id,
-        workspace=workspace,
-    )
+    agents_memory_text = resolved.memory_text
     _log.info(
         "deepagents preflight phase=memory_file user_id=%s source=%s workspace=%s bytes=%s latency_ms=%s",
         int(current_user.id),
         source,
-        workspace,
+        resolved.workspace,
         len(agents_memory_text.encode("utf-8")) if agents_memory_text else 0,
         int((time.perf_counter() - summary_started) * 1000),
     )
@@ -117,12 +101,11 @@ def _try_deepagents_chat(
     normalize_started = time.perf_counter()
     history_turns = normalize_history_turns(payload.history)
     images = normalize_image_inputs(payload.images)
-    attachment_ids = _normalize_attachment_ids(getattr(payload, "attachment_ids", []))
     _log.info(
         "deepagents preflight phase=normalize_inputs user_id=%s source=%s workspace=%s history_turns=%s images=%s latency_ms=%s",
         int(current_user.id),
         source,
-        workspace,
+        resolved.workspace,
         len(history_turns),
         len(images),
         int((time.perf_counter() - normalize_started) * 1000),
@@ -132,44 +115,31 @@ def _try_deepagents_chat(
         return None
 
     tool_runtime_started = time.perf_counter()
-    tool_context = build_tool_runtime_context(
-        db=db,
-        user_id=current_user.id,
-        workspace=workspace,
-        web_search_service=_scoped_web_search_service(
-            getattr(service.config, "web_search_proxy_url", ""),
-        ),
-        available_attachment_ids=attachment_ids,
-    )
     _log.info(
         "deepagents preflight phase=tool_runtime_ready user_id=%s source=%s workspace=%s latency_ms=%s",
         int(current_user.id),
         source,
-        workspace,
+        resolved.workspace,
         int((time.perf_counter() - tool_runtime_started) * 1000),
     )
 
-    limiter = ToolCallLimiter(
-        max_tool_calls=int(getattr(settings, "deepagents_max_tool_calls", 512) or 512),
-        max_write_calls=int(getattr(settings, "deepagents_max_write_calls", 128) or 128),
-        allow_write_tools=(
-            False
-            if force_disable_writes
-            else bool(getattr(settings, "deepagents_allow_write_tools", False))
-        ),
+    limiter = (
+        build_tool_call_limiter(allow_write_tools=False)
+        if force_disable_writes
+        else resolved.limiter
     )
     _log.info(
         "deepagents preflight phase=runner_ready user_id=%s source=%s workspace=%s total_preflight_ms=%s",
         int(current_user.id),
         source,
-        workspace,
+        resolved.workspace,
         int((time.perf_counter() - preflight_started) * 1000),
     )
 
     result = run_deepagents_loop(
-        service=service,
-        provider=provider,
-        context=tool_context,
+        service=resolved.service,
+        provider=resolved.provider,
+        context=resolved.tool_context,
         limiter=limiter,
         query=payload.query,
         memory_text=agents_memory_text,
@@ -196,10 +166,10 @@ def _try_deepagents_chat(
 def _build_no_result_response(
     payload: ChatRequest,
 ) -> ChatResponse:
+    del payload
     answer = _NO_RESULT_ANSWER
     return ChatResponse(
         answer=answer,
-        expression=_pick_expression(payload.query, answer),
         citations=[],
         actions=[],
         memory_summary="",
@@ -222,7 +192,7 @@ def run_chat_request(
     event_cb: Callable[[str, dict[str, Any]], None] | None = None,
     cancel_token: Any | None = None,
 ) -> ChatResponse:
-    response = _try_deepagents_chat(
+    response = _try_agent_server_chat(
         payload,
         db,
         current_user,

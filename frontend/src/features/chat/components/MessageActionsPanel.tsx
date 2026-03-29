@@ -4,8 +4,6 @@ import { useChatI18n } from '../chatI18n'
 
 interface MessageActionsPanelProps {
   actions: ChatAction[]
-  isBrowserPending: boolean
-  onBrowserConfirm: (action: ChatAction) => void
 }
 
 function ActionCard({
@@ -28,37 +26,22 @@ function ActionCard({
 
 export function MessageActionsPanel({
   actions,
-  isBrowserPending,
-  onBrowserConfirm,
 }: MessageActionsPanelProps) {
   const { t } = useChatI18n()
-  if (actions.length === 0) return null
+  const visibleActions = actions.filter((action) => !isBrowserConfirmAction(action))
+  if (visibleActions.length === 0) return null
 
   return (
     <details className="group mt-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-alt)] px-2.5 py-2">
       <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-        {t('actions.heading', { count: actions.length })}
+        {t('actions.heading', { count: visibleActions.length })}
       </summary>
       <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-out group-open:grid-rows-[1fr]">
         <div className="overflow-hidden">
           <div className="mt-2 space-y-1.5 opacity-0 translate-y-1 transition-all duration-300 ease-out group-open:translate-y-0 group-open:opacity-100">
-            {actions.map((action, index) => {
+            {visibleActions.map((action, index) => {
               const detail = String(action.detail || '').trim()
               const key = `${String(action.kind || 'action')}-${index}`
-
-              if (isBrowserConfirmAction(action)) {
-                return (
-                  <ActionCard key={key} title={action.title} detail={detail}>
-                    <button
-                      className="aelin-btn mt-2 h-7 px-2 text-[11px]"
-                      onClick={() => onBrowserConfirm(action)}
-                      disabled={isBrowserPending}
-                    >
-                      {isBrowserPending ? t('actions.confirm.pending') : t('actions.confirm.cta')}
-                    </button>
-                  </ActionCard>
-                )
-              }
 
               const href = resolveActionHref(action)
               return (

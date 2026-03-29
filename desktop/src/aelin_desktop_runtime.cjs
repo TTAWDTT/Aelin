@@ -2527,6 +2527,21 @@ function requestOk(url) {
   });
 }
 
+function requestStatus(url) {
+  return new Promise((resolve) => {
+    const req = http.get(url, (res) => {
+      const code = Number(res.statusCode || 0);
+      res.resume();
+      resolve(code);
+    });
+    req.on("error", () => resolve(0));
+    req.setTimeout(2500, () => {
+      req.destroy();
+      resolve(0);
+    });
+  });
+}
+
 async function waitForUrl(url, timeoutMs = 45000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -2536,6 +2551,41 @@ async function waitForUrl(url, timeoutMs = 45000) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return false;
+}
+
+async function hasHealthyExistingBackend() {
+  const healthCode = await requestStatus(`http://127.0.0.1:${backendPort}/healthz`);
+  if (healthCode === 200) return true;
+  const okCode = await requestStatus(`http://127.0.0.1:${backendPort}/ok`);
+  return okCode === 200;
+}
+
+async function hasHealthyExistingFrontend() {
+  const rootCode = await requestStatus(`http://127.0.0.1:${frontendPort}`);
+  return rootCode === 200;
+}
+
+function cleanupLangGraphTempFiles(rootDir) {
+  const tempDir = path.join(rootDir, ".langgraph_api");
+  if (!fs.existsSync(tempDir)) return;
+  let removed = 0;
+  try {
+    for (const entry of fs.readdirSync(tempDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (!String(entry.name || "").endsWith(".tmp")) continue;
+      try {
+        fs.unlinkSync(path.join(tempDir, entry.name));
+        removed += 1;
+      } catch {
+        // ignore stale temp cleanup errors
+      }
+    }
+  } catch {
+    // ignore temp directory scan errors
+  }
+  if (removed > 0) {
+    safeConsoleLog(`[backend] Removed ${removed} stale LangGraph temp file(s).`);
+  }
 }
 
 function killProcTree(proc) {
@@ -2618,10 +2668,32 @@ function probePythonRunner(candidate, cwd, env) {
       const reason = String(probe.stderr || probe.stdout || "").trim();
       return { ok: false, reason: reason || `exit code ${probe.status}` };
     }
-    return { ok: true };
+    return {
+      ok: true,
+      pythonPath: String(probe.stdout || "").trim(),
+    };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function resolveLangGraphExecutable(pythonPath) {
+  const normalized = String(pythonPath || "").trim();
+  if (!normalized) return "";
+  const pythonDir = path.dirname(normalized);
+  const candidates = process.platform === "win32"
+    ? [
+        path.join(pythonDir, "Scripts", "langgraph.exe"),
+        path.join(pythonDir, "Scripts", "langgraph"),
+      ]
+    : [
+        path.join(pythonDir, "langgraph"),
+        path.join(pythonDir, "bin", "langgraph"),
+      ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "";
 }
 
 function stripAnsiCodes(text) {
@@ -2653,7 +2725,7 @@ function pipeTaggedLog(proc, tag) {
   });
 }
 
-function startBackend() {
+async function startBackend() {
   const userData = app.getPath("userData");
   const mediaDir = path.join(userData, "media");
   fs.mkdirSync(mediaDir, { recursive: true });
@@ -2670,6 +2742,8 @@ function startBackend() {
       `http://localhost:${frontendPort}`,
       "http://127.0.0.1:5173",
       "http://localhost:5173",
+      "http://127.0.0.1:5174",
+      "http://localhost:5174",
     ].join(","),
     AELIN_BROWSER_TOOL_HEADLESS: process.env.AELIN_BROWSER_TOOL_HEADLESS || "0",
     AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
@@ -2687,8 +2761,14 @@ function startBackend() {
     env.AELIN_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
   }
 
+  if (await hasHealthyExistingBackend()) {
+    safeConsoleLog(`[backend] Reusing existing backend at http://127.0.0.1:${backendPort}`);
+    return;
+  }
+
   if (app.isPackaged) {
     const runtimeRoot = backendRuntimeDir();
+    cleanupLangGraphTempFiles(runtimeRoot);
     const exeName = process.platform === "win32" ? "aelin-backend.exe" : "aelin-backend";
     const exePath = path.join(runtimeRoot, exeName);
     if (!fs.existsSync(exePath)) {
@@ -2712,6 +2792,7 @@ function startBackend() {
   if (!fs.existsSync(root)) {
     throw new Error(`Backend directory missing: ${root}`);
   }
+  cleanupLangGraphTempFiles(root);
 
   const requestedPython = String(process.env.AELIN_PYTHON || "");
   const pythonCandidates = buildPythonCandidates(requestedPython);
@@ -2724,9 +2805,45 @@ function startBackend() {
       continue;
     }
     safeConsoleLog(`[backend] Python runner selected: ${candidate.label}`);
+    const langgraphExecutable = resolveLangGraphExecutable(probe.pythonPath);
+    const launch = langgraphExecutable
+      ? {
+          command: langgraphExecutable,
+          args: [
+            "dev",
+            "--config",
+            "langgraph.json",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            String(backendPort),
+            "--no-browser",
+            "--no-reload",
+          ],
+          label: langgraphExecutable,
+        }
+      : {
+          command: candidate.command,
+          args: [
+            ...candidate.args,
+            "-m",
+            "langgraph_cli",
+            "dev",
+            "--config",
+            "langgraph.json",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            String(backendPort),
+            "--no-browser",
+            "--no-reload",
+          ],
+          label: `${candidate.label} -m langgraph_cli`,
+        };
+    safeConsoleLog(`[backend] LangGraph launcher selected: ${launch.label}`);
     backendProc = spawn(
-      candidate.command,
-      [...candidate.args, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(backendPort)],
+      launch.command,
+      launch.args,
       {
         cwd: root,
         env,
@@ -2749,9 +2866,13 @@ function startBackend() {
   });
 }
 
-function startFrontendDev() {
+async function startFrontendDev() {
   if (process.env.AELIN_DESKTOP_SKIP_FRONTEND_DEV === "1") return;
-  const cmd = `npm run dev -- --host 127.0.0.1 --port ${frontendPort}`;
+  if (await hasHealthyExistingFrontend()) {
+    safeConsoleLog(`[frontend] Reusing existing frontend at http://127.0.0.1:${frontendPort}`);
+    return;
+  }
+  const cmd = `npm run dev -- --host 127.0.0.1 --port ${frontendPort} --strictPort`;
   frontendDevProc = spawnViaCmd(cmd, {
     cwd: frontendDir(),
     windowsHide: true,
@@ -3626,7 +3747,7 @@ function createPetWindow() {
 async function boot() {
   reloadPetBehaviorConfig();
   await startPetPluginApiServer();
-  startBackend();
+  await startBackend();
   const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/healthz`, 60000);
   if (!backendReady) {
     throw new Error(
@@ -3637,7 +3758,7 @@ async function boot() {
   }
 
   if (isDev) {
-    startFrontendDev();
+    await startFrontendDev();
   } else {
     startFrontendServer();
   }

@@ -1,37 +1,45 @@
 import type { ChatMessage } from '../chatTypes'
-import type { ExecutionToolCall } from '../executionStreamUtils'
+import type { ChatArtifact } from '../artifactUtils'
+import type { ExecutionLiveSummary, ExecutionTodoItem, ExecutionToolCall } from '../executionStreamUtils'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
 import { MessageActionsPanel } from './MessageActionsPanel'
 import { MessageCitationsPanel } from './MessageCitationsPanel'
 import { MarkdownMessage } from './MarkdownMessage'
+import { MessageArtifactsPanel } from './MessageArtifactsPanel'
+import { formatExecutionStatus } from './executionPaneShared'
 import {
   calculateCompactMaxWidth,
   EXPRESSION_LABELS,
   formatMessageTime,
   resolveExpressionSticker,
 } from './messageBubbleUtils'
-import { useMessageBubbleActions } from '../hooks/useMessageBubbleActions'
 import { useLocaleStore } from '@/shared/stores/localeStore'
 
 interface MessageBubbleProps {
   message: ChatMessage
   toolCalls?: ExecutionToolCall[]
+  artifacts?: ChatArtifact[]
+  liveSummary?: ExecutionLiveSummary
   isThinking?: boolean
   thinkingText?: string
   compact?: boolean
   viewportWidth: number
   onQuickPrompt?: (text: string) => void
+  onOpenArtifact: (artifact: ChatArtifact) => void
 }
 
 export function MessageBubble({
   message,
   toolCalls = [],
+  artifacts = [],
+  liveSummary,
   isThinking = false,
   thinkingText,
   compact = false,
   viewportWidth,
   onQuickPrompt,
+  onOpenArtifact,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const compactMaxWidth = calculateCompactMaxWidth(viewportWidth)
@@ -43,7 +51,12 @@ export function MessageBubble({
     : isZh
       ? 'Aelin 表情'
       : 'Aelin expression'
-  const { confirmBrowser } = useMessageBubbleActions({ message, onQuickPrompt })
+  const liveHeadline = buildLiveHeadline({ liveSummary, thinkingText, isZh })
+  const liveTools = liveSummary?.runningTools ?? []
+  const recentTools = liveSummary?.recentCompletedTools ?? []
+  const runningSubagents = liveSummary?.runningSubagents ?? []
+  const recentSubagents = liveSummary?.recentCompletedSubagents ?? []
+  const todos = liveSummary?.todos ?? []
 
   return (
     <article className={cn(
@@ -72,21 +85,80 @@ export function MessageBubble({
           : 'rounded-tl-[6px] border border-[var(--color-border)] bg-[var(--color-panel)]'
       )} style={compact ? { maxWidth: `${compactMaxWidth}px` } : undefined}>
         {!isUser && isThinking && (
-          <div className="mb-2 flex items-center gap-2">
-            <img
-              src="/gif/action_05.gif"
-              alt="Aelin is thinking"
-              className="h-7 w-7 rounded-[8px] border border-[var(--color-border)] object-cover"
-              draggable={false}
-            />
-            <div className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-              <span>{thinkingText || (isZh ? 'Aelin 正在思考' : 'Aelin is thinking')}</span>
-              <span className="chat-thinking-dots" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
+          <div className="mb-2.5 rounded-[14px] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5">
+            <div className="flex items-center gap-2">
+              <img
+                src="/gif/action_05.gif"
+                alt="Aelin is thinking"
+                className="h-7 w-7 rounded-[8px] border border-[var(--color-border)] object-cover"
+                draggable={false}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
+                  <span className="truncate">{liveHeadline}</span>
+                  <span className="chat-thinking-dots shrink-0" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </div>
+                {liveSummary?.currentNode && (
+                  <div className="mt-1 truncate text-[10px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+                    {liveSummary.currentNamespace && liveSummary.currentNamespace !== 'root'
+                      ? `${liveSummary.currentNamespace} · ${liveSummary.currentNode}`
+                      : liveSummary.currentNode}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {(liveTools.length > 0 || recentTools.length > 0 || runningSubagents.length > 0 || recentSubagents.length > 0 || todos.length > 0) && (
+              <div className="mt-2.5 space-y-2">
+                {liveTools.length > 0 && (
+                  <LiveBlock title={isZh ? '正在调用' : 'Running tools'}>
+                    {liveTools.map((tool) => (
+                      <LiveToolRow key={`running:${tool.key}`} tool={tool} />
+                    ))}
+                    {(liveSummary?.runningToolCount ?? 0) > liveTools.length && (
+                      <LiveMoreRow count={(liveSummary?.runningToolCount ?? 0) - liveTools.length} />
+                    )}
+                  </LiveBlock>
+                )}
+
+                {runningSubagents.length > 0 && (
+                  <LiveBlock title={isZh ? '子代理' : 'Subagents'}>
+                    {runningSubagents.map((subagent) => (
+                      <LiveSubagentRow key={`running:${subagent.key}`} subagent={subagent} />
+                    ))}
+                    {(liveSummary?.runningSubagentCount ?? 0) > runningSubagents.length && (
+                      <LiveMoreRow count={(liveSummary?.runningSubagentCount ?? 0) - runningSubagents.length} />
+                    )}
+                  </LiveBlock>
+                )}
+
+                {todos.length > 0 && (
+                  <LiveBlock title={isZh ? '计划' : 'Plan'}>
+                    {todos.map((todo) => (
+                      <LiveTodoRow key={todo.key} todo={todo} />
+                    ))}
+                    {(liveSummary?.todoCount ?? 0) > todos.length && (
+                      <LiveMoreRow count={(liveSummary?.todoCount ?? 0) - todos.length} />
+                    )}
+                  </LiveBlock>
+                )}
+
+                {(recentTools.length > 0 || recentSubagents.length > 0) && (
+                  <LiveBlock title={isZh ? '刚刚完成' : 'Recently finished'}>
+                    {recentTools.map((tool) => (
+                      <LiveToolRow key={`done:${tool.key}`} tool={tool} />
+                    ))}
+                    {recentSubagents.map((subagent) => (
+                      <LiveSubagentRow key={`done:${subagent.key}`} subagent={subagent} />
+                    ))}
+                  </LiveBlock>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -102,7 +174,7 @@ export function MessageBubble({
         {/* Content */}
         <MarkdownMessage content={message.content || ''} compact={compact} />
 
-        {!isUser && toolCalls.length > 0 && (
+        {!isUser && !isThinking && toolCalls.length > 0 && (
           <div className="mt-2.5 space-y-1.5 border-t border-[var(--color-border)] pt-2">
             {toolCalls.map((tool) => (
               <div
@@ -114,22 +186,19 @@ export function MessageBubble({
                     {tool.name}
                   </span>
                   <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                    {tool.state}
+                    {formatExecutionStatus(tool.state)}
                   </span>
                 </div>
-                {tool.args && (
-                  <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                    args: {tool.args}
-                  </div>
-                )}
-                {tool.result && (
-                  <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
-                    result: {tool.result}
-                  </div>
-                )}
+                <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+                  {tool.result || tool.args || (isZh ? '已记录本次工具调用。' : 'Tool call recorded.')}
+                </div>
               </div>
             ))}
           </div>
+        )}
+
+        {!isUser && !isThinking && artifacts.length > 0 && (
+          <MessageArtifactsPanel artifacts={artifacts} onOpenArtifact={onOpenArtifact} />
         )}
 
         {!isUser && stickerSrc && !isThinking && (
@@ -149,16 +218,129 @@ export function MessageBubble({
 
         {/* Citations (collapsed by default) */}
         <MessageCitationsPanel citations={message.citations || []} />
-        <MessageActionsPanel
-          actions={message.actions || []}
-          isBrowserPending={confirmBrowser.isPending}
-          onBrowserConfirm={(action) => confirmBrowser.mutate(action)}
-        />
+        <MessageActionsPanel actions={message.actions || []} />
 
         <div className="mt-2 text-[10px] tracking-wide text-[var(--color-text-muted)]">
           {formatMessageTime(message.timestamp)}
         </div>
       </div>
     </article>
+  )
+}
+
+function buildLiveHeadline({
+  liveSummary,
+  thinkingText,
+  isZh,
+}: {
+  liveSummary?: ExecutionLiveSummary
+  thinkingText?: string
+  isZh: boolean
+}): string {
+  if (liveSummary?.runningSubagents?.length) {
+    const names = liveSummary.runningSubagents.map((item) => item.name).join(' · ')
+    return isZh ? `正在协同子代理：${names}` : `Coordinating subagents: ${names}`
+  }
+  if (liveSummary?.runningTools?.length) {
+    const allPreparing = liveSummary.runningTools.every((item) => item.state === 'preparing')
+    const names = liveSummary.runningTools.map((item) => item.name).join(' · ')
+    if (allPreparing) {
+      return isZh ? `正在生成工具参数：${names}` : `Preparing tool args: ${names}`
+    }
+    return isZh ? `正在执行工具：${names}` : `Executing tools: ${names}`
+  }
+  if (liveSummary?.currentNode) {
+    return isZh ? `正在执行 ${liveSummary.currentNode}` : `Running ${liveSummary.currentNode}`
+  }
+  if (thinkingText?.trim()) return thinkingText.trim()
+  return isZh ? 'Aelin 正在思考' : 'Aelin is thinking'
+}
+
+function LiveBlock({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="space-y-1.5">
+      <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+        {title}
+      </div>
+      <div className="space-y-1.5">{children}</div>
+    </section>
+  )
+}
+
+function LiveMoreRow({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-panel)] px-2.5 py-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+      +{count} more
+    </div>
+  )
+}
+
+function LiveToolRow({ tool }: { tool: ExecutionToolCall }) {
+  const summary = tool.result || tool.args || ''
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] px-2.5 py-2">
+      <div className="flex items-center gap-2">
+        <span className="truncate text-[11px] font-medium text-[var(--color-text)]">
+          {tool.name}
+        </span>
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+          {formatExecutionStatus(tool.state)}
+        </span>
+      </div>
+      {summary && (
+        <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+          {summary}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LiveSubagentRow({ subagent }: { subagent: ExecutionLiveSummary['runningSubagents'][number] }) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] px-2.5 py-2">
+      <div className="flex items-center gap-2">
+        <span className="truncate text-[11px] font-medium text-[var(--color-text)]">
+          {subagent.name}
+        </span>
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+          {formatExecutionStatus(subagent.status)}
+        </span>
+      </div>
+      <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+        {[subagent.namespace, subagent.preview].filter(Boolean).join(' · ')}
+      </div>
+    </div>
+  )
+}
+
+function LiveTodoRow({ todo }: { todo: ExecutionTodoItem }) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)] px-2.5 py-2">
+      <div className="flex items-center gap-2">
+        <span className={cn(
+          'inline-block h-2 w-2 rounded-full',
+          todo.status === 'completed' ? 'bg-[var(--color-text)]' : 'bg-[var(--color-text-muted)]',
+        )} />
+        <span className="truncate text-[11px] font-medium text-[var(--color-text)]">
+          {todo.title}
+        </span>
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+          {formatExecutionStatus(todo.status)}
+        </span>
+      </div>
+      {todo.detail && (
+        <div className="mt-1 break-words text-[11px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">
+          {todo.detail}
+        </div>
+      )}
+    </div>
   )
 }

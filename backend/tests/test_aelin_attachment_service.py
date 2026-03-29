@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import AttachmentChunk, AttachmentDocument, Base, User
-from app.services.aelin.attachment_service import AelinAttachmentService, AttachmentIngestError
+from app.services.attachments.attachment_service import AttachmentIngestError, AttachmentService
 from app.settings import settings
 
 
@@ -35,7 +35,7 @@ def _seed_user(db: Session, user_id: int = 1) -> None:
 
 def test_ingest_bytes_deduplicates(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     db = _create_db()
     _seed_user(db, user_id=1)
 
@@ -68,7 +68,7 @@ def test_ingest_bytes_deduplicates(monkeypatch, tmp_path):
 
 def test_search_handles_like_wildcards(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     db = _create_db()
     _seed_user(db, user_id=7)
 
@@ -116,7 +116,7 @@ def test_search_handles_like_wildcards(monkeypatch, tmp_path):
 
 def test_parse_pptx_ignores_non_numeric_slide_names(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
 
     buff = io.BytesIO()
     with zipfile.ZipFile(buff, mode="w") as zf:
@@ -138,7 +138,7 @@ def test_parse_pptx_ignores_non_numeric_slide_names(monkeypatch, tmp_path):
 
 def test_ingest_bytes_integrity_error_returns_deduped_existing(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     db = _create_db()
     _seed_user(db, user_id=11)
 
@@ -177,7 +177,7 @@ def test_ingest_bytes_integrity_error_returns_deduped_existing(monkeypatch, tmp_
 
 def test_parse_pdf_empty_text_has_scanned_hint(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     try:
         from pypdf import PdfWriter  # type: ignore
     except Exception:
@@ -199,7 +199,7 @@ def test_parse_pdf_empty_text_has_scanned_hint(monkeypatch, tmp_path):
 
 def test_ingest_parse_error_does_not_leave_orphan_file(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     db = _create_db()
     _seed_user(db, user_id=12)
 
@@ -227,7 +227,7 @@ def test_ingest_parse_error_does_not_leave_orphan_file(monkeypatch, tmp_path):
 
 def test_extract_pdf_page_ocr_text_aggregates_image_ocr(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
 
     class _Img:
         def __init__(self, data: bytes):
@@ -243,7 +243,7 @@ def test_extract_pdf_page_ocr_text_aggregates_image_ocr(monkeypatch, tmp_path):
 
 def test_parse_pdf_uses_ocr_fallback_when_text_empty(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
 
     class _Img:
         data = b"img"
@@ -272,7 +272,7 @@ def test_parse_pdf_uses_ocr_fallback_when_text_empty(monkeypatch, tmp_path):
 
 def test_extract_pdf_page_ocr_text_falls_back_to_rendered_page(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
 
     class _Page:
         images: list[object] = []
@@ -285,14 +285,14 @@ def test_extract_pdf_page_ocr_text_falls_back_to_rendered_page(monkeypatch, tmp_
 
 def test_is_garbled_ocr_text_detects_noise(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     assert service._is_garbled_ocr_text("ae’  站 BAR 四\" \"PROTA 21D t SEXELA") is True
     assert service._is_garbled_ocr_text("门电路逻辑功能验证与参数测试实验报告") is False
 
 
 def test_ocr_candidate_score_prefers_readable_text(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     noisy = service._ocr_candidate_score("ae’ 站 BAR 四\" \"PROTA 21D t SEXELA")
     clean = service._ocr_candidate_score("门电路逻辑功能验证 与 参数测试 实验报告")
     assert clean > noisy
@@ -300,7 +300,7 @@ def test_ocr_candidate_score_prefers_readable_text(monkeypatch, tmp_path):
 
 def test_pick_best_ocr_text_filters_garbled(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     out = service._pick_best_ocr_text(
         [
             "ae’  站 BAR 四\" \"PROTA 21D t SEXELA",
@@ -312,7 +312,7 @@ def test_pick_best_ocr_text_filters_garbled(monkeypatch, tmp_path):
 
 def test_ocr_text_from_image_bytes_prefers_rapidocr_when_clear(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(tmp_path / "attachments"))
-    service = AelinAttachmentService()
+    service = AttachmentService()
     service._rapidocr_enabled = True
 
     monkeypatch.setattr(service, "_ocr_text_from_image_obj", lambda _img: "i 24jH2H7 [ ) /稚大学实验报告纸")

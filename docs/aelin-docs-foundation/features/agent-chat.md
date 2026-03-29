@@ -9,6 +9,7 @@ description: Aelin 的对话体验与 Answer-first 策略。
 ## 核心体验
 
 - 流式输出（边思考边展示）
+- 基于 LangGraph Agent Server 的官方 thread / run 流式链路
 - 证据卡片化引用
 - Markdown 渲染
 - 平台信息可视化（来源、账号、头像）
@@ -24,5 +25,5 @@ Aelin 默认先给出可用答案，再补充：
 ## 会话能力
 
 - 多会话切换
-- 本地持久化会话历史
-- 对话上下文注入（最近消息与记忆摘要）
+- 本地持久化会话历史（前端 session 对应官方 thread）
+- 当前 workspace 下 `/memory/AGENTS.md` 记忆注入

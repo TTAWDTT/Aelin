@@ -44,10 +44,23 @@ export function statusIcon(status?: string) {
   if (lowered === 'failed' || lowered === 'error') {
     return <XCircle size={13} className="text-[var(--color-text)]" />
   }
+  if (lowered === 'preparing') {
+    return <CircleDashed size={13} className="animate-pulse text-[var(--color-text)]" />
+  }
   if (lowered === 'running' || lowered === 'pending' || lowered === 'streaming') {
     return <CircleDashed size={13} className="animate-spin text-[var(--color-text)]" />
   }
   return <Sparkles size={13} className="text-[var(--color-text-muted)]" />
+}
+
+export function formatExecutionStatus(status?: string): string {
+  const lowered = String(status || '').toLowerCase()
+  if (lowered === 'preparing') return 'preparing args'
+  if (lowered === 'running') return 'executing'
+  if (lowered === 'completed' || lowered === 'success') return 'completed'
+  if (lowered === 'failed' || lowered === 'error') return 'failed'
+  if (lowered === 'pending' || lowered === 'streaming') return 'pending'
+  return lowered || 'idle'
 }
 
 export function nodeIcon(kind: string) {
@@ -66,4 +79,12 @@ export function tabClassName(active: boolean) {
       ? 'pointer-events-auto translate-y-0 opacity-100'
       : 'pointer-events-none translate-y-1 opacity-0',
   )
+}
+
+export function toneColor(token: string, alpha: number): string {
+  return `color-mix(in srgb, ${token} ${Math.round(alpha * 100)}%, transparent)`
+}
+
+export function surfaceTint(token: string, alpha: number, fallback = 'var(--graph-surface-outer)'): string {
+  return `color-mix(in srgb, ${token} ${Math.round(alpha * 100)}%, ${fallback})`
 }

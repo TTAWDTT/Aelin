@@ -1,0 +1,17 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "agent": "./agent_server/graph.py:make_graph"
+  },
+  "env": ".env",
+  "auth": {
+    "path": "./agent_server/auth.py:aelin_auth"
+  },
+  "http": {
+    "app": "./app/main.py:app",
+    "enable_custom_route_auth": true,
+    "middleware_order": "auth_first"
+  }
+}

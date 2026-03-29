@@ -13,7 +13,6 @@ export interface ChatSession {
 interface ChatStore {
   sessions: ChatSession[]
   activeSessionId: string | null
-  isStreaming: boolean
   statusText: string
   lastErrorCode: string | null
 
@@ -21,7 +20,6 @@ interface ChatStore {
   switchSession: (id: string) => void
   deleteSession: (id: string) => void
   renameSession: (id: string, title: string) => void
-  setStreaming: (v: boolean) => void
   setStatusText: (v: string) => void
   setLastErrorCode: (code: string | null) => void
 }
@@ -31,7 +29,6 @@ export const useChatStore = create<ChatStore>()(
     (set, get) => ({
       sessions: [],
       activeSessionId: null,
-      isStreaming: false,
       statusText: '',
       lastErrorCode: null,
 
@@ -57,11 +54,9 @@ export const useChatStore = create<ChatStore>()(
       renameSession: (id, title) => set(s => ({
         sessions: s.sessions.map(x => x.id === id ? { ...x, title } : x),
       })),
-
-      setStreaming: (v) => set({ isStreaming: v }),
       setStatusText: (v) => set({ statusText: v }),
       setLastErrorCode: (code) => set({ lastErrorCode: code }),
     }),
-    { name: 'aelin-chat' }
+    { name: 'aelin-chat-v2' }
   )
 )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
@@ -14,30 +13,21 @@ from app.schemas import (
     AelinAttachmentUploadResponse,
     AelinFileMemoryContentResponse,
 )
-from app.services.aelin.attachment_service import AttachmentIngestError, get_aelin_attachment_service
+from app.services.attachments.attachment_service import AttachmentIngestError, get_attachment_service
 from app.services.memory.file_memory_bridge import file_memory_bridge
 
-
-router = APIRouter(prefix="/aelin", tags=["aelin"])
-_LOG = logging.getLogger(__name__)
+router = APIRouter(prefix="/attachments", tags=["attachments"])
 
 
-def _preview(text: str, *, limit: int = 180) -> str:
-    raw = " ".join(str(text or "").split())
-    if len(raw) <= limit:
-        return raw
-    return f"{raw[: max(0, limit - 1)]}…"
-
-
-@router.post("/attachments/upload", response_model=AelinAttachmentUploadResponse)
-def aelin_attachment_upload(
+@router.post("/upload", response_model=AelinAttachmentUploadResponse)
+def upload_attachment(
     file: UploadFile = File(...),
     workspace: str = Form(default="default"),
     session_id: str = Form(default=""),
     db: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    service = get_aelin_attachment_service()
+    service = get_attachment_service()
     workspace_norm = service.normalize_workspace(workspace)
     session_norm = service.normalize_session(session_id)
     if session_norm:
@@ -105,8 +95,8 @@ def aelin_attachment_upload(
     return AelinAttachmentUploadResponse(**response_payload)
 
 
-@router.get("/memory/file-memory/content", response_model=AelinFileMemoryContentResponse)
-def aelin_memory_file_memory_content(
+@router.get("/file-memory/content", response_model=AelinFileMemoryContentResponse)
+def file_memory_content(
     workspace: str = "default",
     path: str = "",
     db: Session = Depends(get_session),
@@ -133,4 +123,3 @@ def aelin_memory_file_memory_content(
         content=str(entry.get("content") or ""),
         generated_at=datetime.now(timezone.utc),
     )
-

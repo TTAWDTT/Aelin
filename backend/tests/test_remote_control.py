@@ -97,9 +97,10 @@ def test_remote_control_status_exposes_unified_device_contract(monkeypatch):
     headers = _auth_headers(client)
 
     monkeypatch.setattr(
-        remote_control,
-        "device_status_snapshot",
+        remote_control.device_actions,
+        "device_status_result",
         lambda: {
+            "ok": True,
             "platform": "windows",
             "capabilities": {"desktop_open_url": True},
             "notes": ["note-a"],

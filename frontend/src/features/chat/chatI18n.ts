@@ -4,6 +4,7 @@ type Locale = 'zh' | 'en'
 
 type ChatKeys =
   | 'status.thinking'
+  | 'status.execution.available'
   | 'status.capture.fullscreen'
   | 'status.capture.region'
   | 'status.attach.processing'
@@ -55,6 +56,7 @@ type ChatKeys =
 
 const ZH: Record<ChatKeys, string> = {
   'status.thinking': '正在思考…',
+  'status.execution.available': '可查看本轮执行详情。',
   'status.capture.fullscreen': '正在全屏截图…',
   'status.capture.region': '等待框选截图…',
   'status.attach.processing': '附件处理中…',
@@ -107,6 +109,7 @@ const ZH: Record<ChatKeys, string> = {
 
 const EN: Record<ChatKeys, string> = {
   'status.thinking': 'Thinking…',
+  'status.execution.available': 'Execution details are available.',
   'status.capture.fullscreen': 'Capturing full screen…',
   'status.capture.region': 'Waiting for region selection…',
   'status.attach.processing': 'Processing attachments…',

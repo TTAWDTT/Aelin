@@ -4,16 +4,17 @@ import json
 import threading
 from dataclasses import dataclass, field
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
-from app.services.aelin.attachment_service import (
-    AelinAttachmentService,
-    get_aelin_attachment_service,
+from app.services.attachments.attachment_service import (
+    AttachmentService,
+    get_attachment_service,
 )
-from app.services.aelin.utils import normalize_positive_ints
+from app.services.foundation.service_utils import normalize_positive_ints
 from app.services.web.web_search import WebSearchService
 
 
@@ -27,7 +28,7 @@ class ToolRuntimeContext:
     user_id: int
     workspace: str
     web_search_service: WebSearchService
-    attachment_service: AelinAttachmentService
+    attachment_service: AttachmentService
     available_attachment_ids: list[int]
     cancel_checker: Callable[[], bool] | None = None
     session_factory: Callable[[], Session] | None = None
@@ -46,8 +47,8 @@ def _ensure_tool_executor() -> tuple[ThreadPoolExecutor, threading.BoundedSemaph
         if _TOOL_EXECUTOR is None or _TOOL_EXECUTOR_SEMAPHORE is None:
             max_workers = max(1, int(_TOOL_EXECUTOR_MAX_WORKERS or 1))
             _TOOL_EXECUTOR = ThreadPoolExecutor(
-                max_workers=max_workers,
-                thread_name_prefix="aelin-tool",
+            max_workers=max_workers,
+            thread_name_prefix="deepagents-tool",
             )
             _TOOL_EXECUTOR_SEMAPHORE = threading.BoundedSemaphore(max_workers)
         return _TOOL_EXECUTOR, _TOOL_EXECUTOR_SEMAPHORE
@@ -68,8 +69,9 @@ def _submit_tool_future(
     context: ToolRuntimeContext,
     args: dict[str, Any],
 ) -> Future:
+    ctx = copy_context()
     try:
-        future = executor.submit(handler, context, args)
+        future = executor.submit(ctx.run, handler, context, args)
     except Exception:
         semaphore.release()
         raise
@@ -100,7 +102,7 @@ def build_tool_runtime_context(
     user_id: int,
     workspace: str,
     web_search_service: WebSearchService | None = None,
-    attachment_service: AelinAttachmentService | None = None,
+    attachment_service: AttachmentService | None = None,
     available_attachment_ids: list[int] | None = None,
     cancel_checker: Callable[[], bool] | None = None,
     session_factory: Callable[[], Session] | None = None,
@@ -109,7 +111,7 @@ def build_tool_runtime_context(
         user_id=int(user_id),
         workspace=normalize_workspace(workspace),
         web_search_service=web_search_service or WebSearchService(),
-        attachment_service=attachment_service or get_aelin_attachment_service(),
+        attachment_service=attachment_service or get_attachment_service(),
         available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
         cancel_checker=cancel_checker,
         session_factory=session_factory,

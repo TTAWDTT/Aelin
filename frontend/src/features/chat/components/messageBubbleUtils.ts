@@ -1,6 +1,4 @@
 import type {
-  BrowserConfirmRequest,
-  BrowserConfirmResponse,
   ChatAction,
 } from '@/shared/api/types'
 
@@ -44,52 +42,4 @@ export function resolveActionHref(action: ChatAction): string {
 
 export function isBrowserConfirmAction(action: ChatAction) {
   return String(action.kind || '').trim().toLowerCase() === 'confirm_browser_action'
-}
-
-export function buildBrowserConfirmBody(action: ChatAction): BrowserConfirmRequest {
-  const payload = action.payload || {}
-  const rawNextCall = String(payload.next_call || '').trim()
-  let nextCall: Record<string, unknown> | undefined
-
-  if (rawNextCall) {
-    try {
-      const parsed = JSON.parse(rawNextCall)
-      if (!parsed || typeof parsed !== 'object') throw new Error('invalid_next_call')
-      nextCall = parsed as Record<string, unknown>
-    } catch {
-      throw new Error('next_call 解析失败')
-    }
-  }
-
-  const loginRequestId = String(payload.login_request_id || '').trim()
-  if (!nextCall && !loginRequestId) {
-    throw new Error('缺少 next_call 或 login_request_id 参数')
-  }
-
-  const rawContinueAfterConfirm = String(payload.continue_after_confirm || '').trim().toLowerCase()
-  const continueAfterConfirm = rawContinueAfterConfirm
-    ? rawContinueAfterConfirm !== 'false' && rawContinueAfterConfirm !== '0' && rawContinueAfterConfirm !== 'no'
-    : true
-
-  return {
-    workspace: String(payload.workspace || 'default').trim() || 'default',
-    action_kind: String(action.kind || '').trim() || 'confirm_browser_action',
-    action: String(payload.action || '').trim(),
-    profile_id: String(payload.profile_id || '').trim(),
-    login_request_id: loginRequestId || undefined,
-    resume_query: String(payload.resume_query || '').trim() || undefined,
-    continue_after_confirm: continueAfterConfirm,
-    next_call: nextCall,
-  }
-}
-
-export function formatBrowserConfirmFeedback(res: Pick<BrowserConfirmResponse, 'message' | 'tool_result'>) {
-  const base = String(res.message || '确认后执行失败').trim()
-  const toolResult = (res.tool_result || {}) as Record<string, unknown>
-  const restart = (toolResult.restart || {}) as Record<string, unknown>
-  const probeReason = String(restart.probe_reason || '').trim()
-  const listenerCount = Number(restart.probe_listener_count || 0)
-  if (!probeReason) return base
-  const suffix = listenerCount > 0 ? `，probe=${probeReason}，listeners=${listenerCount}` : `，probe=${probeReason}`
-  return `${base}${suffix}`
 }

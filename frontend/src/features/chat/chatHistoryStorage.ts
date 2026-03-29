@@ -1,6 +1,6 @@
 import type { ChatMessage } from './chatTypes'
 
-const STORAGE_KEY = 'aelin-chat-history'
+const STORAGE_KEY = 'aelin-chat-history-v2'
 
 function canUseStorage(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'

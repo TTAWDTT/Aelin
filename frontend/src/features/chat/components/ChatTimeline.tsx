@@ -1,6 +1,7 @@
 import type { RefObject } from 'react'
 import type { ChatMessage } from '../chatTypes'
-import type { ExecutionToolCall } from '../executionStreamUtils'
+import type { ChatArtifact } from '../artifactUtils'
+import type { ExecutionLiveSummary, ExecutionToolCall } from '../executionStreamUtils'
 import { MessageBubble } from './MessageBubble'
 import { EmptyChatState } from './EmptyChatState'
 import { useChatI18n } from '../chatI18n'
@@ -13,7 +14,10 @@ interface ChatTimelineProps {
   compact?: boolean
   viewportWidth: number
   toolCallsByMessage?: Map<string, ExecutionToolCall[]>
+  artifactsByMessage?: Map<string, ChatArtifact[]>
+  liveSummary?: ExecutionLiveSummary
   onQuickPrompt: (text: string) => void
+  onOpenArtifact: (artifact: ChatArtifact) => void
 }
 
 export function ChatTimeline({
@@ -24,11 +28,17 @@ export function ChatTimeline({
   compact = false,
   viewportWidth,
   toolCallsByMessage,
+  artifactsByMessage,
+  liveSummary,
   onQuickPrompt,
+  onOpenArtifact,
 }: ChatTimelineProps) {
   const isEmpty = messages.length === 0
-  const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
   const lastMessage = messages.at(-1)
+  const activeAssistantId =
+    isStreaming && lastMessage?.role === 'assistant'
+      ? lastMessage.id
+      : ''
   const showPendingAssistant = isStreaming && lastMessage?.role !== 'assistant'
   const { t } = useChatI18n()
 
@@ -37,7 +47,7 @@ export function ChatTimeline({
       ref={scrollRef}
       className={`min-w-0 flex-1 overflow-y-auto ${
         compact ? 'px-2 py-2.5 max-[500px]:px-1 max-[500px]:py-2' : 'px-2.5 py-3 sm:px-5 sm:py-4'
-      }`}
+      } [overflow-anchor:none]`}
     >
       {isEmpty ? (
         <EmptyChatState onQuickPrompt={onQuickPrompt} />
@@ -53,11 +63,14 @@ export function ChatTimeline({
                 <MessageBubble
                   message={message}
                   toolCalls={toolCallsByMessage?.get(message.id) ?? []}
-                  isThinking={isStreaming && message.id === lastAssistantId}
+                  artifacts={artifactsByMessage?.get(message.id) ?? []}
+                  isThinking={Boolean(activeAssistantId) && message.id === activeAssistantId}
                   thinkingText={statusText}
+                  liveSummary={Boolean(activeAssistantId) && message.id === activeAssistantId ? liveSummary : undefined}
                   compact={compact}
                   viewportWidth={viewportWidth}
                   onQuickPrompt={onQuickPrompt}
+                  onOpenArtifact={onOpenArtifact}
                 />
               </div>
             )
@@ -72,15 +85,19 @@ export function ChatTimeline({
                   timestamp: Date.now(),
                 }}
                 toolCalls={[]}
+                artifacts={[]}
                 isThinking
                 thinkingText={statusText}
+                liveSummary={liveSummary}
                 compact={compact}
                 viewportWidth={viewportWidth}
                 onQuickPrompt={onQuickPrompt}
+                onOpenArtifact={onOpenArtifact}
               />
             </div>
           )}
           {isStreaming && <div className="h-2" />}
+          <div className="h-px [overflow-anchor:auto]" />
         </div>
       )}
     </div>

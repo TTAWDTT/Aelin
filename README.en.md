@@ -7,7 +7,7 @@ Aelin is now an AI workspace built around DeepAgents as the single agent core, w
 - Aelin is the product shell; DeepAgents is the only agent loop.
 - The runtime is designed around factual tool outcomes instead of a separate legacy planner layer.
 - Supports both web and desktop runtimes.
-- Backend = a thin HTTP shell (`/api/v1/deepagents/chat/stream` plus legacy-compatible `/api/v1/aelin/*`) sitting on top of a DeepAgents graph and a small set of domain services (web_search / attachments / device / Google Workspace / skills); for extending behavior, prefer editing the DeepAgents graph/skills and refer to both `docs/deepagents_arch.md` and the official DeepAgents documentation.
+- Backend = an official LangGraph Agent Server (`/assistants`, `/threads`, `/runs`) with product APIs mounted alongside it (`/api/v1/agent/*`, `/api/v1/attachments/*`, `/api/v1/aelin/device/*`, `/api/v1/aelin/remote-control/*`); for extending behavior, prefer editing the DeepAgents graph/skills and refer to both `docs/deepagents_arch.md` and the official DeepAgents documentation.
 
 ## 2. Core Capabilities
 
@@ -31,7 +31,7 @@ Aelin is now an AI workspace built around DeepAgents as the single agent core, w
 # Backend
 cd backend
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000
+python -m langgraph dev --config langgraph.json --host 127.0.0.1 --port 8000 --no-browser
 
 # Frontend (new terminal)
 cd frontend
@@ -77,13 +77,21 @@ npm run dist
 
 Do not commit API keys, OAuth secrets, or local DB artifacts.
 
-## 7. Contribution Notes
+## 7. Product APIs
+
+- Agent config and connectivity: `/api/v1/agent/*`
+- Attachment upload: `/api/v1/attachments/upload`
+- File-memory preview: `/api/v1/attachments/file-memory/content`
+- Device helpers: `/api/v1/aelin/device/*`
+- Remote control: `/api/v1/aelin/remote-control/*`
+
+## 8. Contribution Notes
 
 - Prefer Conventional Commits: `feat(scope): ...`, `fix(scope): ...`, `docs: ...`.
 - Before opening a PR, run at least `pytest -q` and relevant frontend/desktop builds.
 - Collaboration rules: [AGENTS.md](AGENTS.md).
 
-## 8. References
+## 9. References
 
 - [README.zh-CN.md](README.zh-CN.md)
 - [docs/INDEX.md](docs/INDEX.md)
