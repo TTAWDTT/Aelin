@@ -201,9 +201,13 @@ describe('useChatStream', () => {
     expect(mocks.streamMock.submit).toHaveBeenCalledTimes(1)
 
     const [payload, options] = mocks.streamMock.submit.mock.calls[0]
-    expect(payload).toEqual({
-      messages: expect.any(Array),
-    })
+    expect(payload.messages).toHaveLength(1)
+    expect(payload.messages[0]).toEqual(
+      expect.objectContaining({
+        type: 'human',
+        content: '帮我查一下',
+      }),
+    )
     expect(Object.keys(options.context).sort()).toEqual(['attachment_ids', 'source', 'workspace'])
     expect(options.context).toEqual({
       workspace: 'research',
@@ -212,6 +216,13 @@ describe('useChatStream', () => {
     })
     expect(options.streamSubgraphs).toBe(true)
     expect(options.onDisconnect).toBe('cancel')
+    expect(options.optimisticValues({ messages: [{ id: 'persisted-1', type: 'ai', content: 'persisted answer' }] }))
+      .toEqual({
+        messages: [
+          { id: 'persisted-1', type: 'ai', content: 'persisted answer' },
+          expect.objectContaining({ type: 'human', content: '帮我查一下' }),
+        ],
+      })
 
     hook.stop()
     expect(mocks.streamMock.stop).toHaveBeenCalledTimes(1)

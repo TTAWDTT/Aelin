@@ -378,10 +378,7 @@ export function useChatStream() {
       }
 
       const humanMessage = buildHumanStreamMessage(prompt, images)
-      const inputMessages = [
-        ...buildSessionHistoryMessages(currentSessionMessages),
-        humanMessage,
-      ] as Array<Record<string, unknown>>
+      const inputMessages = [humanMessage] as Array<Record<string, unknown>>
       currentState.setStatusText(t('status.thinking'))
       currentState.setLastErrorCode(null)
 
@@ -398,7 +395,11 @@ export function useChatStream() {
             onDisconnect: 'cancel',
             optimisticValues: (prev) => ({
               ...(prev || {}),
-              messages: inputMessages,
+              messages: [
+                ...((((prev?.messages as Array<Record<string, unknown>> | undefined)
+                  ?? buildSessionHistoryMessages(currentSessionMessages)) as Array<Record<string, unknown>>)),
+                humanMessage as Record<string, unknown>,
+              ],
             }),
           },
         )
