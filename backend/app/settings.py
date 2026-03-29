@@ -134,6 +134,9 @@ class Settings(BaseSettings):
     desktop_plugin_token: str = ""
     desktop_plugin_timeout_seconds: float = 12.0
     desktop_plugin_capture_max_data_url_length: int = 3_000_000
+    desktop_plugin_execute_enabled: bool = False
+    desktop_plugin_execute_timeout_seconds: float = 20.0
+    desktop_plugin_execute_max_output_chars: int = 12_000
     # Google Workspace CLI (gws) integration.
     # `google_workspace_cli_bin` 可以是 "gws"（放在 PATH 中），也可以是一个绝对路径。
     google_workspace_cli_bin: str = "gws"

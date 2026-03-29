@@ -19,6 +19,7 @@ from app.services.deepagents.tool_runtime import (
 )
 from app.services.web.web_search import WebSearchResult
 from app.services.tools.tools_device import tool_device, tool_screen_get
+from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_web import tool_web_search
@@ -438,6 +439,34 @@ def test_device_tool_rejects_unknown_action():
     assert "unsupported device action" in str(result.get("error") or "")
 
 
+def test_execute_tool_returns_command_result(monkeypatch):
+    from app.services.tools import tools_execute
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+
+    monkeypatch.setattr(
+        tools_execute,
+        "execute_command_result",
+        lambda args: {
+            "ok": True,
+            "command": str(args.get("command") or ""),
+            "cwd": str(args.get("cwd") or ""),
+            "exit_code": 0,
+            "stdout": "pytest passed",
+            "stderr": "",
+            "timed_out": False,
+            "summary": "command succeeded",
+        },
+    )
+
+    result = tool_execute(context, {"command": "pytest -q", "cwd": "D:/Github/Aelin/backend"})
+
+    assert result["ok"] is True
+    assert result["command"] == "pytest -q"
+    assert result["stdout"] == "pytest passed"
+
+
 def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
     from app.services.tools import tools_gws
 
@@ -630,6 +659,46 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
     assert calls
     assert calls[0]["args"] == {"action": "open_url", "url": "https://example.com"}
     assert any(tr["name"] == "device" and tr["status"] == "completed" for tr in tool_runs)
+
+
+def test_deepagents_build_chat_tools_registers_execute_when_enabled(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    calls: list[dict[str, object]] = []
+
+    def _fake_tool_execute(tool_context, args):  # type: ignore[no-untyped-def]
+        calls.append({"tool_context": tool_context, "args": dict(args)})
+        return {
+            "ok": True,
+            "command": str(args.get("command") or ""),
+            "exit_code": 0,
+            "stdout": "ok",
+            "stderr": "",
+            "timed_out": False,
+            "summary": "command succeeded",
+        }
+
+    monkeypatch.setattr(dag, "tool_execute", _fake_tool_execute)
+    monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", True)
+
+    limiter = ToolCallLimiter(
+        max_tool_calls=20,
+        max_write_calls=10,
+        allow_write_tools=True,
+    )
+
+    tools, tool_runs, _usage = dag.build_chat_tools(context=context, limiter=limiter)
+
+    assert "execute" in [tool.name for tool in tools]
+    execute_tool = next(t for t in tools if t.name == "execute")
+    result = execute_tool.invoke({"command": "pytest -q", "cwd": "D:/Github/Aelin/backend"})
+
+    assert result["ok"] is True
+    assert calls
+    assert calls[0]["args"] == {"command": "pytest -q", "cwd": "D:/Github/Aelin/backend"}
+    assert any(tr["name"] == "execute" and tr["status"] == "completed" for tr in tool_runs)
 
 
 def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):

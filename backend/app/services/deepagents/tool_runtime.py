@@ -249,6 +249,17 @@ def build_tool_signature(name: str, args: dict[str, Any]) -> str:
             ensure_ascii=False,
             sort_keys=True,
         )
+    if tool == "execute":
+        return json.dumps(
+            {
+                "tool": tool,
+                "command": _normalize_text((args or {}).get("command")),
+                "cwd": _normalize_text((args or {}).get("cwd")),
+                "timeout_ms": int((args or {}).get("timeout_ms") or 0),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     return json.dumps({"tool": tool, "args": args or {}}, ensure_ascii=False, sort_keys=True)
 
 
@@ -259,6 +270,7 @@ def _tool_attempt_limit(name: str) -> int:
         "google_workspace": 4,
         "device": 2,
         "screen_get": 2,
+        "execute": 4,
     }.get(str(name or "").strip().lower(), 2)
 
 
@@ -322,6 +334,12 @@ def _invalid_reason(name: str, args: dict[str, Any]) -> str:
             return "invalid device call: action must be one of status, open_url, open_aelin"
         if action == "open_url" and not _normalize_url((args or {}).get("url")):
             return "invalid device call: open_url requires a non-empty http(s) url"
+    if tool == "execute":
+        command = str((args or {}).get("command") or "").strip()
+        if not command:
+            return "invalid execute call: provide a non-empty command"
+        if len(command) > 4000:
+            return "invalid execute call: command is too long"
     return ""
 
 
@@ -333,6 +351,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return action in {"open_url", "open_aelin"}
     if tool in {"web_search", "attachment_search", "screen_get"}:
         return False
+    if tool == "execute":
+        return True
     if tool == "google_workspace":
         return action in {"calendar_create_event", "gmail_send", "gmail_draft", "docs_create"}
     return False
@@ -368,7 +388,7 @@ class ToolCallLimiter:
 
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
-        if tool not in {"device", "web_search", "attachment_search", "screen_get", "google_workspace"}:
+        if tool not in {"device", "web_search", "attachment_search", "screen_get", "google_workspace", "execute"}:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
         invalid_reason = _invalid_reason(tool, args)
