@@ -171,6 +171,12 @@ def _runtime_cache_key(
         "deepagents_write_file_max_chars": int(
             getattr(settings, "deepagents_write_file_max_chars", 50000) or 50000
         ),
+        "desktop_plugin_execute_enabled": bool(
+            getattr(settings, "desktop_plugin_execute_enabled", False)
+        ),
+        "desktop_plugin_execute_timeout_seconds": float(
+            getattr(settings, "desktop_plugin_execute_timeout_seconds", 20.0) or 20.0
+        ),
         "deepagents_extra_skills_dir": str(
             getattr(settings, "deepagents_extra_skills_dir", "") or ""
         ),

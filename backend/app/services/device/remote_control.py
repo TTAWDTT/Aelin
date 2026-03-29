@@ -13,8 +13,8 @@ from app.models import User
 from app.schemas import ChatRequest, ChatResponse, RemoteControlExecuteRequest
 from app.services.device import device_actions
 from app.services.device.device_contract import (
-    SUPPORTED_DEEPAGENTS_TOOLS,
     SUPPORTED_DEVICE_ACTIONS,
+    supported_deepagents_tools,
 )
 from app.services.device.remote_control_chat_adapter import (
     is_deepagents_no_result_response,
@@ -96,7 +96,7 @@ def build_remote_control_status() -> dict[str, Any]:
         "source": "remote_control",
         "capabilities": dict(tool_status.get("capabilities") or {}),
         "notes": list(tool_status.get("notes") or []),
-        "supported_tools": list(SUPPORTED_DEEPAGENTS_TOOLS),
+        "supported_tools": supported_deepagents_tools(tool_status),
         "supported_device_actions": list(SUPPORTED_DEVICE_ACTIONS),
         "desktop_plugin_reachable": bool(tool_status.get("desktop_plugin_reachable")),
         "generated_at": datetime.now(timezone.utc),

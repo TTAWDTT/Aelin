@@ -5,7 +5,7 @@ from typing import Any
 from app.services.device.device_center import device_status_snapshot
 
 
-SUPPORTED_DEEPAGENTS_TOOLS = [
+BASE_DEEPAGENTS_TOOLS = [
     "device",
     "screen_get",
 ]
@@ -15,6 +15,15 @@ SUPPORTED_DEVICE_ACTIONS = [
     "open_url",
     "open_aelin",
 ]
+
+
+def supported_deepagents_tools(snapshot: dict[str, Any] | None = None) -> list[str]:
+    state = snapshot or device_status_snapshot()
+    capabilities = dict(state.get("capabilities") or {})
+    tools = list(BASE_DEEPAGENTS_TOOLS)
+    if bool(capabilities.get("desktop_execute_command")):
+        tools.append("execute")
+    return tools
 
 
 def build_device_status_contract(snapshot: dict[str, Any] | None = None) -> dict[str, Any]:

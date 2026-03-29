@@ -37,6 +37,7 @@ from app.services.deepagents.input_mapping import build_chat_messages
 from app.services.deepagents.output_utils import extract_answer
 from app.services.tools.tool_helpers import _result_error
 from app.services.tools.tools_device import tool_device, tool_screen_get
+from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_web import tool_web_search
@@ -155,6 +156,18 @@ class GoogleWorkspaceToolInput(BaseModel):
     docs_content: str | None = None
 
 
+class ExecuteToolInput(BaseModel):
+    command: str = Field(..., description="Non-interactive shell command to execute.")
+    cwd: str | None = Field(
+        default=None,
+        description="Optional working directory inside the allowed local workspace roots.",
+    )
+    timeout_ms: int | None = Field(
+        default=None,
+        description="Optional timeout in milliseconds (1000-120000).",
+    )
+
+
 def _build_deepagents_http_timeout(service: LLMService) -> httpx.Timeout:
     request_timeout = max(5.0, float(getattr(service, "timeout_seconds", 90.0) or 90.0))
     read_timeout = max(
@@ -266,6 +279,13 @@ def _tool_description(name: str) -> str:
         return (
             "Capture a desktop screenshot for visual inspection.\n"
             "Only use when visual evidence is required. Avoid repeated screenshots with the same arguments."
+        )
+    if name == "execute":
+        return (
+            "Execute a non-interactive shell command on the local desktop runtime.\n"
+            "Arguments: command=<non-empty string>, cwd?<allowed directory>, timeout_ms=1000..120000.\n"
+            "Use for coding or inspection tasks like running tests, listing files, or checking git status.\n"
+            "Avoid interactive commands, long-running dev servers, or commands that wait for user input."
         )
     return name
 
@@ -765,6 +785,15 @@ def build_chat_tools(
         _make_device_tool(),
         _make_screen_get_tool(),
     ]
+    if bool(getattr(settings, "desktop_plugin_execute_enabled", False)):
+        tools.append(
+            _make_structured_tool(
+                "execute",
+                tool_execute,
+                ExecuteToolInput,
+                ["command", "cwd", "timeout_ms"],
+            )
+        )
     return tools, tool_runs, usage
 
 
@@ -811,6 +840,7 @@ def build_chat_agent(
         "- google_workspace: choose a concrete action and include all required fields before calling; never blindly retry writes.\n"
         "- device: only use status/open_url/open_aelin when the user explicitly asks for desktop or browser navigation; open_url requires a valid http(s) URL.\n"
         "- screen_get: capture only when visual evidence is necessary; avoid repeated screenshots with the same arguments.\n"
+        "- execute: use only for short, non-interactive local commands; always provide a concrete command; avoid shells, dev servers, or commands that may wait for user input.\n"
         f"{_current_date_context()}\n"
         "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
         "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"

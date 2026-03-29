@@ -34,6 +34,11 @@ const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
 const PET_DEBUG_LOG_ENABLED = process.env.AELIN_PET_DEBUG === "1";
 const PET_PLUGIN_API_ENABLED = process.env.AELIN_PET_PLUGIN_API_DISABLED !== "1";
 const PET_PLUGIN_API_TOKEN = String(process.env.AELIN_PET_PLUGIN_TOKEN || "").trim();
+const PET_PLUGIN_API_EXECUTE_ENABLED = process.env.AELIN_PET_PLUGIN_ALLOW_EXECUTE !== "0";
+const PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS = Math.max(
+  1024,
+  Math.min(100000, Number(process.env.AELIN_PET_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || "12000"))
+);
 
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -1017,6 +1022,24 @@ function createPetPluginApiApp() {
     }
   });
 
+  api.post("/v1/desktop/command/execute", async (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const result = await executeLocalCommand(body);
+      res.json({
+        ok: true,
+        ...result,
+        ts: Date.now(),
+      });
+    } catch (error) {
+      const statusCode = Math.max(400, Math.min(503, Number(error?.statusCode || 500)));
+      res.status(statusCode).json({
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error || "desktop_command_execute_failed"),
+      });
+    }
+  });
+
   api.get("/v1/pet/behavior", (_req, res) => {
     res.json({
       ok: true,
@@ -1152,6 +1175,115 @@ function frontendDir() {
 
 function frontendDistDir() {
   return app.isPackaged ? path.join(process.resourcesPath, "frontend-dist") : path.join(frontendDir(), "dist");
+}
+
+function createPluginHttpError(detail, statusCode = 400) {
+  const error = new Error(String(detail || "plugin_error"));
+  error.statusCode = Math.max(400, Math.min(503, Number(statusCode || 400)));
+  return error;
+}
+
+function safeRealpath(targetPath) {
+  const input = String(targetPath || "").trim();
+  if (!input) return "";
+  try {
+    return fs.realpathSync(input);
+  } catch {
+    return path.resolve(input);
+  }
+}
+
+function isPathWithinRoot(rootPath, targetPath) {
+  const root = safeRealpath(rootPath);
+  const target = safeRealpath(targetPath);
+  if (!root || !target) return false;
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function buildAllowedExecuteRoots() {
+  const configured = String(process.env.AELIN_PET_PLUGIN_EXECUTE_ALLOWED_ROOTS || "")
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const defaults = [
+    projectRoot(),
+    backendDir(),
+    frontendDir(),
+    path.join(projectRoot(), "desktop"),
+  ];
+  const seen = new Set();
+  const roots = [];
+  for (const candidate of [...configured, ...defaults]) {
+    const resolved = safeRealpath(candidate);
+    if (!resolved || seen.has(resolved) || !fs.existsSync(resolved)) continue;
+    try {
+      if (!fs.statSync(resolved).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    seen.add(resolved);
+    roots.push(resolved);
+  }
+  return roots;
+}
+
+function resolveExecuteWorkingDirectory(raw) {
+  const fallback = safeRealpath(projectRoot());
+  const requested = String(raw || "").trim();
+  const candidate = requested
+    ? safeRealpath(path.isAbsolute(requested) ? requested : path.resolve(projectRoot(), requested))
+    : fallback;
+  if (!candidate || !fs.existsSync(candidate)) {
+    throw createPluginHttpError("cwd_not_found", 400);
+  }
+  try {
+    if (!fs.statSync(candidate).isDirectory()) {
+      throw createPluginHttpError("cwd_not_directory", 400);
+    }
+  } catch (error) {
+    if (error instanceof Error && "statusCode" in error) throw error;
+    throw createPluginHttpError("cwd_not_directory", 400);
+  }
+  const allowedRoots = buildAllowedExecuteRoots();
+  if (!allowedRoots.some((root) => isPathWithinRoot(root, candidate))) {
+    throw createPluginHttpError("cwd_not_allowed", 403);
+  }
+  return candidate;
+}
+
+function truncateExecuteOutput(raw) {
+  const text = String(raw || "");
+  if (text.length <= PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS) return text;
+  const omitted = text.length - PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS;
+  return `${text.slice(0, PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS)}\n...[truncated ${omitted} chars]`;
+}
+
+function normalizeExecuteTimeoutMs(raw) {
+  const parsed = Number(raw);
+  const fallback = getProbeCommandTimeoutMs();
+  const base = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Math.max(1000, Math.min(120000, Math.round(base)));
+}
+
+function buildExecuteLaunch(commandText) {
+  const command = String(commandText || "").trim();
+  if (!command) {
+    throw createPluginHttpError("missing_command", 400);
+  }
+  if (command.length > 4000) {
+    throw createPluginHttpError("command_too_long", 400);
+  }
+  if (process.platform === "win32") {
+    return {
+      command: process.env.COMSPEC || "cmd.exe",
+      args: ["/d", "/s", "/c", command],
+    };
+  }
+  return {
+    command: process.env.SHELL || "/bin/sh",
+    args: ["-lc", command],
+  };
 }
 
 function normalizeRoute(route) {
@@ -1530,6 +1662,82 @@ function runCommandAsync(command, args, timeoutMs = getProbeCommandTimeoutMs()) 
   });
 }
 
+function runCommandDetailedAsync(command, args, options = {}) {
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs || getProbeCommandTimeoutMs()));
+  const cwd = String(options.cwd || "").trim() || undefined;
+  const env = options.env && typeof options.env === "object" ? options.env : process.env;
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error || "command error")));
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let forceTimer = null;
+
+    const finish = (error, payload) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(payload);
+      }
+    };
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk || "");
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk || "");
+    });
+
+    child.on("error", (error) => {
+      finish(error instanceof Error ? error : new Error(String(error || "command error")));
+    });
+
+    child.on("close", (code) => {
+      const exitCode = Number.isFinite(Number(code)) ? Number(code) : null;
+      finish(null, {
+        exitCode,
+        stdout: String(stdout || "").trim(),
+        stderr: String(stderr || "").trim(),
+        timedOut,
+      });
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        killProcTree(child);
+      } catch {
+        // ignore timeout kill failures
+      }
+      forceTimer = setTimeout(() => {
+        finish(null, {
+          exitCode: null,
+          stdout: String(stdout || "").trim(),
+          stderr: String(stderr || "").trim(),
+          timedOut: true,
+        });
+      }, 1200);
+    }, timeoutMs);
+  });
+}
+
 function runPowerShellScriptAsync(script, timeoutMs = getProbeCommandTimeoutMs()) {
   const wrapped = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[Console]::OutputEncoding; ${String(script || "")}`;
   return runCommandAsync(
@@ -1537,6 +1745,50 @@ function runPowerShellScriptAsync(script, timeoutMs = getProbeCommandTimeoutMs()
     ["-NoProfile", "-Command", wrapped],
     timeoutMs
   );
+}
+
+async function executeLocalCommand(payload = {}) {
+  if (!PET_PLUGIN_API_EXECUTE_ENABLED) {
+    throw createPluginHttpError("execute_disabled", 403);
+  }
+  const command = String(payload?.command || "").trim();
+  const cwd = resolveExecuteWorkingDirectory(payload?.cwd);
+  const timeoutMs = normalizeExecuteTimeoutMs(payload?.timeout_ms);
+  const launch = buildExecuteLaunch(command);
+  const result = await runCommandDetailedAsync(
+    launch.command,
+    launch.args,
+    {
+      cwd,
+      timeoutMs,
+      env: {
+        ...process.env,
+        PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+        PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8",
+        TERM: process.env.TERM || "dumb",
+        CI: process.env.CI || "1",
+      },
+    }
+  );
+  const exitCode = result.exitCode;
+  const stdout = truncateExecuteOutput(result.stdout);
+  const stderr = truncateExecuteOutput(result.stderr);
+  const timedOut = Boolean(result.timedOut);
+  const summary = timedOut
+    ? `command timed out after ${timeoutMs}ms`
+    : exitCode === 0
+      ? "command succeeded with exit code 0"
+      : `command failed with exit code ${exitCode == null ? "unknown" : exitCode}`;
+
+  return {
+    command,
+    cwd,
+    exit_code: exitCode,
+    stdout,
+    stderr,
+    timed_out: timedOut,
+    summary,
+  };
 }
 
 async function collectWindowsProcessNamesAsync() {
@@ -2735,6 +2987,11 @@ async function startBackend() {
     ...process.env,
     PYTHONUTF8: "1",
     PYTHONIOENCODING: "utf-8",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED: process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED || "1",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS || String(Math.max(5, Math.round(getProbeCommandTimeoutMs() / 1000))),
+    AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || String(PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS),
     AELIN_DATABASE_URL: sqliteUrl(dbFile),
     AELIN_MEDIA_DIR: mediaDir,
     AELIN_CORS_ORIGINS: [
