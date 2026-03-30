@@ -20,6 +20,15 @@ function safeJsonPreview(content: string): string {
   }
 }
 
+function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+}
+
 function createBlobUrl(artifact: ChatArtifact | null): string {
   if (!artifact) return ''
   if (
@@ -27,6 +36,12 @@ function createBlobUrl(artifact: ChatArtifact | null): string {
     || artifact.previewKind === 'pdf-data-url'
   ) {
     return artifact.content
+  }
+  if (artifact.downloadBase64) {
+    const blob = new Blob([decodeBase64ToArrayBuffer(artifact.downloadBase64)], {
+      type: artifact.mimeType || 'application/octet-stream',
+    })
+    return URL.createObjectURL(blob)
   }
   const blob = new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' })
   return URL.createObjectURL(blob)
@@ -164,7 +179,7 @@ export function ArtifactPreviewDialog({
               </pre>
             )}
 
-            {artifact && ['text', 'unknown'].includes(artifact.previewKind) && (
+            {artifact?.previewKind === 'text' && (
               <div className="overflow-hidden rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)]">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
                   <FileText className="h-3.5 w-3.5" />
@@ -174,6 +189,26 @@ export function ArtifactPreviewDialog({
                   {artifact.content}
                 </pre>
               </div>
+            )}
+
+            {artifact?.previewKind === 'unknown' && (
+              artifact.content
+                ? (
+                    <div className="overflow-hidden rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)]">
+                      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+                        <FileText className="h-3.5 w-3.5" />
+                        File preview
+                      </div>
+                      <pre className="max-h-[68vh] overflow-auto p-5 font-mono text-[12px] leading-6 text-[var(--color-text)]">
+                        {artifact.content}
+                      </pre>
+                    </div>
+                  )
+                : (
+                    <div className="rounded-[24px] border border-dashed border-[var(--color-border)] bg-[var(--color-panel)] px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
+                      Preview is not available for this file type. Use Download or Open to inspect it.
+                    </div>
+                  )
             )}
           </div>
         </Dialog.Content>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import type { ExecutionRuntime } from '../executionStreamUtils'
+import type { ChatArtifact } from '../artifactUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import {
   ExecutionTabButton,
@@ -17,12 +18,15 @@ import {
   statusIcon,
   tabClassName,
 } from './executionPaneShared'
+import { ArtifactCardGrid } from './ArtifactCardGrid'
 
 interface ExecutionPaneProps {
   runtime: ExecutionRuntime
   values: Record<string, unknown>
+  artifacts: ChatArtifact[]
   isStreaming: boolean
   compact?: boolean
+  onOpenArtifact: (artifact: ChatArtifact) => void
 }
 
 type ExecutionTab = 'graph' | 'tools' | 'state'
@@ -30,8 +34,10 @@ type ExecutionTab = 'graph' | 'tools' | 'state'
 export function ExecutionPane({
   runtime,
   values,
+  artifacts,
   isStreaming,
   compact = false,
+  onOpenArtifact,
 }: ExecutionPaneProps) {
   const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
@@ -112,7 +118,15 @@ export function ExecutionPane({
                 </div>
 
                 <div className={tabClassName(tab === 'state')}>
-                  <StateTab todos={todos} values={values} />
+                  <StateTab
+                    todos={todos}
+                    values={values}
+                    artifacts={artifacts}
+                    filesHeading={t('trace.files.heading')}
+                    filesHelper={t('trace.files.helper')}
+                    filesEmpty={t('trace.files.empty')}
+                    onOpenArtifact={onOpenArtifact}
+                  />
                 </div>
               </div>
             </div>
@@ -262,12 +276,45 @@ function ToolsTab({
 function StateTab({
   todos,
   values,
+  artifacts,
+  filesHeading,
+  filesHelper,
+  filesEmpty,
+  onOpenArtifact,
 }: {
   todos: unknown[]
   values: Record<string, unknown>
+  artifacts: ChatArtifact[]
+  filesHeading: string
+  filesHelper: string
+  filesEmpty: string
+  onOpenArtifact: (artifact: ChatArtifact) => void
 }) {
   return (
     <div id="execution-pane-state" className="space-y-2 text-[11px]">
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]">
+          <div>
+            <div className="font-medium text-[var(--color-text-muted)]">
+              {filesHeading}
+            </div>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              {filesHelper}
+            </p>
+          </div>
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
+            {artifacts.length}
+          </span>
+        </div>
+        {artifacts.length > 0
+          ? <ArtifactCardGrid artifacts={artifacts} onOpenArtifact={onOpenArtifact} />
+          : (
+              <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                {filesEmpty}
+              </p>
+            )}
+      </section>
+
       {todos.length > 0 && (
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
           <div className="mb-2 text-[11px] font-medium text-[var(--color-text-muted)]">

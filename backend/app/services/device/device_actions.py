@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from app.services.device.device_center import (
     activate_desktop_module,
     capture_device_screen,
+    execute_desktop_command,
     DesktopPluginActionError,
     DeviceScreenCaptureError,
     open_desktop_external_url,
@@ -109,6 +110,57 @@ def screen_get_result(args: dict[str, Any]) -> dict[str, Any]:
         "source_display": str(shot.get("source_display") or "")[:64],
         "captured_at": str(shot.get("captured_at") or "")[:64],
     }
+
+
+def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
+    command = str(args.get("command") or "").strip()
+    if not command:
+        return {"ok": False, "error": "missing_command"}
+
+    cwd = str(args.get("cwd") or "").strip()
+    try:
+        timeout_ms = int(args.get("timeout_ms") or 0)
+    except Exception:
+        timeout_ms = 0
+
+    try:
+        result = execute_desktop_command(
+            command=command,
+            cwd=cwd,
+            timeout_ms=timeout_ms or None,
+        )
+    except DesktopPluginActionError as exc:
+        return {"ok": False, "error": exc.detail}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"desktop_execute_failed:{str(exc)[:160]}"}
+
+    exit_code = result.get("exit_code")
+    timed_out = bool(result.get("timed_out"))
+    summary = str(result.get("summary") or "").strip()
+    ok = not timed_out and int(exit_code if exit_code is not None else 0) == 0
+    payload = {
+        "ok": ok,
+        "command": str(result.get("command") or command),
+        "cwd": str(result.get("cwd") or cwd),
+        "exit_code": exit_code,
+        "stdout": str(result.get("stdout") or ""),
+        "stderr": str(result.get("stderr") or ""),
+        "timed_out": timed_out,
+        "summary": summary or (
+            "command succeeded"
+            if ok
+            else ("command timed out" if timed_out else f"command failed with exit code {exit_code}")
+        ),
+    }
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, list):
+        payload["artifacts"] = [item for item in artifacts if isinstance(item, dict)]
+        payload["artifact_count"] = len(payload["artifacts"])
+    if timed_out:
+        payload["error"] = "command_timed_out"
+    elif not ok and exit_code is not None:
+        payload["error"] = f"command_exit_{exit_code}"
+    return payload
 
 
 def run_device_action(args: dict[str, Any]) -> dict[str, Any]:

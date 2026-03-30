@@ -148,15 +148,17 @@ class ToolPolicyUsage:
     def note_result(self, result: dict[str, Any]) -> None:
         is_ok = bool(result.get("ok"))
         has_progress = result_has_progress(result)
-        if is_ok and has_progress:
+        if is_ok:
             self.consecutive_failures = 0
-            self.consecutive_no_progress = 0
-            return
-        if not is_ok:
-            self.consecutive_failures += 1
         else:
-            self.consecutive_failures = 0
-        self.consecutive_no_progress += 1
+            self.consecutive_failures += 1
+
+        # A failed tool call can still add new information, such as a concrete
+        # stderr message that helps the model correct the next attempt.
+        if has_progress:
+            self.consecutive_no_progress = 0
+        else:
+            self.consecutive_no_progress += 1
 
 
 def _normalize_text(value: Any) -> str:
@@ -249,6 +251,17 @@ def build_tool_signature(name: str, args: dict[str, Any]) -> str:
             ensure_ascii=False,
             sort_keys=True,
         )
+    if tool == "execute":
+        return json.dumps(
+            {
+                "tool": tool,
+                "command": _normalize_text((args or {}).get("command")),
+                "cwd": _normalize_text((args or {}).get("cwd")),
+                "timeout_ms": int((args or {}).get("timeout_ms") or 0),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     return json.dumps({"tool": tool, "args": args or {}}, ensure_ascii=False, sort_keys=True)
 
 
@@ -259,6 +272,7 @@ def _tool_attempt_limit(name: str) -> int:
         "google_workspace": 4,
         "device": 2,
         "screen_get": 2,
+        "execute": 4,
     }.get(str(name or "").strip().lower(), 2)
 
 
@@ -269,14 +283,12 @@ def _duplicate_signature_limit(name: str, args: dict[str, Any]) -> int:
 def result_has_progress(result: dict[str, Any]) -> bool:
     if not isinstance(result, dict):
         return False
-    if not bool(result.get("ok")):
-        return False
     if bool(result.get("no_new_info")):
         return False
     total = result.get("total")
     if isinstance(total, int):
         return total > 0
-    for key in ("items", "hits", "event_attendees"):
+    for key in ("items", "hits", "event_attendees", "artifacts"):
         value = result.get(key)
         if isinstance(value, list) and len(value) > 0:
             return True
@@ -286,7 +298,17 @@ def result_has_progress(result: dict[str, Any]) -> bool:
     raw = result.get("raw")
     if isinstance(raw, dict) and bool(raw):
         return True
-    for key in ("content", "data_url", "document_id", "url", "route", "summary", "detail"):
+    for key in (
+        "content",
+        "data_url",
+        "document_id",
+        "url",
+        "route",
+        "summary",
+        "detail",
+        "stdout",
+        "stderr",
+    ):
         if str(result.get(key) or "").strip():
             return True
     return False
@@ -322,6 +344,12 @@ def _invalid_reason(name: str, args: dict[str, Any]) -> str:
             return "invalid device call: action must be one of status, open_url, open_aelin"
         if action == "open_url" and not _normalize_url((args or {}).get("url")):
             return "invalid device call: open_url requires a non-empty http(s) url"
+    if tool == "execute":
+        command = str((args or {}).get("command") or "").strip()
+        if not command:
+            return "invalid execute call: provide a non-empty command"
+        if len(command) > 4000:
+            return "invalid execute call: command is too long"
     return ""
 
 
@@ -333,6 +361,8 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return action in {"open_url", "open_aelin"}
     if tool in {"web_search", "attachment_search", "screen_get"}:
         return False
+    if tool == "execute":
+        return True
     if tool == "google_workspace":
         return action in {"calendar_create_event", "gmail_send", "gmail_draft", "docs_create"}
     return False
@@ -368,7 +398,7 @@ class ToolCallLimiter:
 
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
-        if tool not in {"device", "web_search", "attachment_search", "screen_get", "google_workspace"}:
+        if tool not in {"device", "web_search", "attachment_search", "screen_get", "google_workspace", "execute"}:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
         invalid_reason = _invalid_reason(tool, args)

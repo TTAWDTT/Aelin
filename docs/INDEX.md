@@ -12,10 +12,12 @@
 - `docs/aelin-docs-foundation/features/web-search-and-local-memory.md`
 - `docs/aelin-docs-foundation/features/proactive-interaction.md`
 - `docs/aelin-docs-foundation/features/device-interaction.md`
+- `docs/aelin-docs-foundation/reference/deepagents-official-gap-analysis.md`  _(对比官方 DeepAgents 与 Aelin 当前接入，说明差距、成因与修复优先级)_
 - `docs/feishu_qq_setup_guide_zh.md`
 - `docs/feishu_remote_control_v1.md`
 
 ## Draft
+- `docs/deepagents_harness_gap_todo_20260330.md`
 - `docs/aelin_full_audit_and_strategy.md`
 - `docs/optimize_track.md`
 - `docs/aelin/prd-v1.md`

@@ -30,7 +30,7 @@ _LOG = logging.getLogger(__name__)
 _GRAPH_AGENT_CACHE_LOCK = threading.Lock()
 _GRAPH_AGENT_CACHE: OrderedDict[str, "_CachedGraphEntry"] = OrderedDict()
 _PLACEHOLDER_AGENT: Any | None = None
-_GRAPH_BUILD_SIGNATURE = "deepagents-2026-03-28-timeout-and-skills-v2"
+_GRAPH_BUILD_SIGNATURE = "deepagents-2026-03-30-execute-preserve-v3"
 
 
 @dataclass
@@ -171,6 +171,12 @@ def _runtime_cache_key(
         "deepagents_write_file_max_chars": int(
             getattr(settings, "deepagents_write_file_max_chars", 50000) or 50000
         ),
+        "desktop_plugin_execute_enabled": bool(
+            getattr(settings, "desktop_plugin_execute_enabled", False)
+        ),
+        "desktop_plugin_execute_timeout_seconds": float(
+            getattr(settings, "desktop_plugin_execute_timeout_seconds", 20.0) or 20.0
+        ),
         "deepagents_extra_skills_dir": str(
             getattr(settings, "deepagents_extra_skills_dir", "") or ""
         ),
@@ -267,24 +273,13 @@ def _build_runtime_agent(user_id: int, context: DeepAgentsRunContext | None) -> 
         resolved_user_id = _coerce_positive_int(getattr(resolved, "user_id", None)) or int(user_id)
         resolved_workspace = str(getattr(resolved, "workspace", workspace) or workspace or "default")
         resolved_attachment_ids = list(getattr(resolved, "attachment_ids", raw_attachment_ids) or [])
-        cache_key = _runtime_cache_key(
-            user_id=resolved_user_id,
-            workspace=resolved_workspace,
-            attachment_ids=resolved_attachment_ids,
-            service=resolved.service,
-            provider=resolved.provider,
-            memory_text=resolved.memory_text,
-            limiter=resolved.limiter,
-        )
-        cached_agent = _get_cached_graph_agent(cache_key)
-        if cached_agent is not None:
-            _LOG.debug(
-                "agent_server_graph_cache_hit user_id=%s workspace=%s attachment_ids=%s",
-                resolved_user_id,
-                resolved_workspace,
-                resolved_attachment_ids,
-            )
-            return cached_agent
+
+        # Do not cache the runtime DeepAgents agent object itself.
+        #
+        # build_chat_agent() wires tool closures that capture mutable per-run
+        # state such as ToolPolicyUsage and the in-memory tool_runs list. Reusing
+        # the compiled agent leaks those counters across runs/threads and can make
+        # a fresh run start in an already-stalled state.
         agent, _, _, _ = build_chat_agent(
             service=resolved.service,
             provider=resolved.provider,
@@ -296,12 +291,12 @@ def _build_runtime_agent(user_id: int, context: DeepAgentsRunContext | None) -> 
         if agent is None:
             return None
         _LOG.debug(
-            "agent_server_graph_cache_store user_id=%s workspace=%s attachment_ids=%s",
+            "agent_server_graph_built_fresh user_id=%s workspace=%s attachment_ids=%s",
             resolved_user_id,
             resolved_workspace,
             resolved_attachment_ids,
         )
-        return _store_cached_graph_agent(cache_key, agent)
+        return agent
     finally:
         db.close()
 

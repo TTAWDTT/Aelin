@@ -16,6 +16,7 @@
 - Reference
   - /reference/api
   - /reference/storage
+  - /reference/deepagents-gap-analysis
   - /reference/faq
   - /reference/known-issues
 - Release Notes

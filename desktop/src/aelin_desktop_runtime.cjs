@@ -34,6 +34,27 @@ const APP_USER_MODEL_ID = "com.ttawdtt.aelin";
 const PET_DEBUG_LOG_ENABLED = process.env.AELIN_PET_DEBUG === "1";
 const PET_PLUGIN_API_ENABLED = process.env.AELIN_PET_PLUGIN_API_DISABLED !== "1";
 const PET_PLUGIN_API_TOKEN = String(process.env.AELIN_PET_PLUGIN_TOKEN || "").trim();
+const PET_PLUGIN_API_EXECUTE_ENABLED = process.env.AELIN_PET_PLUGIN_ALLOW_EXECUTE !== "0";
+const PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS = Math.max(
+  1024,
+  Math.min(100000, Number(process.env.AELIN_PET_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || "12000"))
+);
+const PET_PLUGIN_API_EXECUTE_ARTIFACT_MAX_FILES = Math.max(
+  1,
+  Math.min(16, Number(process.env.AELIN_PET_PLUGIN_EXECUTE_ARTIFACT_MAX_FILES || "8"))
+);
+const PET_PLUGIN_API_EXECUTE_ARTIFACT_MAX_BYTES = Math.max(
+  1024,
+  Math.min(8 * 1024 * 1024, Number(process.env.AELIN_PET_PLUGIN_EXECUTE_ARTIFACT_MAX_BYTES || "3000000"))
+);
+const PET_PLUGIN_API_EXECUTE_ARTIFACT_SCAN_MAX_FILES = Math.max(
+  32,
+  Math.min(2000, Number(process.env.AELIN_PET_PLUGIN_EXECUTE_ARTIFACT_SCAN_MAX_FILES || "400"))
+);
+const PET_PLUGIN_API_EXECUTE_ARTIFACT_SCAN_MAX_DEPTH = Math.max(
+  0,
+  Math.min(8, Number(process.env.AELIN_PET_PLUGIN_EXECUTE_ARTIFACT_SCAN_MAX_DEPTH || "4"))
+);
 
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -1017,6 +1038,24 @@ function createPetPluginApiApp() {
     }
   });
 
+  api.post("/v1/desktop/command/execute", async (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const result = await executeLocalCommand(body);
+      res.json({
+        ok: true,
+        ...result,
+        ts: Date.now(),
+      });
+    } catch (error) {
+      const statusCode = Math.max(400, Math.min(503, Number(error?.statusCode || 500)));
+      res.status(statusCode).json({
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error || "desktop_command_execute_failed"),
+      });
+    }
+  });
+
   api.get("/v1/pet/behavior", (_req, res) => {
     res.json({
       ok: true,
@@ -1152,6 +1191,386 @@ function frontendDir() {
 
 function frontendDistDir() {
   return app.isPackaged ? path.join(process.resourcesPath, "frontend-dist") : path.join(frontendDir(), "dist");
+}
+
+function createPluginHttpError(detail, statusCode = 400) {
+  const error = new Error(String(detail || "plugin_error"));
+  error.statusCode = Math.max(400, Math.min(503, Number(statusCode || 400)));
+  return error;
+}
+
+function safeRealpath(targetPath) {
+  const input = String(targetPath || "").trim();
+  if (!input) return "";
+  try {
+    return fs.realpathSync(input);
+  } catch {
+    return path.resolve(input);
+  }
+}
+
+function isPathWithinRoot(rootPath, targetPath) {
+  const root = safeRealpath(rootPath);
+  const target = safeRealpath(targetPath);
+  if (!root || !target) return false;
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function looksLikeWorkspaceCheckout(rootPath) {
+  const root = safeRealpath(rootPath);
+  if (!root) return false;
+  const requiredDirs = ["backend", "frontend", "desktop"];
+  return requiredDirs.every((name) => {
+    try {
+      return fs.statSync(path.join(root, name)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+function discoverExecuteWorkspaceRoot() {
+  const execDir = path.dirname(process.execPath || "");
+  const candidates = [
+    process.cwd(),
+    execDir,
+    path.resolve(execDir, ".."),
+    path.resolve(execDir, "..", ".."),
+    path.resolve(execDir, "..", "..", ".."),
+    path.resolve(execDir, "..", "..", "..", ".."),
+  ];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const resolved = safeRealpath(candidate);
+    if (!resolved || seen.has(resolved)) continue;
+    seen.add(resolved);
+    if (looksLikeWorkspaceCheckout(resolved)) {
+      return resolved;
+    }
+  }
+  return "";
+}
+
+function buildAllowedExecuteRoots() {
+  const configured = String(process.env.AELIN_PET_PLUGIN_EXECUTE_ALLOWED_ROOTS || "")
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const discoveredWorkspaceRoot = discoverExecuteWorkspaceRoot();
+  const defaults = [
+    discoveredWorkspaceRoot,
+    projectRoot(),
+    backendDir(),
+    frontendDir(),
+    path.join(projectRoot(), "desktop"),
+  ];
+  const seen = new Set();
+  const roots = [];
+  for (const candidate of [...configured, ...defaults]) {
+    const resolved = safeRealpath(candidate);
+    if (!resolved || seen.has(resolved) || !fs.existsSync(resolved)) continue;
+    try {
+      if (!fs.statSync(resolved).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    seen.add(resolved);
+    roots.push(resolved);
+  }
+  return roots;
+}
+
+function resolveExecuteWorkingDirectory(raw) {
+  const allowedRoots = buildAllowedExecuteRoots();
+  const fallback = allowedRoots[0] || safeRealpath(projectRoot());
+  const requested = String(raw || "").trim();
+  const candidate = requested
+    ? safeRealpath(path.isAbsolute(requested) ? requested : path.resolve(projectRoot(), requested))
+    : fallback;
+  if (!candidate || !fs.existsSync(candidate)) {
+    throw createPluginHttpError("cwd_not_found", 400);
+  }
+  try {
+    if (!fs.statSync(candidate).isDirectory()) {
+      throw createPluginHttpError("cwd_not_directory", 400);
+    }
+  } catch (error) {
+    if (error instanceof Error && "statusCode" in error) throw error;
+    throw createPluginHttpError("cwd_not_directory", 400);
+  }
+  if (!allowedRoots.some((root) => isPathWithinRoot(root, candidate))) {
+    throw createPluginHttpError("cwd_not_allowed", 403);
+  }
+  return candidate;
+}
+
+function truncateExecuteOutput(raw) {
+  const text = String(raw || "");
+  if (text.length <= PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS) return text;
+  const omitted = text.length - PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS;
+  return `${text.slice(0, PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS)}\n...[truncated ${omitted} chars]`;
+}
+
+function normalizeExecuteTimeoutMs(raw) {
+  const parsed = Number(raw);
+  const fallback = getProbeCommandTimeoutMs();
+  const base = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Math.max(1000, Math.min(120000, Math.round(base)));
+}
+
+function stripOuterQuotes(text) {
+  const raw = String(text || "").trim();
+  if ((raw.startsWith("\"") && raw.endsWith("\"")) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    return raw.slice(1, -1);
+  }
+  return raw;
+}
+
+function normalizeExecuteCommand(commandText, cwd) {
+  const raw = String(commandText || "").trim();
+  if (!raw) return "";
+  if (process.platform !== "win32") return raw;
+  const normalizedCwd = safeRealpath(cwd);
+  if (!normalizedCwd) return raw;
+  const match = raw.match(/^cd(?:\s+\/d)?\s+(.+?)\s*&&\s*(.+)$/i);
+  if (!match) return raw;
+  const requestedDir = safeRealpath(stripOuterQuotes(match[1]));
+  if (!requestedDir) return raw;
+  if (requestedDir.toLowerCase() !== normalizedCwd.toLowerCase()) return raw;
+  return String(match[2] || "").trim() || raw;
+}
+
+function normalizeExecuteArtifactPath(filePath) {
+  return String(filePath || "").replace(/\\/g, "/");
+}
+
+function shouldSkipExecuteArtifactDir(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  return [
+    ".git",
+    ".next",
+    ".turbo",
+    ".venv",
+    ".vscode",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "temp",
+    "tmp",
+    "venv",
+  ].includes(normalized);
+}
+
+function inferExecuteArtifactMimeType(filePath) {
+  const ext = String(path.extname(String(filePath || "")).toLowerCase() || "");
+  switch (ext) {
+    case ".md":
+    case ".markdown":
+      return "text/markdown";
+    case ".html":
+    case ".htm":
+      return "text/html";
+    case ".svg":
+      return "image/svg+xml";
+    case ".json":
+      return "application/json";
+    case ".csv":
+      return "text/csv";
+    case ".txt":
+    case ".log":
+    case ".py":
+    case ".js":
+    case ".ts":
+    case ".tsx":
+    case ".jsx":
+    case ".css":
+      return "text/plain";
+    case ".pdf":
+      return "application/pdf";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case ".pptx":
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    case ".xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case ".zip":
+      return "application/zip";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function inferExecuteArtifactPreviewKind(filePath, mimeType) {
+  const ext = String(path.extname(String(filePath || "")).toLowerCase() || "");
+  if (mimeType === "text/markdown") return "markdown";
+  if (mimeType === "text/html") return "html";
+  if (mimeType === "image/svg+xml") return "svg";
+  if (mimeType === "application/json") return "json";
+  if (mimeType === "application/pdf") return "pdf-data-url";
+  if (mimeType.startsWith("image/")) return "image-data-url";
+  if (
+    mimeType.startsWith("text/")
+    || [".py", ".js", ".ts", ".tsx", ".jsx", ".css"].includes(ext)
+  ) {
+    return "text";
+  }
+  return "unknown";
+}
+
+async function collectExecuteFileSnapshot(rootDir) {
+  const root = safeRealpath(rootDir);
+  const snapshot = new Map();
+  if (!root) return snapshot;
+  const queue = [{ dir: root, depth: 0 }];
+
+  while (queue.length > 0 && snapshot.size < PET_PLUGIN_API_EXECUTE_ARTIFACT_SCAN_MAX_FILES) {
+    const current = queue.shift();
+    if (!current) break;
+    let entries = [];
+    try {
+      entries = await fs.promises.readdir(current.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    entries.sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || "")));
+
+    for (const entry of entries) {
+      if (snapshot.size >= PET_PLUGIN_API_EXECUTE_ARTIFACT_SCAN_MAX_FILES) break;
+      const name = String(entry?.name || "").trim();
+      if (!name) continue;
+      const fullPath = path.join(current.dir, name);
+      const resolved = safeRealpath(fullPath);
+      if (!resolved || !isPathWithinRoot(root, resolved)) continue;
+      if (entry.isDirectory()) {
+        if (current.depth < PET_PLUGIN_API_EXECUTE_ARTIFACT_SCAN_MAX_DEPTH && !shouldSkipExecuteArtifactDir(name)) {
+          queue.push({ dir: resolved, depth: current.depth + 1 });
+        }
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      let stat;
+      try {
+        stat = await fs.promises.stat(resolved);
+      } catch {
+        continue;
+      }
+      snapshot.set(resolved, {
+        sizeBytes: Math.max(0, Number(stat?.size || 0)),
+        mtimeMs: Math.max(0, Number(stat?.mtimeMs || 0)),
+        birthtimeMs: Math.max(0, Number(stat?.birthtimeMs || 0)),
+      });
+    }
+  }
+
+  return snapshot;
+}
+
+function diffExecuteArtifactCandidates(beforeSnapshot, afterSnapshot) {
+  const changed = [];
+  for (const [filePath, meta] of afterSnapshot.entries()) {
+    const previous = beforeSnapshot.get(filePath);
+    const changedMeta = !previous
+      || Number(previous.sizeBytes || 0) !== Number(meta.sizeBytes || 0)
+      || Math.abs(Number(previous.mtimeMs || 0) - Number(meta.mtimeMs || 0)) > 1;
+    if (!changedMeta) continue;
+    changed.push({
+      filePath,
+      sizeBytes: Math.max(0, Number(meta.sizeBytes || 0)),
+      mtimeMs: Math.max(0, Number(meta.mtimeMs || 0)),
+      birthtimeMs: Math.max(0, Number(meta.birthtimeMs || 0)),
+    });
+  }
+  changed.sort((left, right) => Number(right.mtimeMs || 0) - Number(left.mtimeMs || 0));
+  return changed.slice(0, PET_PLUGIN_API_EXECUTE_ARTIFACT_MAX_FILES);
+}
+
+async function buildExecuteArtifactPayload(rootDir, candidate) {
+  const filePath = String(candidate?.filePath || "").trim();
+  const sizeBytes = Math.max(0, Number(candidate?.sizeBytes || 0));
+  if (!filePath || sizeBytes <= 0 || sizeBytes > PET_PLUGIN_API_EXECUTE_ARTIFACT_MAX_BYTES) {
+    return null;
+  }
+  let buffer;
+  try {
+    buffer = await fs.promises.readFile(filePath);
+  } catch {
+    return null;
+  }
+
+  const mimeType = inferExecuteArtifactMimeType(filePath);
+  const previewKind = inferExecuteArtifactPreviewKind(filePath, mimeType);
+  const relativePath = path.relative(rootDir, filePath) || path.basename(filePath);
+  const payload = {
+    path: normalizeExecuteArtifactPath(filePath),
+    relative_path: normalizeExecuteArtifactPath(relativePath),
+    name: path.basename(filePath),
+    size_bytes: sizeBytes,
+    mime_type: mimeType,
+    preview_kind: previewKind,
+    created_at: Number(candidate?.birthtimeMs || 0) > 0
+      ? new Date(Number(candidate.birthtimeMs || 0)).toISOString()
+      : "",
+    modified_at: Number(candidate?.mtimeMs || 0) > 0
+      ? new Date(Number(candidate.mtimeMs || 0)).toISOString()
+      : "",
+  };
+
+  if (previewKind === "image-data-url" || previewKind === "pdf-data-url") {
+    payload.content = `data:${mimeType};base64,${buffer.toString("base64")}`;
+    return payload;
+  }
+  if (["markdown", "html", "svg", "json", "text"].includes(previewKind)) {
+    payload.content = buffer.toString("utf8");
+    return payload;
+  }
+  payload.binary_base64 = buffer.toString("base64");
+  return payload;
+}
+
+async function collectExecuteArtifacts(rootDir, beforeSnapshot) {
+  const afterSnapshot = await collectExecuteFileSnapshot(rootDir);
+  const changed = diffExecuteArtifactCandidates(beforeSnapshot, afterSnapshot);
+  const artifacts = [];
+  for (const candidate of changed) {
+    const artifact = await buildExecuteArtifactPayload(rootDir, candidate);
+    if (artifact) {
+      artifacts.push(artifact);
+    }
+  }
+  return artifacts;
+}
+
+function buildExecuteLaunch(commandText) {
+  const command = String(commandText || "").trim();
+  if (!command) {
+    throw createPluginHttpError("missing_command", 400);
+  }
+  if (command.length > 4000) {
+    throw createPluginHttpError("command_too_long", 400);
+  }
+  if (process.platform === "win32") {
+    return {
+      command: process.env.COMSPEC || "cmd.exe",
+      args: ["/d", "/s", "/c", command],
+    };
+  }
+  return {
+    command: process.env.SHELL || "/bin/sh",
+    args: ["-lc", command],
+  };
 }
 
 function normalizeRoute(route) {
@@ -1530,6 +1949,82 @@ function runCommandAsync(command, args, timeoutMs = getProbeCommandTimeoutMs()) 
   });
 }
 
+function runCommandDetailedAsync(command, args, options = {}) {
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs || getProbeCommandTimeoutMs()));
+  const cwd = String(options.cwd || "").trim() || undefined;
+  const env = options.env && typeof options.env === "object" ? options.env : process.env;
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error || "command error")));
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let forceTimer = null;
+
+    const finish = (error, payload) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(payload);
+      }
+    };
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk || "");
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk || "");
+    });
+
+    child.on("error", (error) => {
+      finish(error instanceof Error ? error : new Error(String(error || "command error")));
+    });
+
+    child.on("close", (code) => {
+      const exitCode = Number.isFinite(Number(code)) ? Number(code) : null;
+      finish(null, {
+        exitCode,
+        stdout: String(stdout || "").trim(),
+        stderr: String(stderr || "").trim(),
+        timedOut,
+      });
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        killProcTree(child);
+      } catch {
+        // ignore timeout kill failures
+      }
+      forceTimer = setTimeout(() => {
+        finish(null, {
+          exitCode: null,
+          stdout: String(stdout || "").trim(),
+          stderr: String(stderr || "").trim(),
+          timedOut: true,
+        });
+      }, 1200);
+    }, timeoutMs);
+  });
+}
+
 function runPowerShellScriptAsync(script, timeoutMs = getProbeCommandTimeoutMs()) {
   const wrapped = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[Console]::OutputEncoding; ${String(script || "")}`;
   return runCommandAsync(
@@ -1537,6 +2032,58 @@ function runPowerShellScriptAsync(script, timeoutMs = getProbeCommandTimeoutMs()
     ["-NoProfile", "-Command", wrapped],
     timeoutMs
   );
+}
+
+async function executeLocalCommand(payload = {}) {
+  if (!PET_PLUGIN_API_EXECUTE_ENABLED) {
+    throw createPluginHttpError("execute_disabled", 403);
+  }
+  const cwd = resolveExecuteWorkingDirectory(payload?.cwd);
+  const command = normalizeExecuteCommand(payload?.command, cwd);
+  const timeoutMs = normalizeExecuteTimeoutMs(payload?.timeout_ms);
+  const launch = buildExecuteLaunch(command);
+  const beforeSnapshot = await collectExecuteFileSnapshot(cwd);
+  const result = await runCommandDetailedAsync(
+    launch.command,
+    launch.args,
+    {
+      cwd,
+      timeoutMs,
+      env: {
+        ...process.env,
+        PYTHONUTF8: process.env.PYTHONUTF8 || "1",
+        PYTHONIOENCODING: process.env.PYTHONIOENCODING || "utf-8",
+        TERM: process.env.TERM || "dumb",
+        CI: process.env.CI || "1",
+      },
+    }
+  );
+  const artifacts = await collectExecuteArtifacts(cwd, beforeSnapshot);
+  const exitCode = result.exitCode;
+  const stdout = truncateExecuteOutput(result.stdout);
+  const stderr = truncateExecuteOutput(result.stderr);
+  const timedOut = Boolean(result.timedOut);
+  const summary = timedOut
+    ? `command timed out after ${timeoutMs}ms`
+    : exitCode === 0
+      ? (
+          artifacts.length > 0
+            ? `command succeeded with exit code 0 and produced ${artifacts.length} artifact(s)`
+            : "command succeeded with exit code 0"
+        )
+      : `command failed with exit code ${exitCode == null ? "unknown" : exitCode}`;
+
+  return {
+    command,
+    cwd,
+    exit_code: exitCode,
+    stdout,
+    stderr,
+    timed_out: timedOut,
+    summary,
+    artifact_count: artifacts.length,
+    artifacts,
+  };
 }
 
 async function collectWindowsProcessNamesAsync() {
@@ -2735,6 +3282,11 @@ async function startBackend() {
     ...process.env,
     PYTHONUTF8: "1",
     PYTHONIOENCODING: "utf-8",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED: process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED || "1",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS || String(Math.max(5, Math.round(getProbeCommandTimeoutMs() / 1000))),
+    AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || String(PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS),
     AELIN_DATABASE_URL: sqliteUrl(dbFile),
     AELIN_MEDIA_DIR: mediaDir,
     AELIN_CORS_ORIGINS: [

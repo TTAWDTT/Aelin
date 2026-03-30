@@ -260,6 +260,7 @@ describe('executionStreamUtils', () => {
           args: '{"file_path":"/poster.html"}',
           result: '',
           filePath: '/poster.html',
+          artifacts: [],
         }]],
       ]),
       artifactsByPath,
@@ -276,6 +277,61 @@ describe('executionStreamUtils', () => {
       expect.objectContaining({
         path: '/poster.html',
         name: 'poster.html',
+      }),
+    ])
+  })
+
+  it('preserves execute-produced artifacts on tool calls', () => {
+    const message = { id: 'm8', content: 'done' } as any
+    const runtime = getExecutionRuntime(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm8',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-execute',
+            status: 'completed',
+            call: {
+              id: 'call-execute',
+              name: 'execute',
+              args: { command: 'python build.py' },
+            },
+            result: {
+              artifact_count: 1,
+              artifacts: [
+                {
+                  path: 'D:/Github/Aelin/output/poster.png',
+                  relative_path: 'output/poster.png',
+                  name: 'poster.png',
+                  mime_type: 'image/png',
+                  size_bytes: 16,
+                  preview_kind: 'image-data-url',
+                  content: 'data:image/png;base64,ZmFrZQ==',
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(runtime.tools).toEqual([
+      expect.objectContaining({
+        key: 'call-execute',
+        name: 'execute',
+        artifacts: [
+          expect.objectContaining({
+            path: 'D:/Github/Aelin/output/poster.png',
+            previewKind: 'image-data-url',
+          }),
+        ],
       }),
     ])
   })

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from app.services.deepagents.managed_backend import ManagedCompositeBackend
 from app.services.deepagents.model_timeout_middleware import (
     DeepAgentsModelTimeoutMiddleware,
+    DeepAgentsToolAvailabilityMiddleware,
     DeepAgentsToolMessageSanitizerMiddleware,
 )
 from app.services.deepagents.tool_runtime import (
@@ -37,6 +38,7 @@ from app.services.deepagents.input_mapping import build_chat_messages
 from app.services.deepagents.output_utils import extract_answer
 from app.services.tools.tool_helpers import _result_error
 from app.services.tools.tools_device import tool_device, tool_screen_get
+from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_web import tool_web_search
@@ -155,6 +157,18 @@ class GoogleWorkspaceToolInput(BaseModel):
     docs_content: str | None = None
 
 
+class ExecuteToolInput(BaseModel):
+    command: str = Field(..., description="Non-interactive shell command to execute.")
+    cwd: str | None = Field(
+        default=None,
+        description="Optional working directory inside the allowed local workspace roots.",
+    )
+    timeout_ms: int | None = Field(
+        default=None,
+        description="Optional timeout in milliseconds (1000-120000).",
+    )
+
+
 def _build_deepagents_http_timeout(service: LLMService) -> httpx.Timeout:
     request_timeout = max(5.0, float(getattr(service, "timeout_seconds", 90.0) or 90.0))
     read_timeout = max(
@@ -170,10 +184,14 @@ def _build_deepagents_http_timeout(service: LLMService) -> httpx.Timeout:
     )
 
 
-def _build_agent_middleware() -> list[Any]:
+def _build_agent_middleware(*, preserved_tools: list[Any] | None = None) -> list[Any]:
     middleware: list[Any] = [
         DeepAgentsToolMessageSanitizerMiddleware(),
     ]
+    if preserved_tools:
+        middleware.append(
+            DeepAgentsToolAvailabilityMiddleware(preserved_tools=list(preserved_tools))
+        )
     timeout_seconds = float(getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 0.0)
     if timeout_seconds > 0:
         middleware.append(DeepAgentsModelTimeoutMiddleware(timeout_seconds=timeout_seconds))
@@ -267,7 +285,75 @@ def _tool_description(name: str) -> str:
             "Capture a desktop screenshot for visual inspection.\n"
             "Only use when visual evidence is required. Avoid repeated screenshots with the same arguments."
         )
+    if name == "execute":
+        return (
+            "Execute a non-interactive shell command on the local desktop runtime.\n"
+            "Arguments: command=<non-empty string>, cwd?<allowed directory>, timeout_ms=1000..120000.\n"
+            "Use for coding or inspection tasks like running tests, listing files, or checking git status.\n"
+            "Commands run in the local desktop shell. On Windows, prefer PowerShell or cmd syntax rather than Unix-only syntax.\n"
+            "When targeting a specific directory, prefer passing cwd instead of chaining cd, and then write outputs using relative paths inside that cwd so the runtime can collect artifacts.\n"
+            "If cwd is already provided, do not prepend cd to the command.\n"
+            "On Windows, prefer commands like PowerShell Set-Content or Out-File for file creation rather than shell redirection to absolute paths, and do not use Unix-only constructs like mkdir -p.\n"
+            "Avoid interactive commands, long-running dev servers, or commands that wait for user input."
+        )
     return name
+
+
+def _build_system_prompt(tool_names: list[str]) -> str:
+    available = {str(name or "").strip() for name in tool_names if str(name or "").strip()}
+    tool_specific_rules: list[str] = []
+    if "web_search" in available:
+        tool_specific_rules.append(
+            "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence."
+        )
+    if "attachment_search" in available:
+        tool_specific_rules.append(
+            "- attachment_search: when the user asks about uploaded files, call attachment_search with a concrete non-empty query describing the requested facts. "
+            "If this run already scopes uploaded attachments for you, attachment_ids may be omitted and the runtime will apply the scoped ids automatically. "
+            "Do not claim an attachment is unavailable unless attachment_search actually failed in this run."
+        )
+    if "google_workspace" in available:
+        tool_specific_rules.append(
+            "- google_workspace: choose a concrete action and include all required fields before calling; never blindly retry writes."
+        )
+    if "device" in available:
+        tool_specific_rules.append(
+            "- device: only use status/open_url/open_aelin when the user explicitly asks for desktop or browser navigation; open_url requires a valid http(s) URL."
+        )
+    if "screen_get" in available:
+        tool_specific_rules.append(
+            "- screen_get: capture only when visual evidence is necessary; avoid repeated screenshots with the same arguments."
+        )
+    if "execute" in available:
+        tool_specific_rules.append(
+            "- execute: use only for short, non-interactive local commands; always provide a concrete command. Commands run in the local desktop shell, so on Windows prefer PowerShell/cmd syntax, use cwd for the target directory when possible, do not prepend cd when cwd is already provided, write output files with relative paths inside that cwd, and avoid Unix-only constructs like mkdir -p."
+        )
+
+    parts = [
+        "You are Aelin running on DeepAgents.\n"
+        "Reply in the same language as the user.\n"
+        "Use tools only when they materially help.\n"
+        "Prefer one correct tool call over repeated partial attempts.\n"
+        "Before calling any tool, first form a complete and valid argument set.\n"
+        "If a tool call is rejected for missing or invalid arguments, correct the arguments once instead of retrying blindly.\n"
+        "Do not repeat materially identical tool calls in the same run unless new evidence changes the request.\n"
+        "If two recent tool attempts failed or produced no new information, stop using tools and answer from the current evidence.\n"
+        "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on."
+    ]
+    if tool_specific_rules:
+        parts.append("Tool-specific rules:\n" + "\n".join(tool_specific_rules))
+    parts.extend(
+        [
+            _current_date_context(),
+            "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
+            "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
+            "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
+            "Read skills on demand from /skills/... when a matching skill is relevant.\n"
+            "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
+            "If a required tool or skill is unavailable, say so explicitly instead of implying the action completed.",
+        ]
+    )
+    return "\n".join(parts)
 
 
 def _backend_root() -> Path:
@@ -765,6 +851,15 @@ def build_chat_tools(
         _make_device_tool(),
         _make_screen_get_tool(),
     ]
+    if bool(getattr(settings, "desktop_plugin_execute_enabled", False)):
+        tools.append(
+            _make_structured_tool(
+                "execute",
+                tool_execute,
+                ExecuteToolInput,
+                ["command", "cwd", "timeout_ms"],
+            )
+        )
     return tools, tool_runs, usage
 
 
@@ -792,33 +887,13 @@ def build_chat_agent(
         limiter=limiter,
         cancel_token=cancel_token,
     )
+    preserved_tools = [
+        tool
+        for tool in tools
+        if str(getattr(tool, "name", "") or "").strip() == "execute"
+    ]
 
-    system_prompt = (
-        "You are Aelin running on DeepAgents.\n"
-        "Reply in the same language as the user.\n"
-        "Use tools only when they materially help.\n"
-        "Prefer one correct tool call over repeated partial attempts.\n"
-        "Before calling any tool, first form a complete and valid argument set.\n"
-        "If a tool call is rejected for missing or invalid arguments, correct the arguments once instead of retrying blindly.\n"
-        "Do not repeat materially identical tool calls in the same run unless new evidence changes the request.\n"
-        "If two recent tool attempts failed or produced no new information, stop using tools and answer from the current evidence.\n"
-        "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on.\n"
-        "Tool-specific rules:\n"
-        "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence.\n"
-        "- attachment_search: when the user asks about uploaded files, call attachment_search with a concrete non-empty query describing the requested facts. "
-        "If this run already scopes uploaded attachments for you, attachment_ids may be omitted and the runtime will apply the scoped ids automatically. "
-        "Do not claim an attachment is unavailable unless attachment_search actually failed in this run.\n"
-        "- google_workspace: choose a concrete action and include all required fields before calling; never blindly retry writes.\n"
-        "- device: only use status/open_url/open_aelin when the user explicitly asks for desktop or browser navigation; open_url requires a valid http(s) URL.\n"
-        "- screen_get: capture only when visual evidence is necessary; avoid repeated screenshots with the same arguments.\n"
-        f"{_current_date_context()}\n"
-        "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
-        "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
-        "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
-        "Read skills on demand from /skills/... when a matching skill is relevant.\n"
-        "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
-        "If a required tool or skill is unavailable, say so explicitly instead of implying the action completed."
-    )
+    system_prompt = _build_system_prompt([tool.name for tool in tools])
 
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
@@ -861,7 +936,7 @@ def build_chat_agent(
         system_prompt=system_prompt,
         backend=backend_factory,
         tools=tools,
-        middleware=_build_agent_middleware(),
+        middleware=_build_agent_middleware(preserved_tools=preserved_tools),
         skills=skill_snapshot.skill_sources or None,
         memory=memory_paths or None,
         context_schema=context_schema,

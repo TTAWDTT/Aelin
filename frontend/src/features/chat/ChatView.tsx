@@ -15,7 +15,13 @@ import { ExecutionPane } from './components/ExecutionPane'
 import { getExecutionRuntime, getMessageToolCallMap } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
 import { ArtifactPreviewDialog } from './components/ArtifactPreviewDialog'
-import { buildMessageArtifactMap, extractArtifactsFromState, type ChatArtifact } from './artifactUtils'
+import {
+  buildMessageArtifactMap,
+  extractArtifactsFromState,
+  extractArtifactsFromToolCalls,
+  sortArtifacts,
+  type ChatArtifact,
+} from './artifactUtils'
 
 export function ChatView() {
   const { sessions, activeSessionId, statusText, createSession } = useChatStore()
@@ -40,6 +46,12 @@ export function ChatView() {
       ? stream.values
       : {}
   const artifactsByPath = useMemo(() => extractArtifactsFromState(values), [values])
+  const toolArtifacts = useMemo(() => extractArtifactsFromToolCalls(messageToolCalls), [messageToolCalls])
+  const runtimeArtifacts = useMemo(() => {
+    const merged = new Map(toolArtifacts)
+    artifactsByPath.forEach((artifact, path) => merged.set(path, artifact))
+    return sortArtifacts(merged.values())
+  }, [artifactsByPath, toolArtifacts])
   const artifactsByMessage = useMemo(
     () => buildMessageArtifactMap(messageToolCalls, artifactsByPath),
     [artifactsByPath, messageToolCalls],
@@ -138,7 +150,14 @@ export function ChatView() {
             placeholder={t('composer.placeholder')}
           />
         </section>
-        <ExecutionPane runtime={execution} values={values} isStreaming={isStreaming} compact={compact} />
+        <ExecutionPane
+          runtime={execution}
+          values={values}
+          artifacts={runtimeArtifacts}
+          isStreaming={isStreaming}
+          compact={compact}
+          onOpenArtifact={setSelectedArtifact}
+        />
       </div>
       <ArtifactPreviewDialog
         artifact={selectedArtifact}

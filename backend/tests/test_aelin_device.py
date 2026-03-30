@@ -19,6 +19,7 @@ def test_device_capabilities_endpoint_contract():
         "desktop_plugin_configured",
         "desktop_open_url",
         "desktop_activate_module",
+        "desktop_execute_command",
     ]:
         assert key in caps
 
@@ -200,5 +201,68 @@ def test_desktop_plugin_health_bypasses_proxy_env(monkeypatch):
     assert captured["trust_env"] is False
     assert captured["follow_redirects"] is False
     assert captured["url"] == "http://127.0.0.1:21914/healthz"
+
+
+def test_execute_desktop_command_proxy_success(monkeypatch):
+    monkeypatch.setattr(settings, "desktop_plugin_base_url", "http://127.0.0.1:21914")
+    monkeypatch.setattr(settings, "desktop_plugin_token", "plugin-token")
+    monkeypatch.setattr(settings, "desktop_plugin_execute_enabled", True)
+    monkeypatch.setattr(settings, "desktop_plugin_execute_timeout_seconds", 20.0)
+    monkeypatch.setattr(settings, "desktop_plugin_execute_max_output_chars", 120)
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.text = ""
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "cwd": "D:/Github/Aelin/backend",
+                "exit_code": 0,
+                "stdout": "ok",
+                "stderr": "",
+                "timed_out": False,
+                "summary": "command succeeded with exit code 0",
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args
+            captured["timeout"] = kwargs.get("timeout")
+
+        def __enter__(self) -> "_FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type, exc, tb
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr(device_center.httpx, "Client", _FakeClient)
+
+    result = device_center.execute_desktop_command(
+        command="pytest -q",
+        cwd="D:/Github/Aelin/backend",
+        timeout_ms=15_000,
+    )
+
+    assert captured["url"] == "http://127.0.0.1:21914/v1/desktop/command/execute"
+    assert captured["json"] == {
+        "command": "pytest -q",
+        "cwd": "D:/Github/Aelin/backend",
+        "timeout_ms": 15_000,
+    }
+    assert captured["headers"] == {"x-aelin-token": "plugin-token"}
+    assert float(captured["timeout"] or 0.0) >= 18.0
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "ok"
 
 

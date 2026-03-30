@@ -1,4 +1,4 @@
-import type { ExecutionToolCall } from './executionStreamUtils'
+import type { ExecutionToolArtifact, ExecutionToolCall } from './executionStreamUtils'
 
 type UnknownRecord = Record<string, unknown>
 
@@ -19,10 +19,17 @@ export interface ChatArtifact {
   mimeType: string
   sizeBytes: number
   content: string
+  downloadBase64?: string
   createdAt?: string
   modifiedAt?: string
   previewKind: ArtifactPreviewKind
   previewable: boolean
+}
+
+function artifactTimestamp(value?: string): number {
+  if (!value) return 0
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : 0
 }
 
 const FILE_OUTPUT_TOOL_NAMES = new Set([
@@ -41,6 +48,23 @@ function contentToString(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) return value.map((item) => String(item ?? '')).join('\n')
   return ''
+}
+
+function normalizePreviewKind(value: unknown): ArtifactPreviewKind | null {
+  const text = String(value || '').trim().toLowerCase()
+  if (
+    text === 'markdown'
+    || text === 'html'
+    || text === 'svg'
+    || text === 'json'
+    || text === 'text'
+    || text === 'image-data-url'
+    || text === 'pdf-data-url'
+    || text === 'unknown'
+  ) {
+    return text
+  }
+  return null
 }
 
 function fileNameFromPath(path: string): string {
@@ -127,6 +151,13 @@ function inferPreviewKind(path: string, mimeType: string, content: string): Arti
   return content.trim() ? 'text' : 'unknown'
 }
 
+function estimateBase64Size(base64: string): number {
+  const clean = String(base64 || '').trim().replace(/\s+/g, '')
+  if (!clean) return 0
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding)
+}
+
 function artifactFromStateEntry(path: string, value: unknown): ChatArtifact | null {
   const record = asRecord(value)
   const content = contentToString(record.content)
@@ -147,6 +178,33 @@ function artifactFromStateEntry(path: string, value: unknown): ChatArtifact | nu
   }
 }
 
+function artifactFromToolEntry(value: ExecutionToolArtifact): ChatArtifact | null {
+  const path = String(value.path || value.relativePath || '').trim()
+  if (!path) return null
+  const content = String(value.content || '')
+  const downloadBase64 = String(value.binaryBase64 || '').trim() || undefined
+  const mimeType = String(value.mimeType || '').trim() || inferMimeType(path, content)
+  const previewKind = normalizePreviewKind(value.previewKind) || inferPreviewKind(path, mimeType, content)
+  const sizeBytes = Number.isFinite(Number(value.sizeBytes)) && Number(value.sizeBytes) > 0
+    ? Number(value.sizeBytes)
+    : downloadBase64
+      ? estimateBase64Size(downloadBase64)
+      : new TextEncoder().encode(content).length
+  return {
+    path,
+    name: String(value.name || fileNameFromPath(path)).trim() || fileNameFromPath(path),
+    extension: extensionFromPath(path),
+    mimeType,
+    sizeBytes,
+    content,
+    downloadBase64,
+    createdAt: String(value.createdAt || '').trim() || undefined,
+    modifiedAt: String(value.modifiedAt || '').trim() || undefined,
+    previewKind,
+    previewable: previewKind !== 'unknown',
+  }
+}
+
 export function extractArtifactsFromState(values: Record<string, unknown>): Map<string, ChatArtifact> {
   const files = asRecord(values.files)
   const artifacts = new Map<string, ChatArtifact>()
@@ -155,6 +213,31 @@ export function extractArtifactsFromState(values: Record<string, unknown>): Map<
     const artifact = artifactFromStateEntry(path, value)
     if (!artifact) return
     artifacts.set(path, artifact)
+  })
+  return artifacts
+}
+
+export function sortArtifacts(artifacts: Iterable<ChatArtifact>): ChatArtifact[] {
+  return Array.from(artifacts).sort((left, right) => {
+    const rightTime = Math.max(artifactTimestamp(right.modifiedAt), artifactTimestamp(right.createdAt))
+    const leftTime = Math.max(artifactTimestamp(left.modifiedAt), artifactTimestamp(left.createdAt))
+    if (rightTime !== leftTime) return rightTime - leftTime
+    return left.name.localeCompare(right.name)
+  })
+}
+
+export function extractArtifactsFromToolCalls(
+  toolCallsByMessage: Map<string, ExecutionToolCall[]>,
+): Map<string, ChatArtifact> {
+  const artifacts = new Map<string, ChatArtifact>()
+  toolCallsByMessage.forEach((toolCalls) => {
+    toolCalls.forEach((tool) => {
+      tool.artifacts.forEach((value) => {
+        const artifact = artifactFromToolEntry(value)
+        if (!artifact) return
+        artifacts.set(artifact.path, artifact)
+      })
+    })
   })
   return artifacts
 }
@@ -168,14 +251,18 @@ export function buildMessageArtifactMap(
   toolCallsByMessage.forEach((toolCalls, messageId) => {
     const seen = new Set<string>()
     const artifacts: ChatArtifact[] = []
-    toolCalls.forEach((tool) => {
-      const toolName = String(tool.name || '').trim().toLowerCase()
-      const filePath = String(tool.filePath || '').trim()
-      if (!filePath || !FILE_OUTPUT_TOOL_NAMES.has(toolName)) return
-      const artifact = artifactsByPath.get(filePath)
+    const addArtifact = (artifact: ChatArtifact | null | undefined) => {
       if (!artifact || seen.has(artifact.path)) return
       seen.add(artifact.path)
       artifacts.push(artifact)
+    }
+    toolCalls.forEach((tool) => {
+      const toolName = String(tool.name || '').trim().toLowerCase()
+      const filePath = String(tool.filePath || '').trim()
+      if (filePath && FILE_OUTPUT_TOOL_NAMES.has(toolName)) {
+        addArtifact(artifactsByPath.get(filePath))
+      }
+      tool.artifacts.forEach((value) => addArtifact(artifactFromToolEntry(value)))
     })
     if (artifacts.length > 0) {
       map.set(messageId, artifacts)

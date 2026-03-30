@@ -61,6 +61,20 @@ export type ExecutionToolCall = {
   args: string
   result: string
   filePath?: string
+  artifacts: ExecutionToolArtifact[]
+}
+
+export type ExecutionToolArtifact = {
+  path: string
+  relativePath?: string
+  name: string
+  mimeType?: string
+  sizeBytes?: number
+  createdAt?: string
+  modifiedAt?: string
+  previewKind?: string
+  content?: string
+  binaryBase64?: string
 }
 
 export type ExecutionTodoItem = {
@@ -152,6 +166,11 @@ function stableJson(value: unknown, max = 180): string {
   }
 }
 
+function normalizeToolResultPreviewKind(value: unknown): string {
+  const text = String(value || '').trim().toLowerCase()
+  return text || 'unknown'
+}
+
 function normalizeStatus(value: unknown, fallback = 'idle'): string {
   const text = String(value || '').trim().toLowerCase()
   return text || fallback
@@ -178,10 +197,75 @@ function isSettledToolState(state: string): boolean {
 
 function shouldDisplayToolCall(tool: ExecutionToolCall, hasStableId: boolean): boolean {
   if (hasStableId) return true
+  if (tool.artifacts.length > 0) return true
   if (tool.result) return true
   if (hasMeaningfulArgsText(tool.args)) return true
   if (isSettledToolState(tool.state)) return true
   return !GENERIC_TOOL_NAMES.has(tool.name.toLowerCase())
+}
+
+function extractToolResultArtifacts(result: unknown): ExecutionToolArtifact[] {
+  const record = asRecord(result)
+  const rawArtifacts = Array.isArray(record.artifacts) ? record.artifacts : []
+  const artifacts: ExecutionToolArtifact[] = []
+  rawArtifacts.forEach((item, index) => {
+    const artifact = asRecord(item)
+    const path = String(
+      artifact.path
+      || artifact.abs_path
+      || artifact.relative_path
+      || artifact.file_path
+      || '',
+    ).trim()
+    if (!path) return
+    const name = String(artifact.name || path.split(/[\\/]/).at(-1) || `artifact-${index + 1}`).trim()
+    artifacts.push({
+      path,
+      relativePath: String(artifact.relative_path || '').trim() || undefined,
+      name: name || `artifact-${index + 1}`,
+      mimeType: String(artifact.mime_type || '').trim() || undefined,
+      sizeBytes: Number.isFinite(Number(artifact.size_bytes)) ? Number(artifact.size_bytes) : undefined,
+      createdAt: String(artifact.created_at || '').trim() || undefined,
+      modifiedAt: String(artifact.modified_at || '').trim() || undefined,
+      previewKind: normalizeToolResultPreviewKind(artifact.preview_kind),
+      content: typeof artifact.content === 'string' ? artifact.content : undefined,
+      binaryBase64: typeof artifact.binary_base64 === 'string' ? artifact.binary_base64 : undefined,
+    })
+  })
+
+  if (artifacts.length > 0) return artifacts
+
+  const dataUrl = String(record.data_url || '').trim()
+  const name = String(record.name || '').trim()
+  if (!dataUrl.startsWith('data:') || !name) return []
+  return [{
+    path: name,
+    name,
+    mimeType: '',
+    previewKind: dataUrl.startsWith('data:application/pdf') ? 'pdf-data-url' : 'image-data-url',
+    content: dataUrl,
+  }]
+}
+
+function summarizeToolResult(result: unknown, artifacts: ExecutionToolArtifact[]): string {
+  const record = asRecord(result)
+  if (artifacts.length === 0) return stableJson(result, 180)
+
+  const summaryRecord: Record<string, unknown> = { ...record }
+  if (typeof summaryRecord.stdout === 'string') {
+    summaryRecord.stdout = compactText(summaryRecord.stdout, 80)
+  }
+  if (typeof summaryRecord.stderr === 'string') {
+    summaryRecord.stderr = compactText(summaryRecord.stderr, 80)
+  }
+  summaryRecord.artifacts = artifacts.map((artifact) => ({
+    path: artifact.relativePath || artifact.path,
+    name: artifact.name,
+    mime_type: artifact.mimeType,
+    size_bytes: artifact.sizeBytes,
+    preview_kind: artifact.previewKind,
+  }))
+  return stableJson(summaryRecord, 220)
 }
 
 function messagePreview(message: BaseMessage): string {
@@ -258,13 +342,15 @@ function getToolCallsForMessage(
     const helperState = normalizeStatus(record.status || record.state, result == null ? 'pending' : 'completed')
     const isPendingWithoutResult = helperState === 'pending' && result == null
     const isPreparingArgs = isPendingWithoutResult && Boolean(stream.isLoading) && isLatestMessage
+    const artifacts = extractToolResultArtifacts(result)
     const tool = {
       key: callId || `${String(call.name || record.name || 'tool').trim() || 'tool'}:${index}`,
       name: String(call.name || record.name || 'tool').trim() || 'tool',
       state: isPreparingArgs ? 'preparing' : isPendingWithoutResult ? 'running' : helperState,
       args: call.args == null ? '' : stableJson(call.args, 160),
-      result: result == null ? '' : stableJson(result, 180),
+      result: result == null ? '' : summarizeToolResult(result, artifacts),
       filePath: extractToolFilePath(call.args, result),
+      artifacts,
       hasStableId: Boolean(callId),
     }
 

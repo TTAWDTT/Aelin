@@ -121,6 +121,31 @@ def test_remote_control_status_exposes_unified_device_contract(monkeypatch):
     ]
 
 
+def test_remote_control_status_includes_execute_when_capability_enabled(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        remote_control.device_actions,
+        "device_status_result",
+        lambda: {
+            "ok": True,
+            "platform": "windows",
+            "capabilities": {
+                "desktop_open_url": True,
+                "desktop_execute_command": True,
+            },
+            "notes": [],
+            "desktop_plugin_reachable": True,
+        },
+    )
+
+    resp = client.get("/api/v1/aelin/remote-control/status", headers=headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("supported_tools") == ["device", "screen_get", "execute"]
+
+
 def test_feishu_bot_group_prefix_gate(monkeypatch):
     service = feishu_bot_module.FeishuBotService()
     sent_messages: list[tuple[str, str]] = []

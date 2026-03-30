@@ -182,6 +182,78 @@ def activate_desktop_module(route: str = "/") -> dict[str, Any]:
     return _normalize_plugin_action_result(raw, primary_value=str(raw.get("route") or route_clean)[:120], primary_key="route")
 
 
+def _truncate_output(value: Any, limit: int) -> str:
+    text = str(value or "")
+    max_chars = max(256, int(limit or 0))
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return f"{text[:max_chars]}\n...[truncated {omitted} chars]"
+
+
+def execute_desktop_command(
+    *,
+    command: str,
+    cwd: str = "",
+    timeout_ms: int | None = None,
+) -> dict[str, Any]:
+    if not bool(getattr(settings, "desktop_plugin_execute_enabled", False)):
+        raise DesktopPluginActionError(status_code=403, detail="desktop_execute_disabled")
+
+    command_clean = str(command or "").strip()
+    if not command_clean:
+        raise DesktopPluginActionError(status_code=400, detail="missing_command")
+
+    timeout_default_ms = int(
+        max(1.0, float(getattr(settings, "desktop_plugin_execute_timeout_seconds", 20.0) or 20.0))
+        * 1000
+    )
+    timeout_clean = max(1_000, min(120_000, int(timeout_ms or timeout_default_ms)))
+    output_limit = int(getattr(settings, "desktop_plugin_execute_max_output_chars", 12_000) or 12_000)
+    payload: dict[str, Any] = {
+        "command": command_clean,
+        "timeout_ms": timeout_clean,
+    }
+    cwd_clean = str(cwd or "").strip()
+    if cwd_clean:
+        payload["cwd"] = cwd_clean
+
+    raw = _desktop_plugin_post(
+        "/v1/desktop/command/execute",
+        payload,
+        timeout_s=max(
+            float(_desktop_plugin_config()["timeout_seconds"]),
+            (timeout_clean / 1000.0) + 3.0,
+        ),
+    )
+
+    try:
+        exit_code_raw = raw.get("exit_code")
+        exit_code = None if exit_code_raw is None else int(exit_code_raw)
+    except Exception:
+        exit_code = None
+
+    timed_out = bool(raw.get("timed_out"))
+    stdout = _truncate_output(raw.get("stdout"), output_limit)
+    stderr = _truncate_output(raw.get("stderr"), output_limit)
+    summary = str(raw.get("summary") or "").strip()[:200]
+    resolved_cwd = str(raw.get("cwd") or cwd_clean)[:1024]
+
+    return {
+        "command": command_clean,
+        "cwd": resolved_cwd,
+        "exit_code": exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+        "timed_out": timed_out,
+        "summary": summary or (
+            f"command exited with code {exit_code}"
+            if exit_code is not None
+            else ("command timed out" if timed_out else "command finished")
+        ),
+    }
+
+
 def _normalize_plugin_action_result(raw: dict[str, Any], *, primary_value: str, primary_key: str) -> dict[str, Any]:
     return {
         primary_key: primary_value,
@@ -198,10 +270,16 @@ def device_status_snapshot() -> dict[str, Any]:
         "desktop_plugin_configured": desktop_plugin_configured,
         "desktop_open_url": desktop_plugin_configured,
         "desktop_activate_module": desktop_plugin_configured,
+        "desktop_execute_command": (
+            desktop_plugin_configured
+            and bool(getattr(settings, "desktop_plugin_execute_enabled", False))
+        ),
     }
     notes: list[str] = []
     if not desktop_plugin_configured:
         notes.append("desktop plugin unconfigured: open_url / activate_module unavailable")
+    elif not bool(getattr(settings, "desktop_plugin_execute_enabled", False)):
+        notes.append("desktop command execution disabled")
     return {
         "platform": platform_name,
         "capabilities": capabilities,

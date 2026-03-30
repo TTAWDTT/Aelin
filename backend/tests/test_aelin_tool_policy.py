@@ -4,10 +4,11 @@ from app.services.deepagents.tool_runtime import ToolCallLimiter, ToolPolicyUsag
 
 
 def test_classify_write_tools():
-    # 仅 device / google_workspace 视为写操作，其余工具全部为只读。
+    # execute / device / google_workspace 视为写操作，其余工具全部为只读。
     assert classify_tool_call("device", {"action": "status"}) is False
     assert classify_tool_call("device", {"action": "open_url", "url": "https://example.com"}) is True
     assert classify_tool_call("device", {"action": "open_aelin", "route": "/"}) is True
+    assert classify_tool_call("execute", {"command": "pytest -q"}) is True
 
 
 def test_policy_allows_screen_get_when_reads_enabled():
@@ -47,6 +48,23 @@ def test_classify_device_actions():
     assert classify_tool_call("device", {"action": "status"}) is False
     assert classify_tool_call("device", {"action": "open_url", "url": "https://example.com"}) is True
     assert classify_tool_call("device", {"action": "open_aelin", "route": "/"}) is True
+    assert classify_tool_call("execute", {"command": "python -V"}) is True
+
+
+def test_policy_blocks_execute_when_writes_disabled():
+    policy = ToolCallLimiter(
+        max_tool_calls=4,
+        max_write_calls=1,
+        allow_write_tools=False,
+    )
+    decision = policy.evaluate(
+        name="execute",
+        args={"command": "pytest -q"},
+        usage=ToolPolicyUsage(total_calls=0, write_calls=0),
+    )
+    assert decision.allowed is False
+    assert decision.is_write is True
+    assert decision.reason == "write_tools_disabled"
 
 
 def test_google_workspace_policy_allows_reads_and_marks_writes():
