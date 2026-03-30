@@ -14,12 +14,15 @@ export type ArtifactPreviewKind =
 
 export interface ChatArtifact {
   path: string
+  displayPath: string
   name: string
   extension: string
   mimeType: string
   sizeBytes: number
   content: string
   downloadBase64?: string
+  relativePath?: string
+  localPath?: string
   createdAt?: string
   modifiedAt?: string
   previewKind: ArtifactPreviewKind
@@ -70,7 +73,7 @@ function normalizePreviewKind(value: unknown): ArtifactPreviewKind | null {
 function fileNameFromPath(path: string): string {
   const normalized = String(path || '').trim()
   if (!normalized) return 'file'
-  const segments = normalized.split('/').filter(Boolean)
+  const segments = normalized.split(/[\\/]/).filter(Boolean)
   return segments.at(-1) || normalized
 }
 
@@ -158,6 +161,12 @@ function estimateBase64Size(base64: string): number {
   return Math.max(0, Math.floor((clean.length * 3) / 4) - padding)
 }
 
+function isAbsoluteArtifactPath(path: string): boolean {
+  const text = String(path || '').trim()
+  if (!text) return false
+  return /^[a-z]:[\\/]/i.test(text) || /^\\\\[^\\]/.test(text) || /^\/[^/]/.test(text)
+}
+
 function artifactFromStateEntry(path: string, value: unknown): ChatArtifact | null {
   const record = asRecord(value)
   const content = contentToString(record.content)
@@ -166,6 +175,7 @@ function artifactFromStateEntry(path: string, value: unknown): ChatArtifact | nu
   const previewKind = inferPreviewKind(path, mimeType, content)
   return {
     path,
+    displayPath: path,
     name: fileNameFromPath(path),
     extension: extensionFromPath(path),
     mimeType,
@@ -182,6 +192,8 @@ function artifactFromToolEntry(value: ExecutionToolArtifact): ChatArtifact | nul
   const path = String(value.path || value.relativePath || '').trim()
   if (!path) return null
   const content = String(value.content || '')
+  const relativePath = String(value.relativePath || '').trim() || undefined
+  const localPath = relativePath && isAbsoluteArtifactPath(path) ? path : undefined
   const downloadBase64 = String(value.binaryBase64 || '').trim() || undefined
   const mimeType = String(value.mimeType || '').trim() || inferMimeType(path, content)
   const previewKind = normalizePreviewKind(value.previewKind) || inferPreviewKind(path, mimeType, content)
@@ -192,16 +204,19 @@ function artifactFromToolEntry(value: ExecutionToolArtifact): ChatArtifact | nul
       : new TextEncoder().encode(content).length
   return {
     path,
+    displayPath: relativePath || path,
     name: String(value.name || fileNameFromPath(path)).trim() || fileNameFromPath(path),
     extension: extensionFromPath(path),
     mimeType,
     sizeBytes,
     content,
     downloadBase64,
+    relativePath,
+    localPath,
     createdAt: String(value.createdAt || '').trim() || undefined,
     modifiedAt: String(value.modifiedAt || '').trim() || undefined,
     previewKind,
-    previewable: previewKind !== 'unknown',
+    previewable: previewKind !== 'unknown' || Boolean(localPath),
   }
 }
 

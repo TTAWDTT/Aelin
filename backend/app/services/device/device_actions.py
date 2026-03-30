@@ -117,6 +117,7 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
     if not command:
         return {"ok": False, "error": "missing_command"}
 
+    shell = str(args.get("shell") or "").strip().lower()
     cwd = str(args.get("cwd") or "").strip()
     try:
         timeout_ms = int(args.get("timeout_ms") or 0)
@@ -126,6 +127,7 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
     try:
         result = execute_desktop_command(
             command=command,
+            shell=shell,
             cwd=cwd,
             timeout_ms=timeout_ms or None,
         )
@@ -141,6 +143,7 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "ok": ok,
         "command": str(result.get("command") or command),
+        "shell": str(result.get("shell") or shell),
         "cwd": str(result.get("cwd") or cwd),
         "exit_code": exit_code,
         "stdout": str(result.get("stdout") or ""),

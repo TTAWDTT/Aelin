@@ -1038,6 +1038,24 @@ function createPetPluginApiApp() {
     }
   });
 
+  api.post("/v1/desktop/path/open", async (req, res) => {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    try {
+      const result = await openLocalDesktopPath(body);
+      res.json({
+        ok: true,
+        ...result,
+        ts: Date.now(),
+      });
+    } catch (error) {
+      const statusCode = Math.max(400, Math.min(503, Number(error?.statusCode || 500)));
+      res.status(statusCode).json({
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error || "desktop_path_open_failed"),
+      });
+    }
+  });
+
   api.post("/v1/desktop/command/execute", async (req, res) => {
     const body = req.body && typeof req.body === "object" ? req.body : {};
     try {
@@ -1341,6 +1359,59 @@ function normalizeExecuteCommand(commandText, cwd) {
   return String(match[2] || "").trim() || raw;
 }
 
+function looksLikePowerShellCommand(commandText) {
+  const raw = String(commandText || "").trim();
+  if (!raw || process.platform !== "win32") return false;
+  if (/^powershell(?:\.exe)?\b/i.test(raw) || /^pwsh(?:\.exe)?\b/i.test(raw)) {
+    return false;
+  }
+  if (/\$_/.test(raw) || /@\s*['"]/.test(raw) || /\$[A-Za-z_][A-Za-z0-9_]*/.test(raw)) {
+    return true;
+  }
+  const cmdlets = [
+    "Add-Content",
+    "Clear-Content",
+    "ConvertFrom-Json",
+    "ConvertTo-Json",
+    "Copy-Item",
+    "ForEach-Object",
+    "Get-ChildItem",
+    "Get-Content",
+    "Get-Item",
+    "Join-Path",
+    "Move-Item",
+    "New-Item",
+    "Out-File",
+    "Remove-Item",
+    "Resolve-Path",
+    "Select-Object",
+    "Select-String",
+    "Set-Content",
+    "Set-Item",
+    "Set-Location",
+    "Split-Path",
+    "Test-Path",
+    "Where-Object",
+  ];
+  return cmdlets.some((token) => new RegExp(`(^|[\\s|;])${token}(?=\\s|$)`, "i").test(raw));
+}
+
+function normalizeExecuteShell(rawShell, commandText) {
+  const shellName = String(rawShell || "").trim().toLowerCase();
+  if (process.platform === "win32") {
+    if (!shellName) {
+      return looksLikePowerShellCommand(commandText) ? "powershell" : "cmd";
+    }
+    if (shellName === "cmd" || shellName === "powershell") {
+      return shellName;
+    }
+    throw createPluginHttpError("unsupported_shell", 400);
+  }
+  if (!shellName || shellName === "sh") return "sh";
+  if (shellName === "bash" || shellName === "powershell") return shellName;
+  throw createPluginHttpError("unsupported_shell", 400);
+}
+
 function normalizeExecuteArtifactPath(filePath) {
   return String(filePath || "").replace(/\\/g, "/");
 }
@@ -1553,7 +1624,15 @@ async function collectExecuteArtifacts(rootDir, beforeSnapshot) {
   return artifacts;
 }
 
-function buildExecuteLaunch(commandText) {
+function buildPowerShellLaunch(commandText) {
+  const wrapped = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[Console]::OutputEncoding; ${String(commandText || "")}`;
+  return {
+    command: "powershell",
+    args: ["-NoProfile", "-Command", wrapped],
+  };
+}
+
+function buildExecuteLaunch(commandText, shellName) {
   const command = String(commandText || "").trim();
   if (!command) {
     throw createPluginHttpError("missing_command", 400);
@@ -1561,16 +1640,48 @@ function buildExecuteLaunch(commandText) {
   if (command.length > 4000) {
     throw createPluginHttpError("command_too_long", 400);
   }
+  const normalizedShell = normalizeExecuteShell(shellName, command);
   if (process.platform === "win32") {
+    if (normalizedShell === "powershell") {
+      return {
+        ...buildPowerShellLaunch(command),
+        shell: normalizedShell,
+      };
+    }
     return {
       command: process.env.COMSPEC || "cmd.exe",
       args: ["/d", "/s", "/c", command],
+      shell: normalizedShell,
+    };
+  }
+  if (normalizedShell === "powershell") {
+    return {
+      command: "pwsh",
+      args: ["-NoProfile", "-Command", String(command || "")],
+      shell: normalizedShell,
     };
   }
   return {
-    command: process.env.SHELL || "/bin/sh",
+    command: normalizedShell === "bash" ? "bash" : (process.env.SHELL || "/bin/sh"),
     args: ["-lc", command],
+    shell: normalizedShell,
   };
+}
+
+function resolveLocalOpenPath(raw) {
+  const requested = String(raw || "").trim();
+  if (!requested) {
+    throw createPluginHttpError("missing_path", 400);
+  }
+  const candidate = safeRealpath(requested);
+  if (!candidate || !fs.existsSync(candidate)) {
+    throw createPluginHttpError("path_not_found", 404);
+  }
+  const allowedRoots = buildAllowedExecuteRoots();
+  if (!allowedRoots.some((root) => isPathWithinRoot(root, candidate))) {
+    throw createPluginHttpError("path_not_allowed", 403);
+  }
+  return candidate;
 }
 
 function normalizeRoute(route) {
@@ -2041,7 +2152,7 @@ async function executeLocalCommand(payload = {}) {
   const cwd = resolveExecuteWorkingDirectory(payload?.cwd);
   const command = normalizeExecuteCommand(payload?.command, cwd);
   const timeoutMs = normalizeExecuteTimeoutMs(payload?.timeout_ms);
-  const launch = buildExecuteLaunch(command);
+  const launch = buildExecuteLaunch(command, payload?.shell);
   const beforeSnapshot = await collectExecuteFileSnapshot(cwd);
   const result = await runCommandDetailedAsync(
     launch.command,
@@ -2075,6 +2186,7 @@ async function executeLocalCommand(payload = {}) {
 
   return {
     command,
+    shell: launch.shell,
     cwd,
     exit_code: exitCode,
     stdout,
@@ -2083,6 +2195,22 @@ async function executeLocalCommand(payload = {}) {
     summary,
     artifact_count: artifacts.length,
     artifacts,
+  };
+}
+
+async function openLocalDesktopPath(payload = {}) {
+  const targetPath = resolveLocalOpenPath(payload?.path);
+  if (!shell || typeof shell.openPath !== "function") {
+    throw createPluginHttpError("desktop_shell_open_unavailable", 503);
+  }
+  const detail = await shell.openPath(targetPath);
+  if (String(detail || "").trim()) {
+    throw createPluginHttpError(`desktop_path_open_failed:${String(detail).trim()}`, 500);
+  }
+  return {
+    opened: true,
+    path: normalizeExecuteArtifactPath(targetPath),
+    detail: "ok",
   };
 }
 

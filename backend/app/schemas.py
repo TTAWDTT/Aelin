@@ -267,6 +267,17 @@ class AelinDeviceCapabilitiesResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinDevicePathOpenRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=2000)
+
+
+class AelinDevicePathOpenResponse(BaseModel):
+    path: str
+    opened: bool = True
+    detail: str = "ok"
+    generated_at: datetime
+
+
 class AelinDeviceScreenCaptureResponse(BaseModel):
     data_url: str
     name: str = ""

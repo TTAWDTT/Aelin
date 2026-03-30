@@ -1,10 +1,18 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Download, ExternalLink, FileText, X } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { MarkdownMessage } from './MarkdownMessage'
 import { cn } from '@/shared/utils/cn'
 import { formatBytes } from '../hooks/chatStreamHelpers'
 import type { ChatArtifact } from '../artifactUtils'
+import {
+  canOpenArtifactLocally,
+  createArtifactObjectUrl,
+  downloadArtifact,
+  openArtifactLocally,
+  revokeArtifactObjectUrl,
+} from '../artifactActions'
 
 interface ArtifactPreviewDialogProps {
   artifact: ChatArtifact | null
@@ -20,44 +28,30 @@ function safeJsonPreview(content: string): string {
   }
 }
 
-function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = window.atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-}
-
-function createBlobUrl(artifact: ChatArtifact | null): string {
-  if (!artifact) return ''
-  if (
-    artifact.previewKind === 'image-data-url'
-    || artifact.previewKind === 'pdf-data-url'
-  ) {
-    return artifact.content
-  }
-  if (artifact.downloadBase64) {
-    const blob = new Blob([decodeBase64ToArrayBuffer(artifact.downloadBase64)], {
-      type: artifact.mimeType || 'application/octet-stream',
-    })
-    return URL.createObjectURL(blob)
-  }
-  const blob = new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' })
-  return URL.createObjectURL(blob)
-}
-
 export function ArtifactPreviewDialog({
   artifact,
   open,
   onOpenChange,
 }: ArtifactPreviewDialogProps) {
-  const blobUrl = useMemo(() => createBlobUrl(artifact), [artifact])
+  const [isOpeningLocal, setIsOpeningLocal] = useState(false)
+  const blobUrl = useMemo(() => createArtifactObjectUrl(artifact), [artifact])
 
   useEffect(() => {
-    if (!blobUrl || blobUrl.startsWith('data:')) return undefined
-    return () => URL.revokeObjectURL(blobUrl)
+    if (!blobUrl) return undefined
+    return () => revokeArtifactObjectUrl(blobUrl)
   }, [blobUrl])
+
+  const handleOpenLocal = async () => {
+    if (!artifact || !canOpenArtifactLocally(artifact) || isOpeningLocal) return
+    setIsOpeningLocal(true)
+    try {
+      await openArtifactLocally(artifact)
+    } catch (error: unknown) {
+      toast.error(String((error as Error)?.message || 'Failed to open local file.'))
+    } finally {
+      setIsOpeningLocal(false)
+    }
+  }
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -89,31 +83,41 @@ export function ArtifactPreviewDialog({
               </div>
               {artifact?.path && (
                 <div className="mt-2 truncate font-mono text-[11px] text-[var(--color-text-muted)]">
-                  {artifact.path}
+                  {artifact.displayPath}
                 </div>
               )}
             </div>
             <div className="flex items-center gap-2">
               {artifact && blobUrl && (
                 <>
-                  <a
-                    href={blobUrl}
-                    download={artifact.name}
+                  <button
+                    type="button"
+                    onClick={() => downloadArtifact(artifact)}
                     className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)]"
                   >
                     <Download className="h-3.5 w-3.5" />
                     Download
-                  </a>
-                  <a
-                    href={blobUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.open(blobUrl, '_blank', 'noopener,noreferrer')}
                     className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)]"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     Open
-                  </a>
+                  </button>
                 </>
+              )}
+              {artifact && canOpenArtifactLocally(artifact) && (
+                <button
+                  type="button"
+                  onClick={() => void handleOpenLocal()}
+                  disabled={isOpeningLocal}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  {isOpeningLocal ? 'Opening…' : 'Open local'}
+                </button>
               )}
               <Dialog.Close asChild>
                 <button
@@ -206,7 +210,9 @@ export function ArtifactPreviewDialog({
                   )
                 : (
                     <div className="rounded-[24px] border border-dashed border-[var(--color-border)] bg-[var(--color-panel)] px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
-                      Preview is not available for this file type. Use Download or Open to inspect it.
+                      {canOpenArtifactLocally(artifact)
+                        ? 'Inline preview is not available for this file type. Open the local file or download it to inspect the final deliverable.'
+                        : 'Inline preview is not available for this file type. Use Download or Open to inspect it.'}
                     </div>
                   )
             )}

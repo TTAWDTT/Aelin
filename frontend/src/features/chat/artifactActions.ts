@@ -1,0 +1,71 @@
+import { fetchJson } from '@/shared/api/client'
+import type { ChatArtifact } from './artifactUtils'
+
+type ArtifactLocalOpenResponse = {
+  path: string
+  opened: boolean
+  detail: string
+}
+
+function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = window.atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+}
+
+export function createArtifactObjectUrl(artifact: ChatArtifact | null): string {
+  if (!artifact) return ''
+  if (
+    artifact.previewKind === 'image-data-url'
+    || artifact.previewKind === 'pdf-data-url'
+  ) {
+    return artifact.content
+  }
+  if (artifact.downloadBase64) {
+    const blob = new Blob([decodeBase64ToArrayBuffer(artifact.downloadBase64)], {
+      type: artifact.mimeType || 'application/octet-stream',
+    })
+    return URL.createObjectURL(blob)
+  }
+  return URL.createObjectURL(new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' }))
+}
+
+export function revokeArtifactObjectUrl(url: string): void {
+  if (!url || url.startsWith('data:')) return
+  URL.revokeObjectURL(url)
+}
+
+export function downloadArtifact(artifact: ChatArtifact): void {
+  const url = createArtifactObjectUrl(artifact)
+  if (!url) return
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = artifact.name
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  if (!url.startsWith('data:')) {
+    window.setTimeout(() => revokeArtifactObjectUrl(url), 0)
+  }
+}
+
+export function canOpenArtifactLocally(
+  artifact: ChatArtifact | null | undefined,
+): artifact is ChatArtifact & { localPath: string } {
+  return Boolean(artifact?.localPath)
+}
+
+export async function openArtifactLocally(
+  artifact: ChatArtifact,
+): Promise<ArtifactLocalOpenResponse> {
+  if (!canOpenArtifactLocally(artifact)) {
+    throw new Error('Local open is unavailable for this artifact.')
+  }
+  return fetchJson<ArtifactLocalOpenResponse>('/api/v1/aelin/device/path/open', {
+    method: 'POST',
+    body: JSON.stringify({ path: artifact.localPath }),
+  })
+}

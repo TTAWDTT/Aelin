@@ -8,11 +8,15 @@ from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import (
     AelinDeviceCapabilitiesResponse,
+    AelinDevicePathOpenRequest,
+    AelinDevicePathOpenResponse,
     AelinDeviceScreenCaptureRequest,
     AelinDeviceScreenCaptureResponse,
 )
 from app.services.device.device_center import (
     capture_device_screen as device_capture_screen,
+    open_desktop_local_path,
+    DesktopPluginActionError,
     DeviceScreenCaptureError,
     device_status_snapshot,
 )
@@ -61,6 +65,25 @@ def get_device_capabilities(
         platform=str(snapshot.get("platform") or "unknown"),
         capabilities=dict(snapshot.get("capabilities") or {}),
         notes=list(snapshot.get("notes") or []),
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.post("/device/path/open", response_model=AelinDevicePathOpenResponse)
+def open_device_local_path(
+    payload: AelinDevicePathOpenRequest,
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user  # Auth guard for local device APIs.
+    try:
+        result = open_desktop_local_path(payload.path)
+    except DesktopPluginActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return AelinDevicePathOpenResponse(
+        path=str(result.get("path") or payload.path).strip()[:2000],
+        opened=bool(result.get("opened", True)),
+        detail=str(result.get("detail") or "ok").strip()[:200],
         generated_at=datetime.now(timezone.utc),
     )
 

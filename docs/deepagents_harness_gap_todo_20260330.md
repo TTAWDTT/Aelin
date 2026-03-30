@@ -38,7 +38,10 @@
 - [x] 已确认桌面 execute 真实路由问题来自“旧打包桌面端仍在运行”，不是后端 wrapper 错接；当前使用新 pack 的桌面 runtime 后，`POST /v1/desktop/command/execute` 已真实可用。
 - [x] 桌面 execute 允许根目录已增强：当前源码 checkout / unpacked 包运行时可自动识别 workspace root，允许在 repo 工作区内使用 `cwd`。
 - [x] 桌面 execute 已增加命令归一化：当模型已提供 `cwd` 却又重复拼 `cd <same-cwd> && ...` 时，会自动剥离冗余前缀，减少 Windows 命令失败。
-- [x] 当前分支完整后端测试已通过：`pytest -q` => `112 passed`。
+- [x] Windows execute shell 语义已补强：`execute` 现支持显式 `shell` 参数；桌面 runtime 在 Windows 下也会自动识别 PowerShell cmdlet 并切到 `powershell`，减少 `cmd.exe` 误执行。
+- [x] 前端 artifact 交付入口已统一：blob 预览、下载、本地文件打开现在走同一套 `artifactActions` 流程；对具备宿主绝对路径的 execute 产物会额外提供 `Open file / Open local`。
+- [x] 桌面插件已增加本地文件打开端点：`POST /v1/desktop/path/open`，后端同步暴露 `POST /api/v1/aelin/device/path/open`。
+- [x] 当前分支完整后端测试已通过：`pytest -q` => `113 passed`。
 - [ ] 尚未完成正式后端 artifact registry / download endpoint。
 - [ ] 尚未完成 `write_file` / `execute` / sandbox 统一文件世界。
 - [ ] 尚未完成真实任务 smoke matrix 的全量覆盖。
@@ -107,6 +110,48 @@
 - [x] 另一个已明确识别的测试噪声源：
   - `langgraph dev` 的 watch reload 会中断正在跑的 smoke run
   - 因此后续真实 smoke 证据应优先取“无 reload 干扰”的 run id / JSON 文件
+
+## Latest Validation Update (2026-03-31)
+
+- [x] 直连桌面插件的本地文件打开已成功：
+  - `POST http://127.0.0.1:21914/v1/desktop/path/open`
+  - 成功打开：`D:/Github/Aelin/README.md`
+- [x] 直连桌面插件的显式 PowerShell execute 已成功：
+  - 请求包含：`shell='powershell'`
+  - 成功生成：
+    - `D:\Github\Aelin\output\execute-shell-proof\shell-proof.txt`
+  - 插件返回：
+    - `artifact_count=1`
+    - `shell='powershell'`
+- [x] 直连桌面插件的 Windows PowerShell 自动识别 execute 已成功：
+  - 请求未显式提供 `shell`
+  - 命令体使用 `Set-Content`
+  - runtime 自动归类为 `shell='powershell'`
+  - 成功生成：
+    - `D:\Github\Aelin\output\execute-shell-proof\auto-shell.txt`
+- [x] 前端真实加载 smoke 已成功：
+  - 通过 Playwright 真实打开：`http://127.0.0.1:5173/`
+  - 页面标题：`Aelin`
+  - 快照证据：
+    - `D:\Github\Aelin\.playwright-cli\page-2026-03-30T16-21-23-383Z.yml`
+  - 截图证据：
+    - `D:\Github\Aelin\.playwright-cli\page-2026-03-30T16-21-52-237Z.png`
+- [ ] LangGraph 真实 smoke matrix 已发起但本轮未完成：
+  - 覆盖 case：
+    - `matrix-md-json-20260331`
+    - `matrix-html-20260331`
+    - `matrix-svg-20260331`
+  - 当前共同失败特征：
+    - stream 中只有 `metadata/values/updates/error`
+    - 没有 `tool_calls`
+    - 没有最终 assistant content
+    - backend 日志明确显示：`openai.APIConnectionError: Connection error.`
+  - 这说明本轮阻塞点不是 execute / artifact bridge，而是上游模型连接在首个 model step 前后失败。
+  - 证据 JSON：
+    - `D:\Github\Aelin\output\langgraph-query-smoke\final-matrix-md-json-20260331\39e70c4d-277f-422f-9419-6acbedffe746.json`
+    - `D:\Github\Aelin\output\langgraph-query-smoke\final-matrix-html-20260331\8e12673b-6453-441c-9253-9aafddf7a852.json`
+    - `D:\Github\Aelin\output\langgraph-query-smoke\final-matrix-svg-20260331\38d6db2d-eef5-493a-8528-f320009f6f50.json`
+    - `D:\Github\Aelin\output\langgraph-query-smoke\final-connectivity-retry-20260331\6bf48c1d-2310-4798-9bf7-4bd4389c2ccf.json`
 
 ## Success Criteria
 

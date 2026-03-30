@@ -23,6 +23,7 @@ def test_build_system_prompt_guides_execute_for_windows_shell_usage() -> None:
 
     assert "windows" in prompt.lower()
     assert "cwd" in prompt
+    assert "shell='powershell'" in prompt.lower()
     assert "mkdir -p" in prompt
     assert "relative path" in prompt.lower() or "relative paths" in prompt.lower()
     assert "do not prepend cd" in prompt.lower()

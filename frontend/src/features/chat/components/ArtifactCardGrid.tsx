@@ -1,6 +1,8 @@
-import { Download, Eye, FileCode2, FileJson2, FileText, Globe, Image as ImageIcon } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { Download, ExternalLink, Eye, FileCode2, FileJson2, FileText, Globe, Image as ImageIcon } from 'lucide-react'
 import { formatBytes } from '../hooks/chatStreamHelpers'
 import type { ChatArtifact } from '../artifactUtils'
+import { canOpenArtifactLocally, downloadArtifact, openArtifactLocally } from '../artifactActions'
 
 interface ArtifactCardGridProps {
   artifacts: ChatArtifact[]
@@ -20,38 +22,6 @@ function iconForArtifact(artifact: ChatArtifact) {
       return FileText
     default:
       return FileCode2
-  }
-}
-
-function createDownloadUrl(artifact: ChatArtifact): string {
-  if (
-    artifact.previewKind === 'image-data-url'
-    || artifact.previewKind === 'pdf-data-url'
-  ) {
-    return artifact.content
-  }
-  if (artifact.downloadBase64) {
-    const binary = window.atob(artifact.downloadBase64)
-    const bytes = new Uint8Array(binary.length)
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index)
-    }
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-    return URL.createObjectURL(new Blob([buffer], { type: artifact.mimeType || 'application/octet-stream' }))
-  }
-  return URL.createObjectURL(new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' }))
-}
-
-function downloadArtifact(artifact: ChatArtifact) {
-  const url = createDownloadUrl(artifact)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = artifact.name
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  if (!url.startsWith('data:')) {
-    window.setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 }
 
@@ -88,7 +58,7 @@ export function ArtifactCardGrid({
                     <span>{formatBytes(artifact.sizeBytes)}</span>
                   </span>
                   <span className="mt-1 block truncate font-mono text-[10px] text-[var(--color-text-muted)]">
-                    {artifact.path}
+                    {artifact.displayPath}
                   </span>
                 </span>
               </button>
@@ -101,6 +71,20 @@ export function ArtifactCardGrid({
                   <Eye className="h-3.5 w-3.5" />
                   Preview
                 </button>
+                {canOpenArtifactLocally(artifact) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openArtifactLocally(artifact).catch((error: unknown) => {
+                        toast.error(String((error as Error)?.message || 'Failed to open local file.'))
+                      })
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-panel)] px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)]"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open file
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => downloadArtifact(artifact)}

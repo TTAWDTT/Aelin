@@ -21,6 +21,7 @@ describe('artifactUtils', () => {
     expect(artifacts.get('/report.md')).toEqual(
       expect.objectContaining({
         name: 'report.md',
+        displayPath: '/report.md',
         mimeType: 'text/markdown',
         previewKind: 'markdown',
         previewable: true,
@@ -88,6 +89,8 @@ describe('artifactUtils', () => {
     expect(artifacts.get('D:/Github/Aelin/output/poster.png')).toEqual(
       expect.objectContaining({
         name: 'poster.png',
+        displayPath: 'output/poster.png',
+        localPath: 'D:/Github/Aelin/output/poster.png',
         previewKind: 'image-data-url',
       }),
     )

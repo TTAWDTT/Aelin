@@ -250,6 +250,7 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
 
     result = device_center.execute_desktop_command(
         command="pytest -q",
+        shell="powershell",
         cwd="D:/Github/Aelin/backend",
         timeout_ms=15_000,
     )
@@ -257,6 +258,7 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
     assert captured["url"] == "http://127.0.0.1:21914/v1/desktop/command/execute"
     assert captured["json"] == {
         "command": "pytest -q",
+        "shell": "powershell",
         "cwd": "D:/Github/Aelin/backend",
         "timeout_ms": 15_000,
     }
@@ -264,5 +266,56 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
     assert float(captured["timeout"] or 0.0) >= 18.0
     assert result["exit_code"] == 0
     assert result["stdout"] == "ok"
+    assert result["shell"] == "powershell"
+
+
+def test_device_path_open_endpoint_proxy_success(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "desktop_plugin_base_url", "http://127.0.0.1:21914")
+    monkeypatch.setattr(settings, "desktop_plugin_token", "plugin-token")
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.text = ""
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "opened": True,
+                "path": "D:/Github/Aelin/output/demo/report.docx",
+                "detail": "ok",
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args, kwargs
+
+        def __enter__(self) -> "_FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type, exc, tb
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            assert url == "http://127.0.0.1:21914/v1/desktop/path/open"
+            assert json == {"path": "D:/Github/Aelin/output/demo/report.docx"}
+            assert headers == {"x-aelin-token": "plugin-token"}
+            return _FakeResponse()
+
+    monkeypatch.setattr(device_center.httpx, "Client", _FakeClient)
+
+    resp = client.post(
+        "/api/v1/aelin/device/path/open",
+        json={"path": "D:/Github/Aelin/output/demo/report.docx"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["opened"] is True
+    assert data["path"] == "D:/Github/Aelin/output/demo/report.docx"
 
 

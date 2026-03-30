@@ -159,6 +159,10 @@ class GoogleWorkspaceToolInput(BaseModel):
 
 class ExecuteToolInput(BaseModel):
     command: str = Field(..., description="Non-interactive shell command to execute.")
+    shell: str | None = Field(
+        default=None,
+        description="Optional shell override. On Windows use 'cmd' or 'powershell'.",
+    )
     cwd: str | None = Field(
         default=None,
         description="Optional working directory inside the allowed local workspace roots.",
@@ -288,12 +292,13 @@ def _tool_description(name: str) -> str:
     if name == "execute":
         return (
             "Execute a non-interactive shell command on the local desktop runtime.\n"
-            "Arguments: command=<non-empty string>, cwd?<allowed directory>, timeout_ms=1000..120000.\n"
+            "Arguments: command=<non-empty string>, shell?=('cmd'|'powershell'), cwd?<allowed directory>, timeout_ms=1000..120000.\n"
             "Use for coding or inspection tasks like running tests, listing files, or checking git status.\n"
             "Commands run in the local desktop shell. On Windows, prefer PowerShell or cmd syntax rather than Unix-only syntax.\n"
             "When targeting a specific directory, prefer passing cwd instead of chaining cd, and then write outputs using relative paths inside that cwd so the runtime can collect artifacts.\n"
             "If cwd is already provided, do not prepend cd to the command.\n"
-            "On Windows, prefer commands like PowerShell Set-Content or Out-File for file creation rather than shell redirection to absolute paths, and do not use Unix-only constructs like mkdir -p.\n"
+            "On Windows, prefer shell='powershell' when using Set-Content, Out-File, New-Item, Get-Content, Test-Path, or other PowerShell cmdlets, and pass the PowerShell script body directly rather than prefixing it with powershell -Command.\n"
+            "Do not use Unix-only constructs like mkdir -p.\n"
             "Avoid interactive commands, long-running dev servers, or commands that wait for user input."
         )
     return name
@@ -326,7 +331,7 @@ def _build_system_prompt(tool_names: list[str]) -> str:
         )
     if "execute" in available:
         tool_specific_rules.append(
-            "- execute: use only for short, non-interactive local commands; always provide a concrete command. Commands run in the local desktop shell, so on Windows prefer PowerShell/cmd syntax, use cwd for the target directory when possible, do not prepend cd when cwd is already provided, write output files with relative paths inside that cwd, and avoid Unix-only constructs like mkdir -p."
+            "- execute: use only for short, non-interactive local commands; always provide a concrete command. Commands run in the local desktop shell, so on Windows prefer PowerShell/cmd syntax, use cwd for the target directory when possible, do not prepend cd when cwd is already provided, write output files with relative paths inside that cwd, use shell='powershell' for PowerShell cmdlets like Set-Content or New-Item, and avoid Unix-only constructs like mkdir -p."
         )
 
     parts = [
@@ -857,7 +862,7 @@ def build_chat_tools(
                 "execute",
                 tool_execute,
                 ExecuteToolInput,
-                ["command", "cwd", "timeout_ms"],
+                ["command", "shell", "cwd", "timeout_ms"],
             )
         )
     return tools, tool_runs, usage
