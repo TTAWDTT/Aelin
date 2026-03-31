@@ -213,6 +213,10 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
     monkeypatch.setattr(settings, "desktop_plugin_execute_timeout_seconds", 20.0)
     monkeypatch.setattr(settings, "desktop_plugin_execute_max_output_chars", 120)
 
+    artifact_path = Path(__file__).resolve().parents[2] / "output" / "demo" / "result.txt"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("success", encoding="utf-8")
+
     captured: dict[str, object] = {}
 
     class _FakeResponse:
@@ -231,13 +235,14 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
                 "summary": "command succeeded with exit code 0",
                 "artifacts": [
                     {
-                        "path": "D:/Github/Aelin/output/demo/result.txt",
+                        "path": str(artifact_path),
                         "relative_path": "output/demo/result.txt",
                         "name": "result.txt",
                         "mime_type": "text/plain",
                         "size_bytes": 7,
                         "preview_kind": "text",
                         "content": "success",
+                        "binary_base64": "c3VjY2Vzcw==",
                     }
                 ],
             }
@@ -283,6 +288,8 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
     assert result["shell"] == "powershell"
     assert result["artifact_count"] == 1
     assert result["artifacts"][0]["relative_path"] == "output/demo/result.txt"
+    assert result["artifacts"][0]["content"] == ""
+    assert "binary_base64" not in result["artifacts"][0]
 
 
 def test_device_path_open_endpoint_proxy_success(monkeypatch):

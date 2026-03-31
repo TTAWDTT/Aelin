@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
+from app.services.artifact_files import normalize_tool_artifact_payloads
 from app.services.device.device_center import (
     activate_desktop_module,
     capture_device_screen,
@@ -155,10 +156,10 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
             else ("command timed out" if timed_out else f"command failed with exit code {exit_code}")
         ),
     }
-    artifacts = result.get("artifacts")
-    if isinstance(artifacts, list):
-        payload["artifacts"] = [item for item in artifacts if isinstance(item, dict)]
-        payload["artifact_count"] = len(payload["artifacts"])
+    normalized_artifacts = normalize_tool_artifact_payloads(result.get("artifacts"))
+    if normalized_artifacts:
+        payload["artifacts"] = normalized_artifacts
+        payload["artifact_count"] = len(normalized_artifacts)
     if timed_out:
         payload["error"] = "command_timed_out"
     elif not ok and exit_code is not None:

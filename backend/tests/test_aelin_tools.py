@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import app.services.artifact_files as artifact_files
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables.config import set_config_context
 from sqlalchemy import create_engine
@@ -468,8 +469,22 @@ def test_execute_tool_returns_command_result(monkeypatch):
     assert result["stdout"] == "pytest passed"
 
 
-def test_execute_command_result_preserves_execute_artifacts(monkeypatch):
+def test_execute_command_result_returns_compact_local_artifacts(monkeypatch, tmp_path):
     from app.services.device import device_actions
+
+    fake_repo_root = tmp_path / "allowed-repo"
+    fake_media_root = tmp_path / "allowed-media"
+    fake_attachment_root = tmp_path / "allowed-attachments"
+    fake_repo_root.mkdir(parents=True, exist_ok=True)
+    fake_media_root.mkdir(parents=True, exist_ok=True)
+    fake_attachment_root.mkdir(parents=True, exist_ok=True)
+    artifact_path = fake_repo_root / "output" / "poster.png"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b"fake-png")
+
+    monkeypatch.setattr(artifact_files, "_REPO_ROOT", fake_repo_root)
+    monkeypatch.setattr(artifact_files.settings, "media_dir", str(fake_media_root))
+    monkeypatch.setattr(artifact_files.settings, "aelin_attachment_storage_dir", str(fake_attachment_root))
 
     monkeypatch.setattr(
         device_actions,
@@ -484,13 +499,14 @@ def test_execute_command_result_preserves_execute_artifacts(monkeypatch):
             "summary": "command succeeded with exit code 0 and produced 1 artifact(s)",
             "artifacts": [
                 {
-                    "path": "D:/Github/Aelin/output/poster.png",
+                    "path": str(artifact_path),
                     "relative_path": "output/poster.png",
                     "name": "poster.png",
                     "mime_type": "image/png",
                     "size_bytes": 16,
                     "preview_kind": "image-data-url",
                     "content": "data:image/png;base64,ZmFrZQ==",
+                    "binary_base64": "ZmFrZQ==",
                 }
             ],
         },
@@ -502,17 +518,16 @@ def test_execute_command_result_preserves_execute_artifacts(monkeypatch):
 
     assert result["ok"] is True
     assert result["artifact_count"] == 1
-    assert result["artifacts"] == [
-        {
-            "path": "D:/Github/Aelin/output/poster.png",
-            "relative_path": "output/poster.png",
-            "name": "poster.png",
-            "mime_type": "image/png",
-            "size_bytes": 16,
-            "preview_kind": "image-data-url",
-            "content": "data:image/png;base64,ZmFrZQ==",
-        }
-    ]
+    artifact = result["artifacts"][0]
+    assert artifact["path"] == str(artifact_path)
+    assert artifact["relative_path"] == "output/poster.png"
+    assert artifact["name"] == "poster.png"
+    assert artifact["mime_type"] == "image/png"
+    assert artifact["size_bytes"] == 16
+    assert artifact["preview_kind"] == "image-data-url"
+    assert artifact["content"] == ""
+    assert artifact["created_at"] == ""
+    assert str(artifact["modified_at"] or "").strip()
 
 
 def test_render_poster_artifact_tool_returns_compact_previewable_artifact(monkeypatch, tmp_path):

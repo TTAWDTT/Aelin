@@ -1,4 +1,4 @@
-import { fetchJson } from '@/shared/api/client'
+import { fetchJson, fetchText } from '@/shared/api/client'
 import type { ChatArtifact } from './artifactUtils'
 
 type ArtifactLocalOpenResponse = {
@@ -27,6 +27,10 @@ function buildArtifactContentUrl(
     params.set('download', '1')
   }
   return `/api/v1/aelin/artifact/content?${params.toString()}`
+}
+
+function isTextPreviewKind(previewKind: string): boolean {
+  return previewKind === 'markdown' || previewKind === 'json' || previewKind === 'text'
 }
 
 export function createArtifactObjectUrl(artifact: ChatArtifact | null): string {
@@ -77,6 +81,16 @@ export function canOpenArtifactLocally(
   artifact: ChatArtifact | null | undefined,
 ): artifact is ChatArtifact & { localPath: string } {
   return Boolean(artifact?.localPath)
+}
+
+export async function fetchArtifactTextContent(artifact: ChatArtifact): Promise<string> {
+  if (artifact.content) return artifact.content
+  if (!canOpenArtifactLocally(artifact) || !isTextPreviewKind(artifact.previewKind)) {
+    return ''
+  }
+  const url = buildArtifactContentUrl(artifact)
+  if (!url) return ''
+  return fetchText(url)
 }
 
 export async function openArtifactLocally(

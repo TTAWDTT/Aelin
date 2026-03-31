@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from app.services.artifact_files import normalize_tool_artifact_payloads
 from app.settings import settings
 
 REGION_CAPTURE_TIMEOUT_BUFFER_S = 8.0  # buffer for Snipping Tool UI + clipboard polling latency
@@ -256,7 +257,7 @@ def execute_desktop_command(
     resolved_cwd = str(raw.get("cwd") or cwd_clean)[:1024]
     resolved_shell = str(raw.get("shell") or shell_clean)[:32]
     artifacts = raw.get("artifacts")
-    normalized_artifacts = [item for item in artifacts if isinstance(item, dict)] if isinstance(artifacts, list) else []
+    normalized_artifacts = normalize_tool_artifact_payloads(artifacts)
 
     result = {
         "command": command_clean,
