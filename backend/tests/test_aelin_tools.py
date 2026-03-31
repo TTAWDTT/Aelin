@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables.config import set_config_context
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -22,6 +22,7 @@ from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_visual_artifact import tool_render_poster_artifact
 from app.services.tools.tools_web import tool_web_search
 
 
@@ -514,6 +515,30 @@ def test_execute_command_result_preserves_execute_artifacts(monkeypatch):
     ]
 
 
+def test_render_poster_artifact_tool_returns_compact_previewable_artifact(monkeypatch, tmp_path):
+    from app.services import visual_artifacts
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    monkeypatch.setattr(visual_artifacts, "_REPO_ROOT", Path(tmp_path))
+
+    result = tool_render_poster_artifact(
+        context,
+        {
+            "brief": "帮我为同济大学樱花季赏花活动创作一张海报，要求最终输出为png或.pdf文件，画面纯净精致，无元素重叠，构图完美",
+            "preferred_format": "png",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["artifact_count"] == 2
+    artifact = result["artifacts"][0]
+    assert artifact["preview_kind"] == "image-data-url"
+    assert artifact["content"] == ""
+    assert artifact["relative_path"].startswith("output/generated-posters/")
+    assert Path(artifact["path"]).is_file()
+
+
 def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
     from app.services.tools import tools_gws
 
@@ -697,6 +722,7 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
         "google_workspace",
         "device",
         "screen_get",
+        "render_poster_artifact",
     ]
 
     device_tool = next(t for t in tools if t.name == "device")
@@ -746,6 +772,60 @@ def test_deepagents_build_chat_tools_registers_execute_when_enabled(monkeypatch)
     assert calls
     assert calls[0]["args"] == {"command": "pytest -q", "cwd": "D:/Github/Aelin/backend"}
     assert any(tr["name"] == "execute" and tr["status"] == "completed" for tr in tool_runs)
+
+
+def test_deepagents_build_chat_tools_registers_render_poster_artifact(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    calls: list[dict[str, object]] = []
+
+    def _fake_tool_render_poster_artifact(tool_context, args):  # type: ignore[no-untyped-def]
+        calls.append({"tool_context": tool_context, "args": dict(args)})
+        return {
+            "ok": True,
+            "summary": "poster ready",
+            "title": "同济大学 / 樱花季 / 赏花活动",
+            "format": "png",
+            "file_paths": ["D:/Github/Aelin/output/generated-posters/default/demo/demo.png"],
+            "artifact_count": 1,
+            "artifacts": [
+                {
+                    "path": "D:/Github/Aelin/output/generated-posters/default/demo/demo.png",
+                    "relative_path": "output/generated-posters/default/demo/demo.png",
+                    "name": "demo.png",
+                    "mime_type": "image/png",
+                    "size_bytes": 1024,
+                    "preview_kind": "image-data-url",
+                    "content": "data:image/png;base64,QUJDRA==",
+                    "created_at": "2026-03-31T10:00:00+08:00",
+                    "modified_at": "2026-03-31T10:00:00+08:00",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(dag, "tool_render_poster_artifact", _fake_tool_render_poster_artifact)
+
+    limiter = ToolCallLimiter(
+        max_tool_calls=20,
+        max_write_calls=10,
+        allow_write_tools=True,
+    )
+
+    tools, tool_runs, _usage = dag.build_chat_tools(context=context, limiter=limiter)
+
+    assert "render_poster_artifact" in [tool.name for tool in tools]
+    poster_tool = next(t for t in tools if t.name == "render_poster_artifact")
+    result = poster_tool.invoke({"brief": "同济大学樱花季海报", "preferred_format": "png"})
+
+    assert result["ok"] is True
+    assert calls
+    assert calls[0]["args"] == {"brief": "同济大学樱花季海报", "preferred_format": "png"}
+    assert any(
+        tr["name"] == "render_poster_artifact" and tr["status"] == "completed"
+        for tr in tool_runs
+    )
 
 
 def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
@@ -866,7 +946,9 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
 def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.model_timeout_middleware import (
+        DeepAgentsModelRetryMiddleware,
         DeepAgentsModelTimeoutMiddleware,
+        DeepAgentsToolAvailabilityMiddleware,
         DeepAgentsToolMessageSanitizerMiddleware,
     )
 
@@ -875,6 +957,8 @@ def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypa
 
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     monkeypatch.setattr(dag.settings, "deepagents_run_timeout_seconds", 33.0)
+    monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_retries", 2)
+    monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_backoff_seconds", 0.5)
     monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", False)
 
     captured: dict[str, object] = {}
@@ -895,15 +979,19 @@ def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypa
     )
 
     middleware = list(captured.get("middleware") or [])
-    assert len(middleware) == 2
+    assert len(middleware) == 4
     assert isinstance(middleware[0], DeepAgentsToolMessageSanitizerMiddleware)
-    assert isinstance(middleware[1], DeepAgentsModelTimeoutMiddleware)
-    assert middleware[1].timeout_seconds == 33.0
+    assert isinstance(middleware[1], DeepAgentsToolAvailabilityMiddleware)
+    assert isinstance(middleware[2], DeepAgentsModelRetryMiddleware)
+    assert middleware[2].max_retries == 2
+    assert isinstance(middleware[3], DeepAgentsModelTimeoutMiddleware)
+    assert middleware[3].timeout_seconds == 33.0
 
 
 def test_deepagents_build_chat_agent_preserves_custom_execute_tool(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.model_timeout_middleware import (
+        DeepAgentsModelRetryMiddleware,
         DeepAgentsModelTimeoutMiddleware,
         DeepAgentsToolAvailabilityMiddleware,
         DeepAgentsToolMessageSanitizerMiddleware,
@@ -914,6 +1002,7 @@ def test_deepagents_build_chat_agent_preserves_custom_execute_tool(monkeypatch):
 
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     monkeypatch.setattr(dag.settings, "deepagents_run_timeout_seconds", 33.0)
+    monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_retries", 1)
     monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", True)
 
     captured: dict[str, object] = {}
@@ -934,10 +1023,11 @@ def test_deepagents_build_chat_agent_preserves_custom_execute_tool(monkeypatch):
     )
 
     middleware = list(captured.get("middleware") or [])
-    assert len(middleware) == 3
+    assert len(middleware) == 4
     assert isinstance(middleware[0], DeepAgentsToolMessageSanitizerMiddleware)
     assert isinstance(middleware[1], DeepAgentsToolAvailabilityMiddleware)
-    assert isinstance(middleware[2], DeepAgentsModelTimeoutMiddleware)
+    assert isinstance(middleware[2], DeepAgentsModelRetryMiddleware)
+    assert isinstance(middleware[3], DeepAgentsModelTimeoutMiddleware)
 
 
 def test_deepagents_skills_use_backend_routes_instead_of_preinjected_files(monkeypatch, tmp_path):
@@ -1046,6 +1136,58 @@ def test_deepagents_model_timeout_middleware_stops_long_async_model_call(caplog)
     assert any("deepagents_model_timeout" in record.message for record in caplog.records)
 
 
+def test_deepagents_model_retry_middleware_retries_transient_connection_errors(caplog):
+    import httpx
+    import openai
+    from app.services.deepagents.model_timeout_middleware import DeepAgentsModelRetryMiddleware
+
+    middleware = DeepAgentsModelRetryMiddleware(max_retries=2, backoff_seconds=0.0)
+    request = SimpleNamespace(
+        model=SimpleNamespace(model_name="gpt-test"),
+        runtime=SimpleNamespace(context=SimpleNamespace(user_id=7, workspace="demo")),
+        messages=[HumanMessage(content="hello")],
+        tools=[SimpleNamespace(name="execute")],
+    )
+    attempts = {"count": 0}
+
+    async def _flaky_handler(_request):  # noqa: ANN001
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise openai.APIConnectionError(request=httpx.Request("POST", "https://example.com/v1/chat/completions"))
+        return SimpleNamespace(result=["ok"])
+
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(middleware.awrap_model_call(request, _flaky_handler))
+
+    assert attempts["count"] == 2
+    assert getattr(result, "result", None) == ["ok"]
+    assert any("deepagents_model_transient_error" in record.message for record in caplog.records)
+
+
+def test_deepagents_model_retry_middleware_returns_visible_error_after_exhaustion(caplog):
+    import httpx
+    import openai
+    from app.services.deepagents.model_timeout_middleware import DeepAgentsModelRetryMiddleware
+
+    middleware = DeepAgentsModelRetryMiddleware(max_retries=1, backoff_seconds=0.0)
+    request = SimpleNamespace(
+        model=SimpleNamespace(model_name="gpt-test"),
+        runtime=SimpleNamespace(context=SimpleNamespace(user_id=7, workspace="demo")),
+        messages=[HumanMessage(content="hello")],
+        tools=[SimpleNamespace(name="execute")],
+    )
+
+    async def _always_fail(_request):  # noqa: ANN001
+        raise openai.APIConnectionError(request=httpx.Request("POST", "https://example.com/v1/chat/completions"))
+
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(middleware.awrap_model_call(request, _always_fail))
+
+    assert isinstance(result, AIMessage)
+    assert "模型连接异常" in str(result.content)
+    assert any("deepagents_model_transient_error" in record.message for record in caplog.records)
+
+
 def test_deepagents_tool_message_sanitizer_patches_orphan_tool_messages(caplog):
     from app.services.deepagents.model_timeout_middleware import sanitize_orphan_tool_messages
 
@@ -1136,6 +1278,64 @@ def test_deepagents_write_file_guard_rejects_oversized_content(monkeypatch, capl
     allowed = backend.write("/small.txt", "ok")
     assert allowed.error is None
     assert allowed.path == "/small.txt"
+
+
+def test_deepagents_write_file_guard_is_disabled_by_default(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+    monkeypatch.setattr(dag, "create_deep_agent", lambda **kwargs: object())
+    monkeypatch.setattr(dag.settings, "deepagents_extra_skills_dir", "")
+    monkeypatch.setattr(dag.settings, "deepagents_write_file_max_chars", 0)
+
+    backend_factory = dag._build_agent_backend_factory(
+        user_id=context.user_id,
+        workspace=context.workspace,
+        skills_root=dag._backend_root() / "deepagents_skills",
+        extra_dir="",
+    )
+    backend = backend_factory(SimpleNamespace(state={}))
+
+    large_content = "A" * 60000
+    result = backend.write("/poster.svg", large_content)
+
+    assert result.error is None
+    assert result.path == "/poster.svg"
+
+
+def test_deepagents_system_prompt_guides_large_artifacts_to_execute_when_available(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+    monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", True)
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        context=context,
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        memory_text="",
+        skills_root=None,
+    )
+
+    system_prompt = str(captured.get("system_prompt") or "")
+    assert "avoid stuffing one enormous blob into a single write_file call" in system_prompt
+    assert "Prefer creating or rendering those artifacts through short local commands" in system_prompt
+    assert "render_poster_artifact" in system_prompt
+    assert "Do not first write a manifesto markdown file" in system_prompt
 
 
 def test_deepagents_default_skills_root_points_to_backend_skills_dir():
@@ -1362,4 +1562,29 @@ def test_deepagents_attachment_tool_preserves_runnable_config_across_thread_pool
     assert result["ok"] is True
     assert result["attachment_ids"] == [31, 32]
     assert fake_attachment.calls[0]["attachment_ids"] == [31, 32]
+
+
+def test_render_poster_artifact_tool_returns_compact_local_artifacts():
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+
+    result = tool_render_poster_artifact(
+        context,
+        {
+            "brief": "同济大学樱花季赏花活动海报，纯净精致，无元素重叠，构图完美",
+            "preferred_format": "png",
+            "filename_stem": "tool-compact-poster",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["artifact_count"] == 2
+    assert len(result["file_paths"]) == 2
+    assert "read_file step" in result["summary"]
+
+    for artifact in result["artifacts"]:
+        assert artifact["content"] == ""
+        assert artifact["preview_kind"] in {"image-data-url", "pdf-data-url"}
+        assert Path(str(artifact["path"])).is_file()
+        assert str(artifact["relative_path"]).startswith("output/generated-posters/")
 

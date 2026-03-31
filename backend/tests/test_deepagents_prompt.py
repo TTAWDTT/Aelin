@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from app.services.deepagents.deepagents_graph import _build_system_prompt
@@ -18,6 +19,15 @@ def test_build_system_prompt_only_mentions_execute_when_available() -> None:
     assert "- attachment_search:" in prompt_without_execute
 
 
+def test_build_system_prompt_mentions_render_poster_artifact_when_available() -> None:
+    prompt = _build_system_prompt(["render_poster_artifact"])
+
+    assert "- render_poster_artifact:" in prompt
+    assert "call this tool directly" in prompt
+    assert "Do not first write a manifesto markdown file" in prompt
+    assert "do not read `/skills/aelin/anthropic-canvas-design/SKILL.md`" in prompt
+
+
 def test_build_system_prompt_guides_execute_for_windows_shell_usage() -> None:
     prompt = _build_system_prompt(["execute"])
 
@@ -25,6 +35,7 @@ def test_build_system_prompt_guides_execute_for_windows_shell_usage() -> None:
     assert "cwd" in prompt
     assert "shell='powershell'" in prompt.lower()
     assert "mkdir -p" in prompt
+    assert "python backend/scripts/render_visual_artifact.py" in prompt
     assert "relative path" in prompt.lower() or "relative paths" in prompt.lower()
     assert "do not prepend cd" in prompt.lower()
 
@@ -35,6 +46,20 @@ def test_build_system_prompt_omits_empty_tool_specific_block() -> None:
     assert "Tool-specific rules:" not in prompt
     assert "You are Aelin running on DeepAgents." in prompt
     assert "Treat /memory/AGENTS.md as the canonical long-term memory file." in prompt
+
+
+def test_canvas_design_skill_frontmatter_prefers_direct_render_path() -> None:
+    skill_path = (
+        Path(__file__).resolve().parents[1]
+        / "deepagents_skills"
+        / "anthropic-canvas-design"
+        / "SKILL.md"
+    )
+    skill_text = skill_path.read_text(encoding="utf-8")
+
+    assert "allowed-tools: render_poster_artifact execute read_file glob" in skill_text
+    assert "prefer the runtime's direct poster rendering tool first" in skill_text
+    assert "Only use the two-step philosophy workflow below" in skill_text
 
 
 class _FakeRequest:
@@ -54,8 +79,9 @@ class _FakeRequest:
 
 def test_tool_availability_middleware_restores_filtered_execute_tool() -> None:
     preserved_execute = SimpleNamespace(name="execute")
+    preserved_poster = SimpleNamespace(name="render_poster_artifact")
     middleware = DeepAgentsToolAvailabilityMiddleware(
-        preserved_tools=[preserved_execute]
+        preserved_tools=[preserved_execute, preserved_poster]
     )
     captured: dict[str, object] = {}
 
@@ -74,6 +100,7 @@ def test_tool_availability_middleware_restores_filtered_execute_tool() -> None:
     assert result == "ok"
     request = captured["request"]
     tool_names = [getattr(tool, "name", "") for tool in request.tools]
-    assert tool_names == ["ls", "read_file", "execute"]
+    assert tool_names == ["ls", "read_file", "execute", "render_poster_artifact"]
     assert "Runtime note:" in str(request.system_message)
     assert "do not claim these tools are unavailable" in str(request.system_message).lower()
+    assert "render_poster_artifact" in str(request.system_message)

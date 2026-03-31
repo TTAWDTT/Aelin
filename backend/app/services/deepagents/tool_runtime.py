@@ -262,6 +262,17 @@ def build_tool_signature(name: str, args: dict[str, Any]) -> str:
             ensure_ascii=False,
             sort_keys=True,
         )
+    if tool == "render_poster_artifact":
+        return json.dumps(
+            {
+                "tool": tool,
+                "brief": _normalize_text((args or {}).get("brief")),
+                "preferred_format": _normalize_text((args or {}).get("preferred_format")) or "auto",
+                "filename_stem": _normalize_text((args or {}).get("filename_stem")),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     return json.dumps({"tool": tool, "args": args or {}}, ensure_ascii=False, sort_keys=True)
 
 
@@ -273,6 +284,7 @@ def _tool_attempt_limit(name: str) -> int:
         "device": 2,
         "screen_get": 2,
         "execute": 4,
+        "render_poster_artifact": 2,
     }.get(str(name or "").strip().lower(), 2)
 
 
@@ -350,6 +362,12 @@ def _invalid_reason(name: str, args: dict[str, Any]) -> str:
             return "invalid execute call: provide a non-empty command"
         if len(command) > 4000:
             return "invalid execute call: command is too long"
+    if tool == "render_poster_artifact":
+        brief = str((args or {}).get("brief") or "").strip()
+        if not brief:
+            return "invalid render_poster_artifact call: provide a non-empty brief"
+        if len(brief) > 4000:
+            return "invalid render_poster_artifact call: brief is too long"
     return ""
 
 
@@ -361,7 +379,7 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
         return action in {"open_url", "open_aelin"}
     if tool in {"web_search", "attachment_search", "screen_get"}:
         return False
-    if tool == "execute":
+    if tool in {"execute", "render_poster_artifact"}:
         return True
     if tool == "google_workspace":
         return action in {"calendar_create_event", "gmail_send", "gmail_draft", "docs_create"}
@@ -398,7 +416,15 @@ class ToolCallLimiter:
 
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
-        if tool not in {"device", "web_search", "attachment_search", "screen_get", "google_workspace", "execute"}:
+        if tool not in {
+            "device",
+            "web_search",
+            "attachment_search",
+            "screen_get",
+            "google_workspace",
+            "execute",
+            "render_poster_artifact",
+        }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
         invalid_reason = _invalid_reason(tool, args)

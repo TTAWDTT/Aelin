@@ -105,7 +105,11 @@ class Settings(BaseSettings):
     deepagents_run_timeout_seconds: float = 75.0
     deepagents_stream_idle_timeout_seconds: float = 45.0
     deepagents_tool_timeout_seconds: float = 25.0
-    deepagents_write_file_max_chars: int = 50000
+    deepagents_model_transient_error_retries: int = 2
+    deepagents_model_transient_error_backoff_seconds: float = 1.0
+    # Aelin-specific safety cap for DeepAgents write_file.
+    # Set to 0 to disable the cap and match upstream DeepAgents behavior.
+    deepagents_write_file_max_chars: int = 0
     deepagents_consecutive_failures_limit: int = 3
     deepagents_consecutive_no_progress_limit: int = 2
     feishu_bot_enabled: bool = False

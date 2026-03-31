@@ -16,13 +16,29 @@ function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
 }
 
+function buildArtifactContentUrl(
+  artifact: ChatArtifact,
+  options: { download?: boolean } = {},
+): string {
+  if (!canOpenArtifactLocally(artifact)) return ''
+  const { download = false } = options
+  const params = new URLSearchParams({ path: artifact.localPath })
+  if (download) {
+    params.set('download', '1')
+  }
+  return `/api/v1/aelin/artifact/content?${params.toString()}`
+}
+
 export function createArtifactObjectUrl(artifact: ChatArtifact | null): string {
   if (!artifact) return ''
   if (
     artifact.previewKind === 'image-data-url'
     || artifact.previewKind === 'pdf-data-url'
   ) {
-    return artifact.content
+    if (artifact.content) {
+      return artifact.content
+    }
+    return canOpenArtifactLocally(artifact) ? buildArtifactContentUrl(artifact) : ''
   }
   if (artifact.downloadBase64) {
     const blob = new Blob([decodeBase64ToArrayBuffer(artifact.downloadBase64)], {
@@ -30,16 +46,21 @@ export function createArtifactObjectUrl(artifact: ChatArtifact | null): string {
     })
     return URL.createObjectURL(blob)
   }
+  if (!artifact.content && canOpenArtifactLocally(artifact)) {
+    return buildArtifactContentUrl(artifact)
+  }
   return URL.createObjectURL(new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' }))
 }
 
 export function revokeArtifactObjectUrl(url: string): void {
-  if (!url || url.startsWith('data:')) return
+  if (!url || url.startsWith('data:') || url.startsWith('/api/')) return
   URL.revokeObjectURL(url)
 }
 
 export function downloadArtifact(artifact: ChatArtifact): void {
-  const url = createArtifactObjectUrl(artifact)
+  const url = canOpenArtifactLocally(artifact)
+    ? buildArtifactContentUrl(artifact, { download: true })
+    : createArtifactObjectUrl(artifact)
   if (!url) return
   const anchor = document.createElement('a')
   anchor.href = url
@@ -47,7 +68,7 @@ export function downloadArtifact(artifact: ChatArtifact): void {
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
-  if (!url.startsWith('data:')) {
+  if (!url.startsWith('data:') && !url.startsWith('/api/')) {
     window.setTimeout(() => revokeArtifactObjectUrl(url), 0)
   }
 }

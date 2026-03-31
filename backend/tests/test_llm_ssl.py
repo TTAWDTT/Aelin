@@ -66,3 +66,4 @@ def test_agent_server_chat_model_reuses_llm_http_client(monkeypatch):
     assert http_client.follow_redirects is True
     assert http_client._transport._pool._ssl_context.verify_mode == ssl.CERT_NONE
     assert http_client._transport._pool._ssl_context.check_hostname is False
+    assert captured.get("disable_streaming") == "tool_calling"

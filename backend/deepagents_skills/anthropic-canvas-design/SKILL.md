@@ -1,12 +1,32 @@
 ---
 name: anthropic-canvas-design
-description: Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art, design, or other static piece. Create original visual designs, never copying existing artists' work to avoid copyright violations.
+description: Create beautiful visual art in .png and .pdf documents using design philosophy. In Aelin, prefer the runtime's direct poster rendering tool first; read this skill only when that direct path is unavailable, failed, or the user explicitly asks for the design philosophy/process. Create original visual designs, never copying existing artists' work to avoid copyright violations.
 license: Complete terms in LICENSE.txt
+allowed-tools: render_poster_artifact execute read_file glob
 ---
 
 These are instructions for creating design philosophies - aesthetic movements that are then EXPRESSED VISUALLY. Output only .md files, .pdf files, and .png files.
 
-Complete this in two steps:
+## AELIN RUNTIME OVERRIDE
+
+If the runtime exposes a tool named `render_poster_artifact`, use it immediately for poster, flyer, invitation, cover, banner, and other static visual artifact requests.
+When that tool is available, you usually should not read the rest of this skill before the first render attempt because the runtime already has the direct execution policy.
+
+If `render_poster_artifact` is not available but `execute` is available, use `execute` immediately instead of writing a long script.
+
+Runtime-specific rules:
+- Pass the user's request directly as the `brief`.
+- Use `preferred_format='auto'` unless the user explicitly insists on only `png` or only `pdf`.
+- Do not first create a manifesto markdown file.
+- Do not generate a long Python, HTML, SVG, or canvas script before calling the tool.
+- After the tool succeeds and returns a deliverable, answer the user and stop unless they ask for revisions.
+- `execute` fallback command pattern:
+  `python backend/scripts/render_visual_artifact.py --brief "<user request>" --format auto`
+- When using the `execute` fallback on Windows, prefer `shell='powershell'` and set `cwd` to the repository root.
+
+Only use the two-step philosophy workflow below when the direct runtime rendering path is unavailable, failed, or the user explicitly asks for the philosophy/process.
+
+Two-step philosophy workflow:
 1. Design Philosophy Creation (.md file)
 2. Express by creating it on a canvas (.pdf file or .png file)
 

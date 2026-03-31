@@ -255,8 +255,10 @@ def execute_desktop_command(
     summary = str(raw.get("summary") or "").strip()[:200]
     resolved_cwd = str(raw.get("cwd") or cwd_clean)[:1024]
     resolved_shell = str(raw.get("shell") or shell_clean)[:32]
+    artifacts = raw.get("artifacts")
+    normalized_artifacts = [item for item in artifacts if isinstance(item, dict)] if isinstance(artifacts, list) else []
 
-    return {
+    result = {
         "command": command_clean,
         "shell": resolved_shell,
         "cwd": resolved_cwd,
@@ -270,6 +272,10 @@ def execute_desktop_command(
             else ("command timed out" if timed_out else "command finished")
         ),
     }
+    if normalized_artifacts:
+        result["artifacts"] = normalized_artifacts
+        result["artifact_count"] = len(normalized_artifacts)
+    return result
 
 
 def _normalize_plugin_action_result(raw: dict[str, Any], *, primary_value: str, primary_key: str) -> dict[str, Any]:

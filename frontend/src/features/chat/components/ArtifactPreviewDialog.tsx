@@ -161,17 +161,17 @@ export function ArtifactPreviewDialog({
               </div>
             )}
 
-            {artifact?.previewKind === 'image-data-url' && (
+            {artifact?.previewKind === 'image-data-url' && blobUrl && (
               <div className="overflow-hidden rounded-[24px] border border-[var(--color-border)] bg-white p-6">
-                <img src={artifact.content} alt={artifact.name} className="mx-auto max-h-[68vh] max-w-full object-contain" />
+                <img src={blobUrl} alt={artifact.name} className="mx-auto max-h-[68vh] max-w-full object-contain" />
               </div>
             )}
 
-            {artifact?.previewKind === 'pdf-data-url' && (
+            {artifact?.previewKind === 'pdf-data-url' && blobUrl && (
               <div className="overflow-hidden rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)]">
                 <iframe
                   title={artifact.name}
-                  src={artifact.content}
+                  src={blobUrl}
                   className="h-[68vh] w-full"
                 />
               </div>

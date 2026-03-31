@@ -11,7 +11,7 @@ _LOG = logging.getLogger(__name__)
 
 
 class ManagedCompositeBackend(CompositeBackend):
-    """Composite backend with a hard write_file size guard."""
+    """Composite backend with optional runtime file seeding and write_file guard."""
 
     def __init__(
         self,
