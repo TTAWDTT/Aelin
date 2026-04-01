@@ -100,9 +100,58 @@ function getMessageId(message: BaseMessage, fallback: string): string {
   return direct || fallback
 }
 
+function getRuntimeMessageId(
+  message: BaseMessage,
+  fallback: string,
+  getMessagesMetadata?: (
+    message: BaseMessage,
+    index?: number,
+  ) => {
+    messageId?: string
+    branch?: string
+    streamMetadata?: Record<string, unknown>
+  } | undefined,
+  index?: number,
+): string {
+  const direct = getMessageId(message, '')
+  if (direct) return direct
+  if (typeof getMessagesMetadata === 'function') {
+    try {
+      const metadata = getMessagesMetadata(message, index)
+      const metadataId = String(metadata?.messageId || '').trim()
+      if (metadataId) return metadataId
+    } catch {
+      // Ignore metadata read errors and fall back to a synthetic id.
+    }
+  }
+  return fallback
+}
+
+function getRuntimeToolCalls(
+  message: BaseMessage,
+  getToolCalls?: ((message: BaseMessage) => unknown[]) | undefined,
+): unknown[] {
+  if (typeof getToolCalls !== 'function') return []
+  try {
+    const toolCalls = getToolCalls(message)
+    return Array.isArray(toolCalls) ? toolCalls : []
+  } catch {
+    return []
+  }
+}
+
 function projectRuntimeMessages(
   runtimeMessages: BaseMessage[],
   previousMessages: ChatMessage[],
+  getToolCalls?: ((message: BaseMessage) => unknown[]) | undefined,
+  getMessagesMetadata?: (
+    message: BaseMessage,
+    index?: number,
+  ) => {
+    messageId?: string
+    branch?: string
+    streamMetadata?: Record<string, unknown>
+  } | undefined,
 ): ChatMessage[] {
   const previousById = new Map(previousMessages.map((message) => [message.id, message]))
   const projected: ChatMessage[] = []
@@ -112,10 +161,16 @@ function projectRuntimeMessages(
     const role = normalizeMessageRole(message)
     if (role !== 'user' && role !== 'assistant') return
 
-    const id = getMessageId(message, `message:${index}`)
+    const id = getRuntimeMessageId(
+      message,
+      `message:${index}`,
+      getMessagesMetadata,
+      index,
+    )
     const previous = previousById.get(id)
     const content = extractMessageText((message as any)?.content)
-    const toolCalls = Array.isArray((message as any)?.tool_calls) ? (message as any).tool_calls : []
+    const rawToolCalls = Array.isArray((message as any)?.tool_calls) ? (message as any).tool_calls : []
+    const toolCalls = rawToolCalls.length > 0 ? rawToolCalls : getRuntimeToolCalls(message, getToolCalls)
     if (role === 'assistant' && !content.trim() && toolCalls.length === 0) return
 
     const images = role === 'user'
@@ -323,9 +378,16 @@ export function useChatStream() {
 
   const messages = useMemo(() => {
     const runtimeMessages = Array.isArray(stream.messages) ? stream.messages : []
-    const projected = projectRuntimeMessages(runtimeMessages as BaseMessage[], sessionMessages)
+    const runtimeToolCallsReader = (stream as ChatRuntimeStream).getToolCalls
+    const runtimeMetadataReader = (stream as ChatRuntimeStream).getMessagesMetadata
+    const projected = projectRuntimeMessages(
+      runtimeMessages as BaseMessage[],
+      sessionMessages,
+      runtimeToolCallsReader,
+      runtimeMetadataReader,
+    )
     return projected.length > 0 ? projected : sessionMessages
-  }, [sessionMessages, stream.messages])
+  }, [sessionMessages, stream.messages, stream])
 
   useEffect(() => {
     if (!activeSessionId || stream.isLoading || messages.length === 0) return
