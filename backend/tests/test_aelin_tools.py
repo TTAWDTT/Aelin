@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import AttachmentDocument, Base
+from app.services.deepagents.delivery_paths import get_delivery_paths
 from app.services.deepagents.tool_runtime import (
     ToolCallLimiter,
     ToolPolicyUsage,
@@ -23,6 +24,7 @@ from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_present_files import tool_present_files
 from app.services.tools.tools_visual_artifact import tool_render_poster_artifact
 from app.services.tools.tools_web import tool_web_search
 
@@ -469,6 +471,46 @@ def test_execute_tool_returns_command_result(monkeypatch):
     assert result["stdout"] == "pytest passed"
 
 
+def test_execute_tool_defaults_cwd_to_delivery_workspace(monkeypatch):
+    from app.services.tools import tools_execute
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    captured: dict[str, object] = {}
+
+    def _fake_execute_command_result(args):  # type: ignore[no-untyped-def]
+        captured.update(dict(args))
+        return {"ok": True, "cwd": str(args.get("cwd") or "")}
+
+    monkeypatch.setattr(tools_execute, "execute_command_result", _fake_execute_command_result)
+
+    result = tool_execute(context, {"command": "python build.py"})
+    delivery_paths = get_delivery_paths(workspace="default", user_id=1)
+
+    assert result["ok"] is True
+    assert captured["cwd"] == str(delivery_paths.workspace_dir)
+
+
+def test_execute_tool_maps_virtual_cwd_to_delivery_root(monkeypatch):
+    from app.services.tools import tools_execute
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    captured: dict[str, object] = {}
+
+    def _fake_execute_command_result(args):  # type: ignore[no-untyped-def]
+        captured.update(dict(args))
+        return {"ok": True, "cwd": str(args.get("cwd") or "")}
+
+    monkeypatch.setattr(tools_execute, "execute_command_result", _fake_execute_command_result)
+
+    result = tool_execute(context, {"command": "python build.py", "cwd": "/outputs"})
+    delivery_paths = get_delivery_paths(workspace="default", user_id=1)
+
+    assert result["ok"] is True
+    assert captured["cwd"] == str(delivery_paths.outputs_dir)
+
+
 def test_execute_command_result_returns_compact_local_artifacts(monkeypatch, tmp_path):
     from app.services.device import device_actions
 
@@ -528,6 +570,38 @@ def test_execute_command_result_returns_compact_local_artifacts(monkeypatch, tmp
     assert artifact["content"] == ""
     assert artifact["created_at"] == ""
     assert str(artifact["modified_at"] or "").strip()
+
+
+def test_present_files_tool_returns_output_artifacts(monkeypatch, tmp_path):
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    output_file = tmp_path / "outputs" / "report.docx"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_bytes(b"fake-docx")
+
+    fake_media_root = tmp_path / "media"
+    fake_attachment_root = tmp_path / "attachments"
+    fake_media_root.mkdir(parents=True, exist_ok=True)
+    fake_attachment_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(artifact_files, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(artifact_files.settings, "media_dir", str(fake_media_root))
+    monkeypatch.setattr(artifact_files.settings, "aelin_attachment_storage_dir", str(fake_attachment_root))
+
+    monkeypatch.setattr(
+        "app.services.tools.tools_present_files.get_delivery_paths",
+        lambda **_kwargs: get_delivery_paths(workspace="default", user_id=1, create=False),
+    )
+    monkeypatch.setattr(
+        "app.services.tools.tools_present_files.resolve_virtual_or_local_path",
+        lambda path_value, _paths, **_kwargs: output_file if str(path_value or "").strip() else output_file,
+    )
+
+    result = tool_present_files(context, {"filepaths": ["/outputs/report.docx"]})
+
+    assert result["ok"] is True
+    assert result["artifact_count"] == 1
+    assert result["file_paths"] == [str(output_file)]
+    assert result["artifacts"][0]["path"] == str(output_file)
 
 
 def test_render_poster_artifact_tool_returns_compact_previewable_artifact(monkeypatch, tmp_path):
@@ -737,7 +811,7 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
         "google_workspace",
         "device",
         "screen_get",
-        "render_poster_artifact",
+        "present_files",
     ]
 
     device_tool = next(t for t in tools if t.name == "device")
@@ -789,26 +863,24 @@ def test_deepagents_build_chat_tools_registers_execute_when_enabled(monkeypatch)
     assert any(tr["name"] == "execute" and tr["status"] == "completed" for tr in tool_runs)
 
 
-def test_deepagents_build_chat_tools_registers_render_poster_artifact(monkeypatch):
+def test_deepagents_build_chat_tools_registers_present_files(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
     fake_web = _FakeWebSearch()
     context = _tool_context(fake_web)
     calls: list[dict[str, object]] = []
 
-    def _fake_tool_render_poster_artifact(tool_context, args):  # type: ignore[no-untyped-def]
+    def _fake_tool_present_files(tool_context, args):  # type: ignore[no-untyped-def]
         calls.append({"tool_context": tool_context, "args": dict(args)})
         return {
             "ok": True,
-            "summary": "poster ready",
-            "title": "同济大学 / 樱花季 / 赏花活动",
-            "format": "png",
-            "file_paths": ["D:/Github/Aelin/output/generated-posters/default/demo/demo.png"],
+            "summary": "presented 1 file(s)",
+            "file_paths": ["D:/Github/Aelin/output/deepagents/user-1/default/outputs/demo.png"],
             "artifact_count": 1,
             "artifacts": [
                 {
-                    "path": "D:/Github/Aelin/output/generated-posters/default/demo/demo.png",
-                    "relative_path": "output/generated-posters/default/demo/demo.png",
+                    "path": "D:/Github/Aelin/output/deepagents/user-1/default/outputs/demo.png",
+                    "relative_path": "output/deepagents/user-1/default/outputs/demo.png",
                     "name": "demo.png",
                     "mime_type": "image/png",
                     "size_bytes": 1024,
@@ -820,7 +892,7 @@ def test_deepagents_build_chat_tools_registers_render_poster_artifact(monkeypatc
             ],
         }
 
-    monkeypatch.setattr(dag, "tool_render_poster_artifact", _fake_tool_render_poster_artifact)
+    monkeypatch.setattr(dag, "tool_present_files", _fake_tool_present_files)
 
     limiter = ToolCallLimiter(
         max_tool_calls=20,
@@ -830,15 +902,15 @@ def test_deepagents_build_chat_tools_registers_render_poster_artifact(monkeypatc
 
     tools, tool_runs, _usage = dag.build_chat_tools(context=context, limiter=limiter)
 
-    assert "render_poster_artifact" in [tool.name for tool in tools]
-    poster_tool = next(t for t in tools if t.name == "render_poster_artifact")
-    result = poster_tool.invoke({"brief": "同济大学樱花季海报", "preferred_format": "png"})
+    assert "present_files" in [tool.name for tool in tools]
+    present_tool = next(t for t in tools if t.name == "present_files")
+    result = present_tool.invoke({"filepaths": ["/outputs/demo.png"]})
 
     assert result["ok"] is True
     assert calls
-    assert calls[0]["args"] == {"brief": "同济大学樱花季海报", "preferred_format": "png"}
+    assert calls[0]["args"] == {"filepaths": ["/outputs/demo.png"]}
     assert any(
-        tr["name"] == "render_poster_artifact" and tr["status"] == "completed"
+        tr["name"] == "present_files" and tr["status"] == "completed"
         for tr in tool_runs
     )
 
@@ -1128,6 +1200,47 @@ def test_deepagents_skills_use_backend_routes_instead_of_preinjected_files(monke
     assert "# Guide" in decoded[2]
 
 
+def test_deepagents_backend_maps_workspace_and_outputs_to_real_disk(monkeypatch, tmp_path):
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents import delivery_paths as delivery
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    fake_delivery_root = tmp_path / "deepagents-root"
+
+    def _fake_get_delivery_paths(*, workspace: str, user_id: int | None = None, create: bool = True):
+        root = fake_delivery_root / f"user-{int(user_id or 0)}" / workspace
+        workspace_dir = root / "workspace"
+        outputs_dir = root / "outputs"
+        if create:
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+        return delivery.DeepAgentsDeliveryPaths(
+            root_dir=root,
+            workspace_dir=workspace_dir,
+            outputs_dir=outputs_dir,
+        )
+
+    monkeypatch.setattr(dag, "get_delivery_paths", _fake_get_delivery_paths)
+
+    backend_factory = dag._build_agent_backend_factory(
+        user_id=1,
+        workspace="default",
+        skills_root=tmp_path / "skills",
+        extra_dir="",
+        seed_files=None,
+    )
+    backend = backend_factory(SimpleNamespace(state={}))
+
+    write_result = backend.write("/workspace/demo.txt", "hello workspace")
+    assert not write_result.error
+    assert (fake_delivery_root / "user-1" / "default" / "workspace" / "demo.txt").read_text(encoding="utf-8") == "hello workspace"
+
+    output_result = backend.write("/outputs/report.md", "# Report")
+    assert not output_result.error
+    assert (fake_delivery_root / "user-1" / "default" / "outputs" / "report.md").read_text(encoding="utf-8") == "# Report"
+
+
 def test_deepagents_model_timeout_middleware_stops_long_async_model_call(caplog):
     from app.services.deepagents.model_timeout_middleware import DeepAgentsModelTimeoutMiddleware
 
@@ -1347,10 +1460,10 @@ def test_deepagents_system_prompt_guides_large_artifacts_to_execute_when_availab
     )
 
     system_prompt = str(captured.get("system_prompt") or "")
-    assert "avoid stuffing one enormous blob into a single write_file call" in system_prompt
-    assert "Prefer creating or rendering those artifacts through short local commands" in system_prompt
-    assert "render_poster_artifact" in system_prompt
-    assert "Do not first write a manifesto markdown file" in system_prompt
+    assert "do not stuff one enormous blob into a single write_file call" in system_prompt.lower()
+    assert "/workspace" in system_prompt
+    assert "/outputs" in system_prompt
+    assert "present_files" in system_prompt
 
 
 def test_deepagents_default_skills_root_points_to_backend_skills_dir():

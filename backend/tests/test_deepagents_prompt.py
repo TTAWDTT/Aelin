@@ -10,8 +10,16 @@ from app.services.deepagents.model_timeout_middleware import (
 
 
 def test_build_system_prompt_only_mentions_execute_when_available() -> None:
-    prompt_without_execute = _build_system_prompt(["web_search", "attachment_search"])
-    prompt_with_execute = _build_system_prompt(["web_search", "execute"])
+    prompt_without_execute = _build_system_prompt(
+        ["web_search", "attachment_search"],
+        user_id=1,
+        workspace="default",
+    )
+    prompt_with_execute = _build_system_prompt(
+        ["web_search", "execute"],
+        user_id=1,
+        workspace="default",
+    )
 
     assert "- execute:" not in prompt_without_execute
     assert "- execute:" in prompt_with_execute
@@ -19,36 +27,36 @@ def test_build_system_prompt_only_mentions_execute_when_available() -> None:
     assert "- attachment_search:" in prompt_without_execute
 
 
-def test_build_system_prompt_mentions_render_poster_artifact_when_available() -> None:
-    prompt = _build_system_prompt(["render_poster_artifact"])
+def test_build_system_prompt_mentions_present_files_contract_when_available() -> None:
+    prompt = _build_system_prompt(["present_files"], user_id=1, workspace="default")
 
-    assert "- render_poster_artifact:" in prompt
-    assert "call this tool directly" in prompt
-    assert "Do not first write a manifesto markdown file" in prompt
-    assert "do not read `/skills/aelin/anthropic-canvas-design/SKILL.md`" in prompt
+    assert "- present_files:" in prompt
+    assert "final deliverables must be placed under" in prompt
+    assert "/outputs" in prompt
+    assert "UI can render cards" in prompt
 
 
 def test_build_system_prompt_guides_execute_for_windows_shell_usage() -> None:
-    prompt = _build_system_prompt(["execute"])
+    prompt = _build_system_prompt(["execute"], user_id=1, workspace="default")
 
     assert "windows" in prompt.lower()
     assert "cwd" in prompt
     assert "shell='powershell'" in prompt.lower()
     assert "mkdir -p" in prompt
-    assert "python backend/scripts/render_visual_artifact.py" in prompt
-    assert "relative path" in prompt.lower() or "relative paths" in prompt.lower()
+    assert "/workspace" in prompt
+    assert "/outputs" in prompt
     assert "do not prepend cd" in prompt.lower()
 
 
 def test_build_system_prompt_omits_empty_tool_specific_block() -> None:
-    prompt = _build_system_prompt([])
+    prompt = _build_system_prompt([], user_id=1, workspace="default")
 
     assert "Tool-specific rules:" not in prompt
     assert "You are Aelin running on DeepAgents." in prompt
     assert "Treat /memory/AGENTS.md as the canonical long-term memory file." in prompt
 
 
-def test_canvas_design_skill_frontmatter_prefers_direct_render_path() -> None:
+def test_canvas_design_skill_frontmatter_uses_generic_delivery_contract() -> None:
     skill_path = (
         Path(__file__).resolve().parents[1]
         / "deepagents_skills"
@@ -57,9 +65,11 @@ def test_canvas_design_skill_frontmatter_prefers_direct_render_path() -> None:
     )
     skill_text = skill_path.read_text(encoding="utf-8")
 
-    assert "allowed-tools: render_poster_artifact execute read_file glob" in skill_text
-    assert "prefer the runtime's direct poster rendering tool first" in skill_text
-    assert "Only use the two-step philosophy workflow below" in skill_text
+    assert "allowed-tools: execute write_file edit_file read_file glob present_files" in skill_text
+    assert "Create source files" in skill_text
+    assert "/workspace" in skill_text
+    assert "/outputs" in skill_text
+    assert "present_files" in skill_text
 
 
 class _FakeRequest:
@@ -79,9 +89,9 @@ class _FakeRequest:
 
 def test_tool_availability_middleware_restores_filtered_execute_tool() -> None:
     preserved_execute = SimpleNamespace(name="execute")
-    preserved_poster = SimpleNamespace(name="render_poster_artifact")
+    preserved_present = SimpleNamespace(name="present_files")
     middleware = DeepAgentsToolAvailabilityMiddleware(
-        preserved_tools=[preserved_execute, preserved_poster]
+        preserved_tools=[preserved_execute, preserved_present]
     )
     captured: dict[str, object] = {}
 
@@ -100,7 +110,7 @@ def test_tool_availability_middleware_restores_filtered_execute_tool() -> None:
     assert result == "ok"
     request = captured["request"]
     tool_names = [getattr(tool, "name", "") for tool in request.tools]
-    assert tool_names == ["ls", "read_file", "execute", "render_poster_artifact"]
+    assert tool_names == ["ls", "read_file", "execute", "present_files"]
     assert "Runtime note:" in str(request.system_message)
     assert "do not claim these tools are unavailable" in str(request.system_message).lower()
-    assert "render_poster_artifact" in str(request.system_message)
+    assert "present_files" in str(request.system_message)

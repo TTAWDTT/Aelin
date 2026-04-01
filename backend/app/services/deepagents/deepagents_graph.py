@@ -20,6 +20,7 @@ from deepagents.backends.utils import create_file_data
 from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
+from app.services.deepagents.delivery_paths import get_delivery_paths
 from app.services.deepagents.managed_backend import ManagedCompositeBackend
 from app.services.deepagents.model_timeout_middleware import (
     DeepAgentsModelRetryMiddleware,
@@ -42,7 +43,7 @@ from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
-from app.services.tools.tools_visual_artifact import tool_render_poster_artifact
+from app.services.tools.tools_present_files import tool_present_files
 from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
 from app.services.deepagents.cancel_utils import is_cancelled
@@ -175,18 +176,10 @@ class ExecuteToolInput(BaseModel):
     )
 
 
-class PosterArtifactToolInput(BaseModel):
-    brief: str = Field(
+class PresentFilesToolInput(BaseModel):
+    filepaths: list[str] = Field(
         ...,
-        description="A concise visual brief for the requested poster or static visual artifact.",
-    )
-    preferred_format: str | None = Field(
-        default="auto",
-        description="Preferred output format: 'auto', 'png', or 'pdf'.",
-    )
-    filename_stem: str | None = Field(
-        default=None,
-        description="Optional filename stem for the generated deliverable.",
+        description="Final deliverable file paths. Only files under /outputs or the mapped outputs directory can be presented.",
     )
 
 
@@ -326,7 +319,8 @@ def _tool_description(name: str) -> str:
         return (
             "Execute a non-interactive shell command on the local desktop runtime.\n"
             "Arguments: command=<non-empty string>, shell?=('cmd'|'powershell'), cwd?<allowed directory>, timeout_ms=1000..120000.\n"
-            "Use for coding or inspection tasks like running tests, listing files, or checking git status.\n"
+            "Use for coding, document generation, rendering, or inspection tasks like running tests, listing files, or checking git status.\n"
+            "When cwd is omitted, the runtime uses the mapped DeepAgents workspace directory for this conversation.\n"
             "Commands run in the local desktop shell. On Windows, prefer PowerShell or cmd syntax rather than Unix-only syntax.\n"
             "When targeting a specific directory, prefer passing cwd instead of chaining cd, and then write outputs using relative paths inside that cwd so the runtime can collect artifacts.\n"
             "If cwd is already provided, do not prepend cd to the command.\n"
@@ -334,19 +328,28 @@ def _tool_description(name: str) -> str:
             "Do not use Unix-only constructs like mkdir -p.\n"
             "Avoid interactive commands, long-running dev servers, or commands that wait for user input."
         )
-    if name == "render_poster_artifact":
+    if name == "present_files":
         return (
-            "Render a finished poster or static visual deliverable directly to PNG or PDF.\n"
-            "Arguments: brief=<non-empty visual brief>, preferred_format=('auto'|'png'|'pdf'), filename_stem?<string>.\n"
-            "Use this first for poster, flyer, cover, or other static visual artifact requests.\n"
-            "This tool writes the final deliverable to disk and returns previewable artifacts, so do not write a long generator script first."
+            "Present finished user-facing files in the chat UI.\n"
+            "Arguments: filepaths=<list of file paths>.\n"
+            "Only present final deliverables that already exist under /outputs or the mapped outputs directory.\n"
+            "Call this after generating the final files so the user receives clickable preview/download cards."
         )
     return name
 
 
-def _build_system_prompt(tool_names: list[str]) -> str:
+def _build_system_prompt(
+    tool_names: list[str],
+    *,
+    user_id: int,
+    workspace: str,
+) -> str:
     available = {str(name or "").strip() for name in tool_names if str(name or "").strip()}
-    repo_root = _backend_root().parent.resolve().as_posix()
+    delivery_paths = get_delivery_paths(workspace=workspace, user_id=user_id)
+    workspace_virtual = delivery_paths.workspace_virtual_path
+    outputs_virtual = delivery_paths.outputs_virtual_path
+    workspace_local = delivery_paths.workspace_dir.as_posix()
+    outputs_local = delivery_paths.outputs_dir.as_posix()
     tool_specific_rules: list[str] = []
     if "web_search" in available:
         tool_specific_rules.append(
@@ -372,17 +375,11 @@ def _build_system_prompt(tool_names: list[str]) -> str:
         )
     if "execute" in available:
         tool_specific_rules.append(
-            "- execute: use only for short, non-interactive local commands; always provide a concrete command. Commands run in the local desktop shell, so on Windows prefer PowerShell/cmd syntax, use cwd for the target directory when possible, do not prepend cd when cwd is already provided, write output files with relative paths inside that cwd, use shell='powershell' for PowerShell cmdlets like Set-Content or New-Item, and avoid Unix-only constructs like mkdir -p."
+            f"- execute: use it for local generation, rendering, conversion, and testing. Omit cwd to use the mapped workspace directory `{workspace_local}` by default. You may also pass cwd as `{workspace_virtual}`, `{outputs_virtual}`, `{workspace_local}`, or `{outputs_local}`. On Windows prefer PowerShell/cmd syntax, do not prepend cd when cwd is already provided, use shell='powershell' for PowerShell cmdlets, and avoid Unix-only constructs like mkdir -p."
         )
+    if "present_files" in available:
         tool_specific_rules.append(
-            f"- poster fallback via execute: if the user asks for a poster or other static PNG/PDF deliverable and `render_poster_artifact` is unavailable, call `execute` directly with `shell='powershell'`, `cwd='{repo_root}'`, and a short command like `python backend/scripts/render_visual_artifact.py --brief \"<user request>\" --format auto`. Do not use write_file or generate a long script first. After the command succeeds, return the produced files and stop unless the user asks for revisions."
-        )
-    if "render_poster_artifact" in available:
-        tool_specific_rules.append(
-            "- render_poster_artifact: for poster, flyer, cover, invitation, or other static visual deliverables, call this tool directly with the user's request as brief. Do not first write a manifesto markdown file, HTML/SVG renderer, or long Python script. Once the artifact is returned successfully, answer and stop unless the user requests revisions."
-        )
-        tool_specific_rules.append(
-            "- poster skill usage: when `render_poster_artifact` is available, do not read `/skills/aelin/anthropic-canvas-design/SKILL.md` before your first render attempt unless the user explicitly asks for the design philosophy or the direct render path already failed in this run."
+            f"- present_files: final deliverables must be placed under `{outputs_virtual}` (real local path `{outputs_local}`), then call `present_files` with those file paths so the UI can render cards. Do not call it for temporary or intermediate files."
         )
 
     parts = [
@@ -395,9 +392,14 @@ def _build_system_prompt(tool_names: list[str]) -> str:
         "Do not repeat materially identical tool calls in the same run unless new evidence changes the request.\n"
         "If two recent tool attempts failed or produced no new information, stop using tools and answer from the current evidence.\n"
         "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on.\n"
-        "When producing large generated deliverables such as posters, HTML/SVG artwork, reports, or other long files, avoid stuffing one enormous blob into a single write_file call if a local execution path is available.\n"
-        "Prefer creating or rendering those artifacts through short local commands and saving the resulting files to disk, then return the finished files.\n"
-        "For poster or static art requests, prefer a dedicated rendering tool over generating long source files."
+        f"Real filesystem contract for this run:\n"
+        f"- `{workspace_virtual}` is the on-disk working directory for source files and intermediate assets. It maps to `{workspace_local}`.\n"
+        f"- `{outputs_virtual}` is the on-disk final-deliverables directory. It maps to `{outputs_local}`.\n"
+        "- Files written under those two virtual roots are real local files, not just in-memory thread state.\n"
+        "- Final user-facing files must end up in /outputs.\n"
+        "For large generated deliverables such as posters, reports, slide decks, Word documents, PDFs, HTML/SVG artwork, or other long files, do not stuff one enormous blob into a single write_file call.\n"
+        "Instead, create concise source files in /workspace, use execute to generate or render the final deliverable, save the finished files into /outputs, and then call present_files.\n"
+        "If a task can be completed with normal write_file/edit_file calls under /workspace or /outputs, that is fine; but for binary formats or very large content, prefer execute plus present_files."
     ]
     if tool_specific_rules:
         parts.append("Tool-specific rules:\n" + "\n".join(tool_specific_rules))
@@ -503,7 +505,17 @@ def _build_agent_backend_factory(
     extra_dir: str,
     seed_files: dict[str, Any] | None = None,
 ) -> Callable[[Any], ManagedCompositeBackend]:
+    delivery_paths = get_delivery_paths(workspace=workspace, user_id=user_id)
     routes: dict[str, Any] = {}
+
+    routes["/workspace/"] = FilesystemBackend(
+        root_dir=delivery_paths.workspace_dir,
+        virtual_mode=True,
+    )
+    routes["/outputs/"] = FilesystemBackend(
+        root_dir=delivery_paths.outputs_dir,
+        virtual_mode=True,
+    )
 
     if skills_root.is_dir():
         routes["/skills/aelin/"] = FilesystemBackend(
@@ -914,10 +926,10 @@ def build_chat_tools(
         _make_device_tool(),
         _make_screen_get_tool(),
         _make_structured_tool(
-            "render_poster_artifact",
-            tool_render_poster_artifact,
-            PosterArtifactToolInput,
-            ["brief", "preferred_format", "filename_stem"],
+            "present_files",
+            tool_present_files,
+            PresentFilesToolInput,
+            ["filepaths"],
         ),
     ]
     if bool(getattr(settings, "desktop_plugin_execute_enabled", False)):
@@ -956,13 +968,23 @@ def build_chat_agent(
         limiter=limiter,
         cancel_token=cancel_token,
     )
+    user_id = int(getattr(context, "user_id", 0) or 0)
+    workspace = str(getattr(context, "workspace", "default") or "default")
+    delivery_paths = get_delivery_paths(workspace=workspace, user_id=user_id)
     preserved_tools = [
         tool
         for tool in tools
-        if str(getattr(tool, "name", "") or "").strip() in {"execute", "render_poster_artifact"}
+        if str(getattr(tool, "name", "") or "").strip() in {
+            "execute",
+            "present_files",
+        }
     ]
 
-    system_prompt = _build_system_prompt([tool.name for tool in tools])
+    system_prompt = _build_system_prompt(
+        [tool.name for tool in tools],
+        user_id=user_id,
+        workspace=workspace,
+    )
 
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
@@ -985,6 +1007,10 @@ def build_chat_agent(
                 "mounted_skills": skill_snapshot.mounted_skills,
                 "memory_files": memory_paths,
                 "available_attachment_ids": list(context.available_attachment_ids or []),
+                "workspace_virtual_path": delivery_paths.workspace_virtual_path,
+                "outputs_virtual_path": delivery_paths.outputs_virtual_path,
+                "workspace_local_path": delivery_paths.workspace_dir.as_posix(),
+                "outputs_local_path": delivery_paths.outputs_dir.as_posix(),
             },
             ensure_ascii=False,
             indent=2,
@@ -993,8 +1019,8 @@ def build_chat_agent(
     )
 
     backend_factory = _build_agent_backend_factory(
-        user_id=int(getattr(context, "user_id", 0) or 0),
-        workspace=str(getattr(context, "workspace", "default") or "default"),
+        user_id=user_id,
+        workspace=workspace,
         skills_root=skills_root,
         extra_dir=extra_dir,
         seed_files=files,

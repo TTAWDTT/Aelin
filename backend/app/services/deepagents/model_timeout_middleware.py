@@ -180,7 +180,7 @@ class DeepAgentsModelTimeoutMiddleware(AgentMiddleware[Any, Any, Any]):
             (
                 "deepagents_model_request "
                 "model=%s user_id=%s workspace=%s message_count=%s last_human_chars=%s "
-                "tool_count=%s tool_names=%s system_has_render_poster=%s "
+                "tool_count=%s tool_names=%s system_has_present_files=%s "
                 "system_has_execute=%s"
             ),
             _model_name_from_request(request),
@@ -190,7 +190,7 @@ class DeepAgentsModelTimeoutMiddleware(AgentMiddleware[Any, Any, Any]):
             _last_human_message_chars(request),
             len(tool_names),
             json.dumps(tool_names, ensure_ascii=False),
-            1 if "render_poster_artifact" in system_text else 0,
+            1 if "present_files" in system_text else 0,
             1 if "execute" in system_text else 0,
         )
 
@@ -328,11 +328,11 @@ class DeepAgentsToolAvailabilityMiddleware(AgentMiddleware[Any, Any, Any]):
         ]
         if "execute" in missing_names:
             lines.append(
-                "- `execute` runs short, non-interactive local desktop commands via the Aelin runtime. Use it for tests, builds, inspections, and small file-generation commands."
+                "- `execute` runs short, non-interactive local desktop commands via the Aelin runtime. Use it for tests, builds, inspections, and artifact-generation commands."
             )
-        if "render_poster_artifact" in missing_names:
+        if "present_files" in missing_names:
             lines.append(
-                "- `render_poster_artifact` directly renders finished poster-style PNG/PDF deliverables and returns previewable artifacts. Use it before attempting long file-generation scripts."
+                "- `present_files` is the delivery tool for final user-facing files. Move finished deliverables into `/outputs`, then call `present_files` with those file paths so the UI can render cards."
             )
         return "\n".join(lines)
 

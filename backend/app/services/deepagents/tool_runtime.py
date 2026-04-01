@@ -188,6 +188,13 @@ def _normalize_attachment_ids(value: Any) -> list[int]:
     return sorted(normalize_positive_ints(value, cap=20))
 
 
+def _normalize_filepaths(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items = [" ".join(str(item or "").strip().split()) for item in value]
+    return [item[:512] for item in items if item]
+
+
 def build_tool_signature(name: str, args: dict[str, Any]) -> str:
     tool = str(name or "").strip().lower()
     action = _normalize_text((args or {}).get("action"))
@@ -262,13 +269,11 @@ def build_tool_signature(name: str, args: dict[str, Any]) -> str:
             ensure_ascii=False,
             sort_keys=True,
         )
-    if tool == "render_poster_artifact":
+    if tool == "present_files":
         return json.dumps(
             {
                 "tool": tool,
-                "brief": _normalize_text((args or {}).get("brief")),
-                "preferred_format": _normalize_text((args or {}).get("preferred_format")) or "auto",
-                "filename_stem": _normalize_text((args or {}).get("filename_stem")),
+                "filepaths": _normalize_filepaths((args or {}).get("filepaths")),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -284,7 +289,7 @@ def _tool_attempt_limit(name: str) -> int:
         "device": 2,
         "screen_get": 2,
         "execute": 4,
-        "render_poster_artifact": 2,
+        "present_files": 3,
     }.get(str(name or "").strip().lower(), 2)
 
 
@@ -362,12 +367,12 @@ def _invalid_reason(name: str, args: dict[str, Any]) -> str:
             return "invalid execute call: provide a non-empty command"
         if len(command) > 4000:
             return "invalid execute call: command is too long"
-    if tool == "render_poster_artifact":
-        brief = str((args or {}).get("brief") or "").strip()
-        if not brief:
-            return "invalid render_poster_artifact call: provide a non-empty brief"
-        if len(brief) > 4000:
-            return "invalid render_poster_artifact call: brief is too long"
+    if tool == "present_files":
+        filepaths = _normalize_filepaths((args or {}).get("filepaths"))
+        if not filepaths:
+            return "invalid present_files call: provide at least one file path"
+        if len(filepaths) > 16:
+            return "invalid present_files call: too many file paths"
     return ""
 
 
@@ -377,9 +382,9 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
 
     if tool == "device":
         return action in {"open_url", "open_aelin"}
-    if tool in {"web_search", "attachment_search", "screen_get"}:
+    if tool in {"web_search", "attachment_search", "screen_get", "present_files"}:
         return False
-    if tool in {"execute", "render_poster_artifact"}:
+    if tool == "execute":
         return True
     if tool == "google_workspace":
         return action in {"calendar_create_event", "gmail_send", "gmail_draft", "docs_create"}
@@ -423,7 +428,7 @@ class ToolCallLimiter:
             "screen_get",
             "google_workspace",
             "execute",
-            "render_poster_artifact",
+            "present_files",
         }:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
