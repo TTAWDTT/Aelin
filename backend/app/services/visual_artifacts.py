@@ -240,28 +240,136 @@ def _draw_multiline(
     return y - spacing
 
 
+_TITLE_SUFFIX_HINTS = (
+    "大学",
+    "学院",
+    "学校",
+    "中学",
+    "小学",
+    "园区",
+    "中心",
+    "公司",
+    "社区",
+)
+
+_EVENT_SUFFIX_HINTS = (
+    "赏花活动",
+    "开放日",
+    "音乐节",
+    "电影节",
+    "艺术节",
+    "读书会",
+    "工作坊",
+    "训练营",
+    "嘉年华",
+    "发布会",
+    "论坛",
+    "讲座",
+    "展览",
+    "峰会",
+    "路演",
+    "樱花季",
+    "毕业季",
+    "春日市集",
+    "活动",
+)
+
+
+def _strip_request_noise(text: str) -> str:
+    clean = str(text or "").strip()
+    if not clean:
+        return ""
+    first_clause = re.split(r"[，。！？!?\n]+", clean, maxsplit=1)[0]
+    for marker in ("要求", "画面", "风格", "配色", "构图", "无元素", "输出", "最终输出", "请输出"):
+        if marker in first_clause:
+            first_clause = first_clause.split(marker, 1)[0]
+    first_clause = re.sub(r"^(请你|请帮我|请|帮我|麻烦|可以|能否|帮忙)+", "", first_clause)
+    first_clause = re.sub(r"^(为|围绕)", "", first_clause)
+    first_clause = re.sub(
+        r"(创作|设计|制作|生成|做|完成)一?(张|份|套)?(海报|主视觉|宣传图|封面|画面)$",
+        "",
+        first_clause,
+    )
+    return first_clause.strip(" ：:,.，。")
+
+
+def _match_prefix_chunk(text: str, suffixes: tuple[str, ...]) -> tuple[str, str]:
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        position = text.find(suffix)
+        if position >= 0:
+            end = position + len(suffix)
+            if 2 <= end <= 12:
+                return text[:end], text[end:]
+    return "", text
+
+
+def _match_suffix_chunk(text: str, suffixes: tuple[str, ...]) -> tuple[str, str]:
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        if text.endswith(suffix) and len(text) > len(suffix):
+            start = len(text) - len(suffix)
+            if start >= 2:
+                return text[:start], text[start:]
+    return text, ""
+
+
+def _balanced_wrap(text: str, *, max_lines: int = 3) -> list[str]:
+    clean = str(text or "").strip()
+    if not clean:
+        return []
+    if len(clean) <= 6:
+        return [clean]
+    if len(clean) <= 12:
+        max_lines = min(max_lines, 2)
+    line_count = max(1, min(max_lines, 3))
+    target = max(2, math.ceil(len(clean) / line_count))
+    lines: list[str] = []
+    remainder = clean
+    while remainder and len(lines) < line_count - 1:
+        remaining_slots = line_count - len(lines) - 1
+        max_take = len(remainder) - (remaining_slots * 2)
+        take = max(2, min(target, max_take))
+        lines.append(remainder[:take])
+        remainder = remainder[take:]
+    if remainder:
+        lines.append(remainder)
+    return [line for line in lines if line]
+
+
+def _headline_from_subject(subject: str) -> list[str]:
+    clean = str(subject or "").strip()
+    if not clean:
+        return ["视觉海报", "活动呈现"]
+
+    prefix, remainder = _match_prefix_chunk(clean, _TITLE_SUFFIX_HINTS)
+    middle = remainder
+    suffix = ""
+    if remainder:
+        middle, suffix = _match_suffix_chunk(remainder, _EVENT_SUFFIX_HINTS)
+
+    lines: list[str] = []
+    if prefix:
+        lines.append(prefix)
+    if middle.strip():
+        lines.extend(_balanced_wrap(middle.strip(), max_lines=max(1, 3 - len(lines) - (1 if suffix else 0))))
+    if suffix:
+        lines.append(suffix)
+    if not lines:
+        lines = _balanced_wrap(clean, max_lines=3)
+    return lines[:3]
+
+
 def _extract_copy(brief: str, filename_stem: str | None = None) -> PosterCopy:
     text = str(brief or "").strip()
-    lower = text.lower()
-
-    if "同济大学" in text and "樱花" in text:
-        return PosterCopy(
-            title_lines=["同济大学", "樱花季", "赏花活动"],
-            eyebrow="SPRING CAMPUS EVENT POSTER",
-            english_line="TONGJI UNIVERSITY SAKURA SEASON",
-            detail_line="Bloom Walk / Campus Spring Gathering",
-            accent_line="Pure composition, blossom rhythm, quiet precision",
-            filename_stem=filename_stem or "tongji-sakura-season-poster",
-        )
-
+    subject = _strip_request_noise(text) or text
     chinese_fragments = re.findall(r"[\u4e00-\u9fff]{2,8}", text)
     english_words = re.findall(r"[A-Za-z][A-Za-z0-9&' -]{1,18}", text)
-    headline = chinese_fragments[:3] or ["视觉海报", "活动呈现"]
+    headline = _headline_from_subject(subject)
     english_line = " / ".join(word.strip().upper() for word in english_words[:4]) or "VISUAL EVENT POSTER"
-    stem = filename_stem or _safe_slug("-".join(chinese_fragments[:2]) or english_line)
+    stem = filename_stem or _safe_slug(subject or "-".join(chinese_fragments[:2]) or english_line)
+    eyebrow = "CAMPUS EVENT POSTER" if any(token in subject for token in ("大学", "学院", "校园")) else "ART DIRECTION / EVENT POSTER"
     return PosterCopy(
         title_lines=headline[:3],
-        eyebrow="ART DIRECTION / EVENT POSTER",
+        eyebrow=eyebrow,
         english_line=english_line,
         detail_line="Composed for clarity, breathing room, and strong focal rhythm",
         accent_line="Refined craft / structured calm / visual hierarchy",
@@ -325,7 +433,7 @@ def _draw_poster(copy: PosterCopy, *, seed: int) -> Image.Image:
     side_draw = ImageDraw.Draw(side_label)
     side_draw.text(
         (0, 0),
-        "TONGJI SAKURA BLOOM / METICULOUSLY COMPOSED",
+        f"{copy.english_line[:34]} / METICULOUSLY COMPOSED",
         font=_mono_font(20),
         fill=(82, 76, 82, 148),
     )
