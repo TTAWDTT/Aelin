@@ -16,10 +16,12 @@ backend/browser_data/
 backend/dist/
 backend/build/
 backend/.desktop-build-venv/
+backend/.langgraph_api/
 
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/.env.local
 *.tsbuildinfo
 
 desktop/node_modules/
@@ -45,7 +47,7 @@ tmpclaude-*-cwd
 
 # Claude Code
 .claude/
-AGENTS.md
+!AGENTS.md
 
 # Temp files
 video/
@@ -56,6 +58,7 @@ nul
 .tmp_youwee_*/
 
 .tmp/
+output/
 
 # Pytest temp/runtime artifacts (Windows ACL edge cases)
 /.pytest_tmp/
