@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+from sqlalchemy.orm import Session
+
+from app.services.attachments.attachment_service import (
+    AttachmentService,
+    get_attachment_service,
+)
+from app.services.foundation.service_utils import normalize_positive_ints
+from app.services.web.web_search import WebSearchService
+
+
+def normalize_workspace(raw: str) -> str:
+    clean = " ".join(str(raw or "").strip().split())
+    return (clean[:64] if clean else "default") or "default"
+
+
+@dataclass
+class ToolRuntimeContext:
+    user_id: int
+    workspace: str
+    web_search_service: WebSearchService
+    attachment_service: AttachmentService
+    available_attachment_ids: list[int]
+    cancel_checker: Callable[[], bool] | None = None
+    session_factory: Callable[[], Session] | None = None
+
+
+def build_tool_runtime_context(
+    *,
+    user_id: int,
+    workspace: str,
+    web_search_service: WebSearchService | None = None,
+    attachment_service: AttachmentService | None = None,
+    available_attachment_ids: list[int] | None = None,
+    cancel_checker: Callable[[], bool] | None = None,
+    session_factory: Callable[[], Session] | None = None,
+) -> ToolRuntimeContext:
+    return ToolRuntimeContext(
+        user_id=int(user_id),
+        workspace=normalize_workspace(workspace),
+        web_search_service=web_search_service or WebSearchService(),
+        attachment_service=attachment_service or get_attachment_service(),
+        available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
+        cancel_checker=cancel_checker,
+        session_factory=session_factory,
+    )

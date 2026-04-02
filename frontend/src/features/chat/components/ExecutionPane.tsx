@@ -156,13 +156,13 @@ function GraphTab({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Runtime graph
+              Graph
             </div>
             <div className="mt-1 text-[15px] font-semibold text-[var(--color-text)]">
-              Execution topology
+              Live execution map
             </div>
-            <p className="mt-1 max-w-[44ch] text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-              A live execution map that highlights the active path instead of showing the graph as a static wireframe.
+            <p className="mt-1 max-w-[40ch] text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              A quieter view of the official runtime graph, with the active path kept in focus.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
@@ -188,17 +188,14 @@ function GraphTab({
       <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)] p-3">
         <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
           <div>
-            <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Live paths</div>
-            <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Branch activity</div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Branches</div>
+            <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Active paths</div>
           </div>
           <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
             {lanes.length}
           </span>
         </div>
         <div className="mt-3 space-y-2">
-          <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-            Active branches
-          </div>
           {lanes.length > 0 ? (
             <div className="grid gap-2">
               {lanes.map((lane) => (
@@ -218,7 +215,7 @@ function GraphTab({
           <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
             <div>
               <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Subagents</div>
-              <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Delegation stream</div>
+              <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Delegation</div>
             </div>
             <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
               {locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}

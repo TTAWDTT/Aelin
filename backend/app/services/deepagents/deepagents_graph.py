@@ -2,26 +2,28 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
-from concurrent.futures import TimeoutError as FutureTimeout
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
-from zoneinfo import ZoneInfo
+from typing import Any
 
 import httpx
 from langchain_openai import ChatOpenAI
 
 from deepagents import create_deep_agent
-from deepagents.backends.filesystem import FilesystemBackend
-from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import create_file_data
-from langchain_core.tools import StructuredTool, Tool
-from pydantic import BaseModel, Field
 
+from app.services.deepagents.assembly import backend_factory as _backend_factory_module
+from app.services.deepagents.assembly.backend_factory import _backend_root, build_agent_backend_factory
+from app.services.deepagents.assembly.output_mapping import (
+    DeepAgentsCancelled,
+    DeepAgentsLoopResult,
+    build_loop_result,
+    map_tool_runs,
+    parse_capabilities_file,
+)
+from app.services.deepagents.assembly.prompt import build_system_prompt
+from app.services.deepagents.assembly.skill_mounts import get_skill_mount_snapshot
+from app.services.deepagents.assembly import tool_registry as _tool_registry
 from app.services.deepagents.delivery_paths import get_delivery_paths
-from app.services.deepagents.managed_backend import ManagedCompositeBackend
 from app.services.deepagents.model_timeout_middleware import (
     DeepAgentsModelRetryMiddleware,
     DeepAgentsModelTimeoutMiddleware,
@@ -29,157 +31,73 @@ from app.services.deepagents.model_timeout_middleware import (
     DeepAgentsToolMessageSanitizerMiddleware,
 )
 from app.services.deepagents.tool_runtime import (
-    _acquire_tool_executor_slot,
-    _submit_tool_future,
     ToolCallLimiter,
     ToolPolicyUsage,
     ToolRuntimeContext,
 )
-from app.services.foundation.llm import LLMService
+from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.input_mapping import build_chat_messages
 from app.services.deepagents.output_utils import extract_answer
-from app.services.tools.tool_helpers import _result_error
+from app.services.foundation.llm import LLMService
 from app.services.tools.tools_device import tool_device, tool_screen_get
-from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_present_files import tool_present_files
 from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
-from app.services.deepagents.cancel_utils import is_cancelled
 
 
 _log = logging.getLogger(__name__)
-_AELIN_TIMEZONE = "Asia/Shanghai"
-_SKILL_MOUNT_CACHE_LOCK = threading.Lock()
-_SKILL_MOUNT_CACHE: dict[tuple[str, str], "SkillMountSnapshot"] = {}
 
 
-class DeepAgentsCancelled(RuntimeError):
-    """Raised when the surrounding request has been cancelled."""
+# Backward-compatible alias kept for existing tests and imports during the
+# first structure-refactor phase. The underlying implementation now lives in
+# `deepagents.assembly.prompt`.
+_build_system_prompt = build_system_prompt
 
 
-def _current_date_context() -> str:
-    try:
-        local_now = datetime.now(ZoneInfo(_AELIN_TIMEZONE))
-    except Exception:
-        local_now = datetime.now(timezone.utc)
-    return (
-        f"Current date: {local_now.date().isoformat()}.\n"
-        f"Current timezone: {_AELIN_TIMEZONE}.\n"
-        f"Current local datetime: {local_now.isoformat(timespec='seconds')}.\n"
-        f"Today in {_AELIN_TIMEZONE}: {local_now.strftime('%Y-%m-%d')}.\n"
-        "Interpret relative date and time references using the current local datetime above unless a tool result from this run proves otherwise.\n"
-        "Do not drift to another year or another date just because retrieved content mentions one."
+def _build_agent_backend_factory(
+    *,
+    user_id: int,
+    workspace: str,
+    skills_root: Path,
+    extra_dir: str,
+    seed_files: dict[str, Any] | None = None,
+):
+    # Keep monkeypatch-friendly compatibility during the first refactor phase:
+    # tests and callers may patch symbols on this module and expect the backend
+    # factory assembly module to pick them up.
+    _backend_factory_module.get_delivery_paths = get_delivery_paths
+    return _backend_factory_module.build_agent_backend_factory(
+        user_id=user_id,
+        workspace=workspace,
+        skills_root=skills_root,
+        extra_dir=extra_dir,
+        seed_files=seed_files,
     )
 
 
-@dataclass
-class DeepAgentsToolRun:
-    call_index: int
-    name: str
-    args: dict[str, Any]
-    status: str
-    result: dict[str, Any]
-    error: str = ""
-    is_write: bool = False
-    latency_ms: int = 0
-
-
-@dataclass
-class DeepAgentsLoopResult:
-    ok: bool
-    answer: str
-    tool_runs: list[DeepAgentsToolRun] = field(default_factory=list)
-    total_calls: int = 0
-    write_calls: int = 0
-    actions: list[dict[str, str]] = field(default_factory=list)
-    error: str = ""
-    cancelled: bool = False
-    capability_summary: str = ""
-
-
-@dataclass(frozen=True)
-class SkillMountSnapshot:
-    skill_sources: list[str]
-    mounted_skills: list[str]
-
-
-class DeviceToolInput(BaseModel):
-    action: str = Field(
-        ...,
-        description="Allowed values: 'status', 'open_url', 'open_aelin'.",
-    )
-    url: str | None = Field(default=None, description="HTTP(S) URL when action == 'open_url'.")
-    route: str | None = Field(default=None, description="Optional route when action == 'open_aelin'.")
-
-
-class ScreenGetToolInput(BaseModel):
-    display_id: str | None = Field(default=None)
-    max_edge: int | None = Field(default=1280, description="640-4096.")
-    format: str | None = Field(default="jpeg", description="'jpeg' or 'png'.")
-    quality: int | None = Field(default=72, description="35-95 for JPEG.")
-
-
-class WebSearchToolInput(BaseModel):
-    action: str = Field(default="search_and_fetch")
-    query: str
-    max_results: int | None = Field(default=15)
-    fetch_top_k: int | None = Field(default=3)
-
-
-class AttachmentSearchToolInput(BaseModel):
-    query: str
-    attachment_ids: list[int] | None = Field(default=None)
-    top_k: int | None = Field(default=5)
-    mode: str | None = Field(default="keyword")
-
-
-class GoogleWorkspaceToolInput(BaseModel):
-    action: str
-    calendar_id: str | None = None
-    time_min: str | None = None
-    time_max: str | None = None
-    max_results: int | None = None
-    single_events: bool | None = None
-    event_summary: str | None = None
-    event_description: str | None = None
-    event_start: str | None = None
-    event_end: str | None = None
-    event_attendees: list[str] | None = None
-    query: str | None = None
-    include_spam_trash: bool | None = None
-    message_id: str | None = None
-    format: str | None = None
-    email_to: list[str] | None = None
-    email_cc: list[str] | None = None
-    email_bcc: list[str] | None = None
-    email_subject: str | None = None
-    email_body: str | None = None
-    docs_title: str | None = None
-    docs_content: str | None = None
-
-
-class ExecuteToolInput(BaseModel):
-    command: str = Field(..., description="Non-interactive shell command to execute.")
-    shell: str | None = Field(
-        default=None,
-        description="Optional shell override. On Windows use 'cmd' or 'powershell'.",
-    )
-    cwd: str | None = Field(
-        default=None,
-        description="Optional working directory inside the allowed local workspace roots.",
-    )
-    timeout_ms: int | None = Field(
-        default=None,
-        description="Optional timeout in milliseconds (1000-120000).",
-    )
-
-
-class PresentFilesToolInput(BaseModel):
-    filepaths: list[str] = Field(
-        ...,
-        description="Final deliverable file paths. Only files under /outputs or the mapped outputs directory can be presented.",
+def build_chat_tools(
+    *,
+    context: ToolRuntimeContext,
+    limiter: ToolCallLimiter,
+    cancel_token: Any | None = None,
+) -> tuple[list[Any], list[dict[str, Any]], ToolPolicyUsage]:
+    # Keep monkeypatch-friendly compatibility during the first refactor phase:
+    # tests and callers may patch symbols on this module and expect the tool
+    # registry to pick them up.
+    _tool_registry.tool_web_search = tool_web_search
+    _tool_registry.tool_attachment_search = tool_attachment_search
+    _tool_registry.tool_google_workspace = tool_google_workspace
+    _tool_registry.tool_device = tool_device
+    _tool_registry.tool_screen_get = tool_screen_get
+    _tool_registry.tool_execute = tool_execute
+    _tool_registry.tool_present_files = tool_present_files
+    return _tool_registry.build_chat_tools(
+        context=context,
+        limiter=limiter,
+        cancel_token=cancel_token,
     )
 
 
@@ -277,673 +195,6 @@ def _build_chat_model(service: LLMService, provider: str) -> ChatOpenAI | None:
         return None
 
 
-def _tool_description(name: str) -> str:
-    if name == "web_search":
-        return (
-            "Search the public web.\n"
-            "Arguments: action=('search'|'search_and_fetch'), query=<non-empty string>, "
-            "max_results=1..15, fetch_top_k=0..6.\n"
-            "Never call web_search with an empty query. Do not repeat materially identical queries in the same run. "
-            "If one search already returned enough evidence, stop searching and answer."
-        )
-    if name == "attachment_search":
-        return (
-            "Search uploaded attachments for relevant chunks.\n"
-            "Arguments: query=<non-empty string>, attachment_ids?<int[]>, top_k=1..20, "
-            "mode=('keyword'|'hybrid').\n"
-            "attachment_ids is optional when this run already provides available_attachment_ids in /runtime/capabilities.json; "
-            "the runtime will use those scoped ids automatically.\n"
-            "Always provide a concrete non-empty query that reflects what information you need from the files "
-            "(for example 'project codename deadline deliverables').\n"
-            "Do not repeat the same query against the same attachments. If there are no useful hits, say so and stop."
-        )
-    if name == "google_workspace":
-        return (
-            "Access Google Workspace via local gws CLI.\n"
-            "Use action to select runtime/auth/gmail/drive/calendar/docs operations.\n"
-            "Before calling, ensure action-specific required fields are present. Never retry the same write action blindly."
-        )
-    if name == "device":
-        return (
-            "Desktop actions and status.\n"
-            "Allowed actions: 'status', 'open_url', 'open_aelin'.\n"
-            "Use device only when the user explicitly asks for a desktop action such as opening a page or switching the Aelin app.\n"
-            "For open_url pass a valid http(s) URL. Do not repeat the same desktop action if it already failed once."
-        )
-    if name == "screen_get":
-        return (
-            "Capture a desktop screenshot for visual inspection.\n"
-            "Only use when visual evidence is required. Avoid repeated screenshots with the same arguments."
-        )
-    if name == "execute":
-        return (
-            "Execute a non-interactive shell command on the local desktop runtime.\n"
-            "Arguments: command=<non-empty string>, shell?=('cmd'|'powershell'), cwd?<allowed directory>, timeout_ms=1000..120000.\n"
-            "Use for coding, document generation, rendering, or inspection tasks like running tests, listing files, or checking git status.\n"
-            "When cwd is omitted, the runtime uses the mapped DeepAgents workspace directory for this conversation.\n"
-            "Commands run in the local desktop shell. On Windows, prefer PowerShell or cmd syntax rather than Unix-only syntax.\n"
-            "When targeting a specific directory, prefer passing cwd instead of chaining cd, and then write outputs using relative paths inside that cwd so the runtime can collect artifacts.\n"
-            "If cwd is already provided, do not prepend cd to the command.\n"
-            "On Windows, prefer shell='powershell' when using Set-Content, Out-File, New-Item, Get-Content, Test-Path, or other PowerShell cmdlets, and pass the PowerShell script body directly rather than prefixing it with powershell -Command.\n"
-            "Do not use Unix-only constructs like mkdir -p.\n"
-            "Avoid interactive commands, long-running dev servers, or commands that wait for user input."
-        )
-    if name == "present_files":
-        return (
-            "Present finished user-facing files in the chat UI.\n"
-            "Arguments: filepaths=<list of file paths>.\n"
-            "Only present final deliverables that already exist under /outputs or the mapped outputs directory.\n"
-            "Call this after generating the final files so the user receives clickable preview/download cards."
-        )
-    return name
-
-
-def _build_system_prompt(
-    tool_names: list[str],
-    *,
-    user_id: int,
-    workspace: str,
-) -> str:
-    available = {str(name or "").strip() for name in tool_names if str(name or "").strip()}
-    delivery_paths = get_delivery_paths(workspace=workspace, user_id=user_id)
-    workspace_virtual = delivery_paths.workspace_virtual_path
-    outputs_virtual = delivery_paths.outputs_virtual_path
-    workspace_local = delivery_paths.workspace_dir.as_posix()
-    outputs_local = delivery_paths.outputs_dir.as_posix()
-    tool_specific_rules: list[str] = []
-    if "web_search" in available:
-        tool_specific_rules.append(
-            "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence."
-        )
-    if "attachment_search" in available:
-        tool_specific_rules.append(
-            "- attachment_search: when the user asks about uploaded files, call attachment_search with a concrete non-empty query describing the requested facts. "
-            "If this run already scopes uploaded attachments for you, attachment_ids may be omitted and the runtime will apply the scoped ids automatically. "
-            "Do not claim an attachment is unavailable unless attachment_search actually failed in this run."
-        )
-    if "google_workspace" in available:
-        tool_specific_rules.append(
-            "- google_workspace: choose a concrete action and include all required fields before calling; never blindly retry writes."
-        )
-    if "device" in available:
-        tool_specific_rules.append(
-            "- device: only use status/open_url/open_aelin when the user explicitly asks for desktop or browser navigation; open_url requires a valid http(s) URL."
-        )
-    if "screen_get" in available:
-        tool_specific_rules.append(
-            "- screen_get: capture only when visual evidence is necessary; avoid repeated screenshots with the same arguments."
-        )
-    if "execute" in available:
-        tool_specific_rules.append(
-            f"- execute: use it for local generation, rendering, conversion, and testing. Omit cwd to use the mapped workspace directory `{workspace_local}` by default. You may also pass cwd as `{workspace_virtual}`, `{outputs_virtual}`, `{workspace_local}`, or `{outputs_local}`. On Windows prefer PowerShell/cmd syntax, do not prepend cd when cwd is already provided, use shell='powershell' for PowerShell cmdlets, and avoid Unix-only constructs like mkdir -p."
-        )
-    if "present_files" in available:
-        tool_specific_rules.append(
-            f"- present_files: final deliverables must be placed under `{outputs_virtual}` (real local path `{outputs_local}`), then call `present_files` with those file paths so the UI can render cards. Do not call it for temporary or intermediate files."
-        )
-
-    parts = [
-        "You are Aelin running on DeepAgents.\n"
-        "Reply in the same language as the user.\n"
-        "Use tools only when they materially help.\n"
-        "Prefer one correct tool call over repeated partial attempts.\n"
-        "Before calling any tool, first form a complete and valid argument set.\n"
-        "If a tool call is rejected for missing or invalid arguments, correct the arguments once instead of retrying blindly.\n"
-        "Do not repeat materially identical tool calls in the same run unless new evidence changes the request.\n"
-        "If two recent tool attempts failed or produced no new information, stop using tools and answer from the current evidence.\n"
-        "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on.\n"
-        f"Real filesystem contract for this run:\n"
-        f"- `{workspace_virtual}` is the on-disk working directory for source files and intermediate assets. It maps to `{workspace_local}`.\n"
-        f"- `{outputs_virtual}` is the on-disk final-deliverables directory. It maps to `{outputs_local}`.\n"
-        "- Files written under those two virtual roots are real local files, not just in-memory thread state.\n"
-        "- Final user-facing files must end up in /outputs.\n"
-        "For large generated deliverables such as posters, reports, slide decks, Word documents, PDFs, HTML/SVG artwork, or other long files, do not stuff one enormous blob into a single write_file call.\n"
-        "Instead, create concise source files in /workspace, use execute to generate or render the final deliverable, save the finished files into /outputs, and then call present_files.\n"
-        "If a task can be completed with normal write_file/edit_file calls under /workspace or /outputs, that is fine; but for binary formats or very large content, prefer execute plus present_files."
-    ]
-    if tool_specific_rules:
-        parts.append("Tool-specific rules:\n" + "\n".join(tool_specific_rules))
-    parts.extend(
-        [
-            _current_date_context(),
-            "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
-            "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
-            "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
-            "Read skills on demand from /skills/... when a matching skill is relevant.\n"
-            "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
-            "If a required tool or skill is unavailable, say so explicitly instead of implying the action completed.",
-        ]
-    )
-    return "\n".join(parts)
-
-
-def _backend_root() -> Path:
-    return Path(__file__).parent.parent.parent.parent
-
-
-def _build_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
-    skill_sources: list[str] = []
-    mounted_skills: list[str] = []
-
-    def _mount_skills_from_root(root: Path, virtual_root: str) -> None:
-        nonlocal skill_sources, mounted_skills
-
-        if not root.is_dir():
-            return
-
-        has_any = False
-        for subdir in root.iterdir():
-            if not subdir.is_dir():
-                continue
-            skill_md = subdir / "SKILL.md"
-            if not skill_md.is_file():
-                continue
-
-            has_any = True
-            mounted_skills.append(f"{virtual_root}{subdir.name}/")
-
-        if has_any and virtual_root not in skill_sources:
-            skill_sources.append(virtual_root)
-
-    _mount_skills_from_root(skills_root, "/skills/aelin/")
-    if extra_dir:
-        _mount_skills_from_root(Path(extra_dir), "/skills/external/")
-
-    return SkillMountSnapshot(
-        skill_sources=list(skill_sources),
-        mounted_skills=list(mounted_skills),
-    )
-
-
-def _get_skill_mount_snapshot(skills_root: Path, extra_dir: str) -> SkillMountSnapshot:
-    key = (str(skills_root), str(Path(extra_dir)) if extra_dir else "")
-    with _SKILL_MOUNT_CACHE_LOCK:
-        snapshot = _SKILL_MOUNT_CACHE.get(key)
-        if snapshot is None:
-            snapshot = _build_skill_mount_snapshot(skills_root, extra_dir)
-            _SKILL_MOUNT_CACHE[key] = snapshot
-        return snapshot
-
-
-def _map_tool_runs(raw_tool_runs: list[dict[str, Any]]) -> list[DeepAgentsToolRun]:
-    return [
-        DeepAgentsToolRun(
-            call_index=int(tr.get("call_index", 1)),
-            name=str(tr.get("name") or ""),
-            args=dict(tr.get("args") or {}),
-            status=str(tr.get("status") or ""),
-            result=dict(tr.get("result") or {}),
-            error=str(tr.get("error") or ""),
-            is_write=bool(tr.get("is_write", False)),
-            latency_ms=int(tr.get("latency_ms", 0)),
-        )
-        for tr in raw_tool_runs
-    ]
-
-
-def _parse_capabilities_file(files_mapping: dict[str, Any]) -> dict[str, Any]:
-    raw = files_mapping.get("/runtime/capabilities.json")
-    if not isinstance(raw, dict):
-        return {}
-    content = raw.get("content")
-    if isinstance(content, list):
-        text = "\n".join(str(line) for line in content)
-    else:
-        text = str(content or "")
-    try:
-        parsed = json.loads(text)
-    except Exception:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _build_agent_backend_factory(
-    *,
-    user_id: int,
-    workspace: str,
-    skills_root: Path,
-    extra_dir: str,
-    seed_files: dict[str, Any] | None = None,
-) -> Callable[[Any], ManagedCompositeBackend]:
-    delivery_paths = get_delivery_paths(workspace=workspace, user_id=user_id)
-    routes: dict[str, Any] = {}
-
-    routes["/workspace/"] = FilesystemBackend(
-        root_dir=delivery_paths.workspace_dir,
-        virtual_mode=True,
-    )
-    routes["/outputs/"] = FilesystemBackend(
-        root_dir=delivery_paths.outputs_dir,
-        virtual_mode=True,
-    )
-
-    if skills_root.is_dir():
-        routes["/skills/aelin/"] = FilesystemBackend(
-            root_dir=skills_root,
-            virtual_mode=True,
-        )
-
-    extra_root = Path(extra_dir) if extra_dir else None
-    if extra_root is not None and extra_root.is_dir():
-        routes["/skills/external/"] = FilesystemBackend(
-            root_dir=extra_root,
-            virtual_mode=True,
-        )
-
-    raw_write_file_max_chars = getattr(settings, "deepagents_write_file_max_chars", 0)
-    if raw_write_file_max_chars is None:
-        write_file_max_chars = 0
-    else:
-        write_file_max_chars = int(raw_write_file_max_chars)
-
-    def _factory(runtime: Any) -> ManagedCompositeBackend:
-        return ManagedCompositeBackend(
-            default=StateBackend(runtime),
-            routes=dict(routes),
-            write_file_max_chars=write_file_max_chars,
-            user_id=user_id,
-            workspace=workspace,
-            seed_files=dict(seed_files or {}),
-        )
-
-    return _factory
-
-
-def _loop_result(
-    *,
-    ok: bool,
-    answer: str = "",
-    tool_runs: list[DeepAgentsToolRun] | None = None,
-    total_calls: int = 0,
-    write_calls: int = 0,
-    actions: list[dict[str, str]] | None = None,
-    error: str = "",
-    cancelled: bool = False,
-    capability_summary: str = "",
-) -> DeepAgentsLoopResult:
-    return DeepAgentsLoopResult(
-        ok=ok,
-        answer=answer,
-        tool_runs=list(tool_runs or []),
-        total_calls=int(total_calls or 0),
-        write_calls=int(write_calls or 0),
-        actions=list(actions or []),
-        error=error,
-        cancelled=cancelled,
-        capability_summary=capability_summary,
-    )
-
-
-def _invoke_tool(
-    *,
-    name: str,
-    args: dict[str, Any],
-    handler: Callable[[ToolRuntimeContext, dict[str, Any]], dict[str, Any]],
-    context: ToolRuntimeContext,
-    limiter: ToolCallLimiter,
-    usage: ToolPolicyUsage,
-    tool_runs: list[dict[str, Any]],
-    cancel_token: Any | None = None,
-) -> dict[str, Any]:
-    from time import perf_counter
-
-    if is_cancelled(cancel_token):
-        raise DeepAgentsCancelled("cancelled")
-
-    decision = limiter.evaluate(name=name, args=args, usage=usage)
-    call_index = len(tool_runs) + 1
-    started = perf_counter()
-
-    if not decision.allowed:
-        latency_ms = int((perf_counter() - started) * 1000)
-        result = {"ok": False, "error": decision.reason}
-        usage.note_denial()
-        tool_key = f"{name}:{call_index}"
-        tool_runs.append(
-            {
-                "call_index": call_index,
-                "name": name,
-                "args": args,
-                "key": tool_key,
-                "status": "denied",
-                "result": result,
-                "error": decision.reason,
-                "is_write": decision.is_write,
-                "latency_ms": latency_ms,
-                "summary": f"{name} denied: {decision.reason[:160]}",
-            }
-        )
-        return result
-
-    if is_cancelled(cancel_token):
-        raise DeepAgentsCancelled("cancelled")
-
-    slot = _acquire_tool_executor_slot()
-    if slot is None:
-        latency_ms = int((perf_counter() - started) * 1000)
-        result = {
-            "ok": False,
-            "error": (
-                f"{name}_busy: previous long-running tool calls are still draining; "
-                "stop using tools for now and answer from current evidence"
-            ),
-            "stop_retry": True,
-        }
-        if decision.is_write:
-            result["maybe_applied"] = True
-        usage.note_denial()
-        tool_key = f"{name}:{call_index}"
-        tool_runs.append(
-            {
-                "call_index": call_index,
-                "name": name,
-                "args": args,
-                "key": tool_key,
-                "status": "busy",
-                "result": result,
-                "error": str(result["error"]),
-                "is_write": decision.is_write,
-                "latency_ms": latency_ms,
-                "summary": f"{name} busy: prior tool calls are still draining",
-            }
-        )
-        return result
-
-    executor, semaphore = slot
-
-    usage.note_invocation(name, args)
-    tool_key = f"{name}:{call_index}"
-    result: dict[str, Any]
-    future = _submit_tool_future(executor, semaphore, handler, context, args)
-
-    timeout_seconds = max(
-        1.0,
-        float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
-    )
-    wait_slice_seconds = 0.5
-    cancelled_midflight = False
-    deadline = started + timeout_seconds
-
-    while not future.done():
-        now = perf_counter()
-        remaining = deadline - now
-        if remaining <= 0:
-            break
-        try:
-            future.result(timeout=min(wait_slice_seconds, remaining))
-        except FutureTimeout:
-            pass
-        except BaseException:
-            break
-        if future.done():
-            break
-        if is_cancelled(cancel_token):
-            cancelled_midflight = True
-            break
-
-    if cancelled_midflight:
-        result = _result_error(
-            f"{name}_cancelled: request cancelled while tool was running"
-        )
-        result["stop_retry"] = True
-        if decision.is_write:
-            result["maybe_applied"] = True
-            result["error"] = (
-                f"{name}_cancelled: request cancelled while the write tool was running; "
-                "the operation may still complete in the background, so do not retry the same write blindly"
-            )
-    elif not future.done():
-        result = _result_error(
-            f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
-            "stop using this tool in this run and answer from current evidence"
-        )
-        result["stop_retry"] = True
-        if decision.is_write:
-            result["maybe_applied"] = True
-            result["error"] = (
-                f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
-                "the write may still complete in the background, so do not retry the same write blindly"
-            )
-    else:
-        try:
-            raw_result = future.result()
-        except BaseException as exc:  # noqa: BLE001
-            result = _result_error(f"{name}_failed:{str(exc)[:160]}")
-        else:
-            if isinstance(raw_result, dict):
-                result = raw_result
-            else:
-                result = _result_error(f"{name}_failed:tool returned invalid payload")
-
-    latency_ms = int((perf_counter() - started) * 1000)
-    usage.total_calls += 1
-    if decision.is_write:
-        usage.write_calls += 1
-    usage.note_result(result)
-    if cancelled_midflight:
-        status = "cancelled"
-    else:
-        status = "completed" if bool(result.get("ok", True)) else "failed"
-    error = "" if status == "completed" else str(result.get("error") or "")[:160]
-
-    # Provide a compact, human-friendly summary string for UI/trace rendering.
-    summary = ""
-    if error:
-        summary = f"{name} error: {error}"
-    else:
-        # Prefer an explicit summary from the tool result when present.
-        try:
-            summary_field = str(result.get("summary") or "").strip()
-        except Exception:
-            summary_field = ""
-        if summary_field:
-            summary = f"{name}: {summary_field[:160]}"
-        else:
-            scope = ""
-            try:
-                scope = str(result.get("scope") or "")[:80]
-            except Exception:
-                scope = ""
-            if scope:
-                summary = f"{name} -> {scope}"
-            else:
-                total = result.get("total")
-                if isinstance(total, int):
-                    summary = f"{name} total={total}"
-                else:
-                    summary = f"{name}({len(args)} args)"
-
-    tool_runs.append(
-        {
-            "call_index": call_index,
-            "name": name,
-            "args": args,
-            "key": tool_key,
-            "status": status,
-            "result": result,
-            "error": error,
-            "is_write": decision.is_write,
-            "latency_ms": latency_ms,
-            "summary": summary,
-        }
-    )
-    return result
-
-
-def build_chat_tools(
-    *,
-    context: ToolRuntimeContext,
-    limiter: ToolCallLimiter,
-    cancel_token: Any | None = None,
-) -> tuple[list[Tool], list[dict[str, Any]], ToolPolicyUsage]:
-    """
-    Build the DeepAgents-facing tool list using explicit tool registration.
-
-    This file is intentionally the assembly layer only: it wires Aelin's
-    capability functions into DeepAgents/LangChain tools, applies tool policy,
-    and records tool runs for UI/debugging.
-    """
-    usage = ToolPolicyUsage()
-    tool_runs: list[dict[str, Any]] = []
-
-    def _make_structured_tool(
-        name: str,
-        handler: Callable[[ToolRuntimeContext, dict[str, Any]], dict[str, Any]],
-        args_schema: type[BaseModel],
-        arg_names: list[str],
-    ) -> Tool:
-        def _call_tool(**kwargs: Any) -> dict[str, Any]:
-            args = {
-                key: value
-                for key, value in kwargs.items()
-                if key in arg_names and value is not None
-            }
-            return _invoke_tool(
-                name=name,
-                args=args,
-                handler=handler,
-                context=context,
-                limiter=limiter,
-                usage=usage,
-                tool_runs=tool_runs,
-                cancel_token=cancel_token,
-            )
-
-        return StructuredTool.from_function(
-            func=_call_tool,
-            name=name,
-            description=_tool_description(name),
-            args_schema=args_schema,
-        )
-
-    def _make_device_tool() -> Tool:
-        def _run_device(action: str, url: str | None = None, route: str | None = None) -> dict[str, Any]:
-            args: dict[str, Any] = {"action": str(action or "").strip()}
-            if url is not None and str(url).strip():
-                args["url"] = str(url).strip()
-            if route is not None and str(route).strip():
-                args["route"] = str(route).strip()
-            return _invoke_tool(
-                name="device",
-                args=args,
-                handler=tool_device,
-                context=context,
-                limiter=limiter,
-                usage=usage,
-                tool_runs=tool_runs,
-                cancel_token=cancel_token,
-            )
-
-        return StructuredTool.from_function(
-            func=_run_device,
-            name="device",
-            description=_tool_description("device"),
-            args_schema=DeviceToolInput,
-        )
-
-    def _make_screen_get_tool() -> Tool:
-        def _run_screen_get(
-            display_id: str | None = None,
-            max_edge: int | None = None,
-            format: str | None = None,  # noqa: A002 - keep external arg name stable
-            quality: int | None = None,
-        ) -> dict[str, Any]:
-            args: dict[str, Any] = {}
-            if display_id is not None and str(display_id).strip():
-                args["display_id"] = str(display_id).strip()
-            if max_edge is not None:
-                try:
-                    args["max_edge"] = int(max_edge)
-                except Exception:
-                    pass
-            if format is not None and str(format).strip():
-                args["format"] = str(format).strip()
-            if quality is not None:
-                try:
-                    args["quality"] = int(quality)
-                except Exception:
-                    pass
-            return _invoke_tool(
-                name="screen_get",
-                args=args,
-                handler=tool_screen_get,
-                context=context,
-                limiter=limiter,
-                usage=usage,
-                tool_runs=tool_runs,
-                cancel_token=cancel_token,
-            )
-
-        return StructuredTool.from_function(
-            func=_run_screen_get,
-            name="screen_get",
-            description=_tool_description("screen_get"),
-            args_schema=ScreenGetToolInput,
-        )
-
-    tools: list[Tool] = [
-        _make_structured_tool(
-            "web_search",
-            tool_web_search,
-            WebSearchToolInput,
-            ["action", "query", "max_results", "fetch_top_k"],
-        ),
-        _make_structured_tool(
-            "attachment_search",
-            tool_attachment_search,
-            AttachmentSearchToolInput,
-            ["query", "attachment_ids", "top_k", "mode"],
-        ),
-        _make_structured_tool(
-            "google_workspace",
-            tool_google_workspace,
-            GoogleWorkspaceToolInput,
-            [
-                "action",
-                "calendar_id",
-                "time_min",
-                "time_max",
-                "max_results",
-                "single_events",
-                "event_summary",
-                "event_description",
-                "event_start",
-                "event_end",
-                "event_attendees",
-                "query",
-                "include_spam_trash",
-                "message_id",
-                "format",
-                "email_to",
-                "email_cc",
-                "email_bcc",
-                "email_subject",
-                "email_body",
-                "docs_title",
-                "docs_content",
-            ],
-        ),
-        _make_device_tool(),
-        _make_screen_get_tool(),
-        _make_structured_tool(
-            "present_files",
-            tool_present_files,
-            PresentFilesToolInput,
-            ["filepaths"],
-        ),
-    ]
-    if bool(getattr(settings, "desktop_plugin_execute_enabled", False)):
-        tools.append(
-            _make_structured_tool(
-                "execute",
-                tool_execute,
-                ExecuteToolInput,
-                ["command", "shell", "cwd", "timeout_ms"],
-            )
-        )
-    return tools, tool_runs, usage
-
-
 def build_chat_agent(
     *,
     service: LLMService,
@@ -980,7 +231,7 @@ def build_chat_agent(
         }
     ]
 
-    system_prompt = _build_system_prompt(
+    system_prompt = build_system_prompt(
         [tool.name for tool in tools],
         user_id=user_id,
         workspace=workspace,
@@ -988,7 +239,7 @@ def build_chat_agent(
 
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
-    skill_snapshot = _get_skill_mount_snapshot(skills_root, extra_dir)
+    skill_snapshot = get_skill_mount_snapshot(skills_root, extra_dir)
     memory_files: dict[str, str] = {}
     memory_paths: list[str] = []
     if memory_text.strip():
@@ -1018,7 +269,7 @@ def build_chat_agent(
         )
     )
 
-    backend_factory = _build_agent_backend_factory(
+    backend_factory = build_agent_backend_factory(
         user_id=user_id,
         workspace=workspace,
         skills_root=skills_root,
@@ -1064,9 +315,9 @@ def run_deepagents_loop(
             cancel_token=cancel_token,
         )
         if agent is None:
-            return _loop_result(ok=False, error="llm_not_configured")
+            return build_loop_result(ok=False, error="llm_not_configured")
 
-        capabilities = _parse_capabilities_file(files_mapping)
+        capabilities = parse_capabilities_file(files_mapping)
         capability_summary = (
             f"tools={len(list(capabilities.get('tools') or []))}; "
             f"skills={len(list(capabilities.get('mounted_skills') or []))}; "
@@ -1090,10 +341,10 @@ def run_deepagents_loop(
             raise DeepAgentsCancelled("cancelled")
 
         answer = extract_answer(response).strip()
-        tool_runs = _map_tool_runs(raw_tool_runs)
+        tool_runs = map_tool_runs(raw_tool_runs)
 
         if not answer:
-            return _loop_result(
+            return build_loop_result(
                 ok=False,
                 tool_runs=tool_runs,
                 total_calls=getattr(usage, "total_calls", 0),
@@ -1102,7 +353,7 @@ def run_deepagents_loop(
                 capability_summary=capability_summary,
             )
 
-        return _loop_result(
+        return build_loop_result(
             ok=True,
             answer=answer,
             tool_runs=tool_runs,
@@ -1111,11 +362,10 @@ def run_deepagents_loop(
             capability_summary=capability_summary,
         )
     except DeepAgentsCancelled:
-        return _loop_result(ok=False, cancelled=True, error="cancelled")
+        return build_loop_result(ok=False, cancelled=True, error="cancelled")
     except Exception as exc:  # noqa: BLE001
         _log.exception("deepagents_unhandled_error provider=%s", provider)
-        return _loop_result(
+        return build_loop_result(
             ok=False,
             error=f"deepagents_unhandled_error:{str(exc)[:160]}",
         )
-
