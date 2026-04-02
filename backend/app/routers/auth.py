@@ -19,16 +19,29 @@ from app.settings import settings
 router = APIRouter(tags=["auth"])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token", auto_error=False)
+_LOCAL_FALLBACK_EMAIL = "local@example.com"
+_LEGACY_LOCAL_FALLBACK_EMAILS = {"local@aelin.local"}
+
+
+def _normalize_local_user_email(db: Session, user: User) -> User:
+    email = str(getattr(user, "email", "") or "").strip().lower()
+    if email not in _LEGACY_LOCAL_FALLBACK_EMAILS:
+        return user
+    user.email = _LOCAL_FALLBACK_EMAIL
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def _ensure_local_user(db: Session) -> User:
     """Single-user local fallback in no-login mode."""
     user = db.scalar(select(User).order_by(User.id.asc()))
     if user is not None:
-        return user
+        return _normalize_local_user_email(db, user)
     return crud.create_user(
         db,
-        email="local@aelin.local",
+        email=_LOCAL_FALLBACK_EMAIL,
         password=f"local-{uuid4().hex}-{uuid4().hex}",
     )
 
@@ -160,4 +173,3 @@ async def upload_my_avatar(
             except OSError:
                 pass
     return updated_user
-

@@ -22,6 +22,9 @@ from app.services.device.remote_control_chat_adapter import (
 )
 from app.settings import settings
 
+_LOCAL_FALLBACK_EMAIL = "local@example.com"
+_LEGACY_LOCAL_FALLBACK_EMAILS = {"local@aelin.local"}
+
 
 @dataclass(slots=True)
 class RemoteCommandSource:
@@ -48,10 +51,15 @@ def resolve_remote_control_user(db: Session, *, bind_user_email: str | None = No
             return bound
     user = db.scalar(select(User).order_by(User.id.asc()))
     if user is not None:
+        if str(getattr(user, "email", "") or "").strip().lower() in _LEGACY_LOCAL_FALLBACK_EMAILS:
+            user.email = _LOCAL_FALLBACK_EMAIL
+            db.add(user)
+            db.commit()
+            db.refresh(user)
         return user
     return crud.create_user(
         db,
-        email=configured_email or "local@aelin.local",
+        email=configured_email or _LOCAL_FALLBACK_EMAIL,
         password=f"local-{uuid4().hex}-{uuid4().hex}",
     )
 
@@ -131,4 +139,3 @@ def execute_remote_control_request(
     )
     ok, status = _derive_remote_execution_status(response)
     return RemoteControlExecutionResult(ok=ok, status=status, response=response)
-
