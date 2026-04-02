@@ -66,7 +66,7 @@ export function AIConfigTab() {
     queryFn: agentApi.catalog,
   })
 
-  const providers = catalog?.providers ?? []
+  const providers = useMemo(() => catalog?.providers ?? [], [catalog])
 
   const providerOptions = useMemo(() => {
     const options: Array<{ id: string; label: string }> = [
@@ -93,7 +93,7 @@ export function AIConfigTab() {
   }, [providers, isZh])
 
   const [form, setForm] = useState<AgentFormState>({
-    providerChoice: '',
+    providerChoice: RULE_BASED_PROVIDER,
     customProviderId: '',
     base_url: '',
     web_search_proxy_url: '',
@@ -206,7 +206,7 @@ export function AIConfigTab() {
             {isZh ? '服务商' : 'Provider'}
           </span>
           <Select.Root
-            value={form.providerChoice || undefined}
+            value={form.providerChoice}
             onValueChange={(value) =>
               setForm((prev) => ({
                 ...prev,
@@ -323,7 +323,7 @@ export function AIConfigTab() {
               {isZh ? '模型' : 'Model'}
             </span>
             <Select.Root
-              value={form.model || undefined}
+              value={form.model}
               onValueChange={(value) => setForm((prev) => ({ ...prev, model: value }))}
               disabled={isRuleBased || !currentProvider}
             >
