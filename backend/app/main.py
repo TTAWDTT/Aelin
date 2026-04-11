@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect as sa_inspect, text
 from sqlalchemy.engine import Engine
@@ -109,6 +110,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if bool(getattr(settings, "http_gzip_enabled", True)):
+        app.add_middleware(
+            GZipMiddleware,
+            minimum_size=max(256, int(getattr(settings, "http_gzip_minimum_size_bytes", 1024) or 1024)),
+            compresslevel=max(1, min(9, int(getattr(settings, "http_gzip_compresslevel", 5) or 5))),
+        )
 
     app.mount("/media", StaticFiles(directory=settings.media_dir, check_dir=False), name="media")
 

@@ -12,8 +12,10 @@ from app.routers.auth import get_current_user
 from app.schemas import (
     AelinAttachmentUploadResponse,
     AelinFileMemoryContentResponse,
+    AelinFileMemorySearchResponse,
 )
 from app.services.attachments.attachment_service import AttachmentIngestError, get_attachment_service
+from app.services.memory.agent_memory import get_agent_memory_service
 from app.services.memory.file_memory_bridge import file_memory_bridge
 
 router = APIRouter(prefix="/attachments", tags=["attachments"])
@@ -93,6 +95,40 @@ def upload_attachment(
             pass
     response_payload = {key: value for key, value in result.items() if not str(key).startswith("_")}
     return AelinAttachmentUploadResponse(**response_payload)
+
+
+@router.get("/file-memory/search", response_model=AelinFileMemorySearchResponse)
+def file_memory_search(
+    workspace: str = "default",
+    query: str = "",
+    top_k: int = 6,
+    kinds: str = "",
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> AelinFileMemorySearchResponse:
+    _ = db
+    workspace_norm = str(workspace or "default").strip() or "default"
+    normalized_query = str(query or "").strip()
+    if not normalized_query:
+        return AelinFileMemorySearchResponse(
+            workspace=workspace_norm,
+            total=0,
+            items=[],
+            generated_at=datetime.now(timezone.utc),
+        )
+    items = get_agent_memory_service().search_memory(
+        user_id=int(current_user.id),
+        workspace=workspace_norm,
+        query=normalized_query,
+        top_k=max(1, min(20, int(top_k or 6))),
+        kinds=[part.strip() for part in str(kinds or "").split(",") if part.strip()],
+    )
+    return AelinFileMemorySearchResponse(
+        workspace=workspace_norm,
+        total=len(items),
+        items=items,
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 @router.get("/file-memory/content", response_model=AelinFileMemoryContentResponse)

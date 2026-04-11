@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
@@ -12,7 +12,7 @@ import { useViewportWidth } from '@/shared/hooks/useViewportWidth'
 import type { AttachmentUploadResponse } from '@/shared/api/types'
 import { useChatI18n } from './chatI18n'
 import { ExecutionPane } from './components/ExecutionPane'
-import { getExecutionRuntime, getMessageToolCallMap } from './executionStreamUtils'
+import { analyzeExecutionStream, type ChatRuntimeStream } from './executionStreamUtils'
 import { useExecutionPaneStore } from './stores/executionPaneStore'
 import { ArtifactPreviewDialog } from './components/ArtifactPreviewDialog'
 import { buildMessageArtifactMap, extractArtifactsFromState, type ChatArtifact } from './artifactUtils'
@@ -30,14 +30,42 @@ export function ChatView() {
     suppressAutoOpen,
   } = useExecutionPaneStore()
   const isStreaming = stream.isLoading
-  const execution = getExecutionRuntime(stream, assistantGraph)
-  const messageToolCalls = getMessageToolCallMap(stream)
+  const runtimeStream = stream as ChatRuntimeStream
+  const deferredStreamMessages = useDeferredValue(runtimeStream.messages)
+  const deferredStreamValues = useDeferredValue(runtimeStream.values)
+  const deferredStreamSubagents = useDeferredValue(runtimeStream.subagents)
+  const executionStream = useMemo(
+    () => ({
+      messages: deferredStreamMessages,
+      values: deferredStreamValues,
+      isLoading: stream.isLoading,
+      subagents: deferredStreamSubagents,
+      getToolCalls: runtimeStream.getToolCalls,
+      getSubagentsByMessage: runtimeStream.getSubagentsByMessage,
+      getMessagesMetadata: runtimeStream.getMessagesMetadata,
+    }),
+    [
+      deferredStreamMessages,
+      deferredStreamSubagents,
+      deferredStreamValues,
+      runtimeStream.getMessagesMetadata,
+      runtimeStream.getSubagentsByMessage,
+      runtimeStream.getToolCalls,
+      stream.isLoading,
+    ],
+  )
+  const executionAnalysis = useMemo(
+    () => analyzeExecutionStream(executionStream, assistantGraph),
+    [assistantGraph, executionStream],
+  )
+  const execution = executionAnalysis.runtime
+  const messageToolCalls = executionAnalysis.toolCallsByMessage
   const [selectedArtifact, setSelectedArtifact] = useState<ChatArtifact | null>(null)
   const lastMessage = messages.at(-1)
   const hasAssistantReplyStarted = lastMessage?.role === 'assistant'
   const values =
-    stream.values && typeof stream.values === 'object' && !Array.isArray(stream.values)
-      ? stream.values
+    deferredStreamValues && typeof deferredStreamValues === 'object' && !Array.isArray(deferredStreamValues)
+      ? deferredStreamValues
       : {}
   const artifactsByPath = useMemo(() => extractArtifactsFromState(values), [values])
   const artifactsByMessage = useMemo(

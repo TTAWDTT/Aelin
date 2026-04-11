@@ -343,6 +343,56 @@ def test_attachment_search_falls_back_to_recent_workspace_attachments_without_th
     assert fake_attachment.calls[0]["attachment_ids"] == [1, 2]
 
 
+def test_attachment_search_caches_storage_scope_lookup(monkeypatch):
+    from app.services.tools import tools_files
+
+    tools_files.clear_attachment_scope_cache_for_tests()
+    monkeypatch.setattr(tools_files.settings, "deepagents_attachment_scope_cache_ttl_seconds", 60.0)
+
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    base_session_factory = _db_session_factory_with_attachments(
+        {
+            "user_id": 1,
+            "workspace": "default",
+            "session_id": "thread-cache",
+            "file_name": "cache-a.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "f" * 64,
+            "storage_path": "/tmp/cache-a.pdf",
+            "parse_status": "ready",
+            "summary": "cache-a",
+            "metadata_json": "{}",
+        },
+    )
+    opens = {"count": 0}
+
+    def _counting_session_factory():  # noqa: ANN001
+        opens["count"] += 1
+        return base_session_factory()
+
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[],
+        session_factory=_counting_session_factory,
+    )
+
+    with set_config_context({"configurable": {"thread_id": "thread-cache"}}) as ctx:
+        first = ctx.run(tool_attachment_search, context, {"query": "缓存测试"})
+        second = ctx.run(tool_attachment_search, context, {"query": "缓存测试"})
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["attachment_ids"] == [1]
+    assert second["attachment_ids"] == [1]
+    assert opens["count"] == 3
+
+
 def test_screen_get_tool_success(monkeypatch):
     from app.services.tools import tools_device
 
@@ -645,6 +695,7 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
 
     assert isinstance(usage, ToolPolicyUsage)
     assert [tool.name for tool in tools] == [
+        "memory_search",
         "web_search",
         "attachment_search",
         "google_workspace",
@@ -725,6 +776,42 @@ def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
     assert tool_runs[0]["call_index"] == 1
 
 
+def test_memory_search_tool_returns_structured_hits():
+    from app.services.tools.tools_memory import tool_memory_search
+
+    class _FakeMemoryService:
+        def search_memory(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs["query"] == "OpenClaw memory"
+            return [
+                {
+                    "path": "/memory/PROJECTS.md",
+                    "title": "OpenClaw-style memory refactor",
+                    "preview": "Compact projection plus retrieval.",
+                    "score": 7.2,
+                    "updated_at": "2026-04-07T00:00:00+00:00",
+                    "canonical_id": "project:1",
+                    "target": "/memory/PROJECTS.md",
+                    "source": "memory",
+                    "kind": "project",
+                    "topic_path": "memory/projects",
+                    "entry_kind": "project",
+                }
+            ]
+
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=_FakeWebSearch(),  # type: ignore[arg-type]
+        memory_service=_FakeMemoryService(),  # type: ignore[arg-type]
+    )
+
+    result = tool_memory_search(context, {"query": "OpenClaw memory", "kinds": ["project"], "top_k": 4})
+
+    assert result["ok"] is True
+    assert result["total"] == 1
+    assert result["items"][0]["path"] == "/memory/PROJECTS.md"
+
+
 def test_deepagents_http_timeout_uses_stream_idle_for_read_timeout(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
@@ -767,8 +854,65 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     assert isinstance(usage, ToolPolicyUsage)
     assert isinstance(files, dict)
     assert "/memory/AGENTS.md" in files
+    assert "/memory/FACTS.md" in files
+    assert "/memory/PREFERENCES.md" in files
+    assert "/memory/INDEX.json" in files
     content = files["/memory/AGENTS.md"].get("content")
     assert isinstance(content, list) and "likes agents." in "\n".join(str(line) for line in content)
+
+
+def test_deepagents_build_chat_agent_passes_query_hint_to_memory_bundle(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    class _FakeMemoryService:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def get_memory_bundle(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls.append(dict(kwargs))
+            return {
+                "prompt_path": "/memory/AGENTS.md",
+                "prompt_text": "# Memory\n\nfocused",
+                "files": {
+                    "/memory/AGENTS.md": "# Memory\n\nfocused",
+                    "/memory/PROJECTS.md": "# Projects\n\n- remote control",
+                },
+                "memory_paths": ["/memory/AGENTS.md", "/memory/PROJECTS.md"],
+                "index": {},
+            }
+
+    fake_web = _FakeWebSearch()
+    fake_memory = _FakeMemoryService()
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        memory_service=fake_memory,  # type: ignore[arg-type]
+        session_factory=_FakeSession,
+    )
+
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+    captured: dict[str, object] = {}
+
+    def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        context=context,
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        memory_text="",
+        query_hint="qq remote control stability",
+        skills_root=None,
+    )
+
+    assert fake_memory.calls
+    assert fake_memory.calls[0]["query_hint"] == "qq remote control stability"
+    assert captured["memory"] == ["/memory/AGENTS.md", "/memory/PROJECTS.md"]
 
 
 def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
@@ -813,6 +957,7 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
     ]
     assert "remember this" in decoded[0]
     assert '"available_attachment_ids"' in decoded[1]
+    assert '"memory_runtime_prompt_path"' in decoded[1]
     assert files["/memory/AGENTS.md"] == runtime_files["/memory/AGENTS.md"]
 
 
@@ -959,6 +1104,66 @@ def test_deepagents_model_timeout_middleware_stops_long_async_model_call(caplog)
     assert any("deepagents_model_timeout" in record.message for record in caplog.records)
 
 
+def test_deepagents_model_timeout_middleware_retries_then_recovers(caplog):
+    from app.services.deepagents.model_timeout_middleware import DeepAgentsModelTimeoutMiddleware
+
+    middleware = DeepAgentsModelTimeoutMiddleware(
+        timeout_seconds=0.01,
+        retry_attempts=1,
+        retry_backoff_seconds=0.0,
+    )
+    request = SimpleNamespace(
+        model=SimpleNamespace(model_name="gpt-test"),
+        runtime=SimpleNamespace(context=SimpleNamespace(user_id=7, workspace="demo")),
+        messages=[{"role": "user", "content": "hello"}],
+        tools=[{"name": "web_search"}],
+    )
+    calls = {"count": 0}
+
+    async def _flaky_handler(_request):  # noqa: ANN001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            await asyncio.sleep(0.05)
+        return SimpleNamespace(result=["ok"])
+
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(middleware.awrap_model_call(request, _flaky_handler))
+
+    assert calls["count"] == 2
+    assert result.result == ["ok"]
+    assert any("deepagents_model_retry" in record.message for record in caplog.records)
+
+
+def test_deepagents_model_timeout_middleware_retries_transient_errors(caplog):
+    from app.services.deepagents.model_timeout_middleware import DeepAgentsModelTimeoutMiddleware
+
+    middleware = DeepAgentsModelTimeoutMiddleware(
+        timeout_seconds=1.0,
+        retry_attempts=1,
+        retry_backoff_seconds=0.0,
+    )
+    request = SimpleNamespace(
+        model=SimpleNamespace(model_name="gpt-test"),
+        runtime=SimpleNamespace(context=SimpleNamespace(user_id=7, workspace="demo")),
+        messages=[{"role": "user", "content": "hello"}],
+        tools=[{"name": "web_search"}],
+    )
+    calls = {"count": 0}
+
+    async def _flaky_handler(_request):  # noqa: ANN001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("503 upstream temporarily unavailable")
+        return SimpleNamespace(result=["ok"])
+
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(middleware.awrap_model_call(request, _flaky_handler))
+
+    assert calls["count"] == 2
+    assert result.result == ["ok"]
+    assert any("deepagents_model_retry" in record.message for record in caplog.records)
+
+
 def test_deepagents_tool_message_sanitizer_patches_orphan_tool_messages(caplog):
     from app.services.deepagents.model_timeout_middleware import sanitize_orphan_tool_messages
 
@@ -1084,6 +1289,7 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
     )
 
     system_prompt = str(captured.get("system_prompt") or "")
+    assert "memory_search" in system_prompt
     assert "attachment_ids may be omitted and the runtime will apply the scoped ids automatically" in system_prompt
     assert "Never claim you searched, opened, read, or cited an external source" in system_prompt
 
@@ -1253,6 +1459,77 @@ def test_deepagents_build_chat_tools_abort_when_cancelled(monkeypatch):
 
     with pytest.raises(dag.DeepAgentsCancelled):
         web_tool.invoke({"action": "search", "query": "deepagents"})
+
+
+def test_deepagents_invoke_tool_retries_read_only_tools(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=1, allow_write_tools=False)
+    usage = ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+    calls = {"count": 0}
+
+    monkeypatch.setattr(dag.settings, "deepagents_read_tool_retry_attempts", 1)
+    monkeypatch.setattr(dag.settings, "deepagents_read_tool_retry_backoff_seconds", 0.0)
+
+    def _flaky_handler(_context, _args):  # noqa: ANN001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"ok": False, "error": "web_search_timeout: upstream 504"}
+        return {"ok": True, "total": 1, "summary": "found 1 web result"}
+
+    result = dag._invoke_tool(
+        name="web_search",
+        args={"action": "search", "query": "deepagents"},
+        handler=_flaky_handler,
+        context=context,
+        limiter=limiter,
+        usage=usage,
+        tool_runs=tool_runs,
+    )
+
+    assert calls["count"] == 2
+    assert result["ok"] is True
+    assert result["attempts"] == 2
+    assert usage.total_calls == 1
+    assert tool_runs[0]["status"] == "completed"
+    assert "after 2 attempts" in str(tool_runs[0]["summary"])
+
+
+def test_deepagents_invoke_tool_does_not_retry_write_tools(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=2, allow_write_tools=True)
+    usage = ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+    calls = {"count": 0}
+
+    monkeypatch.setattr(dag.settings, "deepagents_read_tool_retry_attempts", 3)
+    monkeypatch.setattr(dag.settings, "deepagents_read_tool_retry_backoff_seconds", 0.0)
+
+    def _flaky_handler(_context, _args):  # noqa: ANN001
+        calls["count"] += 1
+        return {"ok": False, "error": "execute_timeout: upstream 504"}
+
+    result = dag._invoke_tool(
+        name="execute",
+        args={"command": "pytest -q"},
+        handler=_flaky_handler,
+        context=context,
+        limiter=limiter,
+        usage=usage,
+        tool_runs=tool_runs,
+    )
+
+    assert calls["count"] == 1
+    assert result["ok"] is False
+    assert "attempts" not in result
+    assert usage.total_calls == 1
+    assert tool_runs[0]["status"] == "failed"
 
 
 def test_deepagents_attachment_tool_preserves_runnable_config_across_thread_pool():

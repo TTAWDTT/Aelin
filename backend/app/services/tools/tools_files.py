@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+import threading
+import time
 from typing import Any
 
 from langgraph.runtime import get_runtime
@@ -11,6 +14,12 @@ from app.services.deepagents.run_context import DeepAgentsRunContext
 from app.services.deepagents.tool_runtime import ToolRuntimeContext
 from app.services.foundation.service_utils import normalize_positive_ints
 from app.services.tools.tool_helpers import _result_error, _result_ok, _safe_int
+from app.settings import settings
+
+
+_ATTACHMENT_SCOPE_CACHE_LOCK = threading.Lock()
+_ATTACHMENT_SCOPE_CACHE: OrderedDict[tuple[int, str, str, int], tuple[float, list[int]]] = OrderedDict()
+_ATTACHMENT_SCOPE_CACHE_SIZE = 64
 
 
 def _runtime_configurable() -> dict[str, Any]:
@@ -64,6 +73,79 @@ def _scoped_workspace_from_runtime(context: ToolRuntimeContext) -> str:
     return str(context.workspace or "default").strip() or "default"
 
 
+def _attachment_scope_cache_ttl_seconds() -> float:
+    try:
+        return max(0.0, float(getattr(settings, "deepagents_attachment_scope_cache_ttl_seconds", 8.0) or 0.0))
+    except Exception:
+        return 8.0
+
+
+def _attachment_scope_cache_key(context: ToolRuntimeContext, *, user_id: int, workspace: str, thread_id: str) -> tuple[int, str, str, int]:
+    session_factory = context.session_factory
+    return (
+        int(user_id),
+        str(workspace or "default"),
+        str(thread_id or ""),
+        id(session_factory),
+    )
+
+
+def _cached_attachment_scope_ids(
+    context: ToolRuntimeContext,
+    *,
+    user_id: int,
+    workspace: str,
+    thread_id: str,
+) -> list[int] | None:
+    ttl_seconds = _attachment_scope_cache_ttl_seconds()
+    if ttl_seconds <= 0:
+        return None
+    key = _attachment_scope_cache_key(
+        context,
+        user_id=user_id,
+        workspace=workspace,
+        thread_id=thread_id,
+    )
+    with _ATTACHMENT_SCOPE_CACHE_LOCK:
+        cached = _ATTACHMENT_SCOPE_CACHE.get(key)
+        if cached is None:
+            return None
+        cached_at, ids = cached
+        if (time.monotonic() - float(cached_at)) > ttl_seconds:
+            _ATTACHMENT_SCOPE_CACHE.pop(key, None)
+            return None
+        _ATTACHMENT_SCOPE_CACHE.move_to_end(key)
+        return list(ids)
+
+
+def _remember_attachment_scope_ids(
+    context: ToolRuntimeContext,
+    *,
+    user_id: int,
+    workspace: str,
+    thread_id: str,
+    ids: list[int],
+) -> list[int]:
+    key = _attachment_scope_cache_key(
+        context,
+        user_id=user_id,
+        workspace=workspace,
+        thread_id=thread_id,
+    )
+    stored = normalize_positive_ints(ids, cap=20)
+    with _ATTACHMENT_SCOPE_CACHE_LOCK:
+        _ATTACHMENT_SCOPE_CACHE[key] = (time.monotonic(), list(stored))
+        _ATTACHMENT_SCOPE_CACHE.move_to_end(key)
+        while len(_ATTACHMENT_SCOPE_CACHE) > _ATTACHMENT_SCOPE_CACHE_SIZE:
+            _ATTACHMENT_SCOPE_CACHE.popitem(last=False)
+    return list(stored)
+
+
+def clear_attachment_scope_cache_for_tests() -> None:
+    with _ATTACHMENT_SCOPE_CACHE_LOCK:
+        _ATTACHMENT_SCOPE_CACHE.clear()
+
+
 def _fallback_attachment_ids_from_storage(context: ToolRuntimeContext) -> list[int]:
     session_factory = context.session_factory
     if not callable(session_factory):
@@ -72,6 +154,14 @@ def _fallback_attachment_ids_from_storage(context: ToolRuntimeContext) -> list[i
     user_id = _scoped_user_id_from_runtime(context)
     workspace = _scoped_workspace_from_runtime(context)
     thread_id = _scoped_thread_id_from_runtime()
+    cached_ids = _cached_attachment_scope_ids(
+        context,
+        user_id=user_id,
+        workspace=workspace,
+        thread_id=thread_id,
+    )
+    if cached_ids is not None:
+        return cached_ids
     db = session_factory()
     try:
         def _fetch_ids(*, session_id: str | None = None, limit: int = 8) -> list[int]:
@@ -93,8 +183,21 @@ def _fallback_attachment_ids_from_storage(context: ToolRuntimeContext) -> list[i
         if thread_id:
             scoped_ids = _fetch_ids(session_id=thread_id, limit=20)
             if scoped_ids:
-                return scoped_ids
-        return _fetch_ids(limit=8)
+                return _remember_attachment_scope_ids(
+                    context,
+                    user_id=user_id,
+                    workspace=workspace,
+                    thread_id=thread_id,
+                    ids=scoped_ids,
+                )
+        workspace_ids = _fetch_ids(limit=8)
+        return _remember_attachment_scope_ids(
+            context,
+            user_id=user_id,
+            workspace=workspace,
+            thread_id=thread_id,
+            ids=workspace_ids,
+        )
     finally:
         db.close()
 

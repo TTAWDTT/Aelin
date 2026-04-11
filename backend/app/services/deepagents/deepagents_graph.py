@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,10 +14,140 @@ from zoneinfo import ZoneInfo
 import httpx
 from langchain_openai import ChatOpenAI
 
-from deepagents import create_deep_agent
-from deepagents.backends.filesystem import FilesystemBackend
-from deepagents.backends.state import StateBackend
-from deepagents.backends.utils import create_file_data
+try:
+    from deepagents import create_deep_agent
+    from deepagents.backends.filesystem import FilesystemBackend
+    from deepagents.backends.state import StateBackend
+    from deepagents.backends.utils import create_file_data
+except Exception:  # pragma: no cover - fallback for test environments without deepagents
+    @dataclass
+    class _FallbackDownloadResponse:
+        content: bytes | None = None
+
+    class _FallbackAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = dict(kwargs or {})
+
+        def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+            _ = payload
+            return {"answer": ""}
+
+        async def astream(self, *_args: Any, **_kwargs: Any):
+            if False:
+                yield None
+
+        def get_graph(self) -> dict[str, Any]:
+            return {}
+
+    def create_deep_agent(**kwargs: Any) -> Any:
+        return _FallbackAgent(**kwargs)
+
+    def create_file_data(content: str) -> dict[str, Any]:
+        text = str(content or "")
+        lines = text.splitlines()
+        if text and not lines:
+            lines = [text]
+        return {
+            "content": lines,
+            "created_at": "",
+            "modified_at": "",
+        }
+
+    class StateBackend:
+        def __init__(self, runtime: Any) -> None:
+            self.runtime = runtime
+
+        def _files(self) -> dict[str, dict[str, Any]]:
+            state = getattr(self.runtime, "state", None)
+            if not isinstance(state, dict):
+                state = {}
+                setattr(self.runtime, "state", state)
+            files = state.get("files")
+            if not isinstance(files, dict):
+                files = {}
+                state["files"] = files
+            return files
+
+        def write(self, file_path: str, content: str) -> Any:
+            from app.services.deepagents.managed_backend import WriteResult
+
+            self._files()[str(file_path)] = create_file_data(content)
+            return WriteResult(path=str(file_path), error=None)
+
+        async def awrite(self, file_path: str, content: str) -> Any:
+            return self.write(file_path, content)
+
+        def download_files(self, paths: list[str]) -> list[Any]:
+            files = self._files()
+            responses: list[_FallbackDownloadResponse] = []
+            for path in list(paths or []):
+                entry = files.get(str(path)) or {}
+                content = entry.get("content")
+                if isinstance(content, list):
+                    text = "\n".join(str(line) for line in content)
+                else:
+                    text = str(content or "")
+                responses.append(_FallbackDownloadResponse(content=text.encode("utf-8")))
+            return responses
+
+        def ls_info(self, path: str) -> list[dict[str, Any]]:
+            prefix = str(path or "")
+            files = self._files()
+            out: list[dict[str, Any]] = []
+            for file_path in sorted(files.keys()):
+                if file_path.startswith(prefix):
+                    out.append({"path": file_path, "is_dir": False})
+            return out
+
+    class FilesystemBackend:
+        def __init__(self, *, root_dir: Path, virtual_mode: bool = True) -> None:
+            self.root_dir = Path(root_dir)
+            self.virtual_mode = bool(virtual_mode)
+            self._route_prefix = "/"
+
+        def set_route_prefix(self, prefix: str) -> None:
+            self._route_prefix = str(prefix or "/")
+
+        def _relative_path(self, path: str) -> Path:
+            normalized = str(path or "")
+            prefix = str(self._route_prefix or "/")
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix) :]
+            normalized = normalized.lstrip("/").replace("\\", "/")
+            return self.root_dir / normalized
+
+        def write(self, file_path: str, content: str) -> Any:
+            from app.services.deepagents.managed_backend import WriteResult
+
+            target = self._relative_path(file_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(content or ""), encoding="utf-8")
+            return WriteResult(path=str(file_path), error=None)
+
+        async def awrite(self, file_path: str, content: str) -> Any:
+            return self.write(file_path, content)
+
+        def download_files(self, paths: list[str]) -> list[Any]:
+            responses: list[_FallbackDownloadResponse] = []
+            for path in list(paths or []):
+                target = self._relative_path(path)
+                data = target.read_bytes() if target.is_file() else None
+                responses.append(_FallbackDownloadResponse(content=data))
+            return responses
+
+        def ls_info(self, path: str) -> list[dict[str, Any]]:
+            target = self._relative_path(path)
+            base = target if target.is_dir() else target.parent
+            if not base.exists():
+                return []
+            entries: list[dict[str, Any]] = []
+            for child in sorted(base.iterdir(), key=lambda item: item.name):
+                relative = child.relative_to(self.root_dir).as_posix()
+                virtual_path = f"{self._route_prefix.rstrip('/')}/{relative}"
+                if child.is_dir():
+                    virtual_path = f"{virtual_path.rstrip('/')}/"
+                entries.append({"path": virtual_path, "is_dir": child.is_dir()})
+            return entries
 from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
@@ -40,6 +171,7 @@ from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_memory import tool_memory_search
 from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
 from app.services.deepagents.cancel_utils import is_cancelled
@@ -131,6 +263,12 @@ class AttachmentSearchToolInput(BaseModel):
     mode: str | None = Field(default="keyword")
 
 
+class MemorySearchToolInput(BaseModel):
+    query: str
+    top_k: int | None = Field(default=6)
+    kinds: list[str] | None = Field(default=None)
+
+
 class GoogleWorkspaceToolInput(BaseModel):
     action: str
     calendar_id: str | None = None
@@ -189,7 +327,15 @@ def _build_agent_middleware() -> list[Any]:
     ]
     timeout_seconds = float(getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 0.0)
     if timeout_seconds > 0:
-        middleware.append(DeepAgentsModelTimeoutMiddleware(timeout_seconds=timeout_seconds))
+        middleware.append(
+            DeepAgentsModelTimeoutMiddleware(
+                timeout_seconds=timeout_seconds,
+                retry_attempts=int(getattr(settings, "deepagents_model_retry_attempts", 2) or 0),
+                retry_backoff_seconds=float(
+                    getattr(settings, "deepagents_model_retry_backoff_seconds", 0.35) or 0.0
+                ),
+            )
+        )
     return middleware
 
 
@@ -261,6 +407,13 @@ def _tool_description(name: str) -> str:
             "Always provide a concrete non-empty query that reflects what information you need from the files "
             "(for example 'project codename deadline deliverables').\n"
             "Do not repeat the same query against the same attachments. If there are no useful hits, say so and stop."
+        )
+    if name == "memory_search":
+        return (
+            "Search long-term memory without injecting the entire memory corpus into the prompt.\n"
+            "Arguments: query=<non-empty string>, top_k=1..20, kinds?<string[]>.\n"
+            "Use before opening /memory/*.md files when you need past preferences, facts, projects, or recent context.\n"
+            "Prefer one focused query over repeated vague retries."
         )
     if name == "google_workspace":
         return (
@@ -433,6 +586,88 @@ def _loop_result(
     )
 
 
+def _read_tool_retry_attempts() -> int:
+    try:
+        return max(0, int(getattr(settings, "deepagents_read_tool_retry_attempts", 2) or 0))
+    except Exception:
+        return 0
+
+
+def _read_tool_retry_backoff_seconds() -> float:
+    try:
+        return max(0.0, float(getattr(settings, "deepagents_read_tool_retry_backoff_seconds", 0.25) or 0.0))
+    except Exception:
+        return 0.0
+
+
+def _tool_retry_delay_seconds(*, attempt_number: int) -> float:
+    return _read_tool_retry_backoff_seconds() * max(1, int(attempt_number))
+
+
+def _is_retryable_tool_error(error: str) -> bool:
+    normalized = " ".join(str(error or "").strip().lower().split())
+    if not normalized:
+        return False
+    non_retryable_fragments = (
+        "unsupported",
+        "invalid ",
+        "invalid_",
+        "missing ",
+        "missing_",
+        "authorization required",
+        "authorization failed",
+        "write failed",
+        "write_tools_disabled",
+        "call_limit",
+        "duplicate_",
+        "no new information",
+        "no useful",
+        "no matching",
+        "missing attachment_ids",
+        "not available in this run",
+        "gws_not_installed",
+        "session_factory unavailable",
+        "cancelled",
+        "busy",
+    )
+    if any(fragment in normalized for fragment in non_retryable_fragments):
+        return False
+    retryable_fragments = (
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "rate limit",
+        "too many requests",
+        "connection",
+        "connecterror",
+        "readerror",
+        "transport",
+        "proxy",
+        "server error",
+        "502",
+        "503",
+        "504",
+        "_failed:",
+    )
+    return any(fragment in normalized for fragment in retryable_fragments)
+
+
+def _should_retry_tool_result(
+    *,
+    name: str,
+    decision: Any,
+    result: dict[str, Any],
+) -> bool:
+    _ = name
+    if bool(getattr(decision, "is_write", False)):
+        return False
+    if bool(result.get("ok")):
+        return False
+    if bool(result.get("stop_retry")) or bool(result.get("maybe_applied")):
+        return False
+    return _is_retryable_tool_error(str(result.get("error") or ""))
+
+
 def _invoke_tool(
     *,
     name: str,
@@ -477,112 +712,121 @@ def _invoke_tool(
     if is_cancelled(cancel_token):
         raise DeepAgentsCancelled("cancelled")
 
-    slot = _acquire_tool_executor_slot()
-    if slot is None:
-        latency_ms = int((perf_counter() - started) * 1000)
-        result = {
-            "ok": False,
-            "error": (
-                f"{name}_busy: previous long-running tool calls are still draining; "
-                "stop using tools for now and answer from current evidence"
-            ),
-            "stop_retry": True,
-        }
-        if decision.is_write:
-            result["maybe_applied"] = True
-        usage.note_denial()
-        tool_key = f"{name}:{call_index}"
-        tool_runs.append(
-            {
-                "call_index": call_index,
-                "name": name,
-                "args": args,
-                "key": tool_key,
-                "status": "busy",
-                "result": result,
-                "error": str(result["error"]),
-                "is_write": decision.is_write,
-                "latency_ms": latency_ms,
-                "summary": f"{name} busy: prior tool calls are still draining",
-            }
-        )
-        return result
-
-    executor, semaphore = slot
-
     usage.note_invocation(name, args)
     tool_key = f"{name}:{call_index}"
-    result: dict[str, Any]
-    future = _submit_tool_future(executor, semaphore, handler, context, args)
-
     timeout_seconds = max(
         1.0,
         float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
     )
     wait_slice_seconds = 0.5
-    cancelled_midflight = False
-    deadline = started + timeout_seconds
+    max_attempts = 1 if decision.is_write else max(1, 1 + _read_tool_retry_attempts())
+    attempt_count = 0
+    result: dict[str, Any] = _result_error(f"{name}_failed:unknown")
 
-    while not future.done():
-        now = perf_counter()
-        remaining = deadline - now
-        if remaining <= 0:
-            break
-        try:
-            future.result(timeout=min(wait_slice_seconds, remaining))
-        except FutureTimeout:
-            pass
-        except BaseException:
-            break
-        if future.done():
-            break
-        if is_cancelled(cancel_token):
-            cancelled_midflight = True
-            break
+    def _run_once() -> dict[str, Any]:
+        slot = _acquire_tool_executor_slot()
+        if slot is None:
+            busy_result = {
+                "ok": False,
+                "error": (
+                    f"{name}_busy: previous long-running tool calls are still draining; "
+                    "stop using tools for now and answer from current evidence"
+                ),
+                "stop_retry": True,
+            }
+            if decision.is_write:
+                busy_result["maybe_applied"] = True
+            return busy_result
 
-    if cancelled_midflight:
-        result = _result_error(
-            f"{name}_cancelled: request cancelled while tool was running"
-        )
-        result["stop_retry"] = True
-        if decision.is_write:
-            result["maybe_applied"] = True
-            result["error"] = (
-                f"{name}_cancelled: request cancelled while the write tool was running; "
-                "the operation may still complete in the background, so do not retry the same write blindly"
+        executor, semaphore = slot
+        future = _submit_tool_future(executor, semaphore, handler, context, args)
+        cancelled_midflight = False
+        deadline = perf_counter() + timeout_seconds
+
+        while not future.done():
+            now = perf_counter()
+            remaining = deadline - now
+            if remaining <= 0:
+                break
+            try:
+                future.result(timeout=min(wait_slice_seconds, remaining))
+            except FutureTimeout:
+                pass
+            except BaseException:
+                break
+            if future.done():
+                break
+            if is_cancelled(cancel_token):
+                cancelled_midflight = True
+                break
+
+        if cancelled_midflight:
+            cancelled_result = _result_error(
+                f"{name}_cancelled: request cancelled while tool was running"
             )
-    elif not future.done():
-        result = _result_error(
-            f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
-            "stop using this tool in this run and answer from current evidence"
-        )
-        result["stop_retry"] = True
-        if decision.is_write:
-            result["maybe_applied"] = True
-            result["error"] = (
+            cancelled_result["stop_retry"] = True
+            if decision.is_write:
+                cancelled_result["maybe_applied"] = True
+                cancelled_result["error"] = (
+                    f"{name}_cancelled: request cancelled while the write tool was running; "
+                    "the operation may still complete in the background, so do not retry the same write blindly"
+                )
+            return cancelled_result
+
+        if not future.done():
+            timeout_result = _result_error(
                 f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
-                "the write may still complete in the background, so do not retry the same write blindly"
+                "stop using this tool in this run and answer from current evidence"
             )
-    else:
+            if decision.is_write:
+                timeout_result["stop_retry"] = True
+                timeout_result["maybe_applied"] = True
+                timeout_result["error"] = (
+                    f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
+                    "the write may still complete in the background, so do not retry the same write blindly"
+                )
+            return timeout_result
+
         try:
             raw_result = future.result()
         except BaseException as exc:  # noqa: BLE001
-            result = _result_error(f"{name}_failed:{str(exc)[:160]}")
-        else:
-            if isinstance(raw_result, dict):
-                result = raw_result
-            else:
-                result = _result_error(f"{name}_failed:tool returned invalid payload")
+            return _result_error(f"{name}_failed:{str(exc)[:160]}")
+        if isinstance(raw_result, dict):
+            return raw_result
+        return _result_error(f"{name}_failed:tool returned invalid payload")
+
+    while attempt_count < max_attempts:
+        if is_cancelled(cancel_token):
+            raise DeepAgentsCancelled("cancelled")
+        attempt_count += 1
+        result = _run_once()
+        if attempt_count >= max_attempts or not _should_retry_tool_result(
+            name=name,
+            decision=decision,
+            result=result,
+        ):
+            break
+        delay_seconds = _tool_retry_delay_seconds(attempt_number=attempt_count)
+        _log.warning(
+            "deepagents_read_tool_retry name=%s attempt=%s max_attempts=%s delay_seconds=%s error=%s",
+            name,
+            attempt_count,
+            max_attempts,
+            round(delay_seconds, 3),
+            str(result.get("error") or "")[:160],
+        )
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+    if attempt_count > 1 and isinstance(result, dict):
+        result = {**result, "attempts": attempt_count}
 
     latency_ms = int((perf_counter() - started) * 1000)
     usage.total_calls += 1
     if decision.is_write:
         usage.write_calls += 1
     usage.note_result(result)
-    if cancelled_midflight:
-        status = "cancelled"
-    else:
-        status = "completed" if bool(result.get("ok", True)) else "failed"
+    status = "completed" if bool(result.get("ok", True)) else "failed"
     error = "" if status == "completed" else str(result.get("error") or "")[:160]
 
     # Provide a compact, human-friendly summary string for UI/trace rendering.
@@ -611,6 +855,8 @@ def _invoke_tool(
                     summary = f"{name} total={total}"
                 else:
                     summary = f"{name}({len(args)} args)"
+    if attempt_count > 1 and summary:
+        summary = f"{summary} after {attempt_count} attempts"
 
     tool_runs.append(
         {
@@ -742,6 +988,12 @@ def build_chat_tools(
 
     tools: list[Tool] = [
         _make_structured_tool(
+            "memory_search",
+            tool_memory_search,
+            MemorySearchToolInput,
+            ["query", "top_k", "kinds"],
+        ),
+        _make_structured_tool(
             "web_search",
             tool_web_search,
             WebSearchToolInput,
@@ -804,6 +1056,7 @@ def build_chat_agent(
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
     memory_text: str,
+    query_hint: str = "",
     context_schema: type[Any] | None = None,
     skills_root: Path | None = None,
     cancel_token: Any | None = None,
@@ -833,6 +1086,7 @@ def build_chat_agent(
         "If two recent tool attempts failed or produced no new information, stop using tools and answer from the current evidence.\n"
         "When a tool is unavailable, unauthorized, times out, or returns no useful information, say that clearly and move on.\n"
         "Tool-specific rules:\n"
+        "- memory_search: use it before opening /memory/*.md files when you need long-term memory; prefer a specific query and optional kinds filter.\n"
         "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence.\n"
         "- attachment_search: when the user asks about uploaded files, call attachment_search with a concrete non-empty query describing the requested facts. "
         "If this run already scopes uploaded attachments for you, attachment_ids may be omitted and the runtime will apply the scoped ids automatically. "
@@ -844,7 +1098,7 @@ def build_chat_agent(
         f"{_current_date_context()}\n"
         "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
         "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
-        "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
+        "Treat /memory/AGENTS.md as the compact runtime memory projection. Use memory_search and the other /memory/*.md files for deeper long-term memory only when needed.\n"
         "Read skills on demand from /skills/... when a matching skill is relevant.\n"
         "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
         "If a required tool or skill is unavailable, say so explicitly instead of implying the action completed."
@@ -852,13 +1106,45 @@ def build_chat_agent(
 
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
+    build_started = time.perf_counter()
     skill_snapshot = _get_skill_mount_snapshot(skills_root, extra_dir)
-    memory_files: dict[str, str] = {}
-    memory_paths: list[str] = []
-    if memory_text.strip():
-        mem_path = "/memory/AGENTS.md"
-        memory_files[mem_path] = memory_text.strip()
-        memory_paths.append(mem_path)
+    skill_snapshot_ms = int((time.perf_counter() - build_started) * 1000)
+    memory_bundle: dict[str, Any] = {}
+    memory_service = getattr(context, "memory_service", None)
+    if memory_service is not None:
+        memory_started = time.perf_counter()
+        try:
+            memory_bundle = memory_service.get_memory_bundle(
+                user_id=int(getattr(context, "user_id", 0) or 0),
+                workspace=str(getattr(context, "workspace", "default") or "default"),
+                fallback_agents_text=memory_text,
+                query_hint=query_hint,
+            )
+        except Exception:
+            memory_bundle = {}
+        memory_bundle_ms = int((time.perf_counter() - memory_started) * 1000)
+    else:
+        memory_bundle_ms = 0
+    if not memory_bundle:
+        prompt_text = str(memory_text or "").strip()
+        memory_bundle = {
+            "prompt_path": "/memory/AGENTS.md",
+            "prompt_text": prompt_text,
+            "files": {"/memory/AGENTS.md": prompt_text} if prompt_text else {},
+            "memory_paths": ["/memory/AGENTS.md"] if prompt_text else [],
+            "index": {},
+        }
+
+    memory_files = {
+        str(path): str(text or "").strip()
+        for path, text in dict(memory_bundle.get("files") or {}).items()
+        if str(path or "").strip() and str(text or "").strip()
+    }
+    memory_paths = [
+        str(path)
+        for path in list(memory_bundle.get("memory_paths") or [])
+        if str(path or "").strip()
+    ]
 
     files: dict[str, Any] = {}
     for path, text in memory_files.items():
@@ -869,13 +1155,23 @@ def build_chat_agent(
                 "tools": [tool.name for tool in tools],
                 "skill_sources": skill_snapshot.skill_sources,
                 "mounted_skills": skill_snapshot.mounted_skills,
-                "memory_files": memory_paths,
+                "memory_files": sorted(memory_files.keys()),
+                "memory_runtime_prompt_path": str(memory_bundle.get("prompt_path") or "/memory/AGENTS.md"),
+                "memory_index": dict(memory_bundle.get("index") or {}),
                 "available_attachment_ids": list(context.available_attachment_ids or []),
             },
             ensure_ascii=False,
             indent=2,
             sort_keys=True,
         )
+    )
+    _log.debug(
+        "build_chat_agent_ready user_id=%s workspace=%s skill_snapshot_ms=%s memory_bundle_ms=%s memory_files=%s",
+        getattr(context, "user_id", 0),
+        getattr(context, "workspace", "default"),
+        skill_snapshot_ms,
+        memory_bundle_ms,
+        len(memory_files),
     )
 
     backend_factory = _build_agent_backend_factory(
@@ -915,14 +1211,17 @@ def run_deepagents_loop(
         if is_cancelled(cancel_token):
             raise DeepAgentsCancelled("cancelled")
 
+        build_started = time.perf_counter()
         agent, usage, raw_tool_runs, files_mapping = build_chat_agent(
             service=service,
             provider=provider,
             context=context,
             limiter=limiter,
             memory_text=memory_text,
+            query_hint=query,
             cancel_token=cancel_token,
         )
+        build_agent_ms = int((time.perf_counter() - build_started) * 1000)
         if agent is None:
             return _loop_result(ok=False, error="llm_not_configured")
 
@@ -930,7 +1229,8 @@ def run_deepagents_loop(
         capability_summary = (
             f"tools={len(list(capabilities.get('tools') or []))}; "
             f"skills={len(list(capabilities.get('mounted_skills') or []))}; "
-            f"memory_files={len(list(capabilities.get('memory_files') or []))}"
+            f"memory_files={len(list(capabilities.get('memory_files') or []))}; "
+            f"build_agent_ms={build_agent_ms}"
         )
 
         invoke_payload = {
@@ -945,9 +1245,20 @@ def run_deepagents_loop(
 
         if is_cancelled(cancel_token):
             raise DeepAgentsCancelled("cancelled")
+        invoke_started = time.perf_counter()
         response = agent.invoke(invoke_payload)
+        invoke_ms = int((time.perf_counter() - invoke_started) * 1000)
         if is_cancelled(cancel_token):
             raise DeepAgentsCancelled("cancelled")
+        capability_summary = f"{capability_summary}; invoke_ms={invoke_ms}"
+        _log.debug(
+            "run_deepagents_loop_completed provider=%s build_agent_ms=%s invoke_ms=%s tools=%s writes=%s",
+            provider,
+            build_agent_ms,
+            invoke_ms,
+            getattr(usage, "total_calls", 0),
+            getattr(usage, "write_calls", 0),
+        )
 
         answer = extract_answer(response).strip()
         tool_runs = _map_tool_runs(raw_tool_runs)

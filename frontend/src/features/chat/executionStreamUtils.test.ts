@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AssistantGraph } from '@langchain/langgraph-sdk'
-import { getExecutionRuntime, type ChatRuntimeStream } from './executionStreamUtils'
+import { analyzeExecutionStream, getExecutionRuntime, type ChatRuntimeStream } from './executionStreamUtils'
 import { buildMessageArtifactMap, extractArtifactsFromState } from './artifactUtils'
 
 function createStream(overrides: Partial<ChatRuntimeStream> = {}): ChatRuntimeStream {
@@ -122,6 +122,42 @@ describe('executionStreamUtils', () => {
         name: 'web_search',
         state: 'completed',
       }),
+    ])
+  })
+
+  it('reuses one execution analysis pass for runtime and message tool call map', () => {
+    const message = { id: 'm3b', content: 'tool answer' } as any
+    const analysis = analyzeExecutionStream(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm3b',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-3b',
+            status: 'completed',
+            call: {
+              id: 'call-3b',
+              name: 'write_file',
+              args: { file_path: '/poster.html' },
+            },
+            result: { ok: true },
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(analysis.runtime.tools).toEqual([
+      expect.objectContaining({ key: 'call-3b', name: 'write_file' }),
+    ])
+    expect(analysis.toolCallsByMessage.get('m3b')).toEqual([
+      expect.objectContaining({ key: 'call-3b', name: 'write_file' }),
     ])
   })
 

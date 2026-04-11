@@ -3,8 +3,58 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from deepagents.backends.composite import CompositeBackend
-from deepagents.backends.protocol import WriteResult
+try:
+    from deepagents.backends.composite import CompositeBackend
+    from deepagents.backends.protocol import WriteResult
+except Exception:  # pragma: no cover - fallback for test environments without deepagents
+    from dataclasses import dataclass
+
+    @dataclass
+    class WriteResult:
+        path: str | None = None
+        error: str | None = None
+
+    class CompositeBackend:
+        def __init__(self, *, default, routes) -> None:  # noqa: ANN001
+            self.default = default
+            self.routes = dict(routes or {})
+            for prefix, backend in self.routes.items():
+                if hasattr(backend, "set_route_prefix"):
+                    try:
+                        backend.set_route_prefix(prefix)
+                    except Exception:
+                        pass
+
+        def _resolve_backend(self, file_path: str):  # noqa: ANN001
+            normalized_path = str(file_path or "")
+            matched_prefix = ""
+            matched_backend = self.default
+            for prefix, backend in self.routes.items():
+                if normalized_path.startswith(prefix) and len(prefix) > len(matched_prefix):
+                    matched_prefix = prefix
+                    matched_backend = backend
+            return matched_backend
+
+        def write(self, file_path: str, content: str) -> WriteResult:
+            backend = self._resolve_backend(file_path)
+            return backend.write(file_path, content)
+
+        async def awrite(self, file_path: str, content: str) -> WriteResult:
+            backend = self._resolve_backend(file_path)
+            if hasattr(backend, "awrite"):
+                return await backend.awrite(file_path, content)
+            return backend.write(file_path, content)
+
+        def download_files(self, paths: list[str]) -> list[Any]:
+            responses: list[Any] = []
+            for path in list(paths or []):
+                backend = self._resolve_backend(path)
+                responses.extend(list(backend.download_files([path]) or []))
+            return responses
+
+        def ls_info(self, path: str) -> list[dict[str, Any]]:
+            backend = self._resolve_backend(path)
+            return list(backend.ls_info(path) or [])
 
 
 _LOG = logging.getLogger(__name__)

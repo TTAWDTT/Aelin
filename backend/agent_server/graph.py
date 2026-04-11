@@ -11,7 +11,10 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from langgraph_sdk.runtime import ServerRuntime
+try:
+    from langgraph_sdk.runtime import ServerRuntime
+except Exception:  # pragma: no cover - fallback for test environments without langgraph-sdk
+    ServerRuntime = Any  # type: ignore[misc,assignment]
 
 from app.db import create_session
 from app.schemas import AgentConfigOut
@@ -30,7 +33,7 @@ _LOG = logging.getLogger(__name__)
 _GRAPH_AGENT_CACHE_LOCK = threading.Lock()
 _GRAPH_AGENT_CACHE: OrderedDict[str, "_CachedGraphEntry"] = OrderedDict()
 _PLACEHOLDER_AGENT: Any | None = None
-_GRAPH_BUILD_SIGNATURE = "deepagents-2026-03-28-timeout-and-skills-v2"
+_GRAPH_BUILD_SIGNATURE = "deepagents-2026-04-07-stability-perf-memory-v3"
 
 
 @dataclass
@@ -167,6 +170,18 @@ def _runtime_cache_key(
         ),
         "deepagents_tool_timeout_seconds": float(
             getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0
+        ),
+        "deepagents_model_retry_attempts": int(
+            getattr(settings, "deepagents_model_retry_attempts", 2) or 0
+        ),
+        "deepagents_model_retry_backoff_seconds": float(
+            getattr(settings, "deepagents_model_retry_backoff_seconds", 0.35) or 0.0
+        ),
+        "deepagents_read_tool_retry_attempts": int(
+            getattr(settings, "deepagents_read_tool_retry_attempts", 2) or 0
+        ),
+        "deepagents_read_tool_retry_backoff_seconds": float(
+            getattr(settings, "deepagents_read_tool_retry_backoff_seconds", 0.25) or 0.0
         ),
         "deepagents_write_file_max_chars": int(
             getattr(settings, "deepagents_write_file_max_chars", 50000) or 50000

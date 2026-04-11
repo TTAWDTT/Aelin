@@ -15,6 +15,7 @@ from app.services.attachments.attachment_service import (
     get_attachment_service,
 )
 from app.services.foundation.service_utils import normalize_positive_ints
+from app.services.memory.agent_memory import AgentMemoryService, get_agent_memory_service
 from app.services.web.web_search import WebSearchService
 
 
@@ -29,6 +30,7 @@ class ToolRuntimeContext:
     workspace: str
     web_search_service: WebSearchService
     attachment_service: AttachmentService
+    memory_service: AgentMemoryService
     available_attachment_ids: list[int]
     cancel_checker: Callable[[], bool] | None = None
     session_factory: Callable[[], Session] | None = None
@@ -103,6 +105,7 @@ def build_tool_runtime_context(
     workspace: str,
     web_search_service: WebSearchService | None = None,
     attachment_service: AttachmentService | None = None,
+    memory_service: AgentMemoryService | None = None,
     available_attachment_ids: list[int] | None = None,
     cancel_checker: Callable[[], bool] | None = None,
     session_factory: Callable[[], Session] | None = None,
@@ -112,6 +115,7 @@ def build_tool_runtime_context(
         workspace=normalize_workspace(workspace),
         web_search_service=web_search_service or WebSearchService(),
         attachment_service=attachment_service or get_attachment_service(),
+        memory_service=memory_service or get_agent_memory_service(),
         available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
         cancel_checker=cancel_checker,
         session_factory=session_factory,
@@ -210,6 +214,17 @@ def build_tool_signature(name: str, args: dict[str, Any]) -> str:
             ensure_ascii=False,
             sort_keys=True,
         )
+    if tool == "memory_search":
+        return json.dumps(
+            {
+                "tool": tool,
+                "query": _normalize_text((args or {}).get("query")),
+                "kinds": sorted(_normalize_text(item) for item in list((args or {}).get("kinds") or []) if _normalize_text(item)),
+                "top_k": int((args or {}).get("top_k") or 0),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     if tool == "google_workspace":
         return json.dumps(
             {
@@ -267,6 +282,7 @@ def _tool_attempt_limit(name: str) -> int:
     return {
         "web_search": 4,
         "attachment_search": 3,
+        "memory_search": 4,
         "google_workspace": 4,
         "device": 2,
         "screen_get": 2,
@@ -313,6 +329,9 @@ def _invalid_reason(name: str, args: dict[str, Any]) -> str:
     if tool == "attachment_search":
         if not _normalize_text((args or {}).get("query")):
             return "invalid attachment_search call: provide a non-empty query before searching attachments"
+    if tool == "memory_search":
+        if not _normalize_text((args or {}).get("query")):
+            return "invalid memory_search call: provide a non-empty query before searching long-term memory"
     if tool == "google_workspace":
         if not action:
             return "invalid google_workspace call: provide a concrete action before calling google_workspace"
@@ -349,7 +368,7 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
 
     if tool == "device":
         return action in {"open_url", "open_aelin"}
-    if tool in {"web_search", "attachment_search", "screen_get"}:
+    if tool in {"web_search", "attachment_search", "memory_search", "screen_get"}:
         return False
     if tool == "execute":
         return True
@@ -388,7 +407,7 @@ class ToolCallLimiter:
 
     def evaluate(self, *, name: str, args: dict[str, Any], usage: ToolPolicyUsage) -> ToolPolicyDecision:
         tool = str(name or "").strip().lower()
-        if tool not in {"device", "web_search", "attachment_search", "screen_get", "google_workspace", "execute"}:
+        if tool not in {"device", "web_search", "attachment_search", "memory_search", "screen_get", "google_workspace", "execute"}:
             return ToolPolicyDecision(allowed=False, is_write=False, reason="unsupported_tool")
 
         invalid_reason = _invalid_reason(tool, args)

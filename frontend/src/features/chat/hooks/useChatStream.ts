@@ -100,6 +100,38 @@ function getMessageId(message: BaseMessage, fallback: string): string {
   return direct || fallback
 }
 
+function nowMs(): number {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now()
+  }
+  return Date.now()
+}
+
+function reportChatTiming(stage: string, startedAt: number, detail?: Record<string, unknown>) {
+  const durationMs = Math.max(0, Math.round(nowMs() - startedAt))
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('aelin:chat-perf', {
+          detail: {
+            stage,
+            duration_ms: durationMs,
+            ...(detail || {}),
+          },
+        }),
+      )
+    } catch {
+      // Ignore runtime environments without CustomEvent.
+    }
+  }
+  if (import.meta.env.DEV && typeof console !== 'undefined' && typeof console.debug === 'function') {
+    console.debug('[aelin-chat-perf]', stage, {
+      duration_ms: durationMs,
+      ...(detail || {}),
+    })
+  }
+}
+
 function projectRuntimeMessages(
   runtimeMessages: BaseMessage[],
   previousMessages: ChatMessage[],
@@ -146,18 +178,59 @@ function projectRuntimeMessages(
   return projected
 }
 
-function createPersistenceSignature(messages: ChatMessage[]): string {
-  return JSON.stringify(
-    messages.map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      expression: message.expression || '',
-      citations: message.citations || [],
-      actions: message.actions || [],
-      images: message.images || [],
-    })),
+function hashString(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function hashStringList(values: string[]): number {
+  let hash = 2166136261
+  values.forEach((value) => {
+    hash ^= hashString(value)
+    hash = Math.imul(hash, 16777619)
+  })
+  return hash >>> 0
+}
+
+function buildMessagePersistenceRevision(message: ChatMessage): string {
+  const citationsHash = hashStringList(
+    Array.from(message.citations || []).map((item) => [
+      String((item as any)?.id || ''),
+      String((item as any)?.title || ''),
+      String((item as any)?.url || ''),
+    ].join('|')),
   )
+  const actionsHash = hashStringList(
+    Array.from(message.actions || []).map((item) => [
+      String((item as any)?.type || ''),
+      String((item as any)?.label || ''),
+      String((item as any)?.payload || ''),
+    ].join('|')),
+  )
+  const imagesHash = hashStringList(
+    Array.from(message.images || []).map((item) => `${item.name || ''}|${item.dataUrl || ''}`),
+  )
+  return [
+    message.id,
+    message.role,
+    String(hashString(String(message.content || ''))),
+    String(hashString(String(message.expression || ''))),
+    String(citationsHash),
+    String(actionsHash),
+    String(imagesHash),
+  ].join(':')
+}
+
+function revisionsMatch(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
 }
 
 export function useChatStream() {
@@ -176,7 +249,7 @@ export function useChatStream() {
   const [streamThreadId, setStreamThreadId] = useState<string | null>(null)
   const assistantIdRef = useRef(assistantId)
   const assistantReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
-  const persistedSignatureRef = useRef<string>('')
+  const persistedRevisionsRef = useRef<string[]>([])
   const streamThreadIdRef = useRef<string | null>(null)
 
   const client = useMemo(() => new Client({
@@ -238,12 +311,17 @@ export function useChatStream() {
   useEffect(() => {
     if (assistantId) return
     let cancelled = false
+    const startedAt = nowMs()
     void findAssistantId(client)
       .then((resolved) => {
-        if (!cancelled) setAssistantId(resolved)
+        if (!cancelled) {
+          setAssistantId(resolved)
+          reportChatTiming('assistant_lookup', startedAt, { assistant_id: resolved || '' })
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
+          reportChatTiming('assistant_lookup_failed', startedAt)
           setStatusText(String((error as Error)?.message || 'Assistant lookup failed'))
         }
       })
@@ -258,12 +336,17 @@ export function useChatStream() {
       return
     }
     let cancelled = false
+    const startedAt = nowMs()
     void fetchAssistantGraph(client, assistantId)
       .then((graph) => {
-        if (!cancelled) setAssistantGraph(graph)
+        if (!cancelled) {
+          setAssistantGraph(graph)
+          reportChatTiming('assistant_graph_lookup', startedAt, { assistant_id: assistantId })
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
+          reportChatTiming('assistant_graph_lookup_failed', startedAt, { assistant_id: assistantId })
           setAssistantGraph(null)
           setStatusText(String((error as Error)?.message || 'Assistant graph lookup failed'))
         }
@@ -283,16 +366,18 @@ export function useChatStream() {
   const ensureThreadReady = useCallback(async (threadId: string) => {
     const nextId = String(threadId || '').trim()
     if (!nextId) return
+    const startedAt = nowMs()
     await ensureThreadExists(client, nextId)
     if (streamThreadIdRef.current !== nextId) {
       streamThreadIdRef.current = nextId
       setStreamThreadId(nextId)
       streamRef.current.switchThread(nextId)
     }
+    reportChatTiming('thread_ready', startedAt, { thread_id: nextId })
   }, [client])
 
   useEffect(() => {
-    persistedSignatureRef.current = ''
+    persistedRevisionsRef.current = []
     const nextId = String(activeSessionId || '').trim()
     if (!nextId) {
       if (streamThreadIdRef.current == null) return
@@ -303,6 +388,7 @@ export function useChatStream() {
     }
 
     let cancelled = false
+    const startedAt = nowMs()
     void ensureThreadExists(client, nextId)
       .then(() => {
         if (cancelled) return
@@ -310,9 +396,11 @@ export function useChatStream() {
         streamThreadIdRef.current = nextId
         setStreamThreadId(nextId)
         streamRef.current.switchThread(nextId)
+        reportChatTiming('thread_bootstrap', startedAt, { thread_id: nextId })
       })
       .catch((error: unknown) => {
         if (!cancelled) {
+          reportChatTiming('thread_bootstrap_failed', startedAt, { thread_id: nextId })
           setStatusText(String((error as Error)?.message || 'Thread bootstrap failed'))
         }
       })
@@ -329,10 +417,10 @@ export function useChatStream() {
 
   useEffect(() => {
     if (!activeSessionId || stream.isLoading || messages.length === 0) return
-    const signature = `${activeSessionId}:${createPersistenceSignature(messages)}`
-    if (persistedSignatureRef.current === signature) return
+    const revisions = messages.map((message) => buildMessagePersistenceRevision(message))
+    if (revisionsMatch(persistedRevisionsRef.current, revisions)) return
     setSessionMessages(activeSessionId, messages)
-    persistedSignatureRef.current = signature
+    persistedRevisionsRef.current = revisions
   }, [activeSessionId, messages, stream.isLoading])
 
   useEffect(() => {
@@ -344,6 +432,7 @@ export function useChatStream() {
 
   const send = useCallback(
     async (text: string, images?: PendingImage[], attachmentIds?: number[]) => {
+      const sendStartedAt = nowMs()
       let sessionId = activeSessionId
       if (!sessionId) {
         sessionId = createSession()
@@ -369,13 +458,17 @@ export function useChatStream() {
         currentState.renameSession(sessionId, seed.length > 20 ? `${seed.slice(0, 20)}…` : seed)
       }
 
+      const threadReadyStartedAt = nowMs()
       await ensureThreadReady(sessionId)
+      reportChatTiming('send_thread_prepare', threadReadyStartedAt, { thread_id: sessionId })
 
+      const assistantReadyStartedAt = nowMs()
       const resolvedAssistantId = assistantIdRef.current || await findAssistantId(client)
       if (assistantIdRef.current !== resolvedAssistantId) {
         setAssistantId(resolvedAssistantId)
         await waitForAssistantId(resolvedAssistantId)
       }
+      reportChatTiming('send_assistant_prepare', assistantReadyStartedAt, { assistant_id: resolvedAssistantId || '' })
 
       const humanMessage = buildHumanStreamMessage(prompt, images)
       const inputMessages = [humanMessage] as Array<Record<string, unknown>>
@@ -383,6 +476,7 @@ export function useChatStream() {
       currentState.setLastErrorCode(null)
 
       try {
+        const submitStartedAt = nowMs()
         await streamRef.current.submit(
           { messages: inputMessages as any },
           {
@@ -403,7 +497,18 @@ export function useChatStream() {
             }),
           },
         )
+        reportChatTiming('send_submit', submitStartedAt, {
+          attachment_count: normalizedAttachmentIds.length,
+          image_count: images?.length || 0,
+          thread_id: sessionId,
+        })
+        reportChatTiming('send_total_prepare', sendStartedAt, {
+          attachment_count: normalizedAttachmentIds.length,
+          image_count: images?.length || 0,
+          thread_id: sessionId,
+        })
       } catch (error) {
+        reportChatTiming('send_submit_failed', sendStartedAt, { thread_id: sessionId })
         currentState.setStatusText(String((error as Error)?.message || 'Stream error'))
       }
     },

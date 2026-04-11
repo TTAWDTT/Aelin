@@ -1,4 +1,6 @@
 fastapi>=0.110
+# FastAPI 0.116 expects Starlette < 0.48; Starlette 1.x breaks APIRouter init.
+starlette>=0.40,<0.48
 uvicorn[standard]>=0.24
 sqlalchemy>=2.0
 pydantic-settings>=2.0
@@ -20,7 +22,9 @@ pypdf>=4.3.1
 pypdfium2>=4.30.0
 Pillow>=10.4.0
 pytesseract>=0.3.10
-rapidocr-onnxruntime>=1.4.4
+# RapidOCR currently has no matching wheels for Python 3.13; attachment OCR
+# falls back gracefully when this optional accelerator is unavailable.
+rapidocr-onnxruntime>=1.4.4; python_version < "3.13"
 defusedxml>=0.7.1
 deepagents>=0.1.0
 langchain-openai>=0.2.0

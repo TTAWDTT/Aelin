@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     media_dir: str = "./media"
     models_catalog_url: str = "https://models.dev/api.json"
     models_catalog_refresh_seconds: int = 60 * 60
+    http_gzip_enabled: bool = True
+    http_gzip_minimum_size_bytes: int = 1024
+    http_gzip_compresslevel: int = 5
 
     # File memory bridge (AGENTS.md-based memory only).
     aelin_base_context_cache_ttl_seconds: float = 4.0
@@ -105,6 +108,11 @@ class Settings(BaseSettings):
     deepagents_run_timeout_seconds: float = 75.0
     deepagents_stream_idle_timeout_seconds: float = 45.0
     deepagents_tool_timeout_seconds: float = 25.0
+    deepagents_model_retry_attempts: int = 2
+    deepagents_model_retry_backoff_seconds: float = 0.35
+    deepagents_read_tool_retry_attempts: int = 2
+    deepagents_read_tool_retry_backoff_seconds: float = 0.25
+    deepagents_attachment_scope_cache_ttl_seconds: float = 8.0
     deepagents_write_file_max_chars: int = 50000
     deepagents_consecutive_failures_limit: int = 3
     deepagents_consecutive_no_progress_limit: int = 2
