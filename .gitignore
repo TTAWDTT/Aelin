@@ -17,6 +17,7 @@ backend/dist/
 backend/build/
 backend/.desktop-build-venv/
 backend/.langgraph_api/
+/.langgraph_api/
 
 frontend/node_modules/
 frontend/dist/
@@ -61,6 +62,7 @@ nul
 output/
 
 # Pytest temp/runtime artifacts (Windows ACL edge cases)
+/.pytest_cache/
 /.pytest_tmp/
 /.tmp_pytest_local/
 /.tmp_pytest_run/
@@ -72,6 +74,7 @@ output/
 /backend/.tmp_pytest_runtime/
 /backend/_pytest_runtime_plain*/
 /backend/_pytest_runtime_mode_test/
+/.playwright-cli/
 
 # Local PPT draft artifacts
 /aelin-ppt/
