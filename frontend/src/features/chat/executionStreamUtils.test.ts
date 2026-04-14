@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AssistantGraph } from '@langchain/langgraph-sdk'
-import { getExecutionRuntime, type ChatRuntimeStream } from './executionStreamUtils'
+import { analyzeExecutionStream, getExecutionRuntime, type ChatRuntimeStream } from './executionStreamUtils'
 import { buildMessageArtifactMap, extractArtifactsFromState } from './artifactUtils'
 
 function createStream(overrides: Partial<ChatRuntimeStream> = {}): ChatRuntimeStream {
@@ -123,6 +123,40 @@ describe('executionStreamUtils', () => {
         state: 'completed',
       }),
     ])
+  })
+
+  it('returns message tool-call maps from the same analysis pass', () => {
+    const message = { id: 'm3', content: 'tool answer' } as any
+    const analysis = analyzeExecutionStream(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm3',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-1',
+            status: 'completed',
+            call: {
+              id: 'call-1',
+              name: 'web_search',
+              args: { query: 'github trending' },
+            },
+            result: { answer: 'done' },
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(analysis.toolCallsByMessage.get('m3')).toEqual([
+      expect.objectContaining({ key: 'call-1', name: 'web_search' }),
+    ])
+    expect(analysis.runtime.tools).toHaveLength(1)
   })
 
   it('reads subagents only from the official runtime map', () => {

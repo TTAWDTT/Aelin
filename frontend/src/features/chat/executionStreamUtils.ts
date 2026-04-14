@@ -119,6 +119,11 @@ export type ExecutionRuntime = {
   hasExecution: boolean
 }
 
+export type ExecutionAnalysis = {
+  runtime: ExecutionRuntime
+  toolCallsByMessage: Map<string, ExecutionToolCall[]>
+}
+
 export type ExecutionLiveSummary = {
   currentNode?: string
   currentNamespace?: string
@@ -700,16 +705,13 @@ function buildExecutionLiveSummary(
 }
 
 export function getMessageToolCallMap(stream: ChatRuntimeStream): Map<string, ExecutionToolCall[]> {
-  const entries = getMessageRuntimeRows(stream)
-    .filter((row) => row.toolCalls.length > 0)
-    .map((row) => [row.messageId, row.toolCalls] as const)
-  return new Map(entries)
+  return analyzeExecutionStream(stream).toolCallsByMessage
 }
 
-export function getExecutionRuntime(
+export function analyzeExecutionStream(
   stream: ChatRuntimeStream,
   assistantGraph?: AssistantGraph | null,
-): ExecutionRuntime {
+): ExecutionAnalysis {
   const rows = getMessageRuntimeRows(stream)
   const activities = buildExecutionActivities(rows)
   const lanes = buildExecutionLanes(activities)
@@ -729,15 +731,29 @@ export function getExecutionRuntime(
     || Object.keys(values).some((key) => key !== 'messages')
 
   return {
-    graph,
-    lanes,
-    tools,
-    subagents,
-    todos,
-    live,
-    hasOfficialGraph,
-    hasExecution,
+    runtime: {
+      graph,
+      lanes,
+      tools,
+      subagents,
+      todos,
+      live,
+      hasOfficialGraph,
+      hasExecution,
+    },
+    toolCallsByMessage: new Map(
+      rows
+        .filter((row) => row.toolCalls.length > 0)
+        .map((row) => [row.messageId, row.toolCalls] as const),
+    ),
   }
+}
+
+export function getExecutionRuntime(
+  stream: ChatRuntimeStream,
+  assistantGraph?: AssistantGraph | null,
+): ExecutionRuntime {
+  return analyzeExecutionStream(stream, assistantGraph).runtime
 }
 
 export function summarizeExecutionStatus(
