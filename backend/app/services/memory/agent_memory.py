@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import re
 from typing import Any, Iterable
 
@@ -33,6 +34,18 @@ _SOURCE_LABELS = {
 }
 _TODO_SOURCE = "todo"
 _LAYOUT_SOURCE = "card_layout"
+_PROFILE_MEMORY_PATH = "profile.md"
+_PREFERENCES_MEMORY_PATH = "preferences.md"
+_FACTS_MEMORY_PATH = "facts.md"
+_PROJECTS_MEMORY_PATH = "projects.md"
+_RECENT_CONTEXT_MEMORY_PATH = "recent_context.md"
+_TODOS_MEMORY_PATH = "todos.md"
+_INDEX_MEMORY_PATH = "memory_index.json"
+
+_SUMMARY_SECTION_ALIASES = ("会话摘要", "summary", "session summary")
+_LONG_TERM_MEMORY_SECTION_ALIASES = ("长期记忆", "memory", "long-term memory")
+_TODO_SECTION_ALIASES = ("待办", "todos", "todo")
+_PROJECT_SECTION_ALIASES = ("项目", "projects", "active projects")
 
 
 @dataclass
@@ -155,6 +168,20 @@ class AgentMemoryService:
             sections.setdefault(current, []).append(line)
         return sections
 
+    def _section_name_matches(self, name: str, aliases: tuple[str, ...]) -> bool:
+        normalized = _clean_text(name).lower()
+        return any(normalized == _clean_text(alias).lower() for alias in aliases if alias)
+
+    def _find_section_lines(
+        self,
+        sections: dict[str, list[str]],
+        aliases: tuple[str, ...],
+    ) -> list[str]:
+        for name, lines in sections.items():
+            if self._section_name_matches(name, aliases):
+                return list(lines)
+        return []
+
     def _append_line_to_section(self, text: str, section: str, line: str) -> str:
         """
         Append a single markdown line to the given section, creating the
@@ -235,6 +262,498 @@ class AgentMemoryService:
         text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
         updated = self._append_line_to_section(text, "待办", f"- [{badge}] {clean_title}")
         self._write_agents_md_text(user_id=user_id, workspace=workspace, content=updated)
+
+    def _summary_from_sections(self, sections: dict[str, list[str]]) -> str:
+        lines = self._find_section_lines(sections, _SUMMARY_SECTION_ALIASES)
+        if not lines:
+            return ""
+        parts: list[str] = []
+        for raw in lines:
+            line = _clean_text(str(raw or ""))
+            if line:
+                parts.append(line)
+        return _truncate(" ".join(parts), 1000)
+
+    def _normalize_note_kind(self, value: str) -> str:
+        normalized = _clean_text(value).lower()
+        if normalized in {"偏好", "preference", "preferences", "profile", "喜好"}:
+            return "preference"
+        if normalized in {"事实", "fact", "facts"}:
+            return "fact"
+        if normalized in {"进行中", "in_progress", "todo", "todos", "待办"}:
+            return "in_progress"
+        if normalized in {"项目", "project", "projects"}:
+            return "project"
+        if normalized in {"summary", "会话摘要"}:
+            return "summary"
+        return "note"
+
+    def _normalize_search_kind(self, value: str) -> str:
+        normalized = self._normalize_note_kind(value)
+        if normalized == "note":
+            raw = _clean_text(value).lower()
+            if raw in {"recent", "recent_context", "context"}:
+                return "recent_context"
+            if raw in {"todo", "todos"}:
+                return "todo"
+            if raw in {"profile", "preferences"}:
+                return "preference"
+        if normalized == "in_progress":
+            raw = _clean_text(value).lower()
+            if raw in {"todo", "todos"}:
+                return "todo"
+            return "recent_context"
+        return normalized
+
+    def _note_rows_from_sections(self, sections: dict[str, list[str]]) -> list[dict[str, str]]:
+        lines = self._find_section_lines(sections, _LONG_TERM_MEMORY_SECTION_ALIASES)
+        rows: list[dict[str, str]] = []
+        for raw in lines:
+            line = str(raw or "").strip()
+            if not line or not line.lstrip().startswith("-"):
+                continue
+            bullet = line.lstrip()[1:].strip()
+            if not bullet:
+                continue
+            tag = ""
+            body = bullet
+            matched = re.match(r"\[(?P<tag>[^\]]+)\]\s*(?P<body>.+)", bullet)
+            if matched:
+                tag = str(matched.group("tag") or "").strip()
+                body = str(matched.group("body") or "").strip()
+            content = _truncate(_clean_text(body), 500)
+            if not content:
+                continue
+            rows.append(
+                {
+                    "kind": self._normalize_note_kind(tag),
+                    "content": content,
+                }
+            )
+
+        project_lines = self._find_section_lines(sections, _PROJECT_SECTION_ALIASES)
+        for raw in project_lines:
+            line = _truncate(_clean_text(str(raw or "").lstrip("- ").strip()), 500)
+            if not line:
+                continue
+            rows.append({"kind": "project", "content": line})
+        return rows
+
+    def _todo_rows_from_sections(self, sections: dict[str, list[str]]) -> list[dict[str, Any]]:
+        lines = self._find_section_lines(sections, _TODO_SECTION_ALIASES)
+        rows: list[dict[str, Any]] = []
+        for index, raw in enumerate(lines):
+            line = str(raw or "").strip()
+            if not line or not line.lstrip().startswith("-"):
+                continue
+            bullet = line.lstrip()[1:].strip()
+            if not bullet:
+                continue
+            tag = ""
+            title = bullet
+            matched = re.match(r"\[(?P<tag>[^\]]*)\]\s*(?P<title>.+)", bullet)
+            if matched:
+                tag = str(matched.group("tag") or "").strip()
+                title = str(matched.group("title") or "").strip()
+            title_clean = _truncate(_clean_text(title), 240)
+            if not title_clean:
+                continue
+            tag_norm = _clean_text(tag).lower()
+            rows.append(
+                {
+                    "id": index + 1,
+                    "title": title_clean,
+                    "done": tag_norm in {"x", "done", "✓", "✔", "完成"},
+                    "priority": "high" if tag_norm in {"!", "high", "重要", "high-priority"} else "normal",
+                }
+            )
+        return rows
+
+    def _render_markdown_document(self, title: str, bullets: Iterable[str]) -> str:
+        rows = [f"# {title}", ""]
+        added = False
+        for bullet in bullets:
+            clean = _truncate(_clean_text(bullet), 600)
+            if not clean:
+                continue
+            rows.append(f"- {clean}")
+            added = True
+        if not added:
+            return ""
+        rows.append("")
+        return "\n".join(rows)
+
+    def _search_rows_from_agents_text(self, text: str) -> list[dict[str, Any]]:
+        sections = self._parse_agents_md_sections(text)
+        summary = self._summary_from_sections(sections)
+        notes = self._note_rows_from_sections(sections)
+        todos = self._todo_rows_from_sections(sections)
+        updated_at = _iso_or_empty(datetime.now(timezone.utc))
+        rows: list[dict[str, Any]] = []
+
+        if summary:
+            rows.append(
+                {
+                    "path": f"/memory/{_RECENT_CONTEXT_MEMORY_PATH}",
+                    "target": _RECENT_CONTEXT_MEMORY_PATH,
+                    "title": "近期对话摘要",
+                    "preview": _truncate(summary, 280),
+                    "score": 0.0,
+                    "updated_at": updated_at,
+                    "canonical_id": "summary:session",
+                    "source": "agents_md",
+                    "kind": "recent_context",
+                    "topic_path": "recent_context",
+                    "entry_kind": "summary",
+                }
+            )
+
+        kind_counters: dict[str, int] = {}
+        for note in notes:
+            kind = str(note.get("kind") or "note")
+            topic_path = {
+                "preference": "preferences",
+                "fact": "facts",
+                "project": "projects",
+                "in_progress": "recent_context",
+            }.get(kind, "facts")
+            relative_path = {
+                "preference": _PREFERENCES_MEMORY_PATH,
+                "fact": _FACTS_MEMORY_PATH,
+                "project": _PROJECTS_MEMORY_PATH,
+                "in_progress": _RECENT_CONTEXT_MEMORY_PATH,
+            }.get(kind, _FACTS_MEMORY_PATH)
+            kind_counters[kind] = kind_counters.get(kind, 0) + 1
+            canonical_id = f"{kind}:{kind_counters[kind]}"
+            rows.append(
+                {
+                    "path": f"/memory/{relative_path}",
+                    "target": relative_path,
+                    "title": _truncate(str(note.get("content") or ""), 120),
+                    "preview": _truncate(str(note.get("content") or ""), 280),
+                    "score": 0.0,
+                    "updated_at": updated_at,
+                    "canonical_id": canonical_id,
+                    "source": "agents_md",
+                    "kind": kind if kind != "note" else "fact",
+                    "topic_path": topic_path,
+                    "entry_kind": "note",
+                }
+            )
+
+        for todo in todos:
+            rows.append(
+                {
+                    "path": f"/memory/{_TODOS_MEMORY_PATH}",
+                    "target": _TODOS_MEMORY_PATH,
+                    "title": _truncate(str(todo.get("title") or ""), 120),
+                    "preview": _truncate(str(todo.get("title") or ""), 280),
+                    "score": 0.0,
+                    "updated_at": updated_at,
+                    "canonical_id": f"todo:{int(todo.get('id') or 0)}",
+                    "source": "agents_md",
+                    "kind": "todo",
+                    "topic_path": "todos",
+                    "entry_kind": "todo",
+                }
+            )
+
+        return rows
+
+    def _build_projection_documents(self, text: str) -> tuple[dict[str, str], dict[str, Any], list[dict[str, Any]]]:
+        rows = self._search_rows_from_agents_text(text)
+        preference_rows = [row for row in rows if row.get("kind") == "preference"]
+        fact_rows = [row for row in rows if row.get("kind") == "fact"]
+        project_rows = [row for row in rows if row.get("kind") == "project"]
+        recent_rows = [row for row in rows if row.get("kind") == "recent_context"]
+        todo_rows = [row for row in rows if row.get("kind") == "todo"]
+
+        files = {
+            _PROFILE_MEMORY_PATH: self._render_markdown_document(
+                "Profile Snapshot",
+                [str(row.get("preview") or "") for row in preference_rows[:8]],
+            ),
+            _PREFERENCES_MEMORY_PATH: self._render_markdown_document(
+                "Stable Preferences",
+                [str(row.get("preview") or "") for row in preference_rows],
+            ),
+            _FACTS_MEMORY_PATH: self._render_markdown_document(
+                "Stable Facts",
+                [str(row.get("preview") or "") for row in fact_rows],
+            ),
+            _PROJECTS_MEMORY_PATH: self._render_markdown_document(
+                "Projects",
+                [str(row.get("preview") or "") for row in project_rows],
+            ),
+            _RECENT_CONTEXT_MEMORY_PATH: self._render_markdown_document(
+                "Recent Context",
+                [str(row.get("preview") or "") for row in recent_rows],
+            ),
+            _TODOS_MEMORY_PATH: self._render_markdown_document(
+                "Todo Items",
+                [
+                    (
+                        f"[{'done' if '已完成' in str(row.get('preview') or '') else 'todo'}] "
+                        f"{str(row.get('preview') or '')}"
+                    )
+                    for row in todo_rows
+                ],
+            ),
+        }
+        files = {
+            path: str(content or "").strip()
+            for path, content in files.items()
+            if str(content or "").strip()
+        }
+        index_payload = {
+            "version": 1,
+            "generated_at": _iso_or_empty(datetime.now(timezone.utc)),
+            "runtime_prompt_path": "/memory/AGENTS.md",
+            "counts": {
+                "preferences": len(preference_rows),
+                "facts": len(fact_rows),
+                "projects": len(project_rows),
+                "recent_context": len(recent_rows),
+                "todos": len(todo_rows),
+            },
+            "files": [
+                {
+                    "path": "/memory/AGENTS.md",
+                    "kind": "runtime_prompt",
+                    "title": "Runtime memory prompt",
+                },
+                *[
+                    {
+                        "path": f"/memory/{path}",
+                        "kind": path.rsplit(".", 1)[0],
+                        "title": path.rsplit(".", 1)[0].replace("_", " "),
+                    }
+                    for path in sorted(files.keys())
+                ],
+                {
+                    "path": f"/memory/{_INDEX_MEMORY_PATH}",
+                    "kind": "index",
+                    "title": "Memory index",
+                },
+            ],
+        }
+        return files, index_payload, rows
+
+    def _persist_projection_documents(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        files: dict[str, str],
+        index_payload: dict[str, Any],
+    ) -> None:
+        for relative_path, content in files.items():
+            try:
+                file_memory_bridge.write_memory_text(
+                    user_id=user_id,
+                    workspace=workspace,
+                    path=relative_path,
+                    content=content,
+                )
+            except Exception:
+                continue
+        try:
+            file_memory_bridge.write_memory_json(
+                user_id=user_id,
+                workspace=workspace,
+                path=_INDEX_MEMORY_PATH,
+                payload=index_payload,
+            )
+        except Exception:
+            return
+
+    def _normalize_search_terms(self, query: str) -> list[str]:
+        clean_query = _truncate(_clean_text(query), 240).lower()
+        if not clean_query:
+            return []
+        terms: list[str] = []
+        seen: set[str] = set()
+        for candidate in [clean_query, *re.split(r"[\s/,_\-]+", clean_query)]:
+            token = str(candidate or "").strip()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            terms.append(token)
+        return terms[:12]
+
+    def _score_memory_row(self, row: dict[str, Any], terms: list[str]) -> float:
+        title = str(row.get("title") or "").lower()
+        preview = str(row.get("preview") or "").lower()
+        metadata = " ".join(
+            [
+                str(row.get("kind") or ""),
+                str(row.get("topic_path") or ""),
+                str(row.get("source") or ""),
+            ]
+        ).lower()
+        score = 0.0
+        for index, term in enumerate(terms):
+            if not term:
+                continue
+            weight = 1.5 if index == 0 else 1.0
+            if term in title:
+                score += 4.0 * weight
+            if term in preview:
+                score += 2.5 * weight
+            if term in metadata:
+                score += 1.0 * weight
+        if len(terms) == 1 and terms[0] in preview and terms[0] in title:
+            score += 1.5
+        return score
+
+    def _render_query_relevant_memory_section(self, rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return ""
+        lines = ["## 当前问题相关记忆", ""]
+        for row in rows[:4]:
+            preview = _truncate(_clean_text(str(row.get("preview") or row.get("title") or "")), 220)
+            if not preview:
+                continue
+            label = str(row.get("kind") or "memory")
+            lines.append(f"- [{label}] {preview}")
+        if len(lines) <= 2:
+            return ""
+        lines.append("")
+        return "\n".join(lines)
+
+    def get_memory_bundle(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        fallback_agents_text: str = "",
+        query_hint: str = "",
+    ) -> dict[str, Any]:
+        # Treat the provided AGENTS.md text as the authoritative snapshot for
+        # this run. The caller has already resolved runtime memory, and
+        # re-reading storage here can accidentally drift to a different file
+        # view during tests or concurrent requests.
+        base_text = str(fallback_agents_text or "").strip()
+        if not base_text:
+            base_text = str(
+                self._read_agents_md_text(user_id=user_id, workspace=workspace) or ""
+            ).strip()
+        if not base_text:
+            return {
+                "prompt_path": "/memory/AGENTS.md",
+                "prompt_text": "",
+                "files": {},
+                "memory_paths": [],
+                "index": {},
+            }
+
+        projection_files, index_payload, rows = self._build_projection_documents(base_text)
+        self._persist_projection_documents(
+            user_id=user_id,
+            workspace=workspace,
+            files=projection_files,
+            index_payload=index_payload,
+        )
+
+        focused_hits: list[dict[str, Any]] = []
+        terms = self._normalize_search_terms(query_hint)
+        if terms:
+            for row in rows:
+                score = self._score_memory_row(row, terms)
+                if score <= 0:
+                    continue
+                enriched = dict(row)
+                enriched["score"] = round(score, 3)
+                focused_hits.append(enriched)
+            focused_hits.sort(
+                key=lambda item: (
+                    -float(item.get("score") or 0.0),
+                    str(item.get("title") or ""),
+                )
+            )
+
+        prompt_text = base_text
+        focused_section = self._render_query_relevant_memory_section(focused_hits)
+        if focused_section:
+            prompt_text = f"{base_text.rstrip()}\n\n{focused_section}".strip()
+
+        files = {"/memory/AGENTS.md": prompt_text}
+        for relative_path, content in projection_files.items():
+            if str(content or "").strip():
+                files[f"/memory/{relative_path}"] = str(content or "").strip()
+        files[f"/memory/{_INDEX_MEMORY_PATH}"] = json.dumps(
+            index_payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+
+        memory_paths = ["/memory/AGENTS.md"]
+        for row in focused_hits[:2]:
+            path = str(row.get("path") or "").strip()
+            if path and path not in memory_paths:
+                memory_paths.append(path)
+
+        return {
+            "prompt_path": "/memory/AGENTS.md",
+            "prompt_text": prompt_text,
+            "files": files,
+            "memory_paths": memory_paths,
+            "index": index_payload,
+        }
+
+    def search_memory(
+        self,
+        *,
+        user_id: int,
+        workspace: str,
+        query: str,
+        top_k: int = 6,
+        kinds: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        text = self._read_agents_md_text(user_id=user_id, workspace=workspace)
+        if not text:
+            return []
+
+        projection_files, index_payload, rows = self._build_projection_documents(text)
+        self._persist_projection_documents(
+            user_id=user_id,
+            workspace=workspace,
+            files=projection_files,
+            index_payload=index_payload,
+        )
+
+        terms = self._normalize_search_terms(query)
+        if not terms:
+            return []
+        normalized_kinds = {
+            kind
+            for kind in (
+                self._normalize_search_kind(item)
+                for item in list(kinds or [])
+            )
+            if kind
+        }
+
+        hits: list[dict[str, Any]] = []
+        for row in rows:
+            row_kind = self._normalize_search_kind(str(row.get("kind") or ""))
+            if normalized_kinds and row_kind not in normalized_kinds:
+                continue
+            score = self._score_memory_row(row, terms)
+            if score <= 0:
+                continue
+            enriched = dict(row)
+            enriched["kind"] = row_kind
+            enriched["score"] = round(score, 3)
+            hits.append(enriched)
+        hits.sort(
+            key=lambda item: (
+                -float(item.get("score") or 0.0),
+                str(item.get("title") or ""),
+            )
+        )
+        return hits[: max(1, min(20, int(top_k or 6)))]
 
     def _notes_from_agents_md(
         self,
@@ -657,4 +1176,11 @@ class AgentMemoryService:
     # `get_agents_memory_text`. All methods below this point are used for
     # UI/context projections only and are intentionally decoupled from the
     # agent loop's core behaviour.
+
+
+_memory_service = AgentMemoryService()
+
+
+def get_agent_memory_service() -> AgentMemoryService:
+    return _memory_service
 

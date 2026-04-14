@@ -53,7 +53,7 @@ def test_build_system_prompt_omits_empty_tool_specific_block() -> None:
 
     assert "Tool-specific rules:" not in prompt
     assert "You are Aelin running on DeepAgents." in prompt
-    assert "Treat /memory/AGENTS.md as the canonical long-term memory file." in prompt
+    assert "Treat /memory/AGENTS.md as the compact runtime memory projection for this run." in prompt
 
 
 def test_canvas_design_skill_frontmatter_uses_generic_delivery_contract() -> None:

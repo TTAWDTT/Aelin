@@ -76,6 +76,52 @@ def test_tool_call_limiter_allows_corrected_web_search_after_invalid_attempt():
     assert corrected.allowed is True
 
 
+def test_memory_search_signature_keeps_kind_filters_distinct():
+    left = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": ["project"], "top_k": 5},
+    )
+    right = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": ["fact"], "top_k": 5},
+    )
+
+    assert left != right
+
+
+def test_memory_search_signature_normalizes_string_and_list_kinds_equally():
+    left = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": "project,fact", "top_k": 5},
+    )
+    right = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": ["project", "fact"], "top_k": 5},
+    )
+
+    assert left == right
+
+
+def test_tool_call_limiter_blocks_duplicate_memory_search_calls():
+    usage = ToolPolicyUsage()
+    limiter = ToolCallLimiter(
+        max_tool_calls=10,
+        max_write_calls=2,
+        allow_write_tools=True,
+        consecutive_failures_limit=3,
+        consecutive_no_progress_limit=2,
+    )
+    args = {"query": "OpenClaw memory", "kinds": ["project"], "top_k": 4}
+
+    first = limiter.evaluate(name="memory_search", args=args, usage=usage)
+    assert first.allowed is True
+    usage.note_invocation("memory_search", args)
+
+    second = limiter.evaluate(name="memory_search", args=args, usage=usage)
+    assert second.allowed is False
+    assert "duplicate_memory_search_call" in second.reason
+
+
 def test_tool_google_workspace_validates_required_write_fields(monkeypatch):
     class _FakeService:
         def runtime_status(self):

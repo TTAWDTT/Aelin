@@ -347,6 +347,108 @@ def test_attachment_search_falls_back_to_recent_workspace_attachments_without_th
     assert fake_attachment.calls[0]["attachment_ids"] == [1, 2]
 
 
+def test_attachment_search_caches_non_empty_storage_scope(monkeypatch):
+    from app.services.tools import tools_files
+
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    session_factory = _db_session_factory_with_attachments(
+        {
+            "user_id": 1,
+            "workspace": "default",
+            "session_id": "thread-cache",
+            "file_name": "alpha.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "f" * 64,
+            "storage_path": "/tmp/f.pdf",
+            "parse_status": "ready",
+            "summary": "alpha",
+            "metadata_json": "{}",
+        },
+    )
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[],
+        session_factory=session_factory,
+    )
+
+    tools_files.clear_attachment_scope_cache_for_tests()
+    monkeypatch.setattr(tools_files.settings, "deepagents_attachment_scope_cache_ttl_seconds", 60.0)
+
+    with set_config_context({"configurable": {"thread_id": "thread-cache"}}) as ctx:
+        first = ctx.run(tool_attachment_search, context, {"query": "第一次"})
+
+    assert first["ok"] is True
+    assert first["attachment_ids"] == [1]
+
+    db = session_factory()
+    try:
+        db.query(AttachmentDocument).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    with set_config_context({"configurable": {"thread_id": "thread-cache"}}) as ctx:
+        second = ctx.run(tool_attachment_search, context, {"query": "第二次"})
+
+    assert second["ok"] is True
+    assert second["attachment_ids"] == [1]
+
+
+def test_attachment_search_does_not_cache_empty_storage_fallback(monkeypatch):
+    from app.services.tools import tools_files
+
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    session_factory = _db_session_factory_with_attachments()
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[],
+        session_factory=session_factory,
+    )
+
+    tools_files.clear_attachment_scope_cache_for_tests()
+    monkeypatch.setattr(tools_files.settings, "deepagents_attachment_scope_cache_ttl_seconds", 60.0)
+
+    result = tool_attachment_search(context, {"query": "第一次"})
+    assert result["ok"] is False
+    assert result["error"] == "missing attachment_ids"
+
+    db = session_factory()
+    try:
+        db.add(
+            AttachmentDocument(
+                user_id=1,
+                workspace="default",
+                session_id="",
+                file_name="late.pdf",
+                file_ext="pdf",
+                mime_type="application/pdf",
+                size_bytes=10,
+                sha256="g" * 64,
+                storage_path="/tmp/g.pdf",
+                parse_status="ready",
+                summary="late",
+                metadata_json="{}",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    second = tool_attachment_search(context, {"query": "第二次"})
+    assert second["ok"] is True
+    assert second["attachment_ids"] == [1]
+
+
 def test_screen_get_tool_success(monkeypatch):
     from app.services.tools import tools_device
 
@@ -783,6 +885,45 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
     assert "unsupported_action" in str(unknown["error"])
 
 
+def test_memory_search_tool_returns_structured_hits():
+    from app.services.tools.tools_memory import tool_memory_search
+
+    class _FakeMemoryService:
+        def search_memory(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs["query"] == "OpenClaw memory"
+            return [
+                {
+                    "path": "/memory/projects.md",
+                    "title": "OpenClaw-style memory refactor",
+                    "preview": "Compact projection plus retrieval.",
+                    "score": 7.2,
+                    "updated_at": "2026-04-07T00:00:00+00:00",
+                    "canonical_id": "project:1",
+                    "target": "projects.md",
+                    "source": "agents_md",
+                    "kind": "project",
+                    "topic_path": "projects",
+                    "entry_kind": "note",
+                }
+            ]
+
+    fake_web = _FakeWebSearch()
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        memory_service=_FakeMemoryService(),  # type: ignore[arg-type]
+        session_factory=_FakeSession,
+    )
+
+    result = tool_memory_search(context, {"query": "OpenClaw memory", "kinds": ["project"], "top_k": 4})
+
+    assert result["ok"] is True
+    assert result["total"] == 1
+    assert result["items"][0]["kind"] == "project"
+    assert result["items"][0]["path"] == "/memory/projects.md"
+
+
 def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
@@ -790,11 +931,11 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
     context = _tool_context(fake_web)
     calls: list[dict[str, object]] = []
 
-    def _fake_tool_device(tool_context, args):  # type: ignore[no-untyped-def]
+    def _fake_tool_memory_search(tool_context, args):  # type: ignore[no-untyped-def]
         calls.append({"tool_context": tool_context, "args": dict(args)})
         return {"ok": True, "echo": dict(args)}
 
-    monkeypatch.setattr(dag, "tool_device", _fake_tool_device)
+    monkeypatch.setattr(dag, "tool_memory_search", _fake_tool_memory_search)
 
     limiter = ToolCallLimiter(
         max_tool_calls=20,
@@ -806,6 +947,7 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
 
     assert isinstance(usage, ToolPolicyUsage)
     assert [tool.name for tool in tools] == [
+        "memory_search",
         "web_search",
         "attachment_search",
         "google_workspace",
@@ -814,13 +956,17 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
         "present_files",
     ]
 
-    device_tool = next(t for t in tools if t.name == "device")
-    result = device_tool.invoke({"action": "open_url", "url": "https://example.com"})
+    memory_tool = next(t for t in tools if t.name == "memory_search")
+    result = memory_tool.invoke({"query": "OpenClaw memory", "kinds": ["project"]})
 
     assert result["ok"] is True
     assert calls
-    assert calls[0]["args"] == {"action": "open_url", "url": "https://example.com"}
-    assert any(tr["name"] == "device" and tr["status"] == "completed" for tr in tool_runs)
+    assert calls[0]["args"] == {
+        "query": "OpenClaw memory",
+        "kinds": ["project"],
+        "top_k": 6,
+    }
+    assert any(tr["name"] == "memory_search" and tr["status"] == "completed" for tr in tool_runs)
 
 
 def test_deepagents_build_chat_tools_registers_execute_when_enabled(monkeypatch):
@@ -939,6 +1085,72 @@ def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
     assert tool_runs[0]["call_index"] == 1
 
 
+def test_deepagents_read_tool_retry_recovers_from_transient_failure(monkeypatch):
+    from app.services.deepagents.assembly import tool_registry
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=1, allow_write_tools=False)
+    usage = ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+    calls = {"count": 0}
+
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_attempts", 1)
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_backoff_seconds", 0.0)
+
+    def _flaky_handler(_context, _args):  # noqa: ANN001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"ok": False, "error": "web_search_timeout: upstream 504"}
+        return {"ok": True, "total": 1, "summary": "found 1 web result"}
+
+    result = tool_registry._invoke_tool(
+        name="web_search",
+        args={"action": "search", "query": "deepagents"},
+        handler=_flaky_handler,
+        context=context,
+        limiter=limiter,
+        usage=usage,
+        tool_runs=tool_runs,  # type: ignore[arg-type]
+    )
+
+    assert result["ok"] is True
+    assert result["attempts"] == 2
+    assert calls["count"] == 2
+    assert "after 2 attempts" in str(tool_runs[0]["summary"])
+
+
+def test_deepagents_write_tool_does_not_retry_transient_failures(monkeypatch):
+    from app.services.deepagents.assembly import tool_registry
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=2, allow_write_tools=True)
+    usage = ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+    calls = {"count": 0}
+
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_attempts", 3)
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_backoff_seconds", 0.0)
+
+    def _flaky_handler(_context, _args):  # noqa: ANN001
+        calls["count"] += 1
+        return {"ok": False, "error": "execute_timeout: upstream 504"}
+
+    result = tool_registry._invoke_tool(
+        name="execute",
+        args={"command": "pytest -q"},
+        handler=_flaky_handler,
+        context=context,
+        limiter=limiter,
+        usage=usage,
+        tool_runs=tool_runs,  # type: ignore[arg-type]
+    )
+
+    assert result["ok"] is False
+    assert calls["count"] == 1
+
+
 def test_deepagents_http_timeout_uses_stream_idle_for_read_timeout(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
@@ -981,8 +1193,10 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     assert isinstance(usage, ToolPolicyUsage)
     assert isinstance(files, dict)
     assert "/memory/AGENTS.md" in files
+    assert "/memory/memory_index.json" in files
     content = files["/memory/AGENTS.md"].get("content")
     assert isinstance(content, list) and "likes agents." in "\n".join(str(line) for line in content)
+    assert any(path.startswith("/memory/") and path != "/memory/AGENTS.md" for path in files)
 
 
 def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
@@ -1027,6 +1241,7 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
     ]
     assert "remember this" in decoded[0]
     assert '"available_attachment_ids"' in decoded[1]
+    assert '"memory_index"' in decoded[1]
     assert files["/memory/AGENTS.md"] == runtime_files["/memory/AGENTS.md"]
 
 
@@ -1500,6 +1715,8 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
 
     system_prompt = str(captured.get("system_prompt") or "")
     assert "attachment_ids may be omitted and the runtime will apply the scoped ids automatically" in system_prompt
+    assert "memory_search" in system_prompt
+    assert "compact runtime memory projection" in system_prompt
     assert "Never claim you searched, opened, read, or cited an external source" in system_prompt
 
 

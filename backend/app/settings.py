@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     deepagents_tool_timeout_seconds: float = 25.0
     deepagents_model_transient_error_retries: int = 2
     deepagents_model_transient_error_backoff_seconds: float = 1.0
+    deepagents_read_tool_retry_attempts: int = 2
+    deepagents_read_tool_retry_backoff_seconds: float = 0.25
+    deepagents_attachment_scope_cache_ttl_seconds: float = 8.0
+    deepagents_attachment_scope_cache_max_entries: int = 64
+    deepagents_web_search_service_cache_max_entries: int = 8
     # Aelin-specific safety cap for DeepAgents write_file.
     # Set to 0 to disable the cap and match upstream DeepAgents behavior.
     deepagents_write_file_max_chars: int = 0

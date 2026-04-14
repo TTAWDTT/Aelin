@@ -76,6 +76,17 @@ def _normalize_attachment_ids(value: Any) -> list[int]:
     return sorted(normalize_positive_ints(value, cap=20))
 
 
+def _normalize_memory_kinds(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+    normalized = [_normalize_text(item) for item in raw_items]
+    return sorted(item for item in normalized if item)
+
+
 def _normalize_filepaths(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -103,6 +114,17 @@ def build_tool_signature(name: str, args: dict[str, Any]) -> str:
                 "query": _normalize_text((args or {}).get("query")),
                 "attachment_ids": _normalize_attachment_ids((args or {}).get("attachment_ids")),
                 "mode": _normalize_text((args or {}).get("mode")) or "keyword",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    if tool == "memory_search":
+        return json.dumps(
+            {
+                "tool": tool,
+                "query": _normalize_text((args or {}).get("query")),
+                "kinds": _normalize_memory_kinds((args or {}).get("kinds")),
+                "top_k": int((args or {}).get("top_k") or 0),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -173,6 +195,7 @@ def _tool_attempt_limit(name: str) -> int:
     return {
         "web_search": 4,
         "attachment_search": 3,
+        "memory_search": 4,
         "google_workspace": 4,
         "device": 2,
         "screen_get": 2,
@@ -228,6 +251,9 @@ def _invalid_reason(name: str, args: dict[str, Any]) -> str:
     if tool == "attachment_search":
         if not _normalize_text((args or {}).get("query")):
             return "invalid attachment_search call: provide a non-empty query before searching attachments"
+    if tool == "memory_search":
+        if not _normalize_text((args or {}).get("query")):
+            return "invalid memory_search call: provide a non-empty query before searching long-term memory"
     if tool == "google_workspace":
         if not action:
             return "invalid google_workspace call: provide a concrete action before calling google_workspace"
@@ -270,7 +296,7 @@ def classify_tool_call(name: str, args: dict[str, Any]) -> bool:
 
     if tool == "device":
         return action in {"open_url", "open_aelin"}
-    if tool in {"web_search", "attachment_search", "screen_get", "present_files"}:
+    if tool in {"web_search", "attachment_search", "memory_search", "screen_get", "present_files"}:
         return False
     if tool == "execute":
         return True
@@ -313,6 +339,7 @@ class ToolCallLimiter:
             "device",
             "web_search",
             "attachment_search",
+            "memory_search",
             "screen_get",
             "google_workspace",
             "execute",

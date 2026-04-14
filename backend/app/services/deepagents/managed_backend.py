@@ -1,10 +1,70 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
-from deepagents.backends.composite import CompositeBackend
-from deepagents.backends.protocol import WriteResult
+try:
+    from deepagents.backends.composite import CompositeBackend
+    from deepagents.backends.protocol import WriteResult
+except Exception:  # pragma: no cover - fallback for test environments without deepagents
+    @dataclass
+    class WriteResult:
+        path: str = ""
+        error: str | None = None
+
+    class CompositeBackend:
+        def __init__(self, *, default: Any, routes: dict[str, Any]) -> None:
+            self.default = default
+            self.routes = dict(routes or {})
+
+        def _resolve_backend(self, file_path: str) -> tuple[Any, str]:
+            normalized = str(file_path or "")
+            matched_prefix = ""
+            matched_backend = None
+            for prefix, backend in self.routes.items():
+                prefix_text = str(prefix or "")
+                if not prefix_text:
+                    continue
+                if normalized.startswith(prefix_text) and len(prefix_text) > len(matched_prefix):
+                    matched_prefix = prefix_text
+                    matched_backend = backend
+            if matched_backend is None:
+                return self.default, normalized
+            try:
+                setter = getattr(matched_backend, "set_route_prefix", None)
+                if callable(setter):
+                    setter(matched_prefix)
+            except Exception:
+                pass
+            return matched_backend, normalized
+
+        def write(self, file_path: str, content: str) -> WriteResult:
+            backend, resolved_path = self._resolve_backend(file_path)
+            return backend.write(resolved_path, content)
+
+        async def awrite(self, file_path: str, content: str) -> WriteResult:
+            backend, resolved_path = self._resolve_backend(file_path)
+            awrite = getattr(backend, "awrite", None)
+            if callable(awrite):
+                return await awrite(resolved_path, content)
+            return backend.write(resolved_path, content)
+
+        def download_files(self, paths: list[str]) -> list[Any]:
+            outputs: list[Any] = []
+            for path in list(paths or []):
+                backend, resolved_path = self._resolve_backend(path)
+                downloader = getattr(backend, "download_files", None)
+                if callable(downloader):
+                    outputs.extend(list(downloader([resolved_path]) or []))
+            return outputs
+
+        def ls_info(self, path: str) -> list[dict[str, Any]]:
+            backend, resolved_path = self._resolve_backend(path)
+            lister = getattr(backend, "ls_info", None)
+            if callable(lister):
+                return list(lister(resolved_path) or [])
+            return []
 
 
 _LOG = logging.getLogger(__name__)

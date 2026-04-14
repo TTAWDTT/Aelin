@@ -10,6 +10,7 @@ from app.services.attachments.attachment_service import (
     get_attachment_service,
 )
 from app.services.foundation.service_utils import normalize_positive_ints
+from app.services.memory.agent_memory import AgentMemoryService, get_agent_memory_service
 from app.services.web.web_search import WebSearchService
 
 
@@ -24,6 +25,7 @@ class ToolRuntimeContext:
     workspace: str
     web_search_service: WebSearchService
     attachment_service: AttachmentService
+    memory_service: AgentMemoryService
     available_attachment_ids: list[int]
     cancel_checker: Callable[[], bool] | None = None
     session_factory: Callable[[], Session] | None = None
@@ -35,6 +37,7 @@ def build_tool_runtime_context(
     workspace: str,
     web_search_service: WebSearchService | None = None,
     attachment_service: AttachmentService | None = None,
+    memory_service: AgentMemoryService | None = None,
     available_attachment_ids: list[int] | None = None,
     cancel_checker: Callable[[], bool] | None = None,
     session_factory: Callable[[], Session] | None = None,
@@ -44,6 +47,7 @@ def build_tool_runtime_context(
         workspace=normalize_workspace(workspace),
         web_search_service=web_search_service or WebSearchService(),
         attachment_service=attachment_service or get_attachment_service(),
+        memory_service=memory_service or get_agent_memory_service(),
         available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
         cancel_checker=cancel_checker,
         session_factory=session_factory,

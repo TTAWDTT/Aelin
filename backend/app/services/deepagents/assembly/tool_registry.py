@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from concurrent.futures import TimeoutError as FutureTimeout
+import logging
+import time
 from typing import Any, Callable
 
 from langchain_core.tools import StructuredTool, Tool
@@ -21,9 +23,13 @@ from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_memory import tool_memory_search
 from app.services.tools.tools_present_files import tool_present_files
 from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
+
+
+_log = logging.getLogger(__name__)
 
 
 class DeviceToolInput(BaseModel):
@@ -54,6 +60,12 @@ class AttachmentSearchToolInput(BaseModel):
     attachment_ids: list[int] | None = Field(default=None)
     top_k: int | None = Field(default=5)
     mode: str | None = Field(default="keyword")
+
+
+class MemorySearchToolInput(BaseModel):
+    query: str
+    top_k: int | None = Field(default=6)
+    kinds: list[str] | None = Field(default=None)
 
 
 class GoogleWorkspaceToolInput(BaseModel):
@@ -102,6 +114,89 @@ class PresentFilesToolInput(BaseModel):
         ...,
         description="Final deliverable file paths. Only files under /outputs or the mapped outputs directory can be presented.",
     )
+
+
+def _read_tool_retry_attempts() -> int:
+    try:
+        return max(0, int(getattr(settings, "deepagents_read_tool_retry_attempts", 2) or 0))
+    except Exception:
+        return 0
+
+
+def _read_tool_retry_backoff_seconds() -> float:
+    try:
+        return max(
+            0.0,
+            float(getattr(settings, "deepagents_read_tool_retry_backoff_seconds", 0.25) or 0.0),
+        )
+    except Exception:
+        return 0.0
+
+
+def _tool_retry_delay_seconds(*, attempt_number: int) -> float:
+    return _read_tool_retry_backoff_seconds() * max(1, int(attempt_number))
+
+
+def _is_retryable_tool_error(error: str) -> bool:
+    normalized = " ".join(str(error or "").strip().lower().split())
+    if not normalized:
+        return False
+    non_retryable_fragments = (
+        "unsupported",
+        "invalid ",
+        "invalid_",
+        "missing ",
+        "missing_",
+        "authorization required",
+        "authorization failed",
+        "write failed",
+        "write_tools_disabled",
+        "call_limit",
+        "duplicate_",
+        "no new information",
+        "no useful",
+        "no matching",
+        "missing attachment_ids",
+        "not available in this run",
+        "gws_not_installed",
+        "session_factory unavailable",
+        "cancelled",
+        "busy",
+    )
+    if any(fragment in normalized for fragment in non_retryable_fragments):
+        return False
+    retryable_fragments = (
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "rate limit",
+        "too many requests",
+        "connection",
+        "connecterror",
+        "readerror",
+        "transport",
+        "proxy",
+        "server error",
+        "502",
+        "503",
+        "504",
+        "_failed:",
+    )
+    return any(fragment in normalized for fragment in retryable_fragments)
+
+
+def _should_retry_tool_result(
+    *,
+    decision: Any,
+    result: dict[str, Any],
+) -> bool:
+    if bool(getattr(decision, "is_write", False)):
+        return False
+    if bool(result.get("ok")):
+        return False
+    if bool(result.get("stop_retry")) or bool(result.get("maybe_applied")):
+        return False
+    return _is_retryable_tool_error(str(result.get("error") or ""))
 
 
 def _invoke_tool(
@@ -183,78 +278,109 @@ def _invoke_tool(
 
     usage.note_invocation(name, args)
     tool_key = f"{name}:{call_index}"
-    result: dict[str, Any]
-    future = _submit_tool_future(executor, semaphore, handler, context, args)
-
     timeout_seconds = max(
         1.0,
         float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
     )
-    wait_slice_seconds = 0.5
-    cancelled_midflight = False
-    deadline = started + timeout_seconds
 
-    while not future.done():
-        now = perf_counter()
-        remaining = deadline - now
-        if remaining <= 0:
-            break
-        try:
-            future.result(timeout=min(wait_slice_seconds, remaining))
-        except FutureTimeout:
-            pass
-        except BaseException:
-            break
-        if future.done():
-            break
-        if is_cancelled(cancel_token):
-            cancelled_midflight = True
-            break
+    def _run_once() -> dict[str, Any]:
+        future = _submit_tool_future(executor, semaphore, handler, context, args)
+        wait_slice_seconds = 0.5
+        cancelled_midflight = False
+        deadline = perf_counter() + timeout_seconds
 
-    if cancelled_midflight:
-        result = _result_error(
-            f"{name}_cancelled: request cancelled while tool was running"
-        )
-        result["stop_retry"] = True
-        if decision.is_write:
-            result["maybe_applied"] = True
-            result["error"] = (
-                f"{name}_cancelled: request cancelled while the write tool was running; "
-                "the operation may still complete in the background, so do not retry the same write blindly"
+        while not future.done():
+            now = perf_counter()
+            remaining = deadline - now
+            if remaining <= 0:
+                break
+            try:
+                future.result(timeout=min(wait_slice_seconds, remaining))
+            except FutureTimeout:
+                pass
+            except BaseException:
+                break
+            if future.done():
+                break
+            if is_cancelled(cancel_token):
+                cancelled_midflight = True
+                break
+
+        if cancelled_midflight:
+            result = _result_error(
+                f"{name}_cancelled: request cancelled while tool was running"
             )
-    elif not future.done():
-        result = _result_error(
-            f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
-            "stop using this tool in this run and answer from current evidence"
-        )
-        result["stop_retry"] = True
-        if decision.is_write:
-            result["maybe_applied"] = True
-            result["error"] = (
+            result["stop_retry"] = True
+            if decision.is_write:
+                result["maybe_applied"] = True
+                result["error"] = (
+                    f"{name}_cancelled: request cancelled while the write tool was running; "
+                    "the operation may still complete in the background, so do not retry the same write blindly"
+                )
+            return result
+
+        if not future.done():
+            result = _result_error(
                 f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
-                "the write may still complete in the background, so do not retry the same write blindly"
+                "stop using this tool in this run and answer from current evidence"
             )
-    else:
+            result["stop_retry"] = True
+            if decision.is_write:
+                result["maybe_applied"] = True
+                result["error"] = (
+                    f"{name}_timeout: tool exceeded {int(timeout_seconds)}s; "
+                    "the write may still complete in the background, so do not retry the same write blindly"
+                )
+            return result
+
         try:
             raw_result = future.result()
         except BaseException as exc:  # noqa: BLE001
-            result = _result_error(f"{name}_failed:{str(exc)[:160]}")
-        else:
-            if isinstance(raw_result, dict):
-                result = raw_result
-            else:
-                result = _result_error(f"{name}_failed:tool returned invalid payload")
+            return _result_error(f"{name}_failed:{str(exc)[:160]}")
+        if isinstance(raw_result, dict):
+            return raw_result
+        return _result_error(f"{name}_failed:tool returned invalid payload")
+
+    attempt_count = 0
+    max_attempts = 1 if decision.is_write else max(1, 1 + _read_tool_retry_attempts())
+    result: dict[str, Any] = {}
+    while attempt_count < max_attempts:
+        if is_cancelled(cancel_token):
+            raise DeepAgentsCancelled("cancelled")
+        attempt_count += 1
+        result = _run_once()
+        if attempt_count >= max_attempts or not _should_retry_tool_result(
+            decision=decision,
+            result=result,
+        ):
+            break
+        delay_seconds = _tool_retry_delay_seconds(attempt_number=attempt_count)
+        _log.warning(
+            "deepagents_read_tool_retry name=%s attempt=%s max_attempts=%s delay_seconds=%s error=%s",
+            name,
+            attempt_count,
+            max_attempts,
+            round(delay_seconds, 3),
+            str(result.get("error") or "")[:160],
+        )
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+    if attempt_count > 1 and isinstance(result, dict):
+        result = {**result, "attempts": attempt_count}
 
     latency_ms = int((perf_counter() - started) * 1000)
     usage.total_calls += 1
     if decision.is_write:
         usage.write_calls += 1
     usage.note_result(result)
-    if cancelled_midflight:
+    error_text = str(result.get("error") or "")
+    normalized_error = error_text.lower()
+    if "cancelled" in normalized_error:
         status = "cancelled"
     else:
         status = "completed" if bool(result.get("ok", True)) else "failed"
-    error = "" if status == "completed" else str(result.get("error") or "")[:160]
+    error = "" if status == "completed" else error_text[:160]
 
     summary = ""
     if error:
@@ -280,6 +406,8 @@ def _invoke_tool(
                     summary = f"{name} total={total}"
                 else:
                     summary = f"{name}({len(args)} args)"
+    if attempt_count > 1 and summary:
+        summary = f"{summary} after {attempt_count} attempts"
 
     tool_runs.append(
         {
@@ -403,6 +531,12 @@ def build_chat_tools(
         )
 
     tools: list[Tool] = [
+        _make_structured_tool(
+            "memory_search",
+            tool_memory_search,
+            MemorySearchToolInput,
+            ["query", "top_k", "kinds"],
+        ),
         _make_structured_tool(
             "web_search",
             tool_web_search,

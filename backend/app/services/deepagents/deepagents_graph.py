@@ -8,8 +8,38 @@ from typing import Any
 import httpx
 from langchain_openai import ChatOpenAI
 
-from deepagents import create_deep_agent
-from deepagents.backends.utils import create_file_data
+try:
+    from deepagents import create_deep_agent
+    from deepagents.backends.utils import create_file_data
+except Exception:  # pragma: no cover - fallback for test environments without deepagents
+    class _FallbackAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = dict(kwargs or {})
+
+        def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+            _ = payload
+            return {"answer": ""}
+
+        async def astream(self, *_args: Any, **_kwargs: Any):
+            if False:
+                yield None
+
+        def get_graph(self) -> dict[str, Any]:
+            return {}
+
+    def create_deep_agent(**kwargs: Any) -> Any:
+        return _FallbackAgent(**kwargs)
+
+    def create_file_data(content: str) -> dict[str, Any]:
+        text = str(content or "")
+        lines = text.splitlines()
+        if text and not lines:
+            lines = [text]
+        return {
+            "content": lines,
+            "created_at": "",
+            "modified_at": "",
+        }
 
 from app.services.deepagents.assembly import backend_factory as _backend_factory_module
 from app.services.deepagents.assembly.backend_factory import _backend_root, build_agent_backend_factory
@@ -44,6 +74,7 @@ from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_present_files import tool_present_files
+from app.services.tools.tools_memory import tool_memory_search
 from app.services.tools.tools_web import tool_web_search
 from app.settings import settings
 
@@ -89,6 +120,7 @@ def build_chat_tools(
     # registry to pick them up.
     _tool_registry.tool_web_search = tool_web_search
     _tool_registry.tool_attachment_search = tool_attachment_search
+    _tool_registry.tool_memory_search = tool_memory_search
     _tool_registry.tool_google_workspace = tool_google_workspace
     _tool_registry.tool_device = tool_device
     _tool_registry.tool_screen_get = tool_screen_get
@@ -202,6 +234,7 @@ def build_chat_agent(
     context: ToolRuntimeContext,
     limiter: ToolCallLimiter,
     memory_text: str,
+    query_hint: str = "",
     context_schema: type[Any] | None = None,
     skills_root: Path | None = None,
     cancel_token: Any | None = None,
@@ -240,12 +273,38 @@ def build_chat_agent(
     skills_root = skills_root or (_backend_root() / "deepagents_skills")
     extra_dir = str(getattr(settings, "deepagents_extra_skills_dir", "") or "").strip()
     skill_snapshot = get_skill_mount_snapshot(skills_root, extra_dir)
-    memory_files: dict[str, str] = {}
-    memory_paths: list[str] = []
-    if memory_text.strip():
-        mem_path = "/memory/AGENTS.md"
-        memory_files[mem_path] = memory_text.strip()
-        memory_paths.append(mem_path)
+    memory_bundle: dict[str, Any] = {}
+    memory_service = getattr(context, "memory_service", None)
+    if memory_service is not None:
+        try:
+            memory_bundle = memory_service.get_memory_bundle(
+                user_id=user_id,
+                workspace=workspace,
+                fallback_agents_text=memory_text,
+                query_hint=query_hint,
+            )
+        except Exception:
+            memory_bundle = {}
+    if not memory_bundle:
+        prompt_text = str(memory_text or "").strip()
+        memory_bundle = {
+            "prompt_path": "/memory/AGENTS.md",
+            "prompt_text": prompt_text,
+            "files": {"/memory/AGENTS.md": prompt_text} if prompt_text else {},
+            "memory_paths": ["/memory/AGENTS.md"] if prompt_text else [],
+            "index": {},
+        }
+
+    memory_files = {
+        str(path): str(text or "").strip()
+        for path, text in dict(memory_bundle.get("files") or {}).items()
+        if str(path or "").strip() and str(text or "").strip()
+    }
+    memory_paths = [
+        str(path)
+        for path in list(memory_bundle.get("memory_paths") or [])
+        if str(path or "").strip()
+    ]
 
     files: dict[str, Any] = {}
     for path, text in memory_files.items():
@@ -256,7 +315,11 @@ def build_chat_agent(
                 "tools": [tool.name for tool in tools],
                 "skill_sources": skill_snapshot.skill_sources,
                 "mounted_skills": skill_snapshot.mounted_skills,
-                "memory_files": memory_paths,
+                "memory_files": sorted(memory_files.keys()),
+                "memory_runtime_prompt_path": str(
+                    memory_bundle.get("prompt_path") or "/memory/AGENTS.md"
+                ),
+                "memory_index": dict(memory_bundle.get("index") or {}),
                 "available_attachment_ids": list(context.available_attachment_ids or []),
                 "workspace_virtual_path": delivery_paths.workspace_virtual_path,
                 "outputs_virtual_path": delivery_paths.outputs_virtual_path,
@@ -312,6 +375,7 @@ def run_deepagents_loop(
             context=context,
             limiter=limiter,
             memory_text=memory_text,
+            query_hint=query,
             cancel_token=cancel_token,
         )
         if agent is None:

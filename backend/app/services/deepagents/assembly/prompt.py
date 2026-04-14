@@ -26,6 +26,13 @@ def _current_date_context() -> str:
 
 
 def tool_description(name: str) -> str:
+    if name == "memory_search":
+        return (
+            "Search long-term memory without injecting the entire memory corpus into the prompt.\n"
+            "Arguments: query=<non-empty string>, top_k=1..20, kinds?<string[]>.\n"
+            "Use before opening /memory/*.md files when you need past preferences, facts, projects, or recent context.\n"
+            "Prefer one focused query over repeated vague retries."
+        )
     if name == "web_search":
         return (
             "Search the public web.\n"
@@ -99,6 +106,10 @@ def build_system_prompt(
     workspace_local = delivery_paths.workspace_dir.as_posix()
     outputs_local = delivery_paths.outputs_dir.as_posix()
     tool_specific_rules: list[str] = []
+    if "memory_search" in available:
+        tool_specific_rules.append(
+            "- memory_search: use it before opening /memory/*.md files when you need long-term memory; prefer a specific query and optional kinds filter."
+        )
     if "web_search" in available:
         tool_specific_rules.append(
             "- web_search: always provide a non-empty query; avoid repeated near-duplicate queries; stop once you have enough evidence."
@@ -156,7 +167,8 @@ def build_system_prompt(
             _current_date_context(),
             "If the user asks about date-sensitive facts, keep the answer explicitly grounded to the current date context above.\n"
             "If search results contain stale dates, say that clearly instead of silently treating them as current.\n"
-            "Treat /memory/AGENTS.md as the canonical long-term memory file.\n"
+            "Treat /memory/AGENTS.md as the compact runtime memory projection for this run.\n"
+            "Use memory_search and the other /memory/*.md files for deeper long-term memory only when needed.\n"
             "Read skills on demand from /skills/... when a matching skill is relevant.\n"
             "Never claim you searched, opened, read, or cited an external source unless the corresponding tool call succeeded in this run.\n"
             "If a required tool or skill is unavailable, say so explicitly instead of implying the action completed.",
