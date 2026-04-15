@@ -8,7 +8,15 @@ type ArtifactLocalOpenResponse = {
 }
 
 function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = window.atob(base64)
+  const bufferApi = (globalThis as typeof globalThis & {
+    Buffer?: {
+      from: (input: string, encoding: string) => { toString: (encoding: string) => string }
+    }
+  }).Buffer
+  const decoder = typeof globalThis.atob === 'function'
+    ? globalThis.atob.bind(globalThis)
+    : ((value: string) => bufferApi?.from(value, 'base64').toString('binary') ?? '')
+  const binary = decoder(base64)
   const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index)
