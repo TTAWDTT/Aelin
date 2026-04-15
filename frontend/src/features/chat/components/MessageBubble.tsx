@@ -1,8 +1,15 @@
 import type { ChatMessage } from '../chatTypes'
-import type { ChatArtifact } from '../artifactUtils'
+import {
+  artifactFromServerPayload,
+  artifactMatchesReferencePath,
+  extractReferencedArtifactPaths,
+  findArtifactsReferencedInText,
+  type ChatArtifact,
+} from '../artifactUtils'
 import type { ExecutionLiveSummary, ExecutionTodoItem, ExecutionToolCall } from '../executionStreamUtils'
 import { cn } from '@/shared/utils/cn'
 import { AelinAvatar } from '@/shared/components/AelinAvatar'
+import { aelinApi } from '@/shared/api/aelin'
 import { MessageActionsPanel } from './MessageActionsPanel'
 import { MessageCitationsPanel } from './MessageCitationsPanel'
 import { MarkdownMessage } from './MarkdownMessage'
@@ -15,11 +22,14 @@ import {
   resolveExpressionSticker,
 } from './messageBubbleUtils'
 import { useLocaleStore } from '@/shared/stores/localeStore'
+import { useEffect, useMemo, useState } from 'react'
 
 interface MessageBubbleProps {
   message: ChatMessage
   toolCalls?: ExecutionToolCall[]
   artifacts?: ChatArtifact[]
+  artifactLookup?: Map<string, ChatArtifact>
+  workspace?: string
   liveSummary?: ExecutionLiveSummary
   isThinking?: boolean
   thinkingText?: string
@@ -33,6 +43,8 @@ export function MessageBubble({
   message,
   toolCalls = [],
   artifacts = [],
+  artifactLookup,
+  workspace = 'default',
   liveSummary,
   isThinking = false,
   thinkingText,
@@ -46,6 +58,72 @@ export function MessageBubble({
   const stickerSrc = !isUser ? resolveExpressionSticker(message.expression) : ''
   const { locale } = useLocaleStore()
   const isZh = locale === 'zh'
+  const [resolvedReferencedArtifacts, setResolvedReferencedArtifacts] = useState<ChatArtifact[]>([])
+  const referencedPaths = useMemo(
+    () => extractReferencedArtifactPaths(message.content || ''),
+    [message.content],
+  )
+  const knownReferencedArtifacts = useMemo(
+    () => findArtifactsReferencedInText(message.content || '', artifactLookup ?? new Map()),
+    [artifactLookup, message.content],
+  )
+
+  useEffect(() => {
+    if (isUser || referencedPaths.length === 0) {
+      setResolvedReferencedArtifacts([])
+      return
+    }
+
+    const unresolvedPaths = referencedPaths.filter((path) => !knownReferencedArtifacts.some(
+      (artifact) => artifactMatchesReferencePath(artifact, path),
+    ))
+    if (unresolvedPaths.length === 0) {
+      setResolvedReferencedArtifacts([])
+      return
+    }
+
+    let cancelled = false
+    void Promise.all(unresolvedPaths.map(async (path) => {
+      try {
+        const payload = await aelinApi.resolveArtifactPath({
+          workspace,
+          path,
+        })
+        return artifactFromServerPayload(payload)
+      } catch {
+        return null
+      }
+    })).then((items) => {
+      if (cancelled) return
+      const seen = new Set<string>()
+      const next: ChatArtifact[] = []
+      items.forEach((artifact) => {
+        if (!artifact || seen.has(artifact.path)) return
+        seen.add(artifact.path)
+        next.push(artifact)
+      })
+      setResolvedReferencedArtifacts(next)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isUser, knownReferencedArtifacts, referencedPaths, workspace])
+
+  const visibleArtifacts = useMemo(() => {
+    const seen = new Set<string>()
+    const merged: ChatArtifact[] = []
+    const addArtifact = (artifact: ChatArtifact | null | undefined) => {
+      if (!artifact || seen.has(artifact.path)) return
+      seen.add(artifact.path)
+      merged.push(artifact)
+    }
+
+    artifacts.forEach(addArtifact)
+    knownReferencedArtifacts.forEach(addArtifact)
+    resolvedReferencedArtifacts.forEach(addArtifact)
+    return merged
+  }, [artifacts, knownReferencedArtifacts, resolvedReferencedArtifacts])
   const stickerLabel = message.expression
     ? EXPRESSION_LABELS[message.expression] ?? (isZh ? 'Aelin 表情' : 'Aelin expression')
     : isZh
@@ -197,8 +275,8 @@ export function MessageBubble({
           </div>
         )}
 
-        {!isUser && !isThinking && artifacts.length > 0 && (
-          <MessageArtifactsPanel artifacts={artifacts} onOpenArtifact={onOpenArtifact} />
+        {!isUser && !isThinking && visibleArtifacts.length > 0 && (
+          <MessageArtifactsPanel artifacts={visibleArtifacts} onOpenArtifact={onOpenArtifact} />
         )}
 
         {!isUser && stickerSrc && !isThinking && (

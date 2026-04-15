@@ -157,6 +157,32 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  const direct = asRecord(value)
+  if (Object.keys(direct).length > 0) {
+    const nestedContent = typeof direct.content === 'string' ? direct.content.trim() : ''
+    if (nestedContent.startsWith('{') || nestedContent.startsWith('[')) {
+      try {
+        const nested = asRecord(JSON.parse(nestedContent))
+        if (Object.keys(nested).length > 0) return nested
+      } catch {
+        // Fall back to the direct record when nested JSON parsing fails.
+      }
+    }
+    return direct
+  }
+  if (typeof value !== 'string') return {}
+
+  const text = value.trim()
+  if (!text.startsWith('{') && !text.startsWith('[')) return {}
+  try {
+    const parsed = JSON.parse(text)
+    return asRecord(parsed)
+  } catch {
+    return {}
+  }
+}
+
 function compactText(value: unknown, max = 140): string {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return ''
@@ -210,7 +236,7 @@ function shouldDisplayToolCall(tool: ExecutionToolCall, hasStableId: boolean): b
 }
 
 function extractToolResultArtifacts(result: unknown): ExecutionToolArtifact[] {
-  const record = asRecord(result)
+  const record = parseJsonRecord(result)
   const rawArtifacts = Array.isArray(record.artifacts) ? record.artifacts : []
   const artifacts: ExecutionToolArtifact[] = []
   rawArtifacts.forEach((item, index) => {
@@ -253,7 +279,8 @@ function extractToolResultArtifacts(result: unknown): ExecutionToolArtifact[] {
 }
 
 function summarizeToolResult(result: unknown, artifacts: ExecutionToolArtifact[]): string {
-  const record = asRecord(result)
+  const record = parseJsonRecord(result)
+  if (Object.keys(record).length === 0) return stableJson(result, 180)
   if (artifacts.length === 0) return stableJson(result, 180)
 
   const summaryRecord: Record<string, unknown> = { ...record }
@@ -383,7 +410,7 @@ function getToolCallsForMessage(
 
 function extractToolFilePath(args: unknown, result: unknown): string | undefined {
   const argRecord = asRecord(args)
-  const resultRecord = asRecord(result)
+  const resultRecord = parseJsonRecord(result)
   const candidates = [
     argRecord.file_path,
     argRecord.path,

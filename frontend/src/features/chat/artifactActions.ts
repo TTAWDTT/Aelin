@@ -42,6 +42,12 @@ export function createArtifactObjectUrl(artifact: ChatArtifact | null): string {
     if (artifact.content) {
       return artifact.content
     }
+    if (artifact.downloadBase64) {
+      const blob = new Blob([decodeBase64ToArrayBuffer(artifact.downloadBase64)], {
+        type: artifact.mimeType || 'application/octet-stream',
+      })
+      return URL.createObjectURL(blob)
+    }
     return canOpenArtifactLocally(artifact) ? buildArtifactContentUrl(artifact) : ''
   }
   if (artifact.downloadBase64) {

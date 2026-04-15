@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildMessageArtifactMap, extractArtifactsFromState, extractArtifactsFromToolCalls, sortArtifacts } from './artifactUtils'
+import {
+  artifactFromServerPayload,
+  buildMessageArtifactMap,
+  extractReferencedArtifactPaths,
+  extractArtifactsFromState,
+  extractArtifactsFromToolCalls,
+  findArtifactsReferencedInText,
+  sortArtifacts,
+} from './artifactUtils'
 
 describe('artifactUtils', () => {
   it('extracts previewable runtime files from state', () => {
@@ -100,5 +108,101 @@ describe('artifactUtils', () => {
         name: 'poster.png',
       }),
     ])
+  })
+
+  it('maps virtual outputs files to local disk paths via runtime capabilities and skips internal runtime files', () => {
+    const artifacts = extractArtifactsFromState({
+      messages: [],
+      files: {
+        '/runtime/capabilities.json': {
+          content: [
+            JSON.stringify({
+              workspace_local_path: 'D:/Aelin/output/deepagents/user-1/default/workspace',
+              outputs_local_path: 'D:/Aelin/output/deepagents/user-1/default/outputs',
+            }),
+          ],
+        },
+        '/outputs/report.docx': {
+          content: '',
+          modified_at: '2026-03-30T08:07:00Z',
+        },
+      },
+    })
+
+    expect(artifacts.has('/runtime/capabilities.json')).toBe(false)
+    expect(artifacts.get('/outputs/report.docx')).toEqual(
+      expect.objectContaining({
+        name: 'report.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        previewKind: 'unknown',
+        previewable: true,
+        localPath: 'D:/Aelin/output/deepagents/user-1/default/outputs/report.docx',
+      }),
+    )
+  })
+
+  it('finds known artifacts referenced inside assistant message text', () => {
+    const artifacts = extractArtifactsFromState({
+      messages: [],
+      files: {
+        '/runtime/capabilities.json': {
+          content: [
+            JSON.stringify({
+              outputs_local_path: 'D:/Aelin/output/deepagents/user-1/default/outputs',
+            }),
+          ],
+        },
+        '/outputs/tongji_cherry_blossom_2026_poster.png': {
+          content: '',
+          modified_at: '2026-03-30T08:07:00Z',
+        },
+      },
+    })
+
+    expect(
+      findArtifactsReferencedInText(
+        '同济大学海报已生成完成，保存路径：\n`/outputs/tongji_cherry_blossom_2026_poster.png`',
+        artifacts,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        path: '/outputs/tongji_cherry_blossom_2026_poster.png',
+        localPath: 'D:/Aelin/output/deepagents/user-1/default/outputs/tongji_cherry_blossom_2026_poster.png',
+      }),
+    ])
+  })
+
+  it('extracts referenced artifact paths from markdown text', () => {
+    expect(
+      extractReferencedArtifactPaths(
+        '运行后会保存到 `/outputs/two_people_playing_football.png`，脚本在 `/workspace/generate_football_image.py`',
+      ),
+    ).toEqual([
+      '/outputs/two_people_playing_football.png',
+      '/workspace/generate_football_image.py',
+    ])
+  })
+
+  it('builds a chat artifact from backend resolve payloads', () => {
+    expect(
+      artifactFromServerPayload({
+        path: 'D:/HuaweiMoveData/Users/yixiao/Desktop/Aelin/output/deepagents/user-1/default/outputs/chelsea_poster.png',
+        relative_path: 'output/deepagents/user-1/default/outputs/chelsea_poster.png',
+        name: 'chelsea_poster.png',
+        mime_type: 'image/png',
+        size_bytes: 170947,
+        preview_kind: 'image-data-url',
+        content: '',
+        modified_at: '2026-04-15T22:35:00+08:00',
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        path: 'D:/HuaweiMoveData/Users/yixiao/Desktop/Aelin/output/deepagents/user-1/default/outputs/chelsea_poster.png',
+        localPath: 'D:/HuaweiMoveData/Users/yixiao/Desktop/Aelin/output/deepagents/user-1/default/outputs/chelsea_poster.png',
+        displayPath: 'output/deepagents/user-1/default/outputs/chelsea_poster.png',
+        previewKind: 'image-data-url',
+        previewable: true,
+      }),
+    )
   })
 })

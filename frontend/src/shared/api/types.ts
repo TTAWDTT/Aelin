@@ -60,6 +60,20 @@ export interface DeviceCapabilitiesResponse {
   platform: string; capabilities: Record<string, boolean>
   notes: string[]; generated_at: string
 }
+export interface ArtifactResolveResponse {
+  workspace: string
+  requested_path: string
+  path: string
+  relative_path?: string
+  name: string
+  mime_type: string
+  size_bytes: number
+  preview_kind: string
+  content?: string
+  created_at?: string
+  modified_at?: string
+  generated_at: string
+}
 export interface DeviceScreenCaptureResponse {
   data_url: string
   name: string

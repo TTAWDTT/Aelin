@@ -6,6 +6,7 @@ from pathlib import Path
 
 import app.services.device.device_center as device_center
 import app.services.artifact_files as artifact_files
+import app.services.deepagents.delivery_paths as delivery_paths
 from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
@@ -390,5 +391,35 @@ def test_artifact_content_endpoint_rejects_outside_repo_file(tmp_path, monkeypat
 
         assert resp.status_code == 403, resp.text
         assert "outside_allowed_roots" in str(resp.json().get("detail") or "")
+
+
+def test_artifact_resolve_endpoint_maps_virtual_output_path(monkeypatch, tmp_path):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    fake_root = tmp_path / "output" / "deepagents" / "user-1" / "default"
+    workspace_dir = fake_root / "workspace"
+    outputs_dir = fake_root / "outputs"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    poster = outputs_dir / "chelsea_poster.png"
+    poster.write_bytes(b"fake-png")
+
+    monkeypatch.setattr(artifact_files, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(delivery_paths, "_REPO_ROOT", tmp_path)
+
+    resp = client.get(
+        "/api/v1/aelin/artifact/resolve",
+        params={"workspace": "default", "path": "/outputs/chelsea_poster.png"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["workspace"] == "default"
+    assert data["requested_path"] == "/outputs/chelsea_poster.png"
+    assert data["path"] == str(poster.resolve())
+    assert data["name"] == "chelsea_poster.png"
+    assert data["mime_type"] == "image/png"
 
 

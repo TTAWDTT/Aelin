@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import (
+    AelinArtifactResolveResponse,
     AelinDeviceCapabilitiesResponse,
     AelinDevicePathOpenRequest,
     AelinDevicePathOpenResponse,
@@ -18,8 +19,10 @@ from app.schemas import (
 from app.services.artifact_files import (
     LocalArtifactAccessError,
     artifact_media_type,
+    normalize_tool_artifact_payloads,
     resolve_local_artifact_path,
 )
+from app.services.deepagents.delivery_paths import get_delivery_paths, resolve_virtual_or_local_path
 from app.services.device.device_center import (
     capture_device_screen as device_capture_screen,
     open_desktop_local_path,
@@ -116,4 +119,52 @@ def get_local_artifact_content(
         f"{disposition}; filename*=UTF-8''{quote(resolved.name)}"
     )
     return response
+
+
+@router.get("/artifact/resolve", response_model=AelinArtifactResolveResponse)
+def resolve_artifact_reference(
+    path: str,
+    workspace: str = "default",
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user  # Auth guard for local artifact APIs.
+    delivery_paths = get_delivery_paths(
+        workspace=workspace,
+        user_id=int(getattr(current_user, "id", 0) or 0),
+        create=False,
+    )
+    try:
+        resolved = resolve_virtual_or_local_path(
+            path,
+            delivery_paths,
+            default_root="outputs",
+            allow_workspace=True,
+            allow_outputs=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"artifact_path_invalid:{str(exc)[:160]}") from exc
+
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="artifact_not_found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=400, detail="artifact_path_is_not_file")
+
+    artifacts = normalize_tool_artifact_payloads([{"path": str(resolved)}])
+    if not artifacts:
+        raise HTTPException(status_code=404, detail="artifact_not_found")
+    artifact = artifacts[0]
+    return AelinArtifactResolveResponse(
+        workspace=str(workspace or "default"),
+        requested_path=str(path or "").strip()[:2000],
+        path=str(artifact.get("path") or ""),
+        relative_path=str(artifact.get("relative_path") or ""),
+        name=str(artifact.get("name") or resolved.name),
+        mime_type=str(artifact.get("mime_type") or "application/octet-stream"),
+        size_bytes=max(0, int(artifact.get("size_bytes") or 0)),
+        preview_kind=str(artifact.get("preview_kind") or "unknown"),
+        content=str(artifact.get("content") or ""),
+        created_at=str(artifact.get("created_at") or "")[:64],
+        modified_at=str(artifact.get("modified_at") or "")[:64],
+        generated_at=datetime.now(timezone.utc),
+    )
 

@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { useChatStore } from './stores/chatStore'
+import { getSessionToolCalls, setSessionToolCalls } from './chatExecutionStorage'
 import { useChatStream } from './hooks/useChatStream'
 import { ComposerBar } from './components/ComposerBar'
 import { ChatStatusBar } from './components/ChatStatusBar'
@@ -67,6 +68,11 @@ export function ChatView() {
   const execution = executionAnalysis.runtime
   const messageToolCalls = executionAnalysis.toolCallsByMessage
   const [selectedArtifact, setSelectedArtifact] = useState<ChatArtifact | null>(null)
+  const activeSession = useMemo(
+    () => sessions.find((item) => item.id === activeSessionId) ?? null,
+    [activeSessionId, sessions],
+  )
+  const activeWorkspace = String(activeSession?.workspace || 'default').trim() || 'default'
   const lastMessage = messages.at(-1)
   const hasAssistantReplyStarted = lastMessage?.role === 'assistant'
   const values =
@@ -74,16 +80,73 @@ export function ChatView() {
       ? deferredStreamValues
       : {}
   const artifactsByPath = useMemo(() => extractArtifactsFromState(values), [values])
-  const toolArtifacts = useMemo(() => extractArtifactsFromToolCalls(messageToolCalls), [messageToolCalls])
-  const runtimeArtifacts = useMemo(() => {
+  const persistedToolCallsByMessage = useMemo(
+    () => getSessionToolCalls(activeSessionId),
+    [activeSessionId],
+  )
+  const combinedToolCallsByMessage = useMemo(() => {
+    const merged = new Map(persistedToolCallsByMessage)
+    messageToolCalls.forEach((toolCalls, messageId) => {
+      const existing = merged.get(messageId) ?? []
+      const deduped = new Map(existing.map((tool) => [tool.key, tool]))
+      toolCalls.forEach((tool) => deduped.set(tool.key, tool))
+      merged.set(messageId, Array.from(deduped.values()))
+    })
+    return merged
+  }, [messageToolCalls, persistedToolCallsByMessage])
+  const toolArtifacts = useMemo(() => extractArtifactsFromToolCalls(combinedToolCallsByMessage), [combinedToolCallsByMessage])
+  const mergedArtifactsByPath = useMemo(() => {
     const merged = new Map(toolArtifacts)
     artifactsByPath.forEach((artifact, path) => merged.set(path, artifact))
-    return sortArtifacts(merged.values())
+    return merged
   }, [artifactsByPath, toolArtifacts])
+  const runtimeArtifacts = useMemo(() => {
+    return sortArtifacts(mergedArtifactsByPath.values())
+  }, [mergedArtifactsByPath])
   const artifactsByMessage = useMemo(
-    () => buildMessageArtifactMap(messageToolCalls, artifactsByPath),
-    [artifactsByPath, messageToolCalls],
+    () => buildMessageArtifactMap(combinedToolCallsByMessage, artifactsByPath),
+    [artifactsByPath, combinedToolCallsByMessage],
   )
+  const displayedArtifactsByMessage = useMemo(() => {
+    const next = new Map(artifactsByMessage)
+    const attachedPaths = new Set<string>()
+    artifactsByMessage.forEach((artifacts) => {
+      artifacts.forEach((artifact) => attachedPaths.add(artifact.path))
+    })
+
+    const unassignedArtifacts = sortArtifacts(
+      Array.from(mergedArtifactsByPath.values()).filter((artifact) => !attachedPaths.has(artifact.path)),
+    )
+    if (unassignedArtifacts.length === 0) return next
+
+    const artifactTime = (artifact: ChatArtifact): number => {
+      const modified = Date.parse(String(artifact.modifiedAt || ''))
+      if (Number.isFinite(modified)) return modified
+      const created = Date.parse(String(artifact.createdAt || ''))
+      if (Number.isFinite(created)) return created
+      return 0
+    }
+
+    const newestTime = artifactTime(unassignedArtifacts[0])
+    const fallbackArtifacts = newestTime > 0
+      ? unassignedArtifacts.filter((artifact) => artifactTime(artifact) >= newestTime - 60_000)
+      : unassignedArtifacts.slice(0, 3)
+    if (fallbackArtifacts.length === 0) return next
+
+    const lastAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant')
+    if (!lastAssistantMessage) return next
+
+    const existing = next.get(lastAssistantMessage.id) ?? []
+    const seen = new Set(existing.map((artifact) => artifact.path))
+    const merged = [...existing]
+    fallbackArtifacts.forEach((artifact) => {
+      if (seen.has(artifact.path)) return
+      seen.add(artifact.path)
+      merged.push(artifact)
+    })
+    next.set(lastAssistantMessage.id, sortArtifacts(merged))
+    return next
+  }, [artifactsByMessage, mergedArtifactsByPath, messages])
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -92,6 +155,11 @@ export function ChatView() {
   ], {
     streaming: isStreaming,
   })
+
+  useEffect(() => {
+    if (!activeSessionId) return
+    setSessionToolCalls(activeSessionId, combinedToolCallsByMessage)
+  }, [activeSessionId, combinedToolCallsByMessage])
 
   const handleSend = (text: string) => {
     if (!text.trim()) return
@@ -161,8 +229,10 @@ export function ChatView() {
             statusText={statusText}
             compact={compact}
             viewportWidth={viewportWidth}
-            toolCallsByMessage={messageToolCalls}
-            artifactsByMessage={artifactsByMessage}
+            toolCallsByMessage={combinedToolCallsByMessage}
+            artifactsByMessage={displayedArtifactsByMessage}
+            artifactLookup={mergedArtifactsByPath}
+            workspace={activeWorkspace}
             liveSummary={execution.live}
             onQuickPrompt={handleSend}
             onOpenArtifact={setSelectedArtifact}

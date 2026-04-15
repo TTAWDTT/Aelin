@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useLocaleStore } from '@/shared/stores/localeStore'
+import { deleteSessionToolCalls } from '../chatExecutionStorage'
 import { deleteSessionMessages } from '../chatHistoryStorage'
 
 export interface ChatSession {
@@ -47,6 +48,7 @@ export const useChatStore = create<ChatStore>()(
 
       deleteSession: (id) => set(s => {
         deleteSessionMessages(id)
+        deleteSessionToolCalls(id)
         const rest = s.sessions.filter(x => x.id !== id)
         return { sessions: rest, activeSessionId: s.activeSessionId === id ? (rest[0]?.id ?? null) : s.activeSessionId }
       }),

@@ -29,6 +29,7 @@
   "build": {
     "appId": "com.ttawdtt.aelin",
     "productName": "Aelin",
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
     },
@@ -52,6 +53,7 @@
     ],
     "win": {
       "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",

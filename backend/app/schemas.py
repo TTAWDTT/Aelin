@@ -278,6 +278,21 @@ class AelinDevicePathOpenResponse(BaseModel):
     generated_at: datetime
 
 
+class AelinArtifactResolveResponse(BaseModel):
+    workspace: str = "default"
+    requested_path: str
+    path: str
+    relative_path: str = ""
+    name: str
+    mime_type: str = "application/octet-stream"
+    size_bytes: int = 0
+    preview_kind: str = "unknown"
+    content: str = ""
+    created_at: str = ""
+    modified_at: str = ""
+    generated_at: datetime
+
+
 class AelinDeviceScreenCaptureResponse(BaseModel):
     data_url: str
     name: str = ""

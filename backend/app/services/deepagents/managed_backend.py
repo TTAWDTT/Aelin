@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from typing import Any
 
 try:
     from deepagents.backends.composite import CompositeBackend
-    from deepagents.backends.protocol import FileDownloadResponse, LsResult, WriteResult
+    from deepagents.backends.protocol import FileDownloadResponse, WriteResult
 except Exception:  # pragma: no cover - fallback for test environments without deepagents
     @dataclass
     class WriteResult:
@@ -77,6 +78,18 @@ except Exception:  # pragma: no cover - fallback for test environments without d
             if callable(lister):
                 return list(lister(resolved_path) or [])
             return []
+
+        async def als_info(self, path: str) -> list[dict[str, Any]]:
+            return await asyncio.to_thread(self.ls_info, path)
+
+        async def adownload_files(self, paths: list[str]) -> list[Any]:
+            return await asyncio.to_thread(self.download_files, paths)
+
+
+@dataclass
+class LsResult:
+    error: str | None = None
+    entries: list[dict[str, Any]] | None = None
 
 
 _LOG = logging.getLogger(__name__)
