@@ -55,6 +55,7 @@ const PET_PLUGIN_API_EXECUTE_ARTIFACT_SCAN_MAX_DEPTH = Math.max(
   0,
   Math.min(8, Number(process.env.AELIN_PET_PLUGIN_EXECUTE_ARTIFACT_SCAN_MAX_DEPTH || "4"))
 );
+const AGENT_SERVER_GRAPH_ID = "agent";
 
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -3217,6 +3218,78 @@ function requestStatus(url) {
   });
 }
 
+function requestJson(url, method = "GET", payload = undefined) {
+  return new Promise((resolve) => {
+    const body = payload === undefined ? "" : JSON.stringify(payload);
+    const headers = body
+      ? {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        }
+      : undefined;
+    const req = http.request(url, { method, headers }, (res) => {
+      const code = Number(res.statusCode || 0);
+      let text = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        if (text.length >= 200000) return;
+        text += String(chunk || "");
+      });
+      res.on("end", () => {
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = null;
+        }
+        resolve({ statusCode: code, json });
+      });
+    });
+    req.on("error", () => resolve({ statusCode: 0, json: null }));
+    req.setTimeout(2500, () => {
+      req.destroy();
+      resolve({ statusCode: 0, json: null });
+    });
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+function hasAgentAssistant(items) {
+  if (!Array.isArray(items)) return false;
+  return items.some((item) => {
+    const graphId = String(item?.graph_id || "").trim();
+    const name = String(item?.name || "").trim();
+    return graphId === AGENT_SERVER_GRAPH_ID || name === AGENT_SERVER_GRAPH_ID;
+  });
+}
+
+async function isAgentServerReady() {
+  const response = await requestJson(
+    `http://127.0.0.1:${backendPort}/assistants/search`,
+    "POST",
+    {}
+  );
+  return response.statusCode === 200 && hasAgentAssistant(response.json);
+}
+
+async function probeBackendReadiness() {
+  const [healthCode, okCode, rootCode, agentServerReady] = await Promise.all([
+    requestStatus(`http://127.0.0.1:${backendPort}/healthz`),
+    requestStatus(`http://127.0.0.1:${backendPort}/ok`),
+    requestStatus(`http://127.0.0.1:${backendPort}/`),
+    isAgentServerReady(),
+  ]);
+  return {
+    healthCode,
+    okCode,
+    rootCode,
+    productHealthy: healthCode === 200 || okCode === 200,
+    listenerPresent: healthCode > 0 || okCode > 0 || rootCode > 0,
+    agentServerReady,
+  };
+}
+
 async function waitForUrl(url, timeoutMs = 45000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -3229,10 +3302,19 @@ async function waitForUrl(url, timeoutMs = 45000) {
 }
 
 async function hasHealthyExistingBackend() {
-  const healthCode = await requestStatus(`http://127.0.0.1:${backendPort}/healthz`);
-  if (healthCode === 200) return true;
-  const okCode = await requestStatus(`http://127.0.0.1:${backendPort}/ok`);
-  return okCode === 200;
+  const probe = await probeBackendReadiness();
+  return probe.productHealthy && probe.agentServerReady;
+}
+
+async function waitForBackendReady(timeoutMs = 45000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await hasHealthyExistingBackend()) return true;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
 }
 
 async function hasHealthyExistingFrontend() {
@@ -3309,6 +3391,25 @@ function buildPythonCandidates(requestedPython) {
   const requested = sanitizePythonPath(requestedPython);
   if (requested) pushCandidate(requested, []);
 
+  if (process.platform === "win32") {
+    try {
+      const whereProbe = spawnSync("where.exe", ["python"], {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8",
+      });
+      if (!whereProbe.error && Number(whereProbe.status || 0) === 0) {
+        const discovered = String(whereProbe.stdout || "")
+          .split(/\r?\n/)
+          .map((line) => sanitizePythonPath(line))
+          .filter(Boolean);
+        for (const candidate of discovered) pushCandidate(candidate, []);
+      }
+    } catch {
+      // Ignore PATH discovery failures and fall back to generic launchers.
+    }
+  }
+
   // Prefer plain `python` to avoid broken `py -3` mappings on Windows.
   pushCandidate("python", []);
 
@@ -3347,6 +3448,36 @@ function probePythonRunner(candidate, cwd, env) {
       ok: true,
       pythonPath: String(probe.stdout || "").trim(),
     };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function probeLangGraphModule(candidate, cwd, env) {
+  try {
+    const probe = spawnSync(
+      candidate.command,
+      [
+        ...candidate.args,
+        "-c",
+        "import importlib.util,sys;raise SystemExit(0 if importlib.util.find_spec('langgraph_cli') else 1)",
+      ],
+      {
+        cwd,
+        env,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8",
+      }
+    );
+    if (probe.error) {
+      return { ok: false, reason: probe.error.message || String(probe.error) };
+    }
+    if (probe.status !== 0) {
+      const reason = stripAnsiCodes(String(probe.stderr || probe.stdout || "")).trim();
+      return { ok: false, reason: reason || "langgraph_cli module not found" };
+    }
+    return { ok: true };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
@@ -3441,9 +3572,16 @@ async function startBackend() {
     env.AELIN_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
   }
 
-  if (await hasHealthyExistingBackend()) {
+  const existingBackend = await probeBackendReadiness();
+  if (existingBackend.productHealthy && existingBackend.agentServerReady) {
     safeConsoleLog(`[backend] Reusing existing backend at http://127.0.0.1:${backendPort}`);
     return;
+  }
+  if (existingBackend.listenerPresent && !existingBackend.agentServerReady) {
+    throw new Error(
+      `Port ${backendPort} is already serving a backend-like process, but LangGraph Agent Server is unavailable. ` +
+      `Please stop the existing process on http://127.0.0.1:${backendPort} and retry.`
+    );
   }
 
   if (app.isPackaged) {
@@ -3484,42 +3622,50 @@ async function startBackend() {
       failed.push(`${candidate.label}: ${probe.reason}`);
       continue;
     }
-    safeConsoleLog(`[backend] Python runner selected: ${candidate.label}`);
     const langgraphExecutable = resolveLangGraphExecutable(probe.pythonPath);
-    const launch = langgraphExecutable
-      ? {
-          command: langgraphExecutable,
-          args: [
-            "dev",
-            "--config",
-            "langgraph.json",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            String(backendPort),
-            "--no-browser",
-            "--no-reload",
-          ],
-          label: langgraphExecutable,
-        }
-      : {
-          command: candidate.command,
-          args: [
-            ...candidate.args,
-            "-m",
-            "langgraph_cli",
-            "dev",
-            "--config",
-            "langgraph.json",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            String(backendPort),
-            "--no-browser",
-            "--no-reload",
-          ],
-          label: `${candidate.label} -m langgraph_cli`,
-        };
+    let launch = null;
+    if (langgraphExecutable) {
+      launch = {
+        command: langgraphExecutable,
+        args: [
+          "dev",
+          "--config",
+          "langgraph.json",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          String(backendPort),
+          "--no-browser",
+          "--no-reload",
+        ],
+        label: langgraphExecutable,
+      };
+    } else {
+      const langgraphModuleProbe = probeLangGraphModule(candidate, root, env);
+      if (!langgraphModuleProbe.ok) {
+        failed.push(`${candidate.label}: ${langgraphModuleProbe.reason}`);
+        continue;
+      }
+      launch = {
+        command: candidate.command,
+        args: [
+          ...candidate.args,
+          "-m",
+          "langgraph_cli",
+          "dev",
+          "--config",
+          "langgraph.json",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          String(backendPort),
+          "--no-browser",
+          "--no-reload",
+        ],
+        label: `${candidate.label} -m langgraph_cli`,
+      };
+    }
+    safeConsoleLog(`[backend] Python runner selected: ${candidate.label}`);
     safeConsoleLog(`[backend] LangGraph launcher selected: ${launch.label}`);
     backendProc = spawn(
       launch.command,
@@ -4428,12 +4574,12 @@ async function boot() {
   reloadPetBehaviorConfig();
   await startPetPluginApiServer();
   await startBackend();
-  const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/healthz`, 60000);
+  const backendReady = await waitForBackendReady(60000);
   if (!backendReady) {
     throw new Error(
       app.isPackaged
-        ? "Bundled backend startup timed out. Please reinstall or check logs."
-        : "Backend startup timed out. Check Python environment and dependencies."
+        ? "Bundled backend startup timed out before LangGraph Agent Server became ready. Please reinstall or check logs."
+        : "Backend startup timed out before LangGraph Agent Server became ready. Check Python environment and dependencies."
     );
   }
 
