@@ -160,9 +160,15 @@ def build_agent_backend_factory(
     else:
         write_file_max_chars = int(raw_write_file_max_chars)
 
+    def _build_state_backend(runtime: Any) -> Any:
+        try:
+            return StateBackend()
+        except TypeError:
+            return StateBackend(runtime)
+
     def _factory(runtime: Any) -> ManagedCompositeBackend:
         return ManagedCompositeBackend(
-            default=StateBackend(runtime),
+            default=_build_state_backend(runtime),
             routes=dict(routes),
             write_file_max_chars=write_file_max_chars,
             user_id=user_id,

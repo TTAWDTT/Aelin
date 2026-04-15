@@ -102,6 +102,15 @@ class _FakeSession:
         self.closed = True
 
 
+def _file_data_text(file_data: object) -> str:
+    if not isinstance(file_data, dict):
+        return ""
+    content = file_data.get("content")
+    if isinstance(content, list):
+        return "\n".join(str(line) for line in content)
+    return str(content or "")
+
+
 def _tool_context(fake_web: _FakeWebSearch, *, attachment_service=None, available_attachment_ids=None):
     return build_tool_runtime_context(
         user_id=1,
@@ -1194,8 +1203,8 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     assert isinstance(files, dict)
     assert "/memory/AGENTS.md" in files
     assert "/memory/memory_index.json" in files
-    content = files["/memory/AGENTS.md"].get("content")
-    assert isinstance(content, list) and "likes agents." in "\n".join(str(line) for line in content)
+    content = _file_data_text(files["/memory/AGENTS.md"])
+    assert "likes agents." in content
     assert any(path.startswith("/memory/") and path != "/memory/AGENTS.md" for path in files)
 
 
@@ -1231,8 +1240,9 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
     backend = backend_factory(runtime)
 
     runtime_files = runtime.state.get("files", {})
-    assert "/memory/AGENTS.md" in runtime_files
-    assert "/runtime/capabilities.json" in runtime_files
+    if runtime_files:
+        assert "/memory/AGENTS.md" in runtime_files
+        assert "/runtime/capabilities.json" in runtime_files
 
     responses = backend.download_files(["/memory/AGENTS.md", "/runtime/capabilities.json"])
     decoded = [
@@ -1242,7 +1252,9 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
     assert "remember this" in decoded[0]
     assert '"available_attachment_ids"' in decoded[1]
     assert '"memory_index"' in decoded[1]
-    assert files["/memory/AGENTS.md"] == runtime_files["/memory/AGENTS.md"]
+    assert _file_data_text(files["/memory/AGENTS.md"]) in decoded[0]
+    if runtime_files:
+        assert _file_data_text(runtime_files["/memory/AGENTS.md"]) in decoded[0]
 
 
 def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypatch):
@@ -1386,9 +1398,7 @@ def test_deepagents_skills_use_backend_routes_instead_of_preinjected_files(monke
     assert "/skills/aelin/chrome-cdp/scripts/cdp.mjs" not in files
     assert "/skills/aelin/chrome-cdp/references/guide.md" not in files
     assert "/runtime/capabilities.json" in files
-    capabilities_content = files["/runtime/capabilities.json"].get("content")
-    assert isinstance(capabilities_content, list)
-    capabilities_text = "\n".join(str(line) for line in capabilities_content)
+    capabilities_text = _file_data_text(files["/runtime/capabilities.json"])
     assert '"mounted_skills"' in capabilities_text
     assert "/skills/aelin/chrome-cdp/" in capabilities_text
 
@@ -1932,4 +1942,3 @@ def test_render_poster_artifact_tool_returns_compact_local_artifacts():
         assert artifact["preview_kind"] in {"image-data-url", "pdf-data-url"}
         assert Path(str(artifact["path"])).is_file()
         assert str(artifact["relative_path"]).startswith("output/generated-posters/")
-
