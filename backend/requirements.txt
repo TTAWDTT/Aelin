@@ -26,8 +26,12 @@ pytesseract>=0.3.10
 # falls back gracefully when this optional accelerator is unavailable.
 rapidocr-onnxruntime>=1.4.4; python_version < "3.13"
 defusedxml>=0.7.1
-deepagents>=0.1.0
-langchain-openai>=0.2.0
+# LangChain / DeepAgents stack
+# langgraph-api requires a newer langsmith stack in practice, and looser
+# transitive resolution can silently land on an older incompatible langsmith.
+deepagents>=0.4.11,<1.0.0
+langchain-openai>=1.1.11,<2.0.0
+langsmith[otel]>=0.7.0,<1.0.0
 
 # test
 pytest>=7.0

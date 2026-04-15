@@ -80,5 +80,10 @@ output/
 /aelin-ppt/
 /aelin-ppt.html
 
+# Local promo / video experiment workspaces
+/aelin-promo/
+/promo-video/
+/docs/promo_video_script.md
+
 # Local PinchTab checkout for multi-plane PoC
 backend/.pinchtab/
