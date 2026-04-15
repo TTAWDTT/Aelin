@@ -107,46 +107,6 @@ export function ChatView() {
     () => buildMessageArtifactMap(combinedToolCallsByMessage, artifactsByPath),
     [artifactsByPath, combinedToolCallsByMessage],
   )
-  const displayedArtifactsByMessage = useMemo(() => {
-    const next = new Map(artifactsByMessage)
-    const attachedPaths = new Set<string>()
-    artifactsByMessage.forEach((artifacts) => {
-      artifacts.forEach((artifact) => attachedPaths.add(artifact.path))
-    })
-
-    const unassignedArtifacts = sortArtifacts(
-      Array.from(mergedArtifactsByPath.values()).filter((artifact) => !attachedPaths.has(artifact.path)),
-    )
-    if (unassignedArtifacts.length === 0) return next
-
-    const artifactTime = (artifact: ChatArtifact): number => {
-      const modified = Date.parse(String(artifact.modifiedAt || ''))
-      if (Number.isFinite(modified)) return modified
-      const created = Date.parse(String(artifact.createdAt || ''))
-      if (Number.isFinite(created)) return created
-      return 0
-    }
-
-    const newestTime = artifactTime(unassignedArtifacts[0])
-    const fallbackArtifacts = newestTime > 0
-      ? unassignedArtifacts.filter((artifact) => artifactTime(artifact) >= newestTime - 60_000)
-      : unassignedArtifacts.slice(0, 3)
-    if (fallbackArtifacts.length === 0) return next
-
-    const lastAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant')
-    if (!lastAssistantMessage) return next
-
-    const existing = next.get(lastAssistantMessage.id) ?? []
-    const seen = new Set(existing.map((artifact) => artifact.path))
-    const merged = [...existing]
-    fallbackArtifacts.forEach((artifact) => {
-      if (seen.has(artifact.path)) return
-      seen.add(artifact.path)
-      merged.push(artifact)
-    })
-    next.set(lastAssistantMessage.id, sortArtifacts(merged))
-    return next
-  }, [artifactsByMessage, mergedArtifactsByPath, messages])
 
   useAutoScrollToBottom(scrollRef, [
     messages.length,
@@ -230,7 +190,7 @@ export function ChatView() {
             compact={compact}
             viewportWidth={viewportWidth}
             toolCallsByMessage={combinedToolCallsByMessage}
-            artifactsByMessage={displayedArtifactsByMessage}
+            artifactsByMessage={artifactsByMessage}
             artifactLookup={mergedArtifactsByPath}
             workspace={activeWorkspace}
             liveSummary={execution.live}

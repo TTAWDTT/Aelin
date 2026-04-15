@@ -141,6 +141,27 @@ describe('artifactUtils', () => {
     )
   })
 
+  it('keeps state-only artifacts unattached until a tool call or explicit reference links them', () => {
+    const stateArtifacts = extractArtifactsFromState({
+      messages: [],
+      files: {
+        '/runtime/capabilities.json': {
+          content: [
+            JSON.stringify({
+              outputs_local_path: 'D:/Aelin/output/deepagents/user-1/default/outputs',
+            }),
+          ],
+        },
+        '/outputs/orphan-report.pdf': {
+          content: '',
+          modified_at: '2026-03-30T08:08:00Z',
+        },
+      },
+    })
+
+    expect(buildMessageArtifactMap(new Map(), stateArtifacts)).toEqual(new Map())
+  })
+
   it('finds known artifacts referenced inside assistant message text', () => {
     const artifacts = extractArtifactsFromState({
       messages: [],

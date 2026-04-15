@@ -3192,6 +3192,57 @@ function sqliteUrl(absPath) {
   return `sqlite:///${String(absPath || "").replace(/\\/g, "/")}`;
 }
 
+function buildDesktopBackendEnv(options = {}) {
+  const { includeLangGraphAuth = false } = options;
+  const userData = app.getPath("userData");
+  const mediaDir = path.join(userData, "media");
+  fs.mkdirSync(mediaDir, { recursive: true });
+  const dbFile = path.join(userData, "aelin.db");
+  const env = {
+    ...process.env,
+    PYTHONUTF8: "1",
+    PYTHONIOENCODING: "utf-8",
+    LANG: "C.UTF-8",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED: process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED || "1",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS || String(Math.max(5, Math.round(getProbeCommandTimeoutMs() / 1000))),
+    AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || String(PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS),
+    AELIN_DATABASE_URL: sqliteUrl(dbFile),
+    AELIN_MEDIA_DIR: mediaDir,
+    AELIN_CORS_ORIGINS: [
+      `http://127.0.0.1:${frontendPort}`,
+      `http://localhost:${frontendPort}`,
+      "http://127.0.0.1:5173",
+      "http://localhost:5173",
+      "http://127.0.0.1:5174",
+      "http://localhost:5174",
+    ].join(","),
+    AELIN_BROWSER_TOOL_HEADLESS: process.env.AELIN_BROWSER_TOOL_HEADLESS || "0",
+    AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
+      process.env.AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE || "1",
+    AELIN_BROWSER_TOOL_MODE_DEFAULT: process.env.AELIN_BROWSER_TOOL_MODE_DEFAULT || "auto",
+    AELIN_BROWSER_TOOL_CDP_ENABLED: process.env.AELIN_BROWSER_TOOL_CDP_ENABLED || "1",
+    AELIN_BROWSER_TOOL_CDP_ENDPOINT:
+      process.env.AELIN_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
+  };
+  const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
+  if (pluginBaseUrl) {
+    env.AELIN_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
+  }
+  if (PET_PLUGIN_API_TOKEN) {
+    env.AELIN_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
+  }
+  if (includeLangGraphAuth) {
+    // Empty LANGGRAPH_AUTH / LANGGRAPH_AUTH_TYPE values inherited from the shell
+    // cause `langgraph dev` to ignore the auth block in langgraph.json and fall
+    // back to noop auth, which then loses the desktop user's saved provider config.
+    env.LANGGRAPH_AUTH = LANGGRAPH_AUTH_CONFIG;
+    delete env.LANGGRAPH_AUTH_TYPE;
+  }
+  return env;
+}
+
 function requestOk(url) {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => {
@@ -3411,50 +3462,7 @@ function pipeTaggedLog(proc, tag) {
 }
 
 async function startBackend() {
-  const userData = app.getPath("userData");
-  const mediaDir = path.join(userData, "media");
-  fs.mkdirSync(mediaDir, { recursive: true });
-  const dbFile = path.join(userData, "aelin.db");
-
-  const env = {
-    ...process.env,
-    PYTHONUTF8: "1",
-    PYTHONIOENCODING: "utf-8",
-    AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED: process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED || "1",
-    AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS:
-      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS || String(Math.max(5, Math.round(getProbeCommandTimeoutMs() / 1000))),
-    AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS:
-      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || String(PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS),
-    AELIN_DATABASE_URL: sqliteUrl(dbFile),
-    AELIN_MEDIA_DIR: mediaDir,
-    AELIN_CORS_ORIGINS: [
-      `http://127.0.0.1:${frontendPort}`,
-      `http://localhost:${frontendPort}`,
-      "http://127.0.0.1:5173",
-      "http://localhost:5173",
-      "http://127.0.0.1:5174",
-      "http://localhost:5174",
-    ].join(","),
-    AELIN_BROWSER_TOOL_HEADLESS: process.env.AELIN_BROWSER_TOOL_HEADLESS || "0",
-    AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
-      process.env.AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE || "1",
-    AELIN_BROWSER_TOOL_MODE_DEFAULT: process.env.AELIN_BROWSER_TOOL_MODE_DEFAULT || "auto",
-    AELIN_BROWSER_TOOL_CDP_ENABLED: process.env.AELIN_BROWSER_TOOL_CDP_ENABLED || "1",
-    AELIN_BROWSER_TOOL_CDP_ENDPOINT:
-      process.env.AELIN_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
-  };
-  const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
-  if (pluginBaseUrl) {
-    env.AELIN_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
-  }
-  if (PET_PLUGIN_API_TOKEN) {
-    env.AELIN_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
-  }
-  // Empty LANGGRAPH_AUTH / LANGGRAPH_AUTH_TYPE values inherited from the shell
-  // cause `langgraph dev` to ignore the auth block in langgraph.json and fall
-  // back to noop auth, which then loses the desktop user's saved provider config.
-  env.LANGGRAPH_AUTH = LANGGRAPH_AUTH_CONFIG;
-  delete env.LANGGRAPH_AUTH_TYPE;
+  const env = buildDesktopBackendEnv({ includeLangGraphAuth: true });
 
   if (await hasHealthyExistingBackend()) {
     safeConsoleLog(`[backend] Reusing existing backend at http://127.0.0.1:${backendPort}`);
@@ -3574,12 +3582,10 @@ async function startProductApiDev() {
     throw new Error(`Backend directory missing: ${root}`);
   }
 
-  const env = {
-    ...process.env,
-    PYTHONUTF8: "1",
-    PYTHONIOENCODING: "utf-8",
-    LANG: "C.UTF-8",
-  };
+  // Keep the thin product API on the same DB/media/plugin context as the
+  // LangGraph backend so the desktop shell does not split state across two
+  // different runtimes.
+  const env = buildDesktopBackendEnv();
   const requestedPython = String(process.env.AELIN_PYTHON || "");
   const pythonCandidates = buildPythonCandidates(requestedPython);
   const failed = [];
