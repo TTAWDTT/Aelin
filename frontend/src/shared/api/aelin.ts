@@ -1,5 +1,6 @@
 import { fetchFormData, fetchJson } from './client'
 import type {
+  ArtifactResolveResponse,
   AttachmentUploadResponse,
   DeviceCapabilitiesResponse,
   DeviceScreenCaptureRequest,
@@ -38,6 +39,13 @@ export const aelinApi = {
   // Device
   deviceCapabilities: () =>
     fetchJson<DeviceCapabilitiesResponse>('/api/v1/aelin/device/capabilities'),
+
+  resolveArtifactPath: (params: { workspace?: string; path: string }) => {
+    const searchParams = new URLSearchParams()
+    searchParams.set('workspace', params.workspace || 'default')
+    searchParams.set('path', params.path)
+    return fetchJson<ArtifactResolveResponse>(`/api/v1/aelin/artifact/resolve?${searchParams.toString()}`)
+  },
 
   deviceScreenCapture: (body?: DeviceScreenCaptureRequest) =>
     fetchJson<DeviceScreenCaptureResponse>('/api/v1/aelin/device/screen/capture', {

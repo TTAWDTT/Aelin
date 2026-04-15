@@ -22,8 +22,12 @@ const { computePetEmotion } = require("./pet-emotion-engine.cjs");
 
 const isDev = process.env.AELIN_DESKTOP_DEV === "1" || !app.isPackaged;
 const backendPort = Number(process.env.AELIN_BACKEND_PORT || (isDev ? 8000 : 18080));
+const productApiPort = Number(process.env.AELIN_PRODUCT_API_PORT || (isDev ? 18080 : backendPort));
 const frontendPort = Number(process.env.AELIN_DESKTOP_PORT || (isDev ? 5173 : 1420));
 const desktopZoom = Number(process.env.AELIN_DESKTOP_ZOOM || "1.0");
+const LANGGRAPH_AUTH_CONFIG = JSON.stringify({
+  path: "./agent_server/auth.py:aelin_auth",
+});
 const PET_COMPACT_WINDOW_SIZE = 128;
 const PET_EXPANDED_WINDOW_WIDTH = 236;
 const PET_EXPANDED_WINDOW_MAX_HEIGHT = 420;
@@ -64,6 +68,7 @@ let mainWindow = null;
 let petWindow = null;
 let tray = null;
 let backendProc = null;
+let productApiProc = null;
 let frontendDevProc = null;
 let frontendServer = null;
 let closing = false;
@@ -3187,6 +3192,57 @@ function sqliteUrl(absPath) {
   return `sqlite:///${String(absPath || "").replace(/\\/g, "/")}`;
 }
 
+function buildDesktopBackendEnv(options = {}) {
+  const { includeLangGraphAuth = false } = options;
+  const userData = app.getPath("userData");
+  const mediaDir = path.join(userData, "media");
+  fs.mkdirSync(mediaDir, { recursive: true });
+  const dbFile = path.join(userData, "aelin.db");
+  const env = {
+    ...process.env,
+    PYTHONUTF8: "1",
+    PYTHONIOENCODING: "utf-8",
+    LANG: "C.UTF-8",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED: process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED || "1",
+    AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS || String(Math.max(5, Math.round(getProbeCommandTimeoutMs() / 1000))),
+    AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS:
+      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || String(PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS),
+    AELIN_DATABASE_URL: sqliteUrl(dbFile),
+    AELIN_MEDIA_DIR: mediaDir,
+    AELIN_CORS_ORIGINS: [
+      `http://127.0.0.1:${frontendPort}`,
+      `http://localhost:${frontendPort}`,
+      "http://127.0.0.1:5173",
+      "http://localhost:5173",
+      "http://127.0.0.1:5174",
+      "http://localhost:5174",
+    ].join(","),
+    AELIN_BROWSER_TOOL_HEADLESS: process.env.AELIN_BROWSER_TOOL_HEADLESS || "0",
+    AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
+      process.env.AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE || "1",
+    AELIN_BROWSER_TOOL_MODE_DEFAULT: process.env.AELIN_BROWSER_TOOL_MODE_DEFAULT || "auto",
+    AELIN_BROWSER_TOOL_CDP_ENABLED: process.env.AELIN_BROWSER_TOOL_CDP_ENABLED || "1",
+    AELIN_BROWSER_TOOL_CDP_ENDPOINT:
+      process.env.AELIN_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
+  };
+  const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
+  if (pluginBaseUrl) {
+    env.AELIN_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
+  }
+  if (PET_PLUGIN_API_TOKEN) {
+    env.AELIN_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
+  }
+  if (includeLangGraphAuth) {
+    // Empty LANGGRAPH_AUTH / LANGGRAPH_AUTH_TYPE values inherited from the shell
+    // cause `langgraph dev` to ignore the auth block in langgraph.json and fall
+    // back to noop auth, which then loses the desktop user's saved provider config.
+    env.LANGGRAPH_AUTH = LANGGRAPH_AUTH_CONFIG;
+    delete env.LANGGRAPH_AUTH_TYPE;
+  }
+  return env;
+}
+
 function requestOk(url) {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => {
@@ -3233,6 +3289,11 @@ async function hasHealthyExistingBackend() {
   if (healthCode === 200) return true;
   const okCode = await requestStatus(`http://127.0.0.1:${backendPort}/ok`);
   return okCode === 200;
+}
+
+async function hasHealthyExistingProductApi() {
+  const healthCode = await requestStatus(`http://127.0.0.1:${productApiPort}/healthz`);
+  return healthCode === 200;
 }
 
 async function hasHealthyExistingFrontend() {
@@ -3401,45 +3462,7 @@ function pipeTaggedLog(proc, tag) {
 }
 
 async function startBackend() {
-  const userData = app.getPath("userData");
-  const mediaDir = path.join(userData, "media");
-  fs.mkdirSync(mediaDir, { recursive: true });
-  const dbFile = path.join(userData, "aelin.db");
-
-  const env = {
-    ...process.env,
-    PYTHONUTF8: "1",
-    PYTHONIOENCODING: "utf-8",
-    AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED: process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED || "1",
-    AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS:
-      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS || String(Math.max(5, Math.round(getProbeCommandTimeoutMs() / 1000))),
-    AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS:
-      process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || String(PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS),
-    AELIN_DATABASE_URL: sqliteUrl(dbFile),
-    AELIN_MEDIA_DIR: mediaDir,
-    AELIN_CORS_ORIGINS: [
-      `http://127.0.0.1:${frontendPort}`,
-      `http://localhost:${frontendPort}`,
-      "http://127.0.0.1:5173",
-      "http://localhost:5173",
-      "http://127.0.0.1:5174",
-      "http://localhost:5174",
-    ].join(","),
-    AELIN_BROWSER_TOOL_HEADLESS: process.env.AELIN_BROWSER_TOOL_HEADLESS || "0",
-    AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE:
-      process.env.AELIN_BROWSER_TOOL_OPEN_EXTERNAL_ON_NAVIGATE || "1",
-    AELIN_BROWSER_TOOL_MODE_DEFAULT: process.env.AELIN_BROWSER_TOOL_MODE_DEFAULT || "auto",
-    AELIN_BROWSER_TOOL_CDP_ENABLED: process.env.AELIN_BROWSER_TOOL_CDP_ENABLED || "1",
-    AELIN_BROWSER_TOOL_CDP_ENDPOINT:
-      process.env.AELIN_BROWSER_TOOL_CDP_ENDPOINT || "http://127.0.0.1:9222",
-  };
-  const pluginBaseUrl = petPluginApiPort > 0 ? `http://127.0.0.1:${petPluginApiPort}` : "";
-  if (pluginBaseUrl) {
-    env.AELIN_DESKTOP_PLUGIN_BASE_URL = pluginBaseUrl;
-  }
-  if (PET_PLUGIN_API_TOKEN) {
-    env.AELIN_DESKTOP_PLUGIN_TOKEN = PET_PLUGIN_API_TOKEN;
-  }
+  const env = buildDesktopBackendEnv({ includeLangGraphAuth: true });
 
   if (await hasHealthyExistingBackend()) {
     safeConsoleLog(`[backend] Reusing existing backend at http://127.0.0.1:${backendPort}`);
@@ -3546,6 +3569,68 @@ async function startBackend() {
   });
 }
 
+async function startProductApiDev() {
+  if (!isDev) return;
+  if (productApiPort === backendPort) return;
+  if (await hasHealthyExistingProductApi()) {
+    safeConsoleLog(`[product-api] Reusing existing product API at http://127.0.0.1:${productApiPort}`);
+    return;
+  }
+
+  const root = backendDir();
+  if (!fs.existsSync(root)) {
+    throw new Error(`Backend directory missing: ${root}`);
+  }
+
+  // Keep the thin product API on the same DB/media/plugin context as the
+  // LangGraph backend so the desktop shell does not split state across two
+  // different runtimes.
+  const env = buildDesktopBackendEnv();
+  const requestedPython = String(process.env.AELIN_PYTHON || "");
+  const pythonCandidates = buildPythonCandidates(requestedPython);
+  const failed = [];
+
+  for (const candidate of pythonCandidates) {
+    const probe = probePythonRunner(candidate, root, env);
+    if (!probe.ok) {
+      failed.push(`${candidate.label}: ${probe.reason}`);
+      continue;
+    }
+    safeConsoleLog(`[product-api] Python runner selected: ${candidate.label}`);
+    productApiProc = spawn(
+      candidate.command,
+      [
+        ...candidate.args,
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(productApiPort),
+      ],
+      {
+        cwd: root,
+        env,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    );
+    break;
+  }
+
+  if (!productApiProc) {
+    const details = failed.length ? `\nCandidate probe failed:\n- ${failed.join("\n- ")}` : "";
+    throw new Error(`Unable to start product API Python process.${details}`);
+  }
+
+  pipeTaggedLog(productApiProc, "product-api");
+  productApiProc.on("error", (err) => {
+    if (closing) return;
+    dialog.showErrorBox("Product API startup failed", String(err?.message || err));
+  });
+}
+
 async function startFrontendDev() {
   if (process.env.AELIN_DESKTOP_SKIP_FRONTEND_DEV === "1") return;
   if (await hasHealthyExistingFrontend()) {
@@ -3563,6 +3648,7 @@ async function startFrontendDev() {
       FORCE_COLOR: "0",
       NO_COLOR: "1",
       npm_config_color: "false",
+      VITE_PRODUCT_API_BASE: `http://127.0.0.1:${productApiPort}`,
     },
   });
   pipeTaggedLog(frontendDevProc, "frontend");
@@ -3581,7 +3667,7 @@ function startFrontendServer() {
   web.use(
     "/api",
     createProxyMiddleware({
-      target: `http://127.0.0.1:${backendPort}/api`,
+      target: `http://127.0.0.1:${productApiPort}/api`,
       changeOrigin: true,
       timeout: proxyTimeoutMs,
       proxyTimeout: proxyTimeoutMs,
@@ -3590,7 +3676,7 @@ function startFrontendServer() {
   web.use(
     "/media",
     createProxyMiddleware({
-      target: `http://127.0.0.1:${backendPort}/media`,
+      target: `http://127.0.0.1:${productApiPort}/media`,
       changeOrigin: true,
       timeout: proxyTimeoutMs,
       proxyTimeout: proxyTimeoutMs,
@@ -4428,13 +4514,21 @@ async function boot() {
   reloadPetBehaviorConfig();
   await startPetPluginApiServer();
   await startBackend();
-  const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/healthz`, 60000);
+  await startProductApiDev();
+  const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/ok`, 60000);
   if (!backendReady) {
     throw new Error(
       app.isPackaged
         ? "Bundled backend startup timed out. Please reinstall or check logs."
         : "Backend startup timed out. Check Python environment and dependencies."
     );
+  }
+
+  if (isDev && productApiPort !== backendPort) {
+    const productApiReady = await waitForUrl(`http://127.0.0.1:${productApiPort}/healthz`, 60000);
+    if (!productApiReady) {
+      throw new Error("Product API startup timed out. Check Python environment and dependencies.");
+    }
   }
 
   if (isDev) {
@@ -4488,8 +4582,10 @@ function cleanup() {
     frontendServer = null;
   }
   killProcTree(frontendDevProc);
+  killProcTree(productApiProc);
   killProcTree(backendProc);
   frontendDevProc = null;
+  productApiProc = null;
   backendProc = null;
 }
 

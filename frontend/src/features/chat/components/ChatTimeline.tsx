@@ -15,6 +15,8 @@ interface ChatTimelineProps {
   viewportWidth: number
   toolCallsByMessage?: Map<string, ExecutionToolCall[]>
   artifactsByMessage?: Map<string, ChatArtifact[]>
+  artifactLookup?: Map<string, ChatArtifact>
+  workspace?: string
   liveSummary?: ExecutionLiveSummary
   onQuickPrompt: (text: string) => void
   onOpenArtifact: (artifact: ChatArtifact) => void
@@ -29,6 +31,8 @@ export function ChatTimeline({
   viewportWidth,
   toolCallsByMessage,
   artifactsByMessage,
+  artifactLookup,
+  workspace = 'default',
   liveSummary,
   onQuickPrompt,
   onOpenArtifact,
@@ -64,6 +68,8 @@ export function ChatTimeline({
                   message={message}
                   toolCalls={toolCallsByMessage?.get(message.id) ?? []}
                   artifacts={artifactsByMessage?.get(message.id) ?? []}
+                  artifactLookup={artifactLookup}
+                  workspace={workspace}
                   isThinking={Boolean(activeAssistantId) && message.id === activeAssistantId}
                   thinkingText={statusText}
                   liveSummary={Boolean(activeAssistantId) && message.id === activeAssistantId ? liveSummary : undefined}
@@ -86,6 +92,8 @@ export function ChatTimeline({
                 }}
                 toolCalls={[]}
                 artifacts={[]}
+                artifactLookup={artifactLookup}
+                workspace={workspace}
                 isThinking
                 thinkingText={statusText}
                 liveSummary={liveSummary}

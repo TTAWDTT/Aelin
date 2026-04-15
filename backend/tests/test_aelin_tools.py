@@ -1466,6 +1466,35 @@ def test_deepagents_backend_maps_workspace_and_outputs_to_real_disk(monkeypatch,
     assert (fake_delivery_root / "user-1" / "default" / "outputs" / "report.md").read_text(encoding="utf-8") == "# Report"
 
 
+def test_deepagents_backend_exposes_async_file_listing_and_download(tmp_path):
+    from app.services.deepagents import deepagents_graph as dag
+
+    skill_root = tmp_path / "skills"
+    chrome_skill = skill_root / "chrome-cdp"
+    chrome_skill.mkdir(parents=True)
+    (chrome_skill / "SKILL.md").write_text("# chrome-cdp\n", encoding="utf-8")
+
+    backend_factory = dag._build_agent_backend_factory(
+        user_id=1,
+        workspace="default",
+        skills_root=skill_root,
+        extra_dir="",
+        seed_files=None,
+    )
+    backend = backend_factory(SimpleNamespace(state={}))
+
+    async def _exercise_async_file_ops():
+        listing = await backend.als_info("/skills/aelin/")
+        downloads = await backend.adownload_files(["/skills/aelin/chrome-cdp/SKILL.md"])
+        return listing, downloads
+
+    listed, downloads = asyncio.run(_exercise_async_file_ops())
+
+    assert any(item["path"] == "/skills/aelin/chrome-cdp/" and item["is_dir"] for item in listed)
+    assert len(downloads) == 1
+    assert downloads[0].content.replace(b"\r\n", b"\n") == b"# chrome-cdp\n"
+
+
 def test_deepagents_model_timeout_middleware_stops_long_async_model_call(caplog):
     from app.services.deepagents.model_timeout_middleware import DeepAgentsModelTimeoutMiddleware
 

@@ -60,4 +60,25 @@ describe('artifactActions', () => {
       }),
     )
   })
+
+  it('builds a blob url from binary image data when no local file path is available', () => {
+    const createObjectUrlMock = vi.fn(() => 'blob:artifact-image')
+    vi.stubGlobal('URL', {
+      createObjectURL: createObjectUrlMock,
+      revokeObjectURL: vi.fn(),
+    })
+
+    const url = createArtifactObjectUrl(createArtifact({
+      path: 'artifact-image.png',
+      displayPath: 'artifact-image.png',
+      relativePath: undefined,
+      localPath: undefined,
+      content: '',
+      downloadBase64: 'ZmFrZQ==',
+      previewKind: 'image-data-url',
+    }))
+
+    expect(url).toBe('blob:artifact-image')
+    expect(createObjectUrlMock).toHaveBeenCalledTimes(1)
+  })
 })

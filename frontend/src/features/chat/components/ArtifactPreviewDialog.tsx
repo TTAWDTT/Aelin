@@ -5,7 +5,7 @@ import toast from 'react-hot-toast'
 import { MarkdownMessage } from './MarkdownMessage'
 import { cn } from '@/shared/utils/cn'
 import { formatBytes } from '../hooks/chatStreamHelpers'
-import type { ChatArtifact } from '../artifactUtils'
+import { artifactHasInlinePreview, type ChatArtifact } from '../artifactUtils'
 import {
   canOpenArtifactLocally,
   createArtifactObjectUrl,
@@ -39,6 +39,7 @@ export function ArtifactPreviewDialog({
   const [textContentError, setTextContentError] = useState('')
   const blobUrl = useMemo(() => createArtifactObjectUrl(artifact), [artifact])
   const previewTextContent = artifact?.content || loadedTextContent
+  const hasInlinePreview = artifactHasInlinePreview(artifact)
 
   useEffect(() => {
     if (!blobUrl) return undefined
@@ -120,7 +121,7 @@ export function ArtifactPreviewDialog({
               )}
             </div>
             <div className="flex items-center gap-2">
-              {artifact && blobUrl && (
+              {artifact && (
                 <>
                   <button
                     type="button"
@@ -130,14 +131,16 @@ export function ArtifactPreviewDialog({
                     <Download className="h-3.5 w-3.5" />
                     Download
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => window.open(blobUrl, '_blank', 'noopener,noreferrer')}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)]"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    Open
-                  </button>
+                  {blobUrl && (
+                    <button
+                      type="button"
+                      onClick={() => window.open(blobUrl, '_blank', 'noopener,noreferrer')}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)]"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Open
+                    </button>
+                  )}
                 </>
               )}
               {artifact && canOpenArtifactLocally(artifact) && (
@@ -148,7 +151,7 @@ export function ArtifactPreviewDialog({
                   className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  {isOpeningLocal ? 'Opening…' : 'Open local'}
+                  {isOpeningLocal ? 'Opening...' : 'Open local'}
                 </button>
               )}
               <Dialog.Close asChild>
@@ -176,7 +179,7 @@ export function ArtifactPreviewDialog({
                   ? <MarkdownMessage content={previewTextContent} />
                   : (
                       <div className="text-sm text-[var(--color-text-muted)]">
-                        {textContentError || 'Loading preview…'}
+                        {textContentError || 'Loading preview...'}
                       </div>
                     )}
               </div>
@@ -219,7 +222,7 @@ export function ArtifactPreviewDialog({
               <pre className="overflow-auto rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)] p-5 font-mono text-[12px] leading-6 text-[var(--color-text)]">
                 {previewTextContent
                   ? safeJsonPreview(previewTextContent)
-                  : (textContentError || 'Loading preview…')}
+                  : (textContentError || 'Loading preview...')}
               </pre>
             )}
 
@@ -230,31 +233,47 @@ export function ArtifactPreviewDialog({
                   File preview
                 </div>
                 <pre className="max-h-[68vh] overflow-auto p-5 font-mono text-[12px] leading-6 text-[var(--color-text)]">
-                  {previewTextContent || textContentError || 'Loading preview…'}
+                  {previewTextContent || textContentError || 'Loading preview...'}
                 </pre>
               </div>
             )}
 
-            {artifact?.previewKind === 'unknown' && (
-              artifact.content
-                ? (
-                    <div className="overflow-hidden rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)]">
-                      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
-                        <FileText className="h-3.5 w-3.5" />
-                        File preview
-                      </div>
-                      <pre className="max-h-[68vh] overflow-auto p-5 font-mono text-[12px] leading-6 text-[var(--color-text)]">
-                        {artifact.content}
-                      </pre>
-                    </div>
-                  )
-                : (
-                    <div className="rounded-[24px] border border-dashed border-[var(--color-border)] bg-[var(--color-panel)] px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
-                      {canOpenArtifactLocally(artifact)
-                        ? 'Inline preview is not available for this file type. Open the local file or download it to inspect the final deliverable.'
-                        : 'Inline preview is not available for this file type. Use Download or Open to inspect it.'}
-                    </div>
-                  )
+            {artifact?.previewKind === 'unknown' && artifact.content && (
+              <div className="overflow-hidden rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)]">
+                <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3 text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+                  <FileText className="h-3.5 w-3.5" />
+                  File preview
+                </div>
+                <pre className="max-h-[68vh] overflow-auto p-5 font-mono text-[12px] leading-6 text-[var(--color-text)]">
+                  {artifact.content}
+                </pre>
+              </div>
+            )}
+
+            {artifact && !hasInlinePreview && !(artifact.previewKind === 'unknown' && artifact.content) && (
+              <div className="rounded-[24px] border border-dashed border-[var(--color-border)] bg-[var(--color-panel)] px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
+                <div>
+                  Inline preview is not available for `{artifact.name}`.
+                </div>
+                <div className="mt-2">
+                  {canOpenArtifactLocally(artifact)
+                    ? 'Use Open local to inspect the generated file with a native desktop app, or download it from here.'
+                    : 'Use Download to inspect the generated file outside Aelin.'}
+                </div>
+                {artifact && canOpenArtifactLocally(artifact) && (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenLocal()}
+                      disabled={isOpeningLocal}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-panel-alt)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {isOpeningLocal ? 'Opening...' : 'Open local'}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </Dialog.Content>

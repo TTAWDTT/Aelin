@@ -29,6 +29,13 @@ export interface ChatArtifact {
   previewable: boolean
 }
 
+type RuntimeCapabilityPaths = {
+  workspaceLocalPath?: string
+  outputsLocalPath?: string
+}
+
+const REFERENCED_ARTIFACT_PATH_PATTERN = /((?:\/(?:outputs|workspace)\/[^\s`"'<>]+)|(?:[a-z]:[\\/][^\s`"'<>]+))/gi
+
 function artifactTimestamp(value?: string): number {
   if (!value) return 0
   const time = Date.parse(value)
@@ -40,6 +47,13 @@ const FILE_OUTPUT_TOOL_NAMES = new Set([
   'edit_file',
   'move_file',
 ])
+
+const INTERNAL_ARTIFACT_PREFIXES = [
+  '/attachments/',
+  '/memory/',
+  '/runtime/',
+  '/skills/',
+] as const
 
 function asRecord(value: unknown): UnknownRecord {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -83,6 +97,18 @@ function extensionFromPath(path: string): string {
   return match ? match[1].toLowerCase() : ''
 }
 
+function normalizeLocalFsPath(path: string): string {
+  return String(path || '').trim().replace(/\\/g, '/')
+}
+
+function joinLocalFsPath(root: string, suffix: string): string {
+  const normalizedRoot = normalizeLocalFsPath(root).replace(/\/+$/, '')
+  const normalizedSuffix = String(suffix || '').trim().replace(/\\/g, '/').replace(/^\/+/, '')
+  if (!normalizedRoot) return normalizedSuffix
+  if (!normalizedSuffix) return normalizedRoot
+  return `${normalizedRoot}/${normalizedSuffix}`
+}
+
 function inferMimeType(path: string, content: string): string {
   const extension = extensionFromPath(path)
   if (content.startsWith('data:image/')) {
@@ -123,6 +149,18 @@ function inferMimeType(path: string, content: string): string {
       return 'application/yaml'
     case 'pdf':
       return 'application/pdf'
+    case 'doc':
+      return 'application/msword'
+    case 'docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    case 'ppt':
+      return 'application/vnd.ms-powerpoint'
+    case 'pptx':
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    case 'xls':
+      return 'application/vnd.ms-excel'
+    case 'xlsx':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     case 'png':
       return 'image/png'
     case 'jpg':
@@ -164,15 +202,70 @@ function estimateBase64Size(base64: string): number {
 function isAbsoluteArtifactPath(path: string): boolean {
   const text = String(path || '').trim()
   if (!text) return false
-  return /^[a-z]:[\\/]/i.test(text) || /^\\\\[^\\]/.test(text) || /^\/[^/]/.test(text)
+  if (/^\/(?:outputs|workspace)(?:\/|$)/i.test(text)) return false
+  return /^[a-z]:[\\/]/i.test(text) || /^\\\\[^\\]/.test(text) || /^\/(?!\/)/.test(text)
 }
 
-function artifactFromStateEntry(path: string, value: unknown): ChatArtifact | null {
+function shouldIgnoreStateArtifactPath(path: string): boolean {
+  const normalized = String(path || '').trim()
+  if (!normalized.startsWith('/')) return true
+  return INTERNAL_ARTIFACT_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+}
+
+function parseRuntimeCapabilityPaths(values: Record<string, unknown>): RuntimeCapabilityPaths {
+  const files = asRecord(values.files)
+  const rawCapabilities = asRecord(files['/runtime/capabilities.json'])
+  const capabilitiesText = contentToString(rawCapabilities.content)
+  if (!capabilitiesText.trim()) return {}
+
+  try {
+    const parsed = JSON.parse(capabilitiesText)
+    const record = asRecord(parsed)
+    const workspaceLocalPath = normalizeLocalFsPath(String(record.workspace_local_path || ''))
+    const outputsLocalPath = normalizeLocalFsPath(String(record.outputs_local_path || ''))
+    return {
+      workspaceLocalPath: workspaceLocalPath || undefined,
+      outputsLocalPath: outputsLocalPath || undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+function resolveStateArtifactLocalPath(
+  path: string,
+  runtimePaths: RuntimeCapabilityPaths,
+): string | undefined {
+  const normalized = String(path || '').trim()
+  if (!normalized.startsWith('/')) return undefined
+  if (isAbsoluteArtifactPath(normalized)) return normalizeLocalFsPath(normalized)
+
+  if (normalized === '/workspace' || normalized.startsWith('/workspace/')) {
+    const root = runtimePaths.workspaceLocalPath
+    if (!root) return undefined
+    return joinLocalFsPath(root, normalized.slice('/workspace/'.length))
+  }
+
+  if (normalized === '/outputs' || normalized.startsWith('/outputs/')) {
+    const root = runtimePaths.outputsLocalPath
+    if (!root) return undefined
+    return joinLocalFsPath(root, normalized.slice('/outputs/'.length))
+  }
+
+  return undefined
+}
+
+function artifactFromStateEntry(
+  path: string,
+  value: unknown,
+  runtimePaths: RuntimeCapabilityPaths,
+): ChatArtifact | null {
   const record = asRecord(value)
   const content = contentToString(record.content)
   if (!content && !record.created_at && !record.modified_at) return null
   const mimeType = inferMimeType(path, content)
   const previewKind = inferPreviewKind(path, mimeType, content)
+  const localPath = resolveStateArtifactLocalPath(path, runtimePaths)
   return {
     path,
     displayPath: path,
@@ -181,10 +274,11 @@ function artifactFromStateEntry(path: string, value: unknown): ChatArtifact | nu
     mimeType,
     sizeBytes: new TextEncoder().encode(content).length,
     content,
+    localPath,
     createdAt: String(record.created_at || '').trim() || undefined,
     modifiedAt: String(record.modified_at || '').trim() || undefined,
     previewKind,
-    previewable: previewKind !== 'unknown',
+    previewable: previewKind !== 'unknown' || Boolean(localPath),
   }
 }
 
@@ -222,14 +316,56 @@ function artifactFromToolEntry(value: ExecutionToolArtifact): ChatArtifact | nul
 
 export function extractArtifactsFromState(values: Record<string, unknown>): Map<string, ChatArtifact> {
   const files = asRecord(values.files)
+  const runtimePaths = parseRuntimeCapabilityPaths(values)
   const artifacts = new Map<string, ChatArtifact>()
   Object.entries(files).forEach(([path, value]) => {
-    if (!path.startsWith('/')) return
-    const artifact = artifactFromStateEntry(path, value)
+    if (shouldIgnoreStateArtifactPath(path)) return
+    const artifact = artifactFromStateEntry(path, value, runtimePaths)
     if (!artifact) return
     artifacts.set(path, artifact)
   })
   return artifacts
+}
+
+export function artifactFromServerPayload(value: unknown): ChatArtifact | null {
+  const record = asRecord(value)
+  const path = String(
+    record.path
+    || record.abs_path
+    || record.file_path
+    || record.relative_path
+    || '',
+  ).trim()
+  if (!path) return null
+
+  const content = contentToString(record.content)
+  const relativePath = String(record.relative_path || record.relativePath || '').trim() || undefined
+  const localPath = isAbsoluteArtifactPath(path) ? normalizeLocalFsPath(path) : undefined
+  const downloadBase64 = String(record.binary_base64 || record.binaryBase64 || '').trim() || undefined
+  const mimeType = String(record.mime_type || record.mimeType || '').trim() || inferMimeType(path, content)
+  const previewKind = normalizePreviewKind(record.preview_kind || record.previewKind) || inferPreviewKind(path, mimeType, content)
+  const sizeBytes = Number.isFinite(Number(record.size_bytes || record.sizeBytes)) && Number(record.size_bytes || record.sizeBytes) > 0
+    ? Number(record.size_bytes || record.sizeBytes)
+    : downloadBase64
+      ? estimateBase64Size(downloadBase64)
+      : new TextEncoder().encode(content).length
+
+  return {
+    path,
+    displayPath: relativePath || path,
+    name: String(record.name || fileNameFromPath(path)).trim() || fileNameFromPath(path),
+    extension: extensionFromPath(path),
+    mimeType,
+    sizeBytes,
+    content,
+    downloadBase64,
+    relativePath,
+    localPath,
+    createdAt: String(record.created_at || record.createdAt || '').trim() || undefined,
+    modifiedAt: String(record.modified_at || record.modifiedAt || '').trim() || undefined,
+    previewKind,
+    previewable: previewKind !== 'unknown' || Boolean(localPath),
+  }
 }
 
 export function sortArtifacts(artifacts: Iterable<ChatArtifact>): ChatArtifact[] {
@@ -285,4 +421,83 @@ export function buildMessageArtifactMap(
   })
 
   return map
+}
+
+export function normalizeReferencedArtifactPath(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/[)\]}>,;:!?]+$/g, '')
+    .replace(/[。；，、]+$/g, '')
+    .replace(/\\/g, '/')
+}
+
+export function artifactMatchesReferencePath(
+  artifact: ChatArtifact | null | undefined,
+  path: string,
+): boolean {
+  if (!artifact) return false
+  const normalized = normalizeReferencedArtifactPath(path)
+  if (!normalized) return false
+  return (
+    normalizeReferencedArtifactPath(artifact.path) === normalized
+    || normalizeReferencedArtifactPath(artifact.displayPath) === normalized
+    || normalizeReferencedArtifactPath(artifact.relativePath || '') === normalized
+    || normalizeReferencedArtifactPath(artifact.localPath || '') === normalized
+  )
+}
+
+function resolveReferencedArtifact(
+  path: string,
+  artifactsByPath: Map<string, ChatArtifact>,
+): ChatArtifact | undefined {
+  const normalized = normalizeReferencedArtifactPath(path)
+  if (!normalized) return undefined
+
+  const direct = artifactsByPath.get(normalized)
+  if (direct) return direct
+
+  return Array.from(artifactsByPath.values()).find((artifact) => artifactMatchesReferencePath(artifact, normalized))
+}
+
+export function extractReferencedArtifactPaths(content: string): string[] {
+  const text = String(content || '')
+  if (!text.trim()) return []
+
+  const matches = text.match(REFERENCED_ARTIFACT_PATH_PATTERN) || []
+  const seen = new Set<string>()
+  const paths: string[] = []
+  matches.forEach((match) => {
+    const normalized = normalizeReferencedArtifactPath(match)
+    if (!normalized || seen.has(normalized)) return
+    seen.add(normalized)
+    paths.push(normalized)
+  })
+  return paths
+}
+
+export function findArtifactsReferencedInText(
+  content: string,
+  artifactsByPath: Map<string, ChatArtifact>,
+): ChatArtifact[] {
+  if (artifactsByPath.size === 0) return []
+  const matches = extractReferencedArtifactPaths(content)
+  const seen = new Set<string>()
+  const artifacts: ChatArtifact[] = []
+
+  matches.forEach((match) => {
+    const artifact = resolveReferencedArtifact(match, artifactsByPath)
+    if (!artifact || seen.has(artifact.path)) return
+    seen.add(artifact.path)
+    artifacts.push(artifact)
+  })
+
+  return sortArtifacts(artifacts)
+}
+
+export function artifactHasInlinePreview(
+  artifact: ChatArtifact | null | undefined,
+): boolean {
+  if (!artifact) return false
+  if (artifact.previewKind === 'unknown') return false
+  return Boolean(artifact.content || artifact.localPath || artifact.downloadBase64)
 }

@@ -370,6 +370,120 @@ describe('executionStreamUtils', () => {
     ])
   })
 
+  it('extracts artifacts when the tool result arrives as a JSON string', () => {
+    const message = { id: 'm8b', content: 'done' } as any
+    const runtime = getExecutionRuntime(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm8b',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-present',
+            status: 'completed',
+            call: {
+              id: 'call-present',
+              name: 'present_files',
+              args: { filepaths: ['/outputs/chelsea_poster.svg'] },
+            },
+            result: JSON.stringify({
+              ok: true,
+              artifact_count: 1,
+              artifacts: [
+                {
+                  path: 'D:/HuaweiMoveData/Users/yixiao/Desktop/Aelin/output/deepagents/user-1/default/outputs/chelsea_poster.svg',
+                  relative_path: 'output/deepagents/user-1/default/outputs/chelsea_poster.svg',
+                  name: 'chelsea_poster.svg',
+                  mime_type: 'image/svg+xml',
+                  size_bytes: 128,
+                  preview_kind: 'svg',
+                  content: '',
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(runtime.tools).toEqual([
+      expect.objectContaining({
+        key: 'call-present',
+        name: 'present_files',
+        artifacts: [
+          expect.objectContaining({
+            path: 'D:/HuaweiMoveData/Users/yixiao/Desktop/Aelin/output/deepagents/user-1/default/outputs/chelsea_poster.svg',
+            previewKind: 'svg',
+          }),
+        ],
+      }),
+    ])
+  })
+
+  it('extracts artifacts when the tool result JSON is nested under a content field', () => {
+    const message = { id: 'm8c', content: 'done' } as any
+    const runtime = getExecutionRuntime(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm8c',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-present-nested',
+            status: 'completed',
+            call: {
+              id: 'call-present-nested',
+              name: 'present_files',
+              args: { filepaths: ['/outputs/tongji_sakura_poster.png'] },
+            },
+            result: {
+              content: JSON.stringify({
+                ok: true,
+                artifact_count: 1,
+                artifacts: [
+                  {
+                    path: 'D:/HuaweiMoveData/Users/yixiao/Desktop/Aelin/output/deepagents/user-1/default/outputs/tongji_sakura_poster.png',
+                    relative_path: 'output/deepagents/user-1/default/outputs/tongji_sakura_poster.png',
+                    name: 'tongji_sakura_poster.png',
+                    mime_type: 'image/png',
+                    size_bytes: 2048,
+                    preview_kind: 'image-data-url',
+                    content: '',
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(runtime.tools).toEqual([
+      expect.objectContaining({
+        key: 'call-present-nested',
+        name: 'present_files',
+        artifacts: [
+          expect.objectContaining({
+            path: 'D:/HuaweiMoveData/Users/yixiao/Desktop/Aelin/output/deepagents/user-1/default/outputs/tongji_sakura_poster.png',
+            previewKind: 'image-data-url',
+          }),
+        ],
+      }),
+    ])
+  })
+
   it('marks earlier pending tool calls as running once execution has moved past arg generation', () => {
     const messages = [
       { id: 'm6', content: 'tool call', type: 'ai' } as any,
