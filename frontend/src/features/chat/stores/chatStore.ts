@@ -57,6 +57,22 @@ export const useChatStore = create<ChatStore>()(
       setStatusText: (v) => set({ statusText: v }),
       setLastErrorCode: (code) => set({ lastErrorCode: code }),
     }),
-    { name: 'aelin-chat-v2' }
+    {
+      name: 'aelin-chat-v2',
+      version: 1,
+      partialize: (state) => ({
+        sessions: state.sessions,
+        activeSessionId: state.activeSessionId,
+      }),
+      migrate: (persistedState) => {
+        const state = (persistedState ?? {}) as Partial<ChatStore>
+        return {
+          sessions: Array.isArray(state.sessions) ? state.sessions : [],
+          activeSessionId: typeof state.activeSessionId === 'string' ? state.activeSessionId : null,
+          statusText: '',
+          lastErrorCode: null,
+        }
+      },
+    }
   )
 )

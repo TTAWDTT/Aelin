@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ensureThreadExists,
   fetchAssistantGraph,
@@ -24,6 +24,10 @@ describe('chatStreamRuntime', () => {
     resetDeepAgentsAssistantRuntimeCache()
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('resolves the agent assistant id and reuses the cache', async () => {
     const client = createClientStub()
     client.assistants.search.mockResolvedValue([
@@ -34,6 +38,24 @@ describe('chatStreamRuntime', () => {
     await expect(findAssistantId(client as any)).resolves.toBe('assistant-1')
 
     expect(client.assistants.search).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries assistant discovery until the agent server becomes ready', async () => {
+    vi.useFakeTimers()
+    const client = createClientStub()
+    client.assistants.search
+      .mockRejectedValueOnce(new Error('connect ECONNREFUSED 127.0.0.1:8000'))
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { assistant_id: 'assistant-2', graph_id: getDeepAgentsGraphId(), name: 'agent' },
+      ])
+
+    const pending = findAssistantId(client as any)
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    await expect(pending).resolves.toBe('assistant-2')
+    expect(client.assistants.search).toHaveBeenCalledTimes(3)
   })
 
   it('requests the official graph with xray enabled', async () => {
