@@ -4,6 +4,7 @@ from app.services.deepagents.tool_runtime import (
     ToolCallLimiter,
     ToolPolicyUsage,
     build_tool_signature,
+    result_has_progress,
 )
 from app.services.tools.tools_gws import tool_google_workspace
 from app.services.tools.tools_web import tool_web_search
@@ -75,6 +76,52 @@ def test_tool_call_limiter_allows_corrected_web_search_after_invalid_attempt():
     assert corrected.allowed is True
 
 
+def test_memory_search_signature_keeps_kind_filters_distinct():
+    left = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": ["project"], "top_k": 5},
+    )
+    right = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": ["fact"], "top_k": 5},
+    )
+
+    assert left != right
+
+
+def test_memory_search_signature_normalizes_string_and_list_kinds_equally():
+    left = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": "project,fact", "top_k": 5},
+    )
+    right = build_tool_signature(
+        "memory_search",
+        {"query": "memory refactor", "kinds": ["project", "fact"], "top_k": 5},
+    )
+
+    assert left == right
+
+
+def test_tool_call_limiter_blocks_duplicate_memory_search_calls():
+    usage = ToolPolicyUsage()
+    limiter = ToolCallLimiter(
+        max_tool_calls=10,
+        max_write_calls=2,
+        allow_write_tools=True,
+        consecutive_failures_limit=3,
+        consecutive_no_progress_limit=2,
+    )
+    args = {"query": "OpenClaw memory", "kinds": ["project"], "top_k": 4}
+
+    first = limiter.evaluate(name="memory_search", args=args, usage=usage)
+    assert first.allowed is True
+    usage.note_invocation("memory_search", args)
+
+    second = limiter.evaluate(name="memory_search", args=args, usage=usage)
+    assert second.allowed is False
+    assert "duplicate_memory_search_call" in second.reason
+
+
 def test_tool_google_workspace_validates_required_write_fields(monkeypatch):
     class _FakeService:
         def runtime_status(self):
@@ -117,3 +164,62 @@ def test_tool_google_workspace_stops_when_auth_missing(monkeypatch):
     assert result["ok"] is False
     assert result["stop_retry"] is True
     assert "authorization required" in str(result["error"])
+
+
+def test_result_has_progress_treats_artifacts_as_progress():
+    assert result_has_progress(
+        {
+            "ok": True,
+            "artifacts": [
+                {"path": "D:/Github/Aelin/output/poster.png"},
+            ],
+        }
+    ) is True
+
+
+def test_result_has_progress_treats_failed_execute_with_stderr_as_progress():
+    assert result_has_progress(
+        {
+            "ok": False,
+            "summary": "command failed with exit code 1",
+            "stderr": "The filename, directory name, or volume label syntax is incorrect.",
+        }
+    ) is True
+
+
+def test_tool_call_limiter_allows_execute_retry_after_informative_failures():
+    usage = ToolPolicyUsage()
+    limiter = ToolCallLimiter(
+        max_tool_calls=10,
+        max_write_calls=10,
+        allow_write_tools=True,
+        consecutive_failures_limit=3,
+        consecutive_no_progress_limit=2,
+    )
+
+    first_args = {
+        "command": 'cd "D:\\Github\\Aelin\\output\\agent-query-smoke-final-8002" && echo "artifact bridge ok" > smoke.md'
+    }
+    second_args = {
+        "command": 'mkdir -p "D:\\Github\\Aelin\\output\\agent-query-smoke-final-8002" && cd "D:\\Github\\Aelin\\output\\agent-query-smoke-final-8002" && echo "artifact bridge ok" > smoke.md'
+    }
+    corrected_args = {
+        "command": "powershell -Command \"New-Item -ItemType Directory -Force -Path 'D:\\Github\\Aelin\\output\\agent-query-smoke-final-8002'; Set-Content -Path 'D:\\Github\\Aelin\\output\\agent-query-smoke-final-8002\\smoke.md' -Value 'artifact bridge ok'\""
+    }
+
+    for args in (first_args, second_args):
+        decision = limiter.evaluate(name="execute", args=args, usage=usage)
+        assert decision.allowed is True
+        usage.note_invocation("execute", args)
+        usage.total_calls += 1
+        usage.write_calls += 1
+        usage.note_result(
+            {
+                "ok": False,
+                "summary": "command failed with exit code 1",
+                "stderr": "The filename, directory name, or volume label syntax is incorrect.",
+            }
+        )
+
+    corrected = limiter.evaluate(name="execute", args=corrected_args, usage=usage)
+    assert corrected.allowed is True

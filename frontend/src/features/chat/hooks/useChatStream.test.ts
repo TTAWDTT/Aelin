@@ -3,6 +3,17 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BaseMessage } from '@langchain/core/messages'
 
+type RuntimeMetadataReader =
+  | ((
+      message: BaseMessage,
+      index?: number,
+    ) => {
+      messageId?: string
+      branch?: string
+      streamMetadata?: Record<string, unknown>
+    } | undefined)
+  | undefined
+
 const sessionMessages = [
   {
     id: 'persisted-1',
@@ -19,6 +30,8 @@ const mocks = vi.hoisted(() => {
     values: { messages: [] as Array<Record<string, unknown>> },
     isLoading: false,
     subagents: new Map(),
+    getToolCalls: undefined as (((message: BaseMessage) => unknown[]) | undefined),
+    getMessagesMetadata: undefined as RuntimeMetadataReader,
     submit: vi.fn(),
     stop: vi.fn(),
     switchThread: vi.fn(),
@@ -140,6 +153,8 @@ describe('useChatStream', () => {
     mocks.streamMock.values = { messages: [] }
     mocks.streamMock.isLoading = false
     mocks.streamMock.subagents = new Map()
+    mocks.streamMock.getToolCalls = undefined
+    mocks.streamMock.getMessagesMetadata = undefined
     mocks.streamMock.submit.mockReset()
     mocks.streamMock.stop.mockReset()
     mocks.streamMock.switchThread.mockReset()
@@ -187,6 +202,72 @@ describe('useChatStream', () => {
     expect(hook.messages).toEqual([
       expect.objectContaining({ id: 'user-1', role: 'user', content: '你好' }),
       expect.objectContaining({ id: 'assistant-1', role: 'assistant', content: '你好，我在这里。' }),
+    ])
+  })
+
+  it('keeps assistant runtime messages that only expose tool calls through the official helper', () => {
+    mocks.streamMock.messages = [
+      createMessage('assistant-tools', 'ai', ''),
+    ]
+    mocks.streamMock.getToolCalls = vi.fn(() => [
+      {
+        id: 'call-1',
+        status: 'completed',
+        call: {
+          id: 'call-1',
+          name: 'render_poster_artifact',
+          args: { brief: '同济大学樱花季海报' },
+        },
+        result: {
+          artifact_count: 2,
+        },
+      },
+    ])
+
+    const hook = renderHook()
+
+    expect(hook.messages).toEqual([
+      expect.objectContaining({
+        id: 'assistant-tools',
+        role: 'assistant',
+        content: '',
+      }),
+    ])
+  })
+
+  it('uses official metadata message ids so tool-call keyed artifacts can attach to the same bubble', () => {
+    mocks.streamMock.messages = [
+      {
+        content: '',
+        getType: () => 'ai',
+      } as BaseMessage,
+    ]
+    mocks.streamMock.getToolCalls = vi.fn(() => [
+      {
+        id: 'call-1',
+        status: 'completed',
+        call: {
+          id: 'call-1',
+          name: 'render_poster_artifact',
+          args: { brief: '同济大学樱花季海报' },
+        },
+        result: {
+          artifact_count: 2,
+        },
+      },
+    ])
+    mocks.streamMock.getMessagesMetadata = vi.fn(() => ({
+      messageId: 'official-msg-1',
+    }))
+
+    const hook = renderHook()
+
+    expect(hook.messages).toEqual([
+      expect.objectContaining({
+        id: 'official-msg-1',
+        role: 'assistant',
+        content: '',
+      }),
     ])
   })
 

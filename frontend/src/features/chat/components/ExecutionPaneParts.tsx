@@ -10,7 +10,6 @@ import type {
 } from '../executionStreamUtils'
 import {
   formatExecutionStatus,
-  nodeIcon,
   surfaceTint,
   stableJson,
   statusIcon,
@@ -125,22 +124,11 @@ export function GraphBoard({
   return (
     <div
       ref={viewportRef}
-      className="mt-3 overflow-auto rounded-[30px] border border-[color:var(--color-border)] bg-[var(--graph-surface-outer)] p-3 shadow-[0_22px_80px_-34px_var(--graph-shadow)]"
-      style={{ height: 'clamp(320px, 54vh, 680px)' }}
+      className="mt-3 overflow-auto rounded-[26px] border border-[color:var(--color-border)] bg-[var(--color-bg-elevated)] p-2"
+      style={{ height: 'clamp(300px, 50vh, 620px)' }}
     >
-      <div className="relative grid min-h-full min-w-full place-items-start justify-items-center overflow-hidden rounded-[24px] border border-[color:color-mix(in_srgb,var(--color-border)_74%,transparent)] bg-[var(--graph-surface-inner)] px-4 py-4">
-        <div className="pointer-events-none absolute inset-0 opacity-80">
-          <div className="absolute left-[-6%] top-[-14%] h-40 w-40 rounded-full bg-[color:var(--graph-orbit)] blur-3xl" />
-          <div className="absolute bottom-[-18%] right-[-8%] h-48 w-48 rounded-full bg-[color:var(--graph-orbit)] blur-3xl" />
-        </div>
-        <div className="aelin-graph-grid pointer-events-none absolute inset-[-28px] opacity-90 [background-image:linear-gradient(var(--graph-grid)_1px,transparent_1px),linear-gradient(90deg,var(--graph-grid)_1px,transparent_1px)] [background-position:center_center] [background-size:28px_28px]" />
-        <div className="pointer-events-none absolute inset-x-5 top-4 flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-          <span>Runtime map</span>
-          <div className="flex items-center gap-2">
-            <LegendDot color="var(--graph-edge-active)" label="active path" />
-            <LegendDot color="var(--graph-edge-idle)" label="settled path" />
-          </div>
-        </div>
+      <div className="relative grid min-h-full min-w-full place-items-start justify-items-center overflow-hidden rounded-[22px] border border-[color:color-mix(in_srgb,var(--color-border)_78%,transparent)] bg-[var(--graph-surface-inner)] px-4 py-4">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.24),transparent_60%)] dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.03),transparent_60%)]" />
         <div className="relative" style={{ width: `${scaledWidth}px`, height: `${scaledHeight}px` }}>
           <div
             className="relative"
@@ -158,30 +146,6 @@ export function GraphBoard({
               viewBox={`0 0 ${width} ${height}`}
               fill="none"
             >
-              <defs>
-                <marker
-                  id="graph-arrow-idle"
-                  markerWidth="10"
-                  markerHeight="10"
-                  refX="8"
-                  refY="5"
-                  orient="auto"
-                  markerUnits="userSpaceOnUse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--graph-edge-idle)" />
-                </marker>
-                <marker
-                  id="graph-arrow-active"
-                  markerWidth="10"
-                  markerHeight="10"
-                  refX="8"
-                  refY="5"
-                  orient="auto"
-                  markerUnits="userSpaceOnUse"
-                >
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--graph-edge-active)" />
-                </marker>
-              </defs>
               {edges.map((edge) => {
                 const layoutEdge = graph.edge(edge.source, edge.target)
                 const points = Array.isArray(layoutEdge?.points) ? layoutEdge.points : []
@@ -196,19 +160,18 @@ export function GraphBoard({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeDasharray={edge.conditional ? '5 4' : undefined}
-                      opacity={edge.active ? 0.95 : 0.56}
-                      markerEnd={edge.active ? 'url(#graph-arrow-active)' : 'url(#graph-arrow-idle)'}
+                      opacity={edge.active ? 0.9 : 0.46}
                     />
                     {edge.active && (
                       <path
                         d={path}
                         className="aelin-graph-flow"
-                        stroke="rgba(255,255,255,0.96)"
-                        strokeWidth={1}
+                        stroke="rgba(255,255,255,0.92)"
+                        strokeWidth={0.95}
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        strokeDasharray="3.5 10"
-                        opacity={0.95}
+                        strokeDasharray="3 9"
+                        opacity={0.86}
                       />
                     )}
                   </g>
@@ -221,7 +184,7 @@ export function GraphBoard({
                 const layoutNode = graph.node(node.id)
                 if (!layoutNode) return null
                 const tone = graphTone(node)
-                const isRunning = node.status === 'running' && isStreaming
+                const isRunning = isStreaming && (node.status === 'running' || node.activeNamespaces > 0)
                 const style: CSSProperties = {
                   left: `${layoutNode.x - currentWidth / 2}px`,
                   top: `${layoutNode.y - currentHeight / 2}px`,
@@ -231,58 +194,26 @@ export function GraphBoard({
                   background: tone.background,
                   color: tone.text,
                   boxShadow: isRunning
-                    ? `0 0 0 1px ${tone.glow}, 0 0 0 7px ${tone.halo}, 0 18px 34px -22px ${tone.shadow}`
+                    ? `0 0 0 1px ${tone.glow}, 0 0 0 8px ${tone.halo}, 0 18px 34px -22px ${tone.shadow}`
                     : node.status === 'completed'
-                      ? `0 18px 32px -24px ${tone.shadow}`
-                      : '0 6px 14px -12px var(--graph-shadow)',
-                  opacity: node.status === 'idle' ? 0.9 : 1,
+                      ? `0 12px 20px -22px ${tone.shadow}`
+                      : '0 4px 10px -9px var(--graph-shadow)',
+                  opacity: node.status === 'idle' ? 0.88 : 1,
+                  transform: isRunning ? 'scale(1.03)' : 'scale(1)',
                 }
                 return (
                   <div
                     key={node.id}
                     className={cn(
-                      'absolute rounded-[20px] border px-4 py-3 text-center transition-all duration-200',
+                      'absolute flex items-center justify-center rounded-[18px] border px-4 py-3 text-center transition-all duration-200',
                       isRunning && 'aelin-graph-node--running',
                     )}
                     style={style}
                     title={buildGraphNodeTitle(node)}
                   >
-                    <div className="min-w-0">
-                      <div className="flex items-center justify-center gap-2">
-                        <span
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border"
-                          style={{
-                            borderColor: tone.badgeBorder,
-                            background: tone.badgeBackground,
-                            color: tone.text,
-                          }}
-                        >
-                          {nodeIcon(node.kind)}
-                        </span>
-                        <div className="min-w-0 text-left">
-                          <div className="truncate text-[11px] font-semibold tracking-[0.01em]">
-                            {formatGraphNodeLabel(node.name)}
-                          </div>
-                          <div className="truncate text-[9px] uppercase tracking-[0.16em] opacity-70">
-                            {formatGraphKind(node.kind)}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center justify-center gap-1">
-                        <GraphMetricBadge label="visits" value={node.visits} tone={tone.badgeBackground} />
-                        <GraphMetricBadge label="tools" value={node.toolCalls} tone={tone.badgeBackground} />
-                        <GraphMetricBadge label="agents" value={node.subagents} tone={tone.badgeBackground} />
-                        {node.activeNamespaces > 0 && (
-                          <GraphMetricBadge label="live" value={node.activeNamespaces} tone={tone.glow} strong />
-                        )}
-                      </div>
-                    </div>
-                    {isRunning && (
-                      <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em]" style={{ background: tone.badgeBackground }}>
-                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90 shadow-[0_0_10px_currentColor]" />
-                        Live
-                      </span>
-                    )}
+                    <span className="line-clamp-2 text-[12px] font-semibold leading-snug tracking-[0.01em]">
+                      {formatGraphNodeLabel(node.name)}
+                    </span>
                   </div>
                 )
               })}
@@ -291,39 +222,6 @@ export function GraphBoard({
         </div>
       </div>
     </div>
-  )
-}
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />
-      <span>{label}</span>
-    </span>
-  )
-}
-
-function GraphMetricBadge({
-  label,
-  value,
-  tone,
-  strong = false,
-}: {
-  label: string
-  value: number
-  tone: string
-  strong?: boolean
-}) {
-  return (
-    <span
-      className="rounded-full px-2 py-0.5 text-[9px] uppercase tracking-[0.14em]"
-      style={{
-        background: tone,
-        opacity: strong ? 1 : value > 0 ? 0.96 : 0.72,
-      }}
-    >
-      {label} {value}
-    </span>
   )
 }
 
@@ -386,23 +284,16 @@ function formatGraphNodeLabel(name: string): string {
   return `${text.slice(0, 27)}…`
 }
 
-function formatGraphKind(kind: string): string {
-  const text = String(kind || '').trim().replace(/[_-]+/g, ' ')
-  if (!text) return 'node'
-  if (text.length <= 18) return text
-  return `${text.slice(0, 17)}…`
-}
-
 function measureGraphNode(node: ExecutionGraphNode): { width: number; height: number } {
   const lowered = `${node.id} ${node.name} ${node.kind}`.toLowerCase()
   if (lowered.includes('__start__') || lowered.includes('__end__')) {
-    return { width: 208, height: 88 }
+    return { width: 180, height: 72 }
   }
   if (lowered.includes('model')) {
-    return { width: 220, height: 92 }
+    return { width: 192, height: 74 }
   }
-  const width = Math.min(280, Math.max(212, 58 + Math.round(formatGraphNodeLabel(node.name).length * 7)))
-  return { width, height: 96 }
+  const width = Math.min(220, Math.max(156, 52 + Math.round(formatGraphNodeLabel(node.name).length * 5.4)))
+  return { width, height: 74 }
 }
 
 function edgeStroke(
@@ -419,14 +310,14 @@ function edgeStroke(
 function graphTone(node: ExecutionGraphNode) {
   const name = `${node.id} ${node.name} ${node.kind}`.toLowerCase()
   const makeTone = (token: string) => ({
-    border: toneColor(token, node.status === 'running' ? 0.82 : 0.56),
-    background: surfaceTint(token, node.status === 'running' ? 18 : node.status === 'completed' ? 14 : 10),
+    border: toneColor(token, node.status === 'running' ? 0.7 : 0.42),
+    background: surfaceTint(token, node.status === 'running' ? 14 : node.status === 'completed' ? 11 : 7),
     text: surfaceTint(token, 76, 'var(--color-text)'),
-    glow: toneColor(token, 0.22),
-    halo: toneColor(token, 0.12),
-    shadow: toneColor(token, 0.24),
-    badgeBackground: toneColor(token, 0.1),
-    badgeBorder: toneColor(token, 0.26),
+    glow: toneColor(token, 0.16),
+    halo: toneColor(token, 0.08),
+    shadow: toneColor(token, 0.16),
+    badgeBackground: toneColor(token, 0.08),
+    badgeBorder: toneColor(token, 0.18),
   })
   if (name.includes('__start__') || name.includes('start')) {
     return makeTone('var(--graph-node-start)')

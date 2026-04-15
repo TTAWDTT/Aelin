@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from app.services.artifact_files import normalize_tool_artifact_payloads
 from app.settings import settings
 
 REGION_CAPTURE_TIMEOUT_BUFFER_S = 8.0  # buffer for Snipping Tool UI + clipboard polling latency
@@ -176,6 +177,18 @@ def open_desktop_external_url(url: str) -> dict[str, Any]:
     return _normalize_plugin_action_result(raw, primary_value=str(raw.get("url") or url_clean)[:2000], primary_key="url")
 
 
+def open_desktop_local_path(path_value: str) -> dict[str, Any]:
+    path_clean = str(path_value or "").strip()
+    if not path_clean:
+        raise DesktopPluginActionError(status_code=400, detail="missing_path")
+    raw = _desktop_plugin_post("/v1/desktop/path/open", {"path": path_clean})
+    return _normalize_plugin_action_result(
+        raw,
+        primary_value=str(raw.get("path") or path_clean)[:2000],
+        primary_key="path",
+    )
+
+
 def activate_desktop_module(route: str = "/") -> dict[str, Any]:
     route_clean = str(route or "/").strip() or "/"
     raw = _desktop_plugin_post("/v1/desktop/app/activate", {"route": route_clean})
@@ -194,6 +207,7 @@ def _truncate_output(value: Any, limit: int) -> str:
 def execute_desktop_command(
     *,
     command: str,
+    shell: str = "",
     cwd: str = "",
     timeout_ms: int | None = None,
 ) -> dict[str, Any]:
@@ -214,6 +228,9 @@ def execute_desktop_command(
         "command": command_clean,
         "timeout_ms": timeout_clean,
     }
+    shell_clean = str(shell or "").strip().lower()
+    if shell_clean:
+        payload["shell"] = shell_clean
     cwd_clean = str(cwd or "").strip()
     if cwd_clean:
         payload["cwd"] = cwd_clean
@@ -238,9 +255,13 @@ def execute_desktop_command(
     stderr = _truncate_output(raw.get("stderr"), output_limit)
     summary = str(raw.get("summary") or "").strip()[:200]
     resolved_cwd = str(raw.get("cwd") or cwd_clean)[:1024]
+    resolved_shell = str(raw.get("shell") or shell_clean)[:32]
+    artifacts = raw.get("artifacts")
+    normalized_artifacts = normalize_tool_artifact_payloads(artifacts)
 
-    return {
+    result = {
         "command": command_clean,
+        "shell": resolved_shell,
         "cwd": resolved_cwd,
         "exit_code": exit_code,
         "stdout": stdout,
@@ -252,6 +273,10 @@ def execute_desktop_command(
             else ("command timed out" if timed_out else "command finished")
         ),
     }
+    if normalized_artifacts:
+        result["artifacts"] = normalized_artifacts
+        result["artifact_count"] = len(normalized_artifacts)
+    return result
 
 
 def _normalize_plugin_action_result(raw: dict[str, Any], *, primary_value: str, primary_key: str) -> dict[str, Any]:

@@ -4,6 +4,8 @@ import type {
   DeviceCapabilitiesResponse,
   DeviceScreenCaptureRequest,
   DeviceScreenCaptureResponse,
+  FileMemoryContentResponse,
+  FileMemorySearchResponse,
 } from './types'
 
 export const aelinApi = {
@@ -15,6 +17,22 @@ export const aelinApi = {
       fd.append('session_id', params.session_id)
     }
     return fetchFormData<AttachmentUploadResponse>('/api/v1/attachments/upload', fd)
+  },
+
+  fileMemorySearch: (params: { workspace?: string; query: string; top_k?: number; kinds?: string[] }) => {
+    const searchParams = new URLSearchParams()
+    searchParams.set('workspace', params.workspace || 'default')
+    searchParams.set('query', params.query)
+    if (params.top_k != null) searchParams.set('top_k', String(params.top_k))
+    if (params.kinds?.length) searchParams.set('kinds', params.kinds.join(','))
+    return fetchJson<FileMemorySearchResponse>(`/api/v1/attachments/file-memory/search?${searchParams.toString()}`)
+  },
+
+  fileMemoryContent: (params: { workspace?: string; path: string }) => {
+    const searchParams = new URLSearchParams()
+    searchParams.set('workspace', params.workspace || 'default')
+    searchParams.set('path', params.path)
+    return fetchJson<FileMemoryContentResponse>(`/api/v1/attachments/file-memory/content?${searchParams.toString()}`)
   },
 
   // Device

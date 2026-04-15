@@ -31,6 +31,22 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
   return res.json()
 }
 
+export async function fetchText(path: string, init?: RequestInit): Promise<string> {
+  const token = getToken()
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new ApiError(res.status, body.detail || res.statusText)
+  }
+  return res.text()
+}
+
 export async function fetchFormData<T>(path: string, form: FormData): Promise<T> {
   const token = getToken()
   const res = await fetch(`${BASE}${path}`, {

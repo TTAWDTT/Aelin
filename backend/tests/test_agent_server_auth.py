@@ -50,7 +50,7 @@ def test_agent_server_authenticate_falls_back_to_local_user():
     try:
         stored = db.scalar(select(User).where(User.id == int(user["identity"])))
         assert stored is not None
-        assert stored.email == "local@aelin.local"
+        assert stored.email == "local@example.com"
     finally:
         db.close()
 

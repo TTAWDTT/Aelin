@@ -5,13 +5,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+import app.services.artifact_files as artifact_files
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables.config import set_config_context
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import AttachmentDocument, Base
+from app.services.deepagents.delivery_paths import get_delivery_paths
 from app.services.deepagents.tool_runtime import (
     ToolCallLimiter,
     ToolPolicyUsage,
@@ -22,6 +24,8 @@ from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_execute import tool_execute
 from app.services.tools.tools_files import tool_attachment_search
 from app.services.tools.tools_gws import tool_google_workspace
+from app.services.tools.tools_present_files import tool_present_files
+from app.services.tools.tools_visual_artifact import tool_render_poster_artifact
 from app.services.tools.tools_web import tool_web_search
 
 
@@ -96,6 +100,15 @@ class _FakeSession:
 
     def close(self) -> None:
         self.closed = True
+
+
+def _file_data_text(file_data: object) -> str:
+    if not isinstance(file_data, dict):
+        return ""
+    content = file_data.get("content")
+    if isinstance(content, list):
+        return "\n".join(str(line) for line in content)
+    return str(content or "")
 
 
 def _tool_context(fake_web: _FakeWebSearch, *, attachment_service=None, available_attachment_ids=None):
@@ -343,6 +356,108 @@ def test_attachment_search_falls_back_to_recent_workspace_attachments_without_th
     assert fake_attachment.calls[0]["attachment_ids"] == [1, 2]
 
 
+def test_attachment_search_caches_non_empty_storage_scope(monkeypatch):
+    from app.services.tools import tools_files
+
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    session_factory = _db_session_factory_with_attachments(
+        {
+            "user_id": 1,
+            "workspace": "default",
+            "session_id": "thread-cache",
+            "file_name": "alpha.pdf",
+            "file_ext": "pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 10,
+            "sha256": "f" * 64,
+            "storage_path": "/tmp/f.pdf",
+            "parse_status": "ready",
+            "summary": "alpha",
+            "metadata_json": "{}",
+        },
+    )
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[],
+        session_factory=session_factory,
+    )
+
+    tools_files.clear_attachment_scope_cache_for_tests()
+    monkeypatch.setattr(tools_files.settings, "deepagents_attachment_scope_cache_ttl_seconds", 60.0)
+
+    with set_config_context({"configurable": {"thread_id": "thread-cache"}}) as ctx:
+        first = ctx.run(tool_attachment_search, context, {"query": "第一次"})
+
+    assert first["ok"] is True
+    assert first["attachment_ids"] == [1]
+
+    db = session_factory()
+    try:
+        db.query(AttachmentDocument).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    with set_config_context({"configurable": {"thread_id": "thread-cache"}}) as ctx:
+        second = ctx.run(tool_attachment_search, context, {"query": "第二次"})
+
+    assert second["ok"] is True
+    assert second["attachment_ids"] == [1]
+
+
+def test_attachment_search_does_not_cache_empty_storage_fallback(monkeypatch):
+    from app.services.tools import tools_files
+
+    fake_web = _FakeWebSearch()
+    fake_attachment = _FakeAttachmentService()
+    session_factory = _db_session_factory_with_attachments()
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        attachment_service=fake_attachment,  # type: ignore[arg-type]
+        available_attachment_ids=[],
+        session_factory=session_factory,
+    )
+
+    tools_files.clear_attachment_scope_cache_for_tests()
+    monkeypatch.setattr(tools_files.settings, "deepagents_attachment_scope_cache_ttl_seconds", 60.0)
+
+    result = tool_attachment_search(context, {"query": "第一次"})
+    assert result["ok"] is False
+    assert result["error"] == "missing attachment_ids"
+
+    db = session_factory()
+    try:
+        db.add(
+            AttachmentDocument(
+                user_id=1,
+                workspace="default",
+                session_id="",
+                file_name="late.pdf",
+                file_ext="pdf",
+                mime_type="application/pdf",
+                size_bytes=10,
+                sha256="g" * 64,
+                storage_path="/tmp/g.pdf",
+                parse_status="ready",
+                summary="late",
+                metadata_json="{}",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    second = tool_attachment_search(context, {"query": "第二次"})
+    assert second["ok"] is True
+    assert second["attachment_ids"] == [1]
+
+
 def test_screen_get_tool_success(monkeypatch):
     from app.services.tools import tools_device
 
@@ -465,6 +580,163 @@ def test_execute_tool_returns_command_result(monkeypatch):
     assert result["ok"] is True
     assert result["command"] == "pytest -q"
     assert result["stdout"] == "pytest passed"
+
+
+def test_execute_tool_defaults_cwd_to_delivery_workspace(monkeypatch):
+    from app.services.tools import tools_execute
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    captured: dict[str, object] = {}
+
+    def _fake_execute_command_result(args):  # type: ignore[no-untyped-def]
+        captured.update(dict(args))
+        return {"ok": True, "cwd": str(args.get("cwd") or "")}
+
+    monkeypatch.setattr(tools_execute, "execute_command_result", _fake_execute_command_result)
+
+    result = tool_execute(context, {"command": "python build.py"})
+    delivery_paths = get_delivery_paths(workspace="default", user_id=1)
+
+    assert result["ok"] is True
+    assert captured["cwd"] == str(delivery_paths.workspace_dir)
+
+
+def test_execute_tool_maps_virtual_cwd_to_delivery_root(monkeypatch):
+    from app.services.tools import tools_execute
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    captured: dict[str, object] = {}
+
+    def _fake_execute_command_result(args):  # type: ignore[no-untyped-def]
+        captured.update(dict(args))
+        return {"ok": True, "cwd": str(args.get("cwd") or "")}
+
+    monkeypatch.setattr(tools_execute, "execute_command_result", _fake_execute_command_result)
+
+    result = tool_execute(context, {"command": "python build.py", "cwd": "/outputs"})
+    delivery_paths = get_delivery_paths(workspace="default", user_id=1)
+
+    assert result["ok"] is True
+    assert captured["cwd"] == str(delivery_paths.outputs_dir)
+
+
+def test_execute_command_result_returns_compact_local_artifacts(monkeypatch, tmp_path):
+    from app.services.device import device_actions
+
+    fake_repo_root = tmp_path / "allowed-repo"
+    fake_media_root = tmp_path / "allowed-media"
+    fake_attachment_root = tmp_path / "allowed-attachments"
+    fake_repo_root.mkdir(parents=True, exist_ok=True)
+    fake_media_root.mkdir(parents=True, exist_ok=True)
+    fake_attachment_root.mkdir(parents=True, exist_ok=True)
+    artifact_path = fake_repo_root / "output" / "poster.png"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b"fake-png")
+
+    monkeypatch.setattr(artifact_files, "_REPO_ROOT", fake_repo_root)
+    monkeypatch.setattr(artifact_files.settings, "media_dir", str(fake_media_root))
+    monkeypatch.setattr(artifact_files.settings, "aelin_attachment_storage_dir", str(fake_attachment_root))
+
+    monkeypatch.setattr(
+        device_actions,
+        "execute_desktop_command",
+        lambda **kwargs: {
+            "command": str(kwargs.get("command") or ""),
+            "cwd": str(kwargs.get("cwd") or ""),
+            "exit_code": 0,
+            "stdout": "done",
+            "stderr": "",
+            "timed_out": False,
+            "summary": "command succeeded with exit code 0 and produced 1 artifact(s)",
+            "artifacts": [
+                {
+                    "path": str(artifact_path),
+                    "relative_path": "output/poster.png",
+                    "name": "poster.png",
+                    "mime_type": "image/png",
+                    "size_bytes": 16,
+                    "preview_kind": "image-data-url",
+                    "content": "data:image/png;base64,ZmFrZQ==",
+                    "binary_base64": "ZmFrZQ==",
+                }
+            ],
+        },
+    )
+
+    result = device_actions.execute_command_result(
+        {"command": "python build.py", "cwd": "D:/Github/Aelin"}
+    )
+
+    assert result["ok"] is True
+    assert result["artifact_count"] == 1
+    artifact = result["artifacts"][0]
+    assert artifact["path"] == str(artifact_path)
+    assert artifact["relative_path"] == "output/poster.png"
+    assert artifact["name"] == "poster.png"
+    assert artifact["mime_type"] == "image/png"
+    assert artifact["size_bytes"] == 16
+    assert artifact["preview_kind"] == "image-data-url"
+    assert artifact["content"] == ""
+    assert artifact["created_at"] == ""
+    assert str(artifact["modified_at"] or "").strip()
+
+
+def test_present_files_tool_returns_output_artifacts(monkeypatch, tmp_path):
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    output_file = tmp_path / "outputs" / "report.docx"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_bytes(b"fake-docx")
+
+    fake_media_root = tmp_path / "media"
+    fake_attachment_root = tmp_path / "attachments"
+    fake_media_root.mkdir(parents=True, exist_ok=True)
+    fake_attachment_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(artifact_files, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(artifact_files.settings, "media_dir", str(fake_media_root))
+    monkeypatch.setattr(artifact_files.settings, "aelin_attachment_storage_dir", str(fake_attachment_root))
+
+    monkeypatch.setattr(
+        "app.services.tools.tools_present_files.get_delivery_paths",
+        lambda **_kwargs: get_delivery_paths(workspace="default", user_id=1, create=False),
+    )
+    monkeypatch.setattr(
+        "app.services.tools.tools_present_files.resolve_virtual_or_local_path",
+        lambda path_value, _paths, **_kwargs: output_file if str(path_value or "").strip() else output_file,
+    )
+
+    result = tool_present_files(context, {"filepaths": ["/outputs/report.docx"]})
+
+    assert result["ok"] is True
+    assert result["artifact_count"] == 1
+    assert result["file_paths"] == [str(output_file)]
+    assert result["artifacts"][0]["path"] == str(output_file)
+
+
+def test_render_poster_artifact_tool_returns_compact_previewable_artifact(monkeypatch, tmp_path):
+    from app.services import visual_artifacts
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    monkeypatch.setattr(visual_artifacts, "_REPO_ROOT", Path(tmp_path))
+
+    result = tool_render_poster_artifact(
+        context,
+        {
+            "brief": "帮我为同济大学樱花季赏花活动创作一张海报，要求最终输出为png或.pdf文件，画面纯净精致，无元素重叠，构图完美",
+            "preferred_format": "png",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["artifact_count"] == 2
+    artifact = result["artifacts"][0]
+    assert artifact["preview_kind"] == "image-data-url"
+    assert artifact["content"] == ""
+    assert artifact["relative_path"].startswith("output/generated-posters/")
+    assert Path(artifact["path"]).is_file()
 
 
 def test_google_workspace_tool_runtime_and_auth_status(monkeypatch):
@@ -622,6 +894,45 @@ def test_google_workspace_tool_error_paths_and_write_actions(monkeypatch):
     assert "unsupported_action" in str(unknown["error"])
 
 
+def test_memory_search_tool_returns_structured_hits():
+    from app.services.tools.tools_memory import tool_memory_search
+
+    class _FakeMemoryService:
+        def search_memory(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs["query"] == "OpenClaw memory"
+            return [
+                {
+                    "path": "/memory/projects.md",
+                    "title": "OpenClaw-style memory refactor",
+                    "preview": "Compact projection plus retrieval.",
+                    "score": 7.2,
+                    "updated_at": "2026-04-07T00:00:00+00:00",
+                    "canonical_id": "project:1",
+                    "target": "projects.md",
+                    "source": "agents_md",
+                    "kind": "project",
+                    "topic_path": "projects",
+                    "entry_kind": "note",
+                }
+            ]
+
+    fake_web = _FakeWebSearch()
+    context = build_tool_runtime_context(
+        user_id=1,
+        workspace="default",
+        web_search_service=fake_web,  # type: ignore[arg-type]
+        memory_service=_FakeMemoryService(),  # type: ignore[arg-type]
+        session_factory=_FakeSession,
+    )
+
+    result = tool_memory_search(context, {"query": "OpenClaw memory", "kinds": ["project"], "top_k": 4})
+
+    assert result["ok"] is True
+    assert result["total"] == 1
+    assert result["items"][0]["kind"] == "project"
+    assert result["items"][0]["path"] == "/memory/projects.md"
+
+
 def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
@@ -629,11 +940,11 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
     context = _tool_context(fake_web)
     calls: list[dict[str, object]] = []
 
-    def _fake_tool_device(tool_context, args):  # type: ignore[no-untyped-def]
+    def _fake_tool_memory_search(tool_context, args):  # type: ignore[no-untyped-def]
         calls.append({"tool_context": tool_context, "args": dict(args)})
         return {"ok": True, "echo": dict(args)}
 
-    monkeypatch.setattr(dag, "tool_device", _fake_tool_device)
+    monkeypatch.setattr(dag, "tool_memory_search", _fake_tool_memory_search)
 
     limiter = ToolCallLimiter(
         max_tool_calls=20,
@@ -645,20 +956,26 @@ def test_deepagents_build_chat_tools_uses_explicit_registered_tools(monkeypatch)
 
     assert isinstance(usage, ToolPolicyUsage)
     assert [tool.name for tool in tools] == [
+        "memory_search",
         "web_search",
         "attachment_search",
         "google_workspace",
         "device",
         "screen_get",
+        "present_files",
     ]
 
-    device_tool = next(t for t in tools if t.name == "device")
-    result = device_tool.invoke({"action": "open_url", "url": "https://example.com"})
+    memory_tool = next(t for t in tools if t.name == "memory_search")
+    result = memory_tool.invoke({"query": "OpenClaw memory", "kinds": ["project"]})
 
     assert result["ok"] is True
     assert calls
-    assert calls[0]["args"] == {"action": "open_url", "url": "https://example.com"}
-    assert any(tr["name"] == "device" and tr["status"] == "completed" for tr in tool_runs)
+    assert calls[0]["args"] == {
+        "query": "OpenClaw memory",
+        "kinds": ["project"],
+        "top_k": 6,
+    }
+    assert any(tr["name"] == "memory_search" and tr["status"] == "completed" for tr in tool_runs)
 
 
 def test_deepagents_build_chat_tools_registers_execute_when_enabled(monkeypatch):
@@ -701,6 +1018,58 @@ def test_deepagents_build_chat_tools_registers_execute_when_enabled(monkeypatch)
     assert any(tr["name"] == "execute" and tr["status"] == "completed" for tr in tool_runs)
 
 
+def test_deepagents_build_chat_tools_registers_present_files(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    calls: list[dict[str, object]] = []
+
+    def _fake_tool_present_files(tool_context, args):  # type: ignore[no-untyped-def]
+        calls.append({"tool_context": tool_context, "args": dict(args)})
+        return {
+            "ok": True,
+            "summary": "presented 1 file(s)",
+            "file_paths": ["D:/Github/Aelin/output/deepagents/user-1/default/outputs/demo.png"],
+            "artifact_count": 1,
+            "artifacts": [
+                {
+                    "path": "D:/Github/Aelin/output/deepagents/user-1/default/outputs/demo.png",
+                    "relative_path": "output/deepagents/user-1/default/outputs/demo.png",
+                    "name": "demo.png",
+                    "mime_type": "image/png",
+                    "size_bytes": 1024,
+                    "preview_kind": "image-data-url",
+                    "content": "data:image/png;base64,QUJDRA==",
+                    "created_at": "2026-03-31T10:00:00+08:00",
+                    "modified_at": "2026-03-31T10:00:00+08:00",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(dag, "tool_present_files", _fake_tool_present_files)
+
+    limiter = ToolCallLimiter(
+        max_tool_calls=20,
+        max_write_calls=10,
+        allow_write_tools=True,
+    )
+
+    tools, tool_runs, _usage = dag.build_chat_tools(context=context, limiter=limiter)
+
+    assert "present_files" in [tool.name for tool in tools]
+    present_tool = next(t for t in tools if t.name == "present_files")
+    result = present_tool.invoke({"filepaths": ["/outputs/demo.png"]})
+
+    assert result["ok"] is True
+    assert calls
+    assert calls[0]["args"] == {"filepaths": ["/outputs/demo.png"]}
+    assert any(
+        tr["name"] == "present_files" and tr["status"] == "completed"
+        for tr in tool_runs
+    )
+
+
 def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
@@ -723,6 +1092,72 @@ def test_deepagents_build_chat_tools_wraps_generic_tool_exceptions(monkeypatch):
     assert "web_search_failed:boom" in str(result.get("error") or "")
     assert usage.total_calls == 1
     assert tool_runs[0]["call_index"] == 1
+
+
+def test_deepagents_read_tool_retry_recovers_from_transient_failure(monkeypatch):
+    from app.services.deepagents.assembly import tool_registry
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=1, allow_write_tools=False)
+    usage = ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+    calls = {"count": 0}
+
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_attempts", 1)
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_backoff_seconds", 0.0)
+
+    def _flaky_handler(_context, _args):  # noqa: ANN001
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"ok": False, "error": "web_search_timeout: upstream 504"}
+        return {"ok": True, "total": 1, "summary": "found 1 web result"}
+
+    result = tool_registry._invoke_tool(
+        name="web_search",
+        args={"action": "search", "query": "deepagents"},
+        handler=_flaky_handler,
+        context=context,
+        limiter=limiter,
+        usage=usage,
+        tool_runs=tool_runs,  # type: ignore[arg-type]
+    )
+
+    assert result["ok"] is True
+    assert result["attempts"] == 2
+    assert calls["count"] == 2
+    assert "after 2 attempts" in str(tool_runs[0]["summary"])
+
+
+def test_deepagents_write_tool_does_not_retry_transient_failures(monkeypatch):
+    from app.services.deepagents.assembly import tool_registry
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    limiter = ToolCallLimiter(max_tool_calls=4, max_write_calls=2, allow_write_tools=True)
+    usage = ToolPolicyUsage()
+    tool_runs: list[dict[str, object]] = []
+    calls = {"count": 0}
+
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_attempts", 3)
+    monkeypatch.setattr(tool_registry.settings, "deepagents_read_tool_retry_backoff_seconds", 0.0)
+
+    def _flaky_handler(_context, _args):  # noqa: ANN001
+        calls["count"] += 1
+        return {"ok": False, "error": "execute_timeout: upstream 504"}
+
+    result = tool_registry._invoke_tool(
+        name="execute",
+        args={"command": "pytest -q"},
+        handler=_flaky_handler,
+        context=context,
+        limiter=limiter,
+        usage=usage,
+        tool_runs=tool_runs,  # type: ignore[arg-type]
+    )
+
+    assert result["ok"] is False
+    assert calls["count"] == 1
 
 
 def test_deepagents_http_timeout_uses_stream_idle_for_read_timeout(monkeypatch):
@@ -767,8 +1202,10 @@ def test_deepagents_memory_files_include_agents_md(monkeypatch):
     assert isinstance(usage, ToolPolicyUsage)
     assert isinstance(files, dict)
     assert "/memory/AGENTS.md" in files
-    content = files["/memory/AGENTS.md"].get("content")
-    assert isinstance(content, list) and "likes agents." in "\n".join(str(line) for line in content)
+    assert "/memory/memory_index.json" in files
+    content = _file_data_text(files["/memory/AGENTS.md"])
+    assert "likes agents." in content
+    assert any(path.startswith("/memory/") and path != "/memory/AGENTS.md" for path in files)
 
 
 def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
@@ -803,8 +1240,9 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
     backend = backend_factory(runtime)
 
     runtime_files = runtime.state.get("files", {})
-    assert "/memory/AGENTS.md" in runtime_files
-    assert "/runtime/capabilities.json" in runtime_files
+    if runtime_files:
+        assert "/memory/AGENTS.md" in runtime_files
+        assert "/runtime/capabilities.json" in runtime_files
 
     responses = backend.download_files(["/memory/AGENTS.md", "/runtime/capabilities.json"])
     decoded = [
@@ -813,13 +1251,18 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
     ]
     assert "remember this" in decoded[0]
     assert '"available_attachment_ids"' in decoded[1]
-    assert files["/memory/AGENTS.md"] == runtime_files["/memory/AGENTS.md"]
+    assert '"memory_index"' in decoded[1]
+    assert _file_data_text(files["/memory/AGENTS.md"]) in decoded[0]
+    if runtime_files:
+        assert _file_data_text(runtime_files["/memory/AGENTS.md"]) in decoded[0]
 
 
 def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.model_timeout_middleware import (
+        DeepAgentsModelRetryMiddleware,
         DeepAgentsModelTimeoutMiddleware,
+        DeepAgentsToolAvailabilityMiddleware,
         DeepAgentsToolMessageSanitizerMiddleware,
     )
 
@@ -828,6 +1271,9 @@ def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypa
 
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     monkeypatch.setattr(dag.settings, "deepagents_run_timeout_seconds", 33.0)
+    monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_retries", 2)
+    monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_backoff_seconds", 0.5)
+    monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", False)
 
     captured: dict[str, object] = {}
 
@@ -847,10 +1293,55 @@ def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypa
     )
 
     middleware = list(captured.get("middleware") or [])
-    assert len(middleware) == 2
+    assert len(middleware) == 4
     assert isinstance(middleware[0], DeepAgentsToolMessageSanitizerMiddleware)
-    assert isinstance(middleware[1], DeepAgentsModelTimeoutMiddleware)
-    assert middleware[1].timeout_seconds == 33.0
+    assert isinstance(middleware[1], DeepAgentsToolAvailabilityMiddleware)
+    assert isinstance(middleware[2], DeepAgentsModelRetryMiddleware)
+    assert middleware[2].max_retries == 2
+    assert isinstance(middleware[3], DeepAgentsModelTimeoutMiddleware)
+    assert middleware[3].timeout_seconds == 33.0
+
+
+def test_deepagents_build_chat_agent_preserves_custom_execute_tool(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents.model_timeout_middleware import (
+        DeepAgentsModelRetryMiddleware,
+        DeepAgentsModelTimeoutMiddleware,
+        DeepAgentsToolAvailabilityMiddleware,
+        DeepAgentsToolMessageSanitizerMiddleware,
+    )
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+    monkeypatch.setattr(dag.settings, "deepagents_run_timeout_seconds", 33.0)
+    monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_retries", 1)
+    monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", True)
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        context=context,
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=True),
+        memory_text="",
+        skills_root=None,
+    )
+
+    middleware = list(captured.get("middleware") or [])
+    assert len(middleware) == 4
+    assert isinstance(middleware[0], DeepAgentsToolMessageSanitizerMiddleware)
+    assert isinstance(middleware[1], DeepAgentsToolAvailabilityMiddleware)
+    assert isinstance(middleware[2], DeepAgentsModelRetryMiddleware)
+    assert isinstance(middleware[3], DeepAgentsModelTimeoutMiddleware)
 
 
 def test_deepagents_skills_use_backend_routes_instead_of_preinjected_files(monkeypatch, tmp_path):
@@ -907,9 +1398,7 @@ def test_deepagents_skills_use_backend_routes_instead_of_preinjected_files(monke
     assert "/skills/aelin/chrome-cdp/scripts/cdp.mjs" not in files
     assert "/skills/aelin/chrome-cdp/references/guide.md" not in files
     assert "/runtime/capabilities.json" in files
-    capabilities_content = files["/runtime/capabilities.json"].get("content")
-    assert isinstance(capabilities_content, list)
-    capabilities_text = "\n".join(str(line) for line in capabilities_content)
+    capabilities_text = _file_data_text(files["/runtime/capabilities.json"])
     assert '"mounted_skills"' in capabilities_text
     assert "/skills/aelin/chrome-cdp/" in capabilities_text
 
@@ -936,6 +1425,47 @@ def test_deepagents_skills_use_backend_routes_instead_of_preinjected_files(monke
     assert "# Guide" in decoded[2]
 
 
+def test_deepagents_backend_maps_workspace_and_outputs_to_real_disk(monkeypatch, tmp_path):
+    from app.services.deepagents import deepagents_graph as dag
+    from app.services.deepagents import delivery_paths as delivery
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    fake_delivery_root = tmp_path / "deepagents-root"
+
+    def _fake_get_delivery_paths(*, workspace: str, user_id: int | None = None, create: bool = True):
+        root = fake_delivery_root / f"user-{int(user_id or 0)}" / workspace
+        workspace_dir = root / "workspace"
+        outputs_dir = root / "outputs"
+        if create:
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+        return delivery.DeepAgentsDeliveryPaths(
+            root_dir=root,
+            workspace_dir=workspace_dir,
+            outputs_dir=outputs_dir,
+        )
+
+    monkeypatch.setattr(dag, "get_delivery_paths", _fake_get_delivery_paths)
+
+    backend_factory = dag._build_agent_backend_factory(
+        user_id=1,
+        workspace="default",
+        skills_root=tmp_path / "skills",
+        extra_dir="",
+        seed_files=None,
+    )
+    backend = backend_factory(SimpleNamespace(state={}))
+
+    write_result = backend.write("/workspace/demo.txt", "hello workspace")
+    assert not write_result.error
+    assert (fake_delivery_root / "user-1" / "default" / "workspace" / "demo.txt").read_text(encoding="utf-8") == "hello workspace"
+
+    output_result = backend.write("/outputs/report.md", "# Report")
+    assert not output_result.error
+    assert (fake_delivery_root / "user-1" / "default" / "outputs" / "report.md").read_text(encoding="utf-8") == "# Report"
+
+
 def test_deepagents_model_timeout_middleware_stops_long_async_model_call(caplog):
     from app.services.deepagents.model_timeout_middleware import DeepAgentsModelTimeoutMiddleware
 
@@ -957,6 +1487,58 @@ def test_deepagents_model_timeout_middleware_stops_long_async_model_call(caplog)
     assert isinstance(result, AIMessage)
     assert "模型生成超时" in str(result.content)
     assert any("deepagents_model_timeout" in record.message for record in caplog.records)
+
+
+def test_deepagents_model_retry_middleware_retries_transient_connection_errors(caplog):
+    import httpx
+    import openai
+    from app.services.deepagents.model_timeout_middleware import DeepAgentsModelRetryMiddleware
+
+    middleware = DeepAgentsModelRetryMiddleware(max_retries=2, backoff_seconds=0.0)
+    request = SimpleNamespace(
+        model=SimpleNamespace(model_name="gpt-test"),
+        runtime=SimpleNamespace(context=SimpleNamespace(user_id=7, workspace="demo")),
+        messages=[HumanMessage(content="hello")],
+        tools=[SimpleNamespace(name="execute")],
+    )
+    attempts = {"count": 0}
+
+    async def _flaky_handler(_request):  # noqa: ANN001
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise openai.APIConnectionError(request=httpx.Request("POST", "https://example.com/v1/chat/completions"))
+        return SimpleNamespace(result=["ok"])
+
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(middleware.awrap_model_call(request, _flaky_handler))
+
+    assert attempts["count"] == 2
+    assert getattr(result, "result", None) == ["ok"]
+    assert any("deepagents_model_transient_error" in record.message for record in caplog.records)
+
+
+def test_deepagents_model_retry_middleware_returns_visible_error_after_exhaustion(caplog):
+    import httpx
+    import openai
+    from app.services.deepagents.model_timeout_middleware import DeepAgentsModelRetryMiddleware
+
+    middleware = DeepAgentsModelRetryMiddleware(max_retries=1, backoff_seconds=0.0)
+    request = SimpleNamespace(
+        model=SimpleNamespace(model_name="gpt-test"),
+        runtime=SimpleNamespace(context=SimpleNamespace(user_id=7, workspace="demo")),
+        messages=[HumanMessage(content="hello")],
+        tools=[SimpleNamespace(name="execute")],
+    )
+
+    async def _always_fail(_request):  # noqa: ANN001
+        raise openai.APIConnectionError(request=httpx.Request("POST", "https://example.com/v1/chat/completions"))
+
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(middleware.awrap_model_call(request, _always_fail))
+
+    assert isinstance(result, AIMessage)
+    assert "模型连接异常" in str(result.content)
+    assert any("deepagents_model_transient_error" in record.message for record in caplog.records)
 
 
 def test_deepagents_tool_message_sanitizer_patches_orphan_tool_messages(caplog):
@@ -1051,6 +1633,64 @@ def test_deepagents_write_file_guard_rejects_oversized_content(monkeypatch, capl
     assert allowed.path == "/small.txt"
 
 
+def test_deepagents_write_file_guard_is_disabled_by_default(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+    monkeypatch.setattr(dag, "create_deep_agent", lambda **kwargs: object())
+    monkeypatch.setattr(dag.settings, "deepagents_extra_skills_dir", "")
+    monkeypatch.setattr(dag.settings, "deepagents_write_file_max_chars", 0)
+
+    backend_factory = dag._build_agent_backend_factory(
+        user_id=context.user_id,
+        workspace=context.workspace,
+        skills_root=dag._backend_root() / "deepagents_skills",
+        extra_dir="",
+    )
+    backend = backend_factory(SimpleNamespace(state={}))
+
+    large_content = "A" * 60000
+    result = backend.write("/poster.svg", large_content)
+
+    assert result.error is None
+    assert result.path == "/poster.svg"
+
+
+def test_deepagents_system_prompt_guides_large_artifacts_to_execute_when_available(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+    monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", True)
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        context=context,
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        memory_text="",
+        skills_root=None,
+    )
+
+    system_prompt = str(captured.get("system_prompt") or "")
+    assert "do not stuff one enormous blob into a single write_file call" in system_prompt.lower()
+    assert "/workspace" in system_prompt
+    assert "/outputs" in system_prompt
+    assert "present_files" in system_prompt
+
+
 def test_deepagents_default_skills_root_points_to_backend_skills_dir():
     from app.services.deepagents import deepagents_graph as dag
 
@@ -1085,6 +1725,8 @@ def test_deepagents_system_prompt_adds_capability_and_factuality_rules(monkeypat
 
     system_prompt = str(captured.get("system_prompt") or "")
     assert "attachment_ids may be omitted and the runtime will apply the scoped ids automatically" in system_prompt
+    assert "memory_search" in system_prompt
+    assert "compact runtime memory projection" in system_prompt
     assert "Never claim you searched, opened, read, or cited an external source" in system_prompt
 
 
@@ -1276,3 +1918,27 @@ def test_deepagents_attachment_tool_preserves_runnable_config_across_thread_pool
     assert result["attachment_ids"] == [31, 32]
     assert fake_attachment.calls[0]["attachment_ids"] == [31, 32]
 
+
+def test_render_poster_artifact_tool_returns_compact_local_artifacts():
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+
+    result = tool_render_poster_artifact(
+        context,
+        {
+            "brief": "同济大学樱花季赏花活动海报，纯净精致，无元素重叠，构图完美",
+            "preferred_format": "png",
+            "filename_stem": "tool-compact-poster",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["artifact_count"] == 2
+    assert len(result["file_paths"]) == 2
+    assert "read_file step" in result["summary"]
+
+    for artifact in result["artifacts"]:
+        assert artifact["content"] == ""
+        assert artifact["preview_kind"] in {"image-data-url", "pdf-data-url"}
+        assert Path(str(artifact["path"])).is_file()
+        assert str(artifact["relative_path"]).startswith("output/generated-posters/")

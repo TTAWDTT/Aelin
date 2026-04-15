@@ -1,12 +1,28 @@
 ---
 name: anthropic-canvas-design
-description: Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art, design, or other static piece. Create original visual designs, never copying existing artists' work to avoid copyright violations.
+description: Create beautiful visual art in .png and .pdf documents using design philosophy. In Aelin, use the generic workspace plus outputs delivery contract instead of any dedicated poster-render shortcut. Create original visual designs, never copying existing artists' work to avoid copyright violations.
 license: Complete terms in LICENSE.txt
+allowed-tools: execute write_file edit_file read_file glob present_files
 ---
 
 These are instructions for creating design philosophies - aesthetic movements that are then EXPRESSED VISUALLY. Output only .md files, .pdf files, and .png files.
 
-Complete this in two steps:
+## AELIN RUNTIME OVERRIDE
+
+In Aelin, the correct delivery path is generic:
+- Create source files, sketches, layout notes, or rendering scripts under `/workspace`.
+- Generate the final `.png` or `.pdf` under `/outputs`.
+- After the final file exists, call `present_files` so the user receives a clickable artifact card.
+- If the work is too large for one clean `write_file`, split source across multiple files or use `execute` to generate it.
+
+Runtime-specific rules:
+- Do not keep the final deliverable only inside `/workspace`; the user-facing file must end in `/outputs`.
+- Do not answer "done" until the final file exists and has been presented.
+- When using `execute` on Windows, prefer `shell='powershell'`.
+- Keep generated source concise. Avoid giant one-shot `write_file` blobs when a short render script plus `execute` is cleaner.
+- You may still use the philosophy workflow below, but the final delivery must follow the `/workspace` -> `/outputs` -> `present_files` path.
+
+Two-step philosophy workflow:
 1. Design Philosophy Creation (.md file)
 2. Express by creating it on a canvas (.pdf file or .png file)
 

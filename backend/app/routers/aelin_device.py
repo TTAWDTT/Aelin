@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from app.models import User
 from app.routers.auth import get_current_user
 from app.schemas import (
     AelinDeviceCapabilitiesResponse,
+    AelinDevicePathOpenRequest,
+    AelinDevicePathOpenResponse,
     AelinDeviceScreenCaptureRequest,
     AelinDeviceScreenCaptureResponse,
 )
+from app.services.artifact_files import (
+    LocalArtifactAccessError,
+    artifact_media_type,
+    resolve_local_artifact_path,
+)
 from app.services.device.device_center import (
     capture_device_screen as device_capture_screen,
+    open_desktop_local_path,
+    DesktopPluginActionError,
     DeviceScreenCaptureError,
     device_status_snapshot,
 )
@@ -63,4 +74,46 @@ def get_device_capabilities(
         notes=list(snapshot.get("notes") or []),
         generated_at=datetime.now(timezone.utc),
     )
+
+
+@router.post("/device/path/open", response_model=AelinDevicePathOpenResponse)
+def open_device_local_path(
+    payload: AelinDevicePathOpenRequest,
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user  # Auth guard for local device APIs.
+    try:
+        result = open_desktop_local_path(payload.path)
+    except DesktopPluginActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return AelinDevicePathOpenResponse(
+        path=str(result.get("path") or payload.path).strip()[:2000],
+        opened=bool(result.get("opened", True)),
+        detail=str(result.get("detail") or "ok").strip()[:200],
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/artifact/content")
+def get_local_artifact_content(
+    path: str,
+    download: bool = False,
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user  # Auth guard for local artifact APIs.
+    try:
+        resolved = resolve_local_artifact_path(path)
+    except LocalArtifactAccessError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    response = FileResponse(
+        path=str(resolved),
+        media_type=artifact_media_type(resolved),
+    )
+    disposition = "attachment" if download else "inline"
+    response.headers["Content-Disposition"] = (
+        f"{disposition}; filename*=UTF-8''{quote(resolved.name)}"
+    )
+    return response
 

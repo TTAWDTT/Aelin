@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 
 import app.services.device.device_center as device_center
+import app.services.artifact_files as artifact_files
 from app.settings import settings
 from tests.aelin_test_utils import _auth_headers, _create_test_client
 
@@ -210,6 +213,10 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
     monkeypatch.setattr(settings, "desktop_plugin_execute_timeout_seconds", 20.0)
     monkeypatch.setattr(settings, "desktop_plugin_execute_max_output_chars", 120)
 
+    artifact_path = Path(__file__).resolve().parents[2] / "output" / "demo" / "result.txt"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("success", encoding="utf-8")
+
     captured: dict[str, object] = {}
 
     class _FakeResponse:
@@ -226,6 +233,18 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
                 "stderr": "",
                 "timed_out": False,
                 "summary": "command succeeded with exit code 0",
+                "artifacts": [
+                    {
+                        "path": str(artifact_path),
+                        "relative_path": "output/demo/result.txt",
+                        "name": "result.txt",
+                        "mime_type": "text/plain",
+                        "size_bytes": 7,
+                        "preview_kind": "text",
+                        "content": "success",
+                        "binary_base64": "c3VjY2Vzcw==",
+                    }
+                ],
             }
 
     class _FakeClient:
@@ -250,6 +269,7 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
 
     result = device_center.execute_desktop_command(
         command="pytest -q",
+        shell="powershell",
         cwd="D:/Github/Aelin/backend",
         timeout_ms=15_000,
     )
@@ -257,6 +277,7 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
     assert captured["url"] == "http://127.0.0.1:21914/v1/desktop/command/execute"
     assert captured["json"] == {
         "command": "pytest -q",
+        "shell": "powershell",
         "cwd": "D:/Github/Aelin/backend",
         "timeout_ms": 15_000,
     }
@@ -264,5 +285,110 @@ def test_execute_desktop_command_proxy_success(monkeypatch):
     assert float(captured["timeout"] or 0.0) >= 18.0
     assert result["exit_code"] == 0
     assert result["stdout"] == "ok"
+    assert result["shell"] == "powershell"
+    assert result["artifact_count"] == 1
+    assert result["artifacts"][0]["relative_path"] == "output/demo/result.txt"
+    assert result["artifacts"][0]["content"] == ""
+    assert "binary_base64" not in result["artifacts"][0]
+
+
+def test_device_path_open_endpoint_proxy_success(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(settings, "desktop_plugin_base_url", "http://127.0.0.1:21914")
+    monkeypatch.setattr(settings, "desktop_plugin_token", "plugin-token")
+
+    class _FakeResponse:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.text = ""
+
+        def json(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "opened": True,
+                "path": "D:/Github/Aelin/output/demo/report.docx",
+                "detail": "ok",
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args, kwargs
+
+        def __enter__(self) -> "_FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type, exc, tb
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            assert url == "http://127.0.0.1:21914/v1/desktop/path/open"
+            assert json == {"path": "D:/Github/Aelin/output/demo/report.docx"}
+            assert headers == {"x-aelin-token": "plugin-token"}
+            return _FakeResponse()
+
+    monkeypatch.setattr(device_center.httpx, "Client", _FakeClient)
+
+    resp = client.post(
+        "/api/v1/aelin/device/path/open",
+        json={"path": "D:/Github/Aelin/output/demo/report.docx"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["opened"] is True
+    assert data["path"] == "D:/Github/Aelin/output/demo/report.docx"
+
+
+def test_artifact_content_endpoint_serves_repo_file():
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    root = Path(__file__).resolve().parents[2]
+    artifact_path = root / "output" / "test-artifacts" / "preview.txt"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("preview-ok", encoding="utf-8")
+
+    resp = client.get(
+        "/api/v1/aelin/artifact/content",
+        params={"path": str(artifact_path), "download": "0"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.text == "preview-ok"
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert "inline;" in resp.headers.get("content-disposition", "")
+
+
+def test_artifact_content_endpoint_rejects_outside_repo_file(tmp_path, monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    fake_repo_root = tmp_path / "allowed-repo"
+    fake_media_root = tmp_path / "allowed-media"
+    fake_attachment_root = tmp_path / "allowed-attachments"
+    fake_repo_root.mkdir(parents=True, exist_ok=True)
+    fake_media_root.mkdir(parents=True, exist_ok=True)
+    fake_attachment_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(artifact_files, "_REPO_ROOT", fake_repo_root)
+    monkeypatch.setattr(settings, "media_dir", str(fake_media_root))
+    monkeypatch.setattr(settings, "aelin_attachment_storage_dir", str(fake_attachment_root))
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        outside_path = Path(temp_dir) / "outside.txt"
+        outside_path.write_text("outside", encoding="utf-8")
+
+        resp = client.get(
+            "/api/v1/aelin/artifact/content",
+            params={"path": str(outside_path)},
+            headers=headers,
+        )
+
+        assert resp.status_code == 403, resp.text
+        assert "outside_allowed_roots" in str(resp.json().get("detail") or "")
 
 

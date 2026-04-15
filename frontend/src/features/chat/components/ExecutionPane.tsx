@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { cn } from '@/shared/utils/cn'
 import { useChatI18n } from '../chatI18n'
 import type { ExecutionRuntime } from '../executionStreamUtils'
+import type { ChatArtifact } from '../artifactUtils'
 import { useExecutionPaneStore } from '../stores/executionPaneStore'
 import {
   ExecutionTabButton,
@@ -17,12 +18,15 @@ import {
   statusIcon,
   tabClassName,
 } from './executionPaneShared'
+import { ArtifactCardGrid } from './ArtifactCardGrid'
 
 interface ExecutionPaneProps {
   runtime: ExecutionRuntime
   values: Record<string, unknown>
+  artifacts: ChatArtifact[]
   isStreaming: boolean
   compact?: boolean
+  onOpenArtifact: (artifact: ChatArtifact) => void
 }
 
 type ExecutionTab = 'graph' | 'tools' | 'state'
@@ -30,8 +34,10 @@ type ExecutionTab = 'graph' | 'tools' | 'state'
 export function ExecutionPane({
   runtime,
   values,
+  artifacts,
   isStreaming,
   compact = false,
+  onOpenArtifact,
 }: ExecutionPaneProps) {
   const { t, locale } = useChatI18n()
   const { open } = useExecutionPaneStore()
@@ -112,7 +118,15 @@ export function ExecutionPane({
                 </div>
 
                 <div className={tabClassName(tab === 'state')}>
-                  <StateTab todos={todos} values={values} />
+                  <StateTab
+                    todos={todos}
+                    values={values}
+                    artifacts={artifacts}
+                    filesHeading={t('trace.files.heading')}
+                    filesHelper={t('trace.files.helper')}
+                    filesEmpty={t('trace.files.empty')}
+                    onOpenArtifact={onOpenArtifact}
+                  />
                 </div>
               </div>
             </div>
@@ -142,13 +156,13 @@ function GraphTab({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-              Runtime graph
+              Graph
             </div>
             <div className="mt-1 text-[15px] font-semibold text-[var(--color-text)]">
-              Execution topology
+              Live execution map
             </div>
-            <p className="mt-1 max-w-[44ch] text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-              A live execution map that highlights the active path instead of showing the graph as a static wireframe.
+            <p className="mt-1 max-w-[40ch] text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              A quieter view of the official runtime graph, with the active path kept in focus.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
@@ -174,17 +188,14 @@ function GraphTab({
       <section className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel)] p-3">
         <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
           <div>
-            <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Live paths</div>
-            <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Branch activity</div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Branches</div>
+            <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Active paths</div>
           </div>
           <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
             {lanes.length}
           </span>
         </div>
         <div className="mt-3 space-y-2">
-          <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
-            Active branches
-          </div>
           {lanes.length > 0 ? (
             <div className="grid gap-2">
               {lanes.map((lane) => (
@@ -204,7 +215,7 @@ function GraphTab({
           <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
             <div>
               <div className="text-[10px] font-medium uppercase tracking-[0.18em]">Subagents</div>
-              <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Delegation stream</div>
+              <div className="mt-1 text-[14px] font-semibold text-[var(--color-text)]">Delegation</div>
             </div>
             <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
               {locale === 'zh' ? (isStreaming ? '实时' : '已结束') : (isStreaming ? 'live' : 'settled')}
@@ -262,12 +273,45 @@ function ToolsTab({
 function StateTab({
   todos,
   values,
+  artifacts,
+  filesHeading,
+  filesHelper,
+  filesEmpty,
+  onOpenArtifact,
 }: {
   todos: unknown[]
   values: Record<string, unknown>
+  artifacts: ChatArtifact[]
+  filesHeading: string
+  filesHelper: string
+  filesEmpty: string
+  onOpenArtifact: (artifact: ChatArtifact) => void
 }) {
   return (
     <div id="execution-pane-state" className="space-y-2 text-[11px]">
+      <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
+        <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]">
+          <div>
+            <div className="font-medium text-[var(--color-text-muted)]">
+              {filesHeading}
+            </div>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              {filesHelper}
+            </p>
+          </div>
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 text-[10px] uppercase tracking-[0.16em]">
+            {artifacts.length}
+          </span>
+        </div>
+        {artifacts.length > 0
+          ? <ArtifactCardGrid artifacts={artifacts} onOpenArtifact={onOpenArtifact} />
+          : (
+              <p className="text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                {filesEmpty}
+              </p>
+            )}
+      </section>
+
       {todos.length > 0 && (
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-2.5">
           <div className="mb-2 text-[11px] font-medium text-[var(--color-text-muted)]">

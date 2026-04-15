@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
+from app.services.artifact_files import normalize_tool_artifact_payloads
 from app.services.device.device_center import (
     activate_desktop_module,
     capture_device_screen,
@@ -117,6 +118,7 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
     if not command:
         return {"ok": False, "error": "missing_command"}
 
+    shell = str(args.get("shell") or "").strip().lower()
     cwd = str(args.get("cwd") or "").strip()
     try:
         timeout_ms = int(args.get("timeout_ms") or 0)
@@ -126,6 +128,7 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
     try:
         result = execute_desktop_command(
             command=command,
+            shell=shell,
             cwd=cwd,
             timeout_ms=timeout_ms or None,
         )
@@ -141,6 +144,7 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "ok": ok,
         "command": str(result.get("command") or command),
+        "shell": str(result.get("shell") or shell),
         "cwd": str(result.get("cwd") or cwd),
         "exit_code": exit_code,
         "stdout": str(result.get("stdout") or ""),
@@ -152,6 +156,10 @@ def execute_command_result(args: dict[str, Any]) -> dict[str, Any]:
             else ("command timed out" if timed_out else f"command failed with exit code {exit_code}")
         ),
     }
+    normalized_artifacts = normalize_tool_artifact_payloads(result.get("artifacts"))
+    if normalized_artifacts:
+        payload["artifacts"] = normalized_artifacts
+        payload["artifact_count"] = len(normalized_artifacts)
     if timed_out:
         payload["error"] = "command_timed_out"
     elif not ok and exit_code is not None:

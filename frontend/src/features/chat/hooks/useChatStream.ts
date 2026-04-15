@@ -3,7 +3,7 @@ import { type BaseMessage } from '@langchain/core/messages'
 import { Client, type AssistantGraph } from '@langchain/langgraph-sdk'
 import { useStream } from '@langchain/react'
 import { aelinApi } from '@/shared/api/aelin'
-import type { AttachmentUploadResponse } from '@/shared/api/types'
+import type { AttachmentUploadResponse, ChatAction, ChatCitation } from '@/shared/api/types'
 import { MAX_PENDING_ATTACHMENTS } from '../constants'
 import { useChatI18n } from '../chatI18n'
 import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
@@ -100,9 +100,58 @@ function getMessageId(message: BaseMessage, fallback: string): string {
   return direct || fallback
 }
 
+function getRuntimeMessageId(
+  message: BaseMessage,
+  fallback: string,
+  getMessagesMetadata?: (
+    message: BaseMessage,
+    index?: number,
+  ) => {
+    messageId?: string
+    branch?: string
+    streamMetadata?: Record<string, unknown>
+  } | undefined,
+  index?: number,
+): string {
+  const direct = getMessageId(message, '')
+  if (direct) return direct
+  if (typeof getMessagesMetadata === 'function') {
+    try {
+      const metadata = getMessagesMetadata(message, index)
+      const metadataId = String(metadata?.messageId || '').trim()
+      if (metadataId) return metadataId
+    } catch {
+      // Ignore metadata read errors and fall back to a synthetic id.
+    }
+  }
+  return fallback
+}
+
+function getRuntimeToolCalls(
+  message: BaseMessage,
+  getToolCalls?: ((message: BaseMessage) => unknown[]) | undefined,
+): unknown[] {
+  if (typeof getToolCalls !== 'function') return []
+  try {
+    const toolCalls = getToolCalls(message)
+    return Array.isArray(toolCalls) ? toolCalls : []
+  } catch {
+    return []
+  }
+}
+
 function projectRuntimeMessages(
   runtimeMessages: BaseMessage[],
   previousMessages: ChatMessage[],
+  getToolCalls?: ((message: BaseMessage) => unknown[]) | undefined,
+  getMessagesMetadata?: (
+    message: BaseMessage,
+    index?: number,
+  ) => {
+    messageId?: string
+    branch?: string
+    streamMetadata?: Record<string, unknown>
+  } | undefined,
 ): ChatMessage[] {
   const previousById = new Map(previousMessages.map((message) => [message.id, message]))
   const projected: ChatMessage[] = []
@@ -112,10 +161,16 @@ function projectRuntimeMessages(
     const role = normalizeMessageRole(message)
     if (role !== 'user' && role !== 'assistant') return
 
-    const id = getMessageId(message, `message:${index}`)
+    const id = getRuntimeMessageId(
+      message,
+      `message:${index}`,
+      getMessagesMetadata,
+      index,
+    )
     const previous = previousById.get(id)
     const content = extractMessageText((message as any)?.content)
-    const toolCalls = Array.isArray((message as any)?.tool_calls) ? (message as any).tool_calls : []
+    const rawToolCalls = Array.isArray((message as any)?.tool_calls) ? (message as any).tool_calls : []
+    const toolCalls = rawToolCalls.length > 0 ? rawToolCalls : getRuntimeToolCalls(message, getToolCalls)
     if (role === 'assistant' && !content.trim() && toolCalls.length === 0) return
 
     const images = role === 'user'
@@ -146,18 +201,83 @@ function projectRuntimeMessages(
   return projected
 }
 
-function createPersistenceSignature(messages: ChatMessage[]): string {
-  return JSON.stringify(
-    messages.map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      expression: message.expression || '',
-      citations: message.citations || [],
-      actions: message.actions || [],
-      images: message.images || [],
-    })),
+function stableSerialize(value: unknown): string {
+  if (value == null) return 'null'
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(',')}]`
+  const record = asRecord(value)
+  const keys = Object.keys(record).sort()
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(',')}}`
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function hashStringList(values: string[]): number {
+  let hash = 2166136261
+  values.forEach((value) => {
+    hash ^= hashString(value)
+    hash = Math.imul(hash, 16777619)
+  })
+  return hash >>> 0
+}
+
+function buildCitationRevision(citation: ChatCitation): string {
+  return [
+    String(citation.message_id ?? ''),
+    String(citation.source ?? ''),
+    String(citation.source_label ?? ''),
+    String(citation.sender ?? ''),
+    String(citation.sender_avatar_url ?? ''),
+    String(citation.title ?? ''),
+    String(citation.received_at ?? ''),
+    String(citation.score ?? ''),
+  ].join('|')
+}
+
+function buildActionRevision(action: ChatAction): string {
+  return [
+    String(action.kind ?? ''),
+    String(action.title ?? ''),
+    String(action.detail ?? ''),
+    stableSerialize(action.payload ?? {}),
+  ].join('|')
+}
+
+function buildMessagePersistenceRevision(message: ChatMessage): string {
+  const citationsHash = hashStringList(
+    Array.from(message.citations || []).map((item) => buildCitationRevision(item)),
   )
+  const actionsHash = hashStringList(
+    Array.from(message.actions || []).map((item) => buildActionRevision(item)),
+  )
+  const imagesHash = hashStringList(
+    Array.from(message.images || []).map((item) => `${item.name || ''}|${item.dataUrl || ''}`),
+  )
+  return [
+    message.id,
+    message.role,
+    String(hashString(String(message.content || ''))),
+    String(hashString(String(message.expression || ''))),
+    String(citationsHash),
+    String(actionsHash),
+    String(imagesHash),
+  ].join(':')
+}
+
+function revisionsMatch(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
 }
 
 export function useChatStream() {
@@ -176,7 +296,7 @@ export function useChatStream() {
   const [streamThreadId, setStreamThreadId] = useState<string | null>(null)
   const assistantIdRef = useRef(assistantId)
   const assistantReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
-  const persistedSignatureRef = useRef<string>('')
+  const persistedRevisionsRef = useRef<string[]>([])
   const streamThreadIdRef = useRef<string | null>(null)
 
   const client = useMemo(() => new Client({
@@ -292,7 +412,7 @@ export function useChatStream() {
   }, [client])
 
   useEffect(() => {
-    persistedSignatureRef.current = ''
+    persistedRevisionsRef.current = []
     const nextId = String(activeSessionId || '').trim()
     if (!nextId) {
       if (streamThreadIdRef.current == null) return
@@ -323,16 +443,23 @@ export function useChatStream() {
 
   const messages = useMemo(() => {
     const runtimeMessages = Array.isArray(stream.messages) ? stream.messages : []
-    const projected = projectRuntimeMessages(runtimeMessages as BaseMessage[], sessionMessages)
+    const runtimeToolCallsReader = (stream as ChatRuntimeStream).getToolCalls
+    const runtimeMetadataReader = (stream as ChatRuntimeStream).getMessagesMetadata
+    const projected = projectRuntimeMessages(
+      runtimeMessages as BaseMessage[],
+      sessionMessages,
+      runtimeToolCallsReader,
+      runtimeMetadataReader,
+    )
     return projected.length > 0 ? projected : sessionMessages
-  }, [sessionMessages, stream.messages])
+  }, [sessionMessages, stream.messages, stream])
 
   useEffect(() => {
     if (!activeSessionId || stream.isLoading || messages.length === 0) return
-    const signature = `${activeSessionId}:${createPersistenceSignature(messages)}`
-    if (persistedSignatureRef.current === signature) return
+    const revisions = messages.map((message) => buildMessagePersistenceRevision(message))
+    if (revisionsMatch(persistedRevisionsRef.current, revisions)) return
     setSessionMessages(activeSessionId, messages)
-    persistedSignatureRef.current = signature
+    persistedRevisionsRef.current = revisions
   }, [activeSessionId, messages, stream.isLoading])
 
   useEffect(() => {

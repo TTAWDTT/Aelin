@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AssistantGraph } from '@langchain/langgraph-sdk'
-import { getExecutionRuntime, type ChatRuntimeStream } from './executionStreamUtils'
+import { analyzeExecutionStream, getExecutionRuntime, type ChatRuntimeStream } from './executionStreamUtils'
 import { buildMessageArtifactMap, extractArtifactsFromState } from './artifactUtils'
 
 function createStream(overrides: Partial<ChatRuntimeStream> = {}): ChatRuntimeStream {
@@ -123,6 +123,40 @@ describe('executionStreamUtils', () => {
         state: 'completed',
       }),
     ])
+  })
+
+  it('returns message tool-call maps from the same analysis pass', () => {
+    const message = { id: 'm3', content: 'tool answer' } as any
+    const analysis = analyzeExecutionStream(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm3',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-1',
+            status: 'completed',
+            call: {
+              id: 'call-1',
+              name: 'web_search',
+              args: { query: 'github trending' },
+            },
+            result: { answer: 'done' },
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(analysis.toolCallsByMessage.get('m3')).toEqual([
+      expect.objectContaining({ key: 'call-1', name: 'web_search' }),
+    ])
+    expect(analysis.runtime.tools).toHaveLength(1)
   })
 
   it('reads subagents only from the official runtime map', () => {
@@ -260,6 +294,7 @@ describe('executionStreamUtils', () => {
           args: '{"file_path":"/poster.html"}',
           result: '',
           filePath: '/poster.html',
+          artifacts: [],
         }]],
       ]),
       artifactsByPath,
@@ -276,6 +311,61 @@ describe('executionStreamUtils', () => {
       expect.objectContaining({
         path: '/poster.html',
         name: 'poster.html',
+      }),
+    ])
+  })
+
+  it('preserves execute-produced artifacts on tool calls', () => {
+    const message = { id: 'm8', content: 'done' } as any
+    const runtime = getExecutionRuntime(
+      createStream({
+        messages: [message],
+        getMessagesMetadata: () => ({
+          messageId: 'm8',
+          streamMetadata: {
+            langgraph_node: 'tools',
+            langgraph_checkpoint_ns: 'root',
+          },
+        }),
+        getToolCalls: () => [
+          {
+            id: 'call-execute',
+            status: 'completed',
+            call: {
+              id: 'call-execute',
+              name: 'execute',
+              args: { command: 'python build.py' },
+            },
+            result: {
+              artifact_count: 1,
+              artifacts: [
+                {
+                  path: 'D:/Github/Aelin/output/poster.png',
+                  relative_path: 'output/poster.png',
+                  name: 'poster.png',
+                  mime_type: 'image/png',
+                  size_bytes: 16,
+                  preview_kind: 'image-data-url',
+                  content: 'data:image/png;base64,ZmFrZQ==',
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      null,
+    )
+
+    expect(runtime.tools).toEqual([
+      expect.objectContaining({
+        key: 'call-execute',
+        name: 'execute',
+        artifacts: [
+          expect.objectContaining({
+            path: 'D:/Github/Aelin/output/poster.png',
+            previewKind: 'image-data-url',
+          }),
+        ],
       }),
     ])
   })

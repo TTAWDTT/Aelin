@@ -42,6 +42,9 @@ type ChatKeys =
   | 'trace.executionPane.empty'
   | 'trace.executionPane.headerOpen'
   | 'trace.executionPane.emptyDetail'
+  | 'trace.files.heading'
+  | 'trace.files.empty'
+  | 'trace.files.helper'
   | 'trace.tools.empty'
   | 'trace.tools.count'
   | 'actions.heading'
@@ -94,6 +97,9 @@ const ZH: Record<ChatKeys, string> = {
   'trace.executionPane.empty': '暂无执行信息',
   'trace.executionPane.headerOpen': '执行面板',
   'trace.executionPane.emptyDetail': '暂无可展示的执行信息。当本轮运行产生工具、状态或子代理数据时，这里会直接展示。',
+  'trace.files.heading': '运行时文件',
+  'trace.files.empty': '当前状态里还没有可预览的文件。',
+  'trace.files.helper': '这些文件直接来自本轮运行的交付链路，可点击预览、打开本地文件或下载。',
   'trace.tools.empty': '本轮暂未调用任何原子工具。',
   'trace.tools.count': '{count} 个调用',
   'actions.heading': '建议动作 ({count})',
@@ -149,6 +155,9 @@ const EN: Record<ChatKeys, string> = {
   'trace.executionPane.headerOpen': 'Execution panel',
   'trace.executionPane.emptyDetail':
     'No execution data to show yet. Tool calls, state snapshots, and subagent activity will appear here when available.',
+  'trace.files.heading': 'Runtime files',
+  'trace.files.empty': 'No previewable files have been materialized in state yet.',
+  'trace.files.helper': 'These files come directly from the current delivery pipeline and can be previewed, opened locally, or downloaded.',
   'trace.tools.empty': 'No atomic tools were invoked in this turn.',
   'trace.tools.count': '{count} call(s)',
   'actions.heading': 'Suggested actions ({count})',
