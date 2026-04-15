@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
-import { useChatStore } from './stores/chatStore'
 import { getSessionToolCalls, setSessionToolCalls } from './chatExecutionStorage'
+import { selectSessionRuntime, useChatStore } from './stores/chatStore'
 import { useChatStream } from './hooks/useChatStream'
 import { ComposerBar } from './components/ComposerBar'
 import { ChatStatusBar } from './components/ChatStatusBar'
@@ -25,7 +25,10 @@ import {
 } from './artifactUtils'
 
 export function ChatView() {
-  const { sessions, activeSessionId, statusText, createSession } = useChatStore()
+  const sessions = useChatStore((state) => state.sessions)
+  const activeSessionId = useChatStore((state) => state.activeSessionId)
+  const activeSessionRuntime = useChatStore((state) => selectSessionRuntime(state, state.activeSessionId))
+  const createSession = useChatStore((state) => state.createSession)
   const { send, messages, captureAndSend, uploadAttachments, sendWithAttachments, stop, stream, assistantGraph } = useChatStream()
   const scrollRef = useRef<HTMLDivElement>(null)
   const compact = useMediaQuery('(max-width: 960px)')
@@ -36,6 +39,7 @@ export function ChatView() {
     setOpen,
     suppressAutoOpen,
   } = useExecutionPaneStore()
+  const statusText = activeSessionRuntime.statusText
   const isStreaming = stream.isLoading
   const runtimeStream = stream as ChatRuntimeStream
   const deferredStreamMessages = useDeferredValue(runtimeStream.messages)

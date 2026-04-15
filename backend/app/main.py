@@ -21,6 +21,7 @@ from app.routers import (
 from app.settings import settings
 from app.services.bots.feishu_bot import feishu_bot_service
 from app.services.bots.qq_bot import qq_bot_service
+from app.services.deepagents.environment_contract import validate_deepagents_environment
 
 _log = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ def _add_missing_columns(engine: Engine) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    validate_deepagents_environment()
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     # Lightweight column migration for SQLite (add columns that don't exist yet)
@@ -126,4 +128,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-

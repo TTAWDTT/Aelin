@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 try:
@@ -20,11 +20,6 @@ except Exception:  # pragma: no cover - fallback for test environments without d
         path: str = ""
         content: bytes | None = None
         error: str | None = None
-
-    @dataclass
-    class LsResult:
-        error: str | None = None
-        entries: list[dict[str, Any]] | None = None
 
     class CompositeBackend:
         def __init__(self, *, default: Any, routes: dict[str, Any]) -> None:
@@ -344,6 +339,64 @@ class ManagedCompositeBackend(CompositeBackend):
                 responses[index] = response
 
         return [response for response in responses if response is not None]
+
+    async def adownload_files(self, paths: list[str]) -> list[Any]:
+        responses: list[Any] = [None] * len(list(paths or []))
+        passthrough_indexes: list[int] = []
+        passthrough_paths: list[str] = []
+
+        for index, raw_path in enumerate(list(paths or [])):
+            path = str(raw_path or "")
+            if path in self._overlay_files:
+                responses[index] = self._overlay_download_response(path)
+                continue
+            passthrough_indexes.append(index)
+            passthrough_paths.append(path)
+
+        if passthrough_paths:
+            try:
+                async_downloader = getattr(super(), "adownload_files", None)
+                if callable(async_downloader):
+                    passthrough = list(await async_downloader(passthrough_paths) or [])
+                else:
+                    passthrough = list(super().download_files(passthrough_paths) or [])
+            except RuntimeError as exc:
+                if not self._is_state_backend_graph_context_error(exc):
+                    raise
+                passthrough = [
+                    FileDownloadResponse(path=path, content=None, error=str(exc))
+                    for path in passthrough_paths
+                ]
+            for index, response in zip(passthrough_indexes, passthrough, strict=False):
+                responses[index] = response
+
+        return [response for response in responses if response is not None]
+
+    async def als_info(self, path: str) -> list[dict[str, Any]]:
+        overlay_entries = self._overlay_entries_for_path(path)
+        try:
+            async_lister = getattr(super(), "als_info", None)
+            if callable(async_lister):
+                base_entries = list(await async_lister(path) or [])
+            else:
+                base_entries = list(super().ls_info(path) or [])
+        except RuntimeError as exc:
+            if not self._is_state_backend_graph_context_error(exc):
+                raise
+            route_entries: list[dict[str, Any]] = []
+            if str(path or "/") == "/":
+                route_entries = [
+                    {
+                        "path": str(prefix or ""),
+                        "is_dir": True,
+                        "size": 0,
+                        "modified_at": "",
+                    }
+                    for prefix in sorted(self.routes.keys())
+                ]
+            return self._merge_entries(route_entries, overlay_entries)
+
+        return self._merge_entries(base_entries, overlay_entries)
 
     def _log_write_decision(
         self,

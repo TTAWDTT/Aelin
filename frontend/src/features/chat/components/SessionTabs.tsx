@@ -10,7 +10,7 @@ interface SessionTabsProps {
 }
 
 export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
-  const { sessions, activeSessionId, switchSession, createSession, deleteSession } = useChatStore()
+  const { sessions, activeSessionId, switchSession, createSession, deleteSession, sessionRuntimeById } = useChatStore()
   const activeTabRef = useRef<HTMLButtonElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const prefersReducedMotion =
@@ -37,7 +37,12 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
 
   const renderSessionItems = (truncateTitle: boolean) => (
     <>
-      {sessions.map((session) => (
+      {sessions.map((session) => {
+        const runtime = sessionRuntimeById[session.id]
+        const isRunning = runtime?.phase === 'streaming' || runtime?.phase === 'background'
+        const sessionTitle = isRunning ? `${session.title} · ${t('session.running')}` : session.title
+
+        return (
         <div
           key={session.id}
           className="group relative shrink-0"
@@ -54,9 +59,18 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)]'
             )}
             aria-label={t('session.switch', { title: session.title })}
-            title={session.title}
+            title={sessionTitle}
           >
             <span className="flex min-w-0 items-center gap-1.5">
+              {isRunning && (
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 shrink-0 rounded-full',
+                    session.id === activeSessionId ? 'bg-current animate-pulse' : 'bg-[var(--color-accent)] animate-pulse',
+                  )}
+                  aria-hidden="true"
+                />
+              )}
               <span
                 className={cn(
                   'min-w-0 text-left',
@@ -81,7 +95,8 @@ export function SessionTabs({ className, wrap = false }: SessionTabsProps) {
             </button>
           )}
         </div>
-      ))}
+        )
+      })}
     </>
   )
 

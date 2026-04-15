@@ -25,7 +25,7 @@ export function NavigationRail() {
     setSessionsVisible,
     applyTheme,
   } = useLayoutStore()
-  const { sessions, activeSessionId, switchSession, createSession, deleteSession } = useChatStore()
+  const { sessions, activeSessionId, switchSession, createSession, deleteSession, sessionRuntimeById } = useChatStore()
   const { t } = useChatI18n()
 
   const handleThemeToggle = (override?: 'light' | 'dark') => {
@@ -149,7 +149,12 @@ export function NavigationRail() {
                       >
                         <div className="h-full overflow-y-auto pr-0.5 pt-0.5">
                           <div className="flex flex-col gap-0.5">
-                            {sessions.map((session) => (
+                            {sessions.map((session) => {
+                              const runtime = sessionRuntimeById[session.id]
+                              const isRunning = runtime?.phase === 'streaming' || runtime?.phase === 'background'
+                              const sessionTitle = isRunning ? `${session.title} · ${t('session.running')}` : session.title
+
+                              return (
                               <div
                                 key={session.id}
                                 className="group relative"
@@ -164,9 +169,20 @@ export function NavigationRail() {
                                       : 'text-[var(--color-text-muted)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-text)] hover:-translate-y-[1px] hover:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.75)]'
                                   )}
                                   aria-label={t('session.switch', { title: session.title })}
-                                  title={session.title}
+                                  title={sessionTitle}
                                 >
-                                  <span className="mr-1 min-w-0 flex-1 truncate text-left">{session.title}</span>
+                                  <span className="mr-1 flex min-w-0 flex-1 items-center gap-2 truncate text-left">
+                                    {isRunning && (
+                                      <span
+                                        className={cn(
+                                          'h-1.5 w-1.5 shrink-0 rounded-full',
+                                          session.id === activeSessionId ? 'bg-current animate-pulse' : 'bg-[var(--color-accent)] animate-pulse',
+                                        )}
+                                        aria-hidden="true"
+                                      />
+                                    )}
+                                    <span className="min-w-0 flex-1 truncate text-left">{session.title}</span>
+                                  </span>
                                   {sessions.length > 1 && (
                                     <span className="ml-1 inline-flex items-center opacity-0 transition-opacity group-hover:opacity-70 group-focus-within:opacity-70">
                                       <X
@@ -182,7 +198,8 @@ export function NavigationRail() {
                                   )}
                                 </button>
                               </div>
-                            ))}
+                              )
+                            })}
                           </div>
                         </div>
                       </div>

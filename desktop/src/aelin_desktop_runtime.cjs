@@ -29,7 +29,7 @@ const LANGGRAPH_AUTH_CONFIG = JSON.stringify({
   path: "./agent_server/auth.py:aelin_auth",
 });
 const PET_COMPACT_WINDOW_SIZE = 128;
-const PET_EXPANDED_WINDOW_WIDTH = 236;
+const PET_EXPANDED_WINDOW_WIDTH = 392;
 const PET_EXPANDED_WINDOW_MAX_HEIGHT = 420;
 const MAIN_ZOOM_MIN = 0.5;
 const MAIN_ZOOM_MAX = 2.0;

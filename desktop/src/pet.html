@@ -16,7 +16,7 @@
         display: grid;
         place-items: center;
         user-select: none;
-        font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+        font-family: "Segoe UI Variable Text", "PingFang SC", "Microsoft YaHei UI", sans-serif;
       }
       #petWrap {
         position: relative;
@@ -24,15 +24,122 @@
         height: 100%;
         --pet-center-x: 64px;
         --pet-center-y: 50%;
-        --controls-left: 120px;
-        --controls-top: 14px;
+        --controls-left: 6px;
+        --controls-top: 6px;
         --controls-entry-x: 8px;
         --controls-entry-y: 0px;
-        --button-entry-x: 6px;
-        --button-entry-y: 0px;
-        --control-size: 28px;
-        --control-gap: 8px;
+        --panel-width: 248px;
+        --panel-height: 64px;
+        --control-size: 22px;
+        --control-gap: 4px;
+        --surface-bg: rgba(244, 242, 236, 0.94);
+        --surface-border: rgba(37, 34, 30, 0.12);
+        --surface-muted: rgba(37, 34, 30, 0.05);
+        --surface-active: rgba(37, 34, 30, 0.08);
+        --ink-strong: #1f1c18;
+        --ink-soft: #7a746b;
+        --entity-fill: #181614;
+        --entity-line: rgba(37, 34, 30, 0.16);
+        --entity-accent: #6d7d89;
+        --symbol-width: 12px;
+        --symbol-height: 58px;
+        --symbol-radius: 999px;
+        --symbol-rotate: 0deg;
+        --symbol-shift-y: 0px;
+        --symbol-opacity: 0.92;
+        --symbol-slit-width: 18px;
+        --symbol-slit-opacity: 0.28;
+        --shard-width: 14px;
+        --shard-height: 1.5px;
+        --shard-x: -10px;
+        --shard-y: -12px;
+        --shard-rotate: -28deg;
+        --shard-opacity: 0.48;
+        --shard-drift-x: 2px;
+        --shard-drift-y: -2px;
+        --shard-drift-rotate: 10deg;
+        --echo-x: 18px;
+        --echo-y: -18px;
+        --echo-width: 20px;
+        --echo-height: 1.5px;
+        --echo-dot-size: 4px;
+        --echo-rotate: -14deg;
+        --echo-opacity: 0.54;
+        --echo-drift-x: 3px;
+        --echo-drift-y: -4px;
+        --echo-drift-rotate: 8deg;
+        --glyph-duration: 8.8s;
+        --echo-duration: 6.8s;
+        --shard-duration: 9.8s;
+        --glyph-drift-x: 0.7px;
+        --glyph-drift-y: 3px;
+        --glyph-turn: 1.1deg;
         pointer-events: auto;
+      }
+      #statusPanel {
+        position: absolute;
+        left: var(--controls-left);
+        top: var(--controls-top);
+        box-sizing: border-box;
+        width: min(var(--panel-width), calc(100% - 12px));
+        min-height: var(--panel-height);
+        padding: 8px 10px 8px 14px;
+        border-radius: 0;
+        border: none;
+        background: linear-gradient(90deg, var(--surface-bg) 0%, rgba(244, 242, 236, 0.72) 62%, rgba(244, 242, 236, 0) 100%);
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0);
+        transform-origin: center;
+        will-change: opacity, transform;
+        backface-visibility: hidden;
+        transition: opacity 150ms ease, transform 170ms ease, border-color 170ms ease, background 170ms ease;
+      }
+      #statusPanel::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 9px;
+        bottom: 9px;
+        width: 1px;
+        background: var(--surface-border);
+        opacity: 0.86;
+      }
+      .panels-visible #statusPanel {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
+        pointer-events: auto;
+      }
+      #petWrap.dragging-panels-hidden #statusPanel {
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0) !important;
+      }
+      #speechLine {
+        color: var(--ink-strong);
+        width: 100%;
+        font-size: 11.5px;
+        line-height: 1.46;
+        font-weight: 500;
+        min-height: 0;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        white-space: normal;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        letter-spacing: 0.04em;
+        word-break: break-word;
+        text-wrap: pretty;
+      }
+      #mediaRow {
+        display: none;
+      }
+      #mediaTitle {
+        display: none;
       }
       #petShell {
         position: absolute;
@@ -40,20 +147,112 @@
         top: var(--pet-center-y);
         transform: translate(-50%, -50%);
         will-change: transform;
+        width: 120px;
+        height: 120px;
+        display: grid;
+        place-items: center;
+      }
+      #petFrame {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+      }
+      #petGlyph {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+        animation: glyphFloat var(--glyph-duration) cubic-bezier(0.37, 0, 0.2, 1) infinite;
+      }
+      #petSymbol,
+      #petEcho {
+        position: absolute;
+        transition:
+          transform 240ms ease,
+          background 220ms ease,
+          border-color 220ms ease,
+          color 220ms ease,
+          font-size 220ms ease,
+          width 220ms ease,
+          height 220ms ease,
+          opacity 220ms ease;
+      }
+      #petSymbol {
+        position: relative;
+        width: var(--symbol-width);
+        height: var(--symbol-height);
+        border-radius: var(--symbol-radius);
+        background: var(--entity-fill);
+        color: var(--entity-fill);
+        opacity: var(--symbol-opacity);
+        transform-origin: center 78%;
+        transform: translate3d(0, var(--symbol-shift-y), 0) rotate(var(--symbol-rotate));
+      }
+      #petSymbol::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 34%;
+        width: var(--symbol-slit-width);
+        height: 1px;
+        background: rgba(244, 242, 236, 0.58);
+        opacity: var(--symbol-slit-opacity);
+        transform: translate3d(-34%, -50%, 0) rotate(-28deg);
+      }
+      #petSymbol::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: var(--shard-width);
+        height: var(--shard-height);
+        border-radius: 999px;
+        background: var(--entity-accent);
+        opacity: var(--shard-opacity);
+        transform: translate3d(var(--shard-x), var(--shard-y), 0) rotate(var(--shard-rotate));
+        transform-origin: center;
+        animation: shardSweep var(--shard-duration) cubic-bezier(0.37, 0, 0.2, 1) infinite;
+      }
+      #petEcho {
+        position: relative;
+        width: var(--echo-width);
+        height: var(--echo-height);
+        border-radius: 999px;
+        background: currentColor;
+        color: var(--entity-accent);
+        opacity: var(--echo-opacity);
+        transform: translate3d(var(--echo-x), var(--echo-y), 0) rotate(var(--echo-rotate));
+        animation: echoDrift var(--echo-duration) cubic-bezier(0.37, 0, 0.2, 1) infinite;
+      }
+      #petEcho::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: 0;
+        width: var(--echo-dot-size);
+        height: var(--echo-dot-size);
+        border-radius: 50%;
+        background: currentColor;
+        transform: translate(38%, -50%);
       }
       #pet {
-        width: 96px;
-        height: 96px;
-        border-radius: 22px;
-        border: 1px solid rgba(255, 255, 255, 0.22);
+        position: absolute;
+        inset: 10px;
+        width: 100px;
+        height: 100px;
+        opacity: 0;
+        border-radius: 50%;
+        border: none;
         box-shadow: none;
-        object-fit: cover;
+        object-fit: contain;
         cursor: grab;
-        transition: filter 140ms ease;
+        transition: transform 140ms ease, opacity 140ms ease;
         pointer-events: auto;
+        transform: translate3d(0, 0, 0) scale(1);
       }
       #pet:hover {
-        transform: none;
         box-shadow: none;
       }
       #pet.dragging {
@@ -66,73 +265,23 @@
         box-shadow: none;
       }
       #pet.pressing {
-        transform: none;
-      }
-      #pet[data-state="resting"] {
-        filter: saturate(0.92) brightness(0.94);
-      }
-      #pet[data-state="working"] {
-        filter: saturate(1.18) brightness(1.02);
-      }
-      #pet[data-state="completed"] {
-        filter: saturate(1.08) brightness(1.05);
-      }
-      #pet[data-state="happy"] {
-        filter: none;
-      }
-      #stateBadge {
-        position: absolute;
-        left: 50%;
-        bottom: -12px;
-        transform: translateX(-50%);
-        padding: 2px 8px;
-        border-radius: 999px;
-        font-size: 10px;
-        line-height: 14px;
-        color: #f4f4f5;
-        background: rgba(15, 23, 42, 0.74);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        backdrop-filter: blur(6px);
-        white-space: nowrap;
-        pointer-events: none;
+        transform: translate3d(0, 1px, 0) scale(0.99);
       }
       #controlRail {
-        position: absolute;
-        left: var(--controls-left);
-        top: var(--controls-top);
-        display: grid;
-        grid-auto-flow: row;
-        gap: var(--control-gap);
-        pointer-events: none;
-        opacity: 0;
-        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0) scale(0.92);
-        transform-origin: center;
-        will-change: opacity, transform;
-        backface-visibility: hidden;
-        transition: opacity 160ms ease, transform 180ms cubic-bezier(0.22, 0.9, 0.24, 1);
-      }
-      #petWrap[data-controls-axis="x"] #controlRail {
-        grid-auto-flow: column;
+        display: flex;
+        gap: 4px;
+        pointer-events: auto;
+        align-items: center;
+        justify-content: flex-end;
+        flex-shrink: 0;
       }
       #controlRail.hidden {
         display: none;
       }
-      .panels-visible #controlRail:not(.hidden) {
-        opacity: 1;
-        transform: translate3d(0, 0, 0) scale(1);
-        pointer-events: auto;
-      }
-      #petWrap.dragging-panels-hidden #controlRail {
-        opacity: 0 !important;
-        pointer-events: none !important;
-        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0) scale(0.9) !important;
-      }
       .control-btn {
-        border: 1px solid rgba(255, 255, 255, 0.62);
-        background:
-          radial-gradient(circle at 26% 18%, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.12) 58%),
-          linear-gradient(180deg, rgba(248, 250, 252, 0.72), rgba(226, 232, 240, 0.52));
-        color: #0f172a;
+        border: 1px solid var(--surface-border);
+        background: transparent;
+        color: var(--ink-strong);
         border-radius: 999px;
         width: var(--control-size);
         height: var(--control-size);
@@ -141,66 +290,80 @@
         justify-content: center;
         padding: 0;
         cursor: pointer;
-        opacity: 0;
-        transform: translate3d(var(--button-entry-x), var(--button-entry-y), 0) scale(0.92);
-        box-shadow: 0 8px 20px rgba(100, 116, 139, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.84);
         transition:
-          opacity 130ms ease,
           background 140ms ease,
           border-color 140ms ease,
-          transform 180ms cubic-bezier(0.22, 0.9, 0.24, 1),
-          box-shadow 140ms ease;
+          transform 120ms ease;
       }
-      .panels-visible #controlRail:not(.hidden) .control-btn {
-        opacity: 1;
-        transform: translate3d(0, 0, 0) scale(1);
-      }
-      .panels-visible #controlRail:not(.hidden) .control-btn:nth-child(1) { transition-delay: 0ms; }
-      .panels-visible #controlRail:not(.hidden) .control-btn:nth-child(2) { transition-delay: 25ms; }
-      .panels-visible #controlRail:not(.hidden) .control-btn:nth-child(3) { transition-delay: 50ms; }
       .control-btn:hover:not(:disabled) {
-        background:
-          radial-gradient(circle at 26% 18%, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.2) 62%),
-          linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(241, 245, 249, 0.62));
-        border-color: rgba(255, 255, 255, 0.9);
-        transform: translate3d(0, -1px, 0) scale(1);
-        box-shadow: 0 12px 22px rgba(100, 116, 139, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+        background: var(--surface-muted);
+        border-color: rgba(42, 40, 35, 0.2);
+        transform: none;
       }
       .control-btn:active:not(:disabled) {
-        transform: translate3d(0, 0, 0) scale(0.94);
+        background: var(--surface-active);
+        transform: none;
       }
       .control-btn:disabled {
-        opacity: 0.45;
+        opacity: 0.42;
         cursor: not-allowed;
       }
       .control-btn svg {
-        width: 12px;
-        height: 12px;
+        width: 11px;
+        height: 11px;
         stroke: currentColor;
-        stroke-width: 1.9;
+        stroke-width: 1.7;
         stroke-linecap: round;
         stroke-linejoin: round;
         fill: none;
       }
-      #btnPlay {
-        background:
-          radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.14) 62%),
-          linear-gradient(180deg, rgba(204, 251, 241, 0.72), rgba(167, 243, 208, 0.54));
-        border-color: rgba(153, 246, 228, 0.74);
+      #petWrap[data-music="1"] #petSymbol {
+        transform: translate3d(0, var(--symbol-shift-y), 0) rotate(calc(var(--symbol-rotate) + 2deg));
       }
-      #btnPlay:hover:not(:disabled) {
-        background:
-          radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.2) 64%),
-          linear-gradient(180deg, rgba(153, 246, 228, 0.78), rgba(110, 231, 183, 0.62));
-        border-color: rgba(236, 253, 245, 0.96);
+      @keyframes glyphFloat {
+        0%,
+        100% {
+          transform: translate3d(0, 0, 0) rotate(-0.2deg);
+        }
+        42% {
+          transform: translate3d(var(--glyph-drift-x), calc(var(--glyph-drift-y) * -1), 0) rotate(var(--glyph-turn));
+        }
+        76% {
+          transform: translate3d(calc(var(--glyph-drift-x) * -0.5), calc(var(--glyph-drift-y) * -0.2), 0) rotate(-0.5deg);
+        }
+      }
+      @keyframes echoDrift {
+        0%,
+        100% {
+          transform: translate3d(var(--echo-x), var(--echo-y), 0) rotate(var(--echo-rotate));
+        }
+        50% {
+          transform: translate3d(calc(var(--echo-x) + var(--echo-drift-x)), calc(var(--echo-y) + var(--echo-drift-y)), 0)
+            rotate(calc(var(--echo-rotate) + var(--echo-drift-rotate)));
+        }
+      }
+      @keyframes shardSweep {
+        0%,
+        100% {
+          transform: translate3d(var(--shard-x), var(--shard-y), 0) rotate(var(--shard-rotate));
+        }
+        50% {
+          transform: translate3d(calc(var(--shard-x) + var(--shard-drift-x)), calc(var(--shard-y) + var(--shard-drift-y)), 0)
+            rotate(calc(var(--shard-rotate) + var(--shard-drift-rotate)));
+        }
       }
       @media (prefers-reduced-motion: reduce) {
-        #controlRail,
-        .control-btn {
+        #statusPanel,
+        .control-btn,
+        #pet,
+        #petGlyph,
+        #petSymbol,
+        #petEcho {
           transition-duration: 80ms !important;
           transition-delay: 0ms !important;
+          animation: none !important;
         }
-        #controlRail,
+        #statusPanel,
         .control-btn {
           transform: none !important;
         }
@@ -209,15 +372,26 @@
   </head>
   <body>
     <div id="petWrap">
-      <div id="controlRail" class="hidden" aria-label="音乐控制">
-        <button class="control-btn" id="btnPrev" type="button" aria-label="上一首"></button>
-        <button class="control-btn" id="btnPlay" type="button" aria-label="播放或暂停"></button>
-        <button class="control-btn" id="btnNext" type="button" aria-label="下一首"></button>
+      <div id="statusPanel" aria-live="polite">
+        <div id="speechLine">我在。</div>
+        <div id="mediaRow" class="hidden">
+          <div id="mediaTitle">暂无播放</div>
+          <div id="controlRail" class="hidden" aria-label="音乐控制">
+            <button class="control-btn" id="btnPrev" type="button" aria-label="上一首"></button>
+            <button class="control-btn" id="btnPlay" type="button" aria-label="播放或暂停"></button>
+            <button class="control-btn" id="btnNext" type="button" aria-label="下一首"></button>
+          </div>
+        </div>
       </div>
 
       <div id="petShell">
-        <img id="pet" alt="Aelin" draggable="false" />
-        <div id="stateBadge">开心</div>
+        <div id="petFrame">
+          <div id="petGlyph" aria-hidden="true">
+            <div id="petSymbol"></div>
+            <div id="petEcho"></div>
+          </div>
+          <img id="pet" alt="Aelin" draggable="false" />
+        </div>
       </div>
     </div>
 
@@ -228,18 +402,64 @@
       let debugSeq = 0;
 
       const wrap = document.getElementById("petWrap");
+      const statusPanel = document.getElementById("statusPanel");
       const pet = document.getElementById("pet");
-      const badge = document.getElementById("stateBadge");
+      const speechLine = document.getElementById("speechLine");
+      const mediaRow = document.getElementById("mediaRow");
+      const mediaTitle = document.getElementById("mediaTitle");
       const controlRail = document.getElementById("controlRail");
       const btnPrev = document.getElementById("btnPrev");
       const btnPlay = document.getElementById("btnPlay");
       const btnNext = document.getElementById("btnNext");
-
-      const stateLabels = {
-        happy: "开心",
-        completed: "完成",
-        resting: "休息",
-        working: "工作",
+      const moodThemes = {
+        calm: {
+          fill: "#191714",
+          accent: "#6e7d88",
+          line: "rgba(37, 34, 30, 0.16)",
+          surface: "rgba(244, 242, 236, 0.94)",
+        },
+        warming_up: {
+          fill: "#1b1713",
+          accent: "#8b7863",
+          line: "rgba(52, 41, 30, 0.16)",
+          surface: "rgba(245, 240, 232, 0.95)",
+        },
+        focused: {
+          fill: "#15181c",
+          accent: "#61778e",
+          line: "rgba(39, 49, 60, 0.18)",
+          surface: "rgba(239, 243, 247, 0.94)",
+        },
+        flow: {
+          fill: "#151917",
+          accent: "#66827c",
+          line: "rgba(34, 50, 45, 0.17)",
+          surface: "rgba(239, 244, 241, 0.94)",
+        },
+        deep_focus: {
+          fill: "#121518",
+          accent: "#52667a",
+          line: "rgba(32, 43, 53, 0.18)",
+          surface: "rgba(236, 241, 246, 0.95)",
+        },
+        recharging: {
+          fill: "#1a1714",
+          accent: "#847364",
+          line: "rgba(48, 40, 33, 0.16)",
+          surface: "rgba(245, 241, 235, 0.95)",
+        },
+        sleepy: {
+          fill: "#17171a",
+          accent: "#78758a",
+          line: "rgba(38, 38, 48, 0.16)",
+          surface: "rgba(240, 239, 245, 0.95)",
+        },
+        strained: {
+          fill: "#1c1614",
+          accent: "#8b675d",
+          line: "rgba(60, 40, 34, 0.17)",
+          surface: "rgba(245, 239, 236, 0.95)",
+        },
       };
 
       let stateAssets = {};
@@ -270,6 +490,7 @@
       let lastAppliedBounds = null;
       let currentAnchorX = 64;
       let currentAnchorY = 64;
+      let lastPayload = {};
       const petLayoutConfig = {
         compactSize: 128,
       };
@@ -279,13 +500,12 @@
       const POINTER_ACTIVE_HOLD_MS = 140;
       const DRAG_END_REOPEN_GUARD_MS = 260;
       const PLAY_VISUAL_STALE_GUARD_MS = 1200;
-      const PET_SIZE = 96;
-      const PET_RADIUS = PET_SIZE / 2;
-      const CONTROL_SIZE = 28;
-      const CONTROL_GAP = 8;
-      const CONTROL_MARGIN = 8;
-      const CONTROL_RAIL_LENGTH = CONTROL_SIZE * 3 + CONTROL_GAP * 2;
-      const CONTROL_SIDE_BAND = CONTROL_MARGIN * 2 + CONTROL_SIZE;
+      const PET_RADIUS = 50;
+      const PANEL_WIDTH = 248;
+      const PANEL_HEIGHT = 64;
+      const PANEL_GAP = 12;
+      const PANEL_MARGIN = 6;
+      const PANEL_TOP_BOTTOM_WIDTH = 252;
       const iconMarkup = {
         prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6l-8.5 6L18 18V6Z"></path><path d="M7 6v12"></path></svg>',
         next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l8.5 6L6 18V6Z"></path><path d="M17 6v12"></path></svg>',
@@ -355,6 +575,14 @@
         return { x: 0, y: 0, width: petLayoutConfig.compactSize, height: petLayoutConfig.compactSize };
       }
 
+      function getPlacementNeed(placement) {
+        const value = String(placement || "").toLowerCase();
+        if (value === "top" || value === "bottom") {
+          return PANEL_HEIGHT + PANEL_GAP;
+        }
+        return PANEL_WIDTH + PANEL_GAP;
+      }
+
       function chooseControlPlacement() {
         const bounds = getCurrentWindowBounds();
         const area = getScreenWorkArea();
@@ -364,23 +592,25 @@
         const leftSpace = (petCenterX - PET_RADIUS) - area.left;
         const topSpace = (petCenterY - PET_RADIUS) - area.top;
         const bottomSpace = area.bottom - (petCenterY + PET_RADIUS);
-        const need = CONTROL_SIDE_BAND;
+        const rightNeed = getPlacementNeed("right");
+        const leftNeed = getPlacementNeed("left");
+        const topNeed = getPlacementNeed("top");
+        const bottomNeed = getPlacementNeed("bottom");
 
-        if (rightSpace >= need) return "right";
+        if (rightSpace >= rightNeed) return "right";
+        if (leftSpace >= leftNeed) return "left";
 
-        const topOk = topSpace >= need;
-        const bottomOk = bottomSpace >= need;
+        const topOk = topSpace >= topNeed;
+        const bottomOk = bottomSpace >= bottomNeed;
         if (topOk || bottomOk) {
           return topSpace >= bottomSpace ? "top" : "bottom";
         }
 
-        if (leftSpace >= need) return "left";
-
         const ranked = [
-          { placement: "top", space: topSpace },
-          { placement: "bottom", space: bottomSpace },
-          { placement: "left", space: leftSpace },
-          { placement: "right", space: rightSpace },
+          { placement: "left", space: leftSpace - leftNeed },
+          { placement: "top", space: topSpace - topNeed },
+          { placement: "bottom", space: bottomSpace - bottomNeed },
+          { placement: "right", space: rightSpace - rightNeed },
         ].sort((a, b) => b.space - a.space);
         return ranked[0]?.placement || "right";
       }
@@ -397,73 +627,73 @@
           height: compact,
           petCenterX: compact / 2,
           petCenterY: compact / 2,
-          controlsLeft: compact - CONTROL_MARGIN - CONTROL_SIZE,
-          controlsTop: Math.round((compact - CONTROL_RAIL_LENGTH) / 2),
-          controlsEntryX: 8,
-          controlsEntryY: 0,
-          buttonEntryX: 6,
-          buttonEntryY: 0,
+          panelWidth: PANEL_WIDTH,
+          panelHeight: PANEL_HEIGHT,
+          controlsLeft: PANEL_MARGIN,
+          controlsTop: PANEL_MARGIN,
+          controlsEntryX: placement === "left" ? -12 : placement === "right" ? 12 : 0,
+          controlsEntryY: placement === "top" ? -12 : placement === "bottom" ? 12 : 0,
         };
 
         if (placement === "right") {
-          base.width = compact + CONTROL_SIDE_BAND;
-          base.controlsLeft = Math.round(base.petCenterX + PET_RADIUS + CONTROL_MARGIN);
-          base.controlsTop = Math.round((compact - CONTROL_RAIL_LENGTH) / 2);
-          base.controlsEntryX = 8;
-          base.buttonEntryX = 6;
+          base.height = Math.max(compact, PANEL_HEIGHT);
+          base.petCenterY = Math.round(base.height / 2);
+          base.width = compact + PANEL_WIDTH + PANEL_GAP;
+          base.controlsLeft = Math.round(base.petCenterX + PET_RADIUS - 4);
+          base.controlsTop = Math.round((base.height - PANEL_HEIGHT) / 2);
           return base;
         }
 
         if (placement === "left") {
-          base.width = compact + CONTROL_SIDE_BAND;
-          base.petCenterX = compact / 2 + CONTROL_SIDE_BAND;
-          base.controlsLeft = CONTROL_MARGIN;
-          base.controlsTop = Math.round((compact - CONTROL_RAIL_LENGTH) / 2);
-          base.controlsEntryX = -8;
-          base.buttonEntryX = -6;
+          base.height = Math.max(compact, PANEL_HEIGHT);
+          base.petCenterY = Math.round(base.height / 2);
+          base.width = compact + PANEL_WIDTH + PANEL_GAP;
+          base.petCenterX = compact / 2 + PANEL_WIDTH + PANEL_GAP;
+          base.controlsLeft = 0;
+          base.controlsTop = Math.round((base.height - PANEL_HEIGHT) / 2);
           return base;
         }
 
-        base.height = compact + CONTROL_SIDE_BAND;
-        base.controlsLeft = Math.round((compact - CONTROL_RAIL_LENGTH) / 2);
-        base.controlsEntryX = 0;
-        base.buttonEntryX = 0;
+        base.width = Math.max(compact, PANEL_TOP_BOTTOM_WIDTH);
+        base.panelWidth = Math.min(base.width - PANEL_MARGIN * 2, PANEL_TOP_BOTTOM_WIDTH);
+        base.height = compact + PANEL_HEIGHT + PANEL_GAP;
+        base.controlsLeft = Math.round((base.width - base.panelWidth) / 2);
         if (placement === "top") {
-          base.petCenterY = compact / 2 + CONTROL_SIDE_BAND;
-          base.controlsTop = CONTROL_MARGIN;
-          base.controlsEntryY = -8;
-          base.buttonEntryY = -6;
+          base.petCenterX = Math.round(base.width / 2);
+          base.petCenterY = compact / 2 + PANEL_HEIGHT + PANEL_GAP;
+          base.controlsTop = 0;
           return base;
         }
 
-        base.controlsTop = Math.round(base.petCenterY + PET_RADIUS + CONTROL_MARGIN);
-        base.controlsEntryY = 8;
-        base.buttonEntryY = 6;
+        base.petCenterX = Math.round(base.width / 2);
+        base.controlsTop = Math.round(base.petCenterY + PET_RADIUS - 2);
         return base;
       }
 
       function applyLayoutVars(layout) {
         if (!layout || layout.mode !== "expanded") {
           wrap.dataset.controlsAxis = "y";
+          wrap.dataset.panelPlacement = "right";
           wrap.style.setProperty("--pet-center-x", `${Math.round(petLayoutConfig.compactSize / 2)}px`);
           wrap.style.setProperty("--pet-center-y", `${Math.round(petLayoutConfig.compactSize / 2)}px`);
-          wrap.style.setProperty("--controls-left", `${petLayoutConfig.compactSize - CONTROL_MARGIN - CONTROL_SIZE}px`);
-          wrap.style.setProperty("--controls-top", `${Math.round((petLayoutConfig.compactSize - CONTROL_RAIL_LENGTH) / 2)}px`);
-          wrap.style.setProperty("--controls-entry-x", "8px");
+          wrap.style.setProperty("--controls-left", `${PANEL_MARGIN}px`);
+          wrap.style.setProperty("--controls-top", `${PANEL_MARGIN}px`);
+          wrap.style.setProperty("--controls-entry-x", "10px");
           wrap.style.setProperty("--controls-entry-y", "0px");
-          wrap.style.setProperty("--button-entry-x", "6px");
-          wrap.style.setProperty("--button-entry-y", "0px");
+          wrap.style.setProperty("--panel-width", `${PANEL_WIDTH}px`);
+          wrap.style.setProperty("--panel-height", `${PANEL_HEIGHT}px`);
           return;
         }
         wrap.dataset.controlsAxis = String(layout.axis || "y");
+        wrap.dataset.panelPlacement = String(layout.placement || "right");
         wrap.style.setProperty("--pet-center-x", `${Math.round(layout.petCenterX)}px`);
         wrap.style.setProperty("--pet-center-y", `${Math.round(layout.petCenterY)}px`);
         wrap.style.setProperty("--controls-left", `${Math.round(layout.controlsLeft)}px`);
         wrap.style.setProperty("--controls-top", `${Math.round(layout.controlsTop)}px`);
         wrap.style.setProperty("--controls-entry-x", `${Math.round(layout.controlsEntryX || 0)}px`);
         wrap.style.setProperty("--controls-entry-y", `${Math.round(layout.controlsEntryY || 0)}px`);
-        wrap.style.setProperty("--button-entry-x", `${Math.round(layout.buttonEntryX || 0)}px`);
-        wrap.style.setProperty("--button-entry-y", `${Math.round(layout.buttonEntryY || 0)}px`);
+        wrap.style.setProperty("--panel-width", `${Math.round(layout.panelWidth || PANEL_WIDTH)}px`);
+        wrap.style.setProperty("--panel-height", `${Math.round(layout.panelHeight || PANEL_HEIGHT)}px`);
       }
 
       function clearCompactCommitTimer() {
@@ -610,8 +840,7 @@
       }
 
       function syncLayoutNow() {
-        const controlsReady = !controlRail.classList.contains("hidden");
-        const expanded = desiredHoverActive && !dragging && controlsReady;
+        const expanded = desiredHoverActive && !dragging;
         if (expanded) {
           clearCompactCommitTimer();
           const layout = computeExpandedLayout();
@@ -625,7 +854,8 @@
             petCenterX: layout.petCenterX,
             petCenterY: layout.petCenterY,
             placement: layout.placement,
-            controlsReady,
+            panelWidth: layout.panelWidth,
+            panelHeight: layout.panelHeight,
           });
           requestPanelsVisible();
           return;
@@ -665,21 +895,275 @@
         return "happy";
       }
 
-      function stateLabel(state, payload) {
-        const base = stateLabels[state] || stateLabels.happy;
-        const idleSec = Number(payload?.idleSec || 0);
-        if (state === "resting" && idleSec > 0) {
-          return `${base} ${Math.floor(idleSec)}s`;
-        }
-        if (state === "working") {
-          const mins = Number(payload?.workDurationMin || 0);
-          if (mins > 0) return `${base} ${mins}m`;
-        }
-        return base;
-      }
-
       function sourceForState(state) {
         return stateAssets[state] || stateAssets.happy || fallbackIcon || "";
+      }
+
+      function truncateText(text, maxLength = 26) {
+        const raw = String(text || "").trim();
+        if (!raw) return "";
+        return raw.length > maxLength ? `${raw.slice(0, Math.max(0, maxLength - 1))}…` : raw;
+      }
+
+      function clampUnit(value, min = 0, max = 1) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return min;
+        return Math.max(min, Math.min(max, num));
+      }
+
+      function buildPrimaryLine(payload = {}) {
+        const coach = String(payload?.coachLine || "").trim();
+        if (coach) return truncateText(coach, 28);
+        const workDurationMin = Math.max(0, Number(payload?.workDurationMin || 0));
+        if (payload?.state === "working") {
+          if (workDurationMin >= 90) return "继续下潜。";
+          if (workDurationMin >= 45) return "先别切走。";
+          return "我替你守着。";
+        }
+        if (payload?.state === "completed") {
+          return "这一段稳了。";
+        }
+        if (payload?.state === "resting") {
+          return payload?.isLateNight ? "今晚慢一点。" : "先缓一口气。";
+        }
+        if (payload?.hasMusic) {
+          return "让声音先铺开。";
+        }
+        return "我在。";
+      }
+
+      function applyMoodTheme(payload = {}) {
+        const emotion = payload?.emotion && typeof payload.emotion === "object" ? payload.emotion : {};
+        const mood = String(emotion.mood || "calm").trim() || "calm";
+        wrap.dataset.mood = mood;
+        const theme = moodThemes[mood] || moodThemes.calm;
+        wrap.style.setProperty("--entity-fill", theme.fill);
+        wrap.style.setProperty("--entity-accent", theme.accent);
+        wrap.style.setProperty("--entity-line", theme.line);
+        wrap.style.setProperty("--surface-bg", theme.surface);
+        wrap.style.setProperty("--surface-border", theme.line);
+      }
+
+      function applyEntityVisual(payload = {}) {
+        const emotion = payload?.emotion && typeof payload.emotion === "object" ? payload.emotion : {};
+        const state = normalizeState(payload?.state || currentState);
+        const focus = clampUnit(Number(emotion.focus || 0) / 100);
+        const energy = clampUnit(Number(emotion.energy || 0) / 100);
+        const tension = clampUnit(Number(emotion.tension || 0) / 100);
+        const valence = clampUnit(Number(emotion.valence || 0) / 100);
+
+        let symbolWidth = 12;
+        let symbolHeight = 58;
+        let symbolRadius = "999px";
+        let rotate = 0;
+        let shiftY = 0;
+        let symbolOpacity = 0.92;
+        let symbolSlitWidth = 18;
+        let symbolSlitOpacity = 0.28;
+        let shardWidth = 14;
+        let shardHeight = 1.5;
+        let shardX = -10;
+        let shardY = -12;
+        let shardRotate = -28;
+        let shardOpacity = 0.48;
+        let shardDriftX = 2;
+        let shardDriftY = -2;
+        let shardDriftRotate = 10;
+        let echoX = 18;
+        let echoY = -18;
+        let echoWidth = 20;
+        let echoHeight = 1.5;
+        let echoDotSize = 4;
+        let echoRotate = -14;
+        let echoOpacity = 0.54;
+        let echoDriftX = 3;
+        let echoDriftY = -4;
+        let echoDriftRotate = 8;
+        let glyphDuration = 8.8;
+        let echoDuration = 6.8;
+        let shardDuration = 9.8;
+        let glyphDriftX = 0.7;
+        let glyphDriftY = 3;
+        let glyphTurn = 1.1;
+
+        if (state === "working") {
+          symbolWidth = 10.5;
+          symbolHeight = 62 + focus * 8;
+          rotate = -6 + energy * 3;
+          shiftY = 0.5;
+          symbolOpacity = 0.98;
+          symbolSlitWidth = 20;
+          symbolSlitOpacity = 0.4;
+          shardWidth = 18;
+          shardX = -9;
+          shardY = -18 - tension * 3;
+          shardRotate = -34 + energy * 8;
+          shardOpacity = 0.52;
+          shardDriftX = 3;
+          shardDriftY = -4;
+          shardDriftRotate = 12;
+          echoX = 15 + energy * 4;
+          echoY = -22 - focus * 4;
+          echoWidth = 14;
+          echoHeight = 1.25;
+          echoDotSize = 3.6;
+          echoRotate = -24;
+          echoOpacity = 0.46 + focus * 0.14;
+          echoDriftX = 4;
+          echoDriftY = -6;
+          echoDriftRotate = 12;
+          glyphDuration = 6.9 - energy * 0.4;
+          echoDuration = 5.4 - energy * 0.2;
+          shardDuration = 7.4 - energy * 0.3;
+          glyphDriftX = 1;
+          glyphDriftY = 4.4 + tension;
+          glyphTurn = 1.6;
+        } else if (state === "completed") {
+          symbolWidth = 16;
+          symbolHeight = 50;
+          rotate = 7;
+          symbolOpacity = 1;
+          symbolSlitWidth = 16;
+          symbolSlitOpacity = 0.22;
+          shardWidth = 12;
+          shardX = -13;
+          shardY = -6;
+          shardRotate = -16;
+          shardOpacity = 0.58;
+          echoX = 22;
+          echoY = -10;
+          echoWidth = 24;
+          echoHeight = 1.6;
+          echoDotSize = 4;
+          echoRotate = -4;
+          echoOpacity = 0.72;
+          echoDriftX = 3;
+          echoDriftY = -3;
+          echoDriftRotate = 6;
+          glyphDuration = 7.4;
+          echoDuration = 6.1;
+          shardDuration = 8.2;
+          glyphDriftX = 0.6;
+          glyphDriftY = 2.6;
+          glyphTurn = 0.8;
+        } else if (state === "resting") {
+          symbolWidth = payload?.isLateNight ? 11 : 13;
+          symbolHeight = payload?.isLateNight ? 50 : 54;
+          rotate = payload?.isLateNight ? -10 : -4;
+          shiftY = payload?.isLateNight ? 1.5 : 0.5;
+          symbolOpacity = payload?.isLateNight ? 0.8 : 0.88;
+          symbolSlitWidth = payload?.isLateNight ? 14 : 16;
+          symbolSlitOpacity = payload?.isLateNight ? 0.18 : 0.24;
+          shardWidth = payload?.isLateNight ? 10 : 12;
+          shardX = -9;
+          shardY = payload?.isLateNight ? -8 : -10;
+          shardRotate = payload?.isLateNight ? -38 : -24;
+          shardOpacity = payload?.isLateNight ? 0.34 : 0.4;
+          shardDriftX = 2;
+          shardDriftY = -2;
+          shardDriftRotate = 8;
+          echoX = 14;
+          echoY = payload?.isLateNight ? -16 : -14;
+          echoWidth = payload?.isLateNight ? 12 : 15;
+          echoHeight = 1.2;
+          echoDotSize = payload?.isLateNight ? 3.2 : 3.6;
+          echoRotate = payload?.isLateNight ? -20 : -12;
+          echoOpacity = payload?.isLateNight ? 0.42 : 0.5;
+          echoDriftX = payload?.isLateNight ? 3 : 4;
+          echoDriftY = payload?.isLateNight ? -3 : -4;
+          echoDriftRotate = 6;
+          glyphDuration = payload?.isLateNight ? 10.4 : 9.2;
+          echoDuration = payload?.isLateNight ? 8.1 : 7.2;
+          shardDuration = payload?.isLateNight ? 11.4 : 10.2;
+          glyphDriftX = 0.5;
+          glyphDriftY = payload?.isLateNight ? 2.2 : 2.8;
+          glyphTurn = payload?.isLateNight ? 0.8 : 1;
+        } else {
+          symbolWidth = 12 + valence * 2;
+          symbolHeight = 56 + energy * 2;
+          rotate = payload?.hasMusic ? 4 : valence * 1.6 - tension * 1.2;
+          symbolOpacity = 0.9 + valence * 0.08;
+          symbolSlitWidth = payload?.hasMusic ? 20 : 18;
+          symbolSlitOpacity = payload?.hasMusic ? 0.34 : 0.28;
+          shardWidth = payload?.hasMusic ? 16 : 14;
+          shardX = payload?.hasMusic ? -7 : -10;
+          shardY = payload?.hasMusic ? -14 : -12;
+          shardRotate = payload?.hasMusic ? -18 : -28;
+          shardOpacity = 0.44 + valence * 0.08;
+          echoX = 18;
+          echoY = -18;
+          echoWidth = payload?.hasMusic ? 24 : 20;
+          echoHeight = payload?.hasMusic ? 1.6 : 1.5;
+          echoDotSize = payload?.hasMusic ? 4.2 : 4;
+          echoRotate = payload?.hasMusic ? -8 : -14;
+          echoOpacity = 0.5 + valence * 0.12;
+          echoDriftX = payload?.hasMusic ? 5 : 3;
+          echoDriftY = payload?.hasMusic ? -6 : -4;
+          echoDriftRotate = payload?.hasMusic ? 10 : 8;
+          glyphDuration = payload?.hasMusic ? 7.2 : 8.8;
+          echoDuration = payload?.hasMusic ? 5.8 : 6.8;
+          shardDuration = payload?.hasMusic ? 8.1 : 9.8;
+          glyphDriftX = payload?.hasMusic ? 1 : 0.7;
+          glyphDriftY = payload?.hasMusic ? 3.8 : 3;
+          glyphTurn = payload?.hasMusic ? 1.4 : 1.1;
+        }
+
+        if (payload?.hasMusic) {
+          echoX += 2;
+          echoWidth += 2;
+          echoDotSize += 0.2;
+          symbolOpacity = Math.min(1, symbolOpacity + 0.03);
+          echoOpacity = Math.min(0.76, echoOpacity + 0.12);
+        }
+
+        if (payload?.coachLine) {
+          shardOpacity = Math.min(1, shardOpacity + 0.08);
+          echoWidth += 1;
+          echoDotSize += 0.3;
+          echoY -= 2;
+          echoOpacity = Math.min(0.82, echoOpacity + 0.08);
+        }
+
+        wrap.style.setProperty("--symbol-width", `${symbolWidth.toFixed(1)}px`);
+        wrap.style.setProperty("--symbol-height", `${symbolHeight.toFixed(1)}px`);
+        wrap.style.setProperty("--symbol-radius", symbolRadius);
+        wrap.style.setProperty("--symbol-rotate", `${rotate.toFixed(1)}deg`);
+        wrap.style.setProperty("--symbol-shift-y", `${shiftY.toFixed(1)}px`);
+        wrap.style.setProperty("--symbol-opacity", symbolOpacity.toFixed(3));
+        wrap.style.setProperty("--symbol-slit-width", `${symbolSlitWidth.toFixed(1)}px`);
+        wrap.style.setProperty("--symbol-slit-opacity", symbolSlitOpacity.toFixed(3));
+        wrap.style.setProperty("--shard-width", `${shardWidth.toFixed(1)}px`);
+        wrap.style.setProperty("--shard-height", `${shardHeight.toFixed(1)}px`);
+        wrap.style.setProperty("--shard-x", `${shardX.toFixed(1)}px`);
+        wrap.style.setProperty("--shard-y", `${shardY.toFixed(1)}px`);
+        wrap.style.setProperty("--shard-rotate", `${shardRotate.toFixed(1)}deg`);
+        wrap.style.setProperty("--shard-opacity", shardOpacity.toFixed(3));
+        wrap.style.setProperty("--shard-drift-x", `${shardDriftX.toFixed(1)}px`);
+        wrap.style.setProperty("--shard-drift-y", `${shardDriftY.toFixed(1)}px`);
+        wrap.style.setProperty("--shard-drift-rotate", `${shardDriftRotate.toFixed(1)}deg`);
+        wrap.style.setProperty("--echo-x", `${echoX.toFixed(1)}px`);
+        wrap.style.setProperty("--echo-y", `${echoY.toFixed(1)}px`);
+        wrap.style.setProperty("--echo-width", `${echoWidth.toFixed(1)}px`);
+        wrap.style.setProperty("--echo-height", `${echoHeight.toFixed(1)}px`);
+        wrap.style.setProperty("--echo-dot-size", `${echoDotSize.toFixed(1)}px`);
+        wrap.style.setProperty("--echo-rotate", `${echoRotate.toFixed(1)}deg`);
+        wrap.style.setProperty("--echo-opacity", echoOpacity.toFixed(3));
+        wrap.style.setProperty("--echo-drift-x", `${echoDriftX.toFixed(1)}px`);
+        wrap.style.setProperty("--echo-drift-y", `${echoDriftY.toFixed(1)}px`);
+        wrap.style.setProperty("--echo-drift-rotate", `${echoDriftRotate.toFixed(1)}deg`);
+        wrap.style.setProperty("--glyph-duration", `${glyphDuration.toFixed(2)}s`);
+        wrap.style.setProperty("--echo-duration", `${echoDuration.toFixed(2)}s`);
+        wrap.style.setProperty("--shard-duration", `${shardDuration.toFixed(2)}s`);
+        wrap.style.setProperty("--glyph-drift-x", `${glyphDriftX.toFixed(1)}px`);
+        wrap.style.setProperty("--glyph-drift-y", `${glyphDriftY.toFixed(1)}px`);
+        wrap.style.setProperty("--glyph-turn", `${glyphTurn.toFixed(1)}deg`);
+        wrap.dataset.state = state;
+        wrap.dataset.music = payload?.hasMusic ? "1" : "0";
+        wrap.dataset.coach = payload?.coachLine ? "1" : "0";
+      }
+
+      function renderPanelContent(payload = {}) {
+        speechLine.textContent = buildPrimaryLine(payload);
       }
 
       function setHoverActive(active) {
@@ -744,7 +1228,8 @@
           : [];
         const hasMediaDetail = !!(media && (media.title || media.artist || media.app));
         const hasMusic = Boolean(payload?.hasMusic) || musicNames.length > 0 || hasMediaDetail;
-        controlRail.classList.toggle("hidden", !hasMusic);
+        controlRail.classList.add("hidden");
+        mediaRow.classList.add("hidden");
         if (!hasMusic) {
           latestMedia = null;
           controlsPlacementLock = "";
@@ -753,7 +1238,7 @@
           btnPlay.disabled = true;
           btnNext.disabled = true;
           setButtonIcon(btnPlay, "play");
-          setPanelsVisible(false);
+          mediaTitle.textContent = "";
           scheduleLayoutSync();
           return;
         }
@@ -771,8 +1256,14 @@
       }
 
       function applyState(payload, force = false) {
-        const nextState = normalizeState(payload?.state || currentState);
+        const nextPayload = payload && typeof payload === "object" ? { ...payload } : {};
+        const nextState = normalizeState(nextPayload?.state || currentState);
         const sameState = nextState === currentState;
+        lastPayload = {
+          ...lastPayload,
+          ...nextPayload,
+          state: nextState,
+        };
 
         if (!sameState || force) {
           currentState = nextState;
@@ -783,8 +1274,10 @@
           }
         }
 
-        badge.textContent = stateLabel(nextState, payload);
-        setMusicPanel(payload || {});
+        applyMoodTheme(lastPayload);
+        applyEntityVisual(lastPayload);
+        renderPanelContent(lastPayload);
+        setMusicPanel(lastPayload);
         scheduleLayoutSync();
       }
 
@@ -806,7 +1299,7 @@
             setPointerActive(false);
           }
         }
-        applyState({ state: config?.state || currentState }, force);
+        applyState({ ...lastPayload, state: config?.state || currentState }, force);
         scheduleLayoutSync(true);
       }
 
@@ -851,8 +1344,8 @@
           rect = mergeRect(rect, petRect);
         }
         if (wrap.classList.contains("panels-visible")) {
-          if (controlRail && !controlRail.classList.contains("hidden")) {
-            rect = mergeRect(rect, controlRail.getBoundingClientRect());
+          if (statusPanel) {
+            rect = mergeRect(rect, statusPanel.getBoundingClientRect());
           }
         }
         return rect;
@@ -860,7 +1353,7 @@
 
       function isInsideInteractive(clientX, clientY) {
         if (isInsidePet(clientX, clientY)) return true;
-        if (isInsideRect(controlRail, clientX, clientY, 3)) return true;
+        if (isInsideRect(statusPanel, clientX, clientY, 3)) return true;
         if (desiredHoverActive || wrap.classList.contains("panels-visible")) {
           const rect = buildInteractiveRect();
           if (!rect) return false;
@@ -1043,20 +1536,22 @@
         runMediaAction("next");
       });
 
-      pet.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        window.petBridge?.openMenu({
-          screenX: event.screenX,
-          screenY: event.screenY,
+      [pet, statusPanel].forEach((el) => {
+        el?.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          window.petBridge?.openMenu({
+            screenX: event.screenX,
+            screenY: event.screenY,
+          });
         });
-      });
 
-      pet.addEventListener("mouseup", (event) => {
-        if (event.button !== 2) return;
-        event.preventDefault();
-        window.petBridge?.openMenu({
-          screenX: event.screenX,
-          screenY: event.screenY,
+        el?.addEventListener("mouseup", (event) => {
+          if (event.button !== 2) return;
+          event.preventDefault();
+          window.petBridge?.openMenu({
+            screenX: event.screenX,
+            screenY: event.screenY,
+          });
         });
       });
 
@@ -1175,7 +1670,7 @@
         window.petBridge?.openChat();
       });
 
-      [pet, controlRail].forEach((el) => {
+      [pet, statusPanel].forEach((el) => {
         el?.addEventListener("mouseenter", (event) => {
           if (dragging) return;
           syncPointerByPoint(event.clientX, event.clientY);

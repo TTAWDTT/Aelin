@@ -6,40 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from deepagents import create_deep_agent
+from deepagents.backends.utils import create_file_data
 from langchain_openai import ChatOpenAI
-
-try:
-    from deepagents import create_deep_agent
-    from deepagents.backends.utils import create_file_data
-except Exception:  # pragma: no cover - fallback for test environments without deepagents
-    class _FallbackAgent:
-        def __init__(self, **kwargs: Any) -> None:
-            self.kwargs = dict(kwargs or {})
-
-        def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
-            _ = payload
-            return {"answer": ""}
-
-        async def astream(self, *_args: Any, **_kwargs: Any):
-            if False:
-                yield None
-
-        def get_graph(self) -> dict[str, Any]:
-            return {}
-
-    def create_deep_agent(**kwargs: Any) -> Any:
-        return _FallbackAgent(**kwargs)
-
-    def create_file_data(content: str) -> dict[str, Any]:
-        text = str(content or "")
-        lines = text.splitlines()
-        if text and not lines:
-            lines = [text]
-        return {
-            "content": lines,
-            "created_at": "",
-            "modified_at": "",
-        }
 
 from app.services.deepagents.assembly import backend_factory as _backend_factory_module
 from app.services.deepagents.assembly.backend_factory import _backend_root, build_agent_backend_factory

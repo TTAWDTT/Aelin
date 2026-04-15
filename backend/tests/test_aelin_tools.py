@@ -1257,6 +1257,50 @@ def test_deepagents_backend_factory_seeds_runtime_files(monkeypatch):
         assert _file_data_text(runtime_files["/memory/AGENTS.md"]) in decoded[0]
 
 
+def test_deepagents_backend_factory_preserves_async_downloads(monkeypatch):
+    from app.services.deepagents import deepagents_graph as dag
+
+    fake_web = _FakeWebSearch()
+    context = _tool_context(fake_web)
+    monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
+    monkeypatch.setattr(dag.settings, "deepagents_extra_skills_dir", "")
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_deep_agent(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(dag, "create_deep_agent", _fake_create_deep_agent)
+
+    dag.build_chat_agent(  # type: ignore[misc]
+        service=SimpleNamespace(config=SimpleNamespace(model="fake-model", temperature=0.0)),
+        provider="openai",
+        context=context,
+        limiter=ToolCallLimiter(max_tool_calls=8, max_write_calls=2, allow_write_tools=False),
+        memory_text="# Memory\nremember async",
+        skills_root=None,
+    )
+
+    backend_factory = captured.get("backend")
+    assert callable(backend_factory)
+
+    runtime = SimpleNamespace(state={})
+    backend = backend_factory(runtime)
+
+    assert hasattr(backend, "adownload_files")
+
+    responses = asyncio.run(
+        backend.adownload_files(["/memory/AGENTS.md", "/runtime/capabilities.json"])
+    )
+    decoded = [
+        response.content.decode("utf-8") if response.content is not None else ""
+        for response in responses
+    ]
+    assert "remember async" in decoded[0]
+    assert '"memory_index"' in decoded[1]
+
+
 def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
     from app.services.deepagents.model_timeout_middleware import (

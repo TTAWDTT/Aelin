@@ -2,6 +2,7 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BaseMessage } from '@langchain/core/messages'
+import type { ChatSessionRuntime } from '../stores/chatStore'
 
 type RuntimeMetadataReader =
   | ((
@@ -35,6 +36,19 @@ const mocks = vi.hoisted(() => {
     submit: vi.fn(),
     stop: vi.fn(),
     switchThread: vi.fn(),
+    tryReconnect: vi.fn(() => false),
+  }
+
+  const ensureRuntime = (sessionId: string): ChatSessionRuntime => {
+    const existing = storeState.sessionRuntimeById[sessionId]
+    if (existing) return existing
+    const nextRuntime: ChatSessionRuntime = {
+      phase: 'idle',
+      statusText: '',
+      lastErrorCode: null,
+    }
+    storeState.sessionRuntimeById[sessionId] = nextRuntime
+    return nextRuntime
   }
 
   const storeState = {
@@ -42,14 +56,19 @@ const mocks = vi.hoisted(() => {
       { id: 'session-1', title: 'Session 1', createdAt: 1, workspace: 'research' },
     ],
     activeSessionId: 'session-1' as string | null,
-    statusText: '',
-    lastErrorCode: null as string | null,
+    sessionRuntimeById: {} as Record<string, ChatSessionRuntime>,
     createSession: vi.fn(() => 'session-created'),
-    setStatusText: vi.fn((value: string) => {
-      storeState.statusText = value
+    setSessionStatusText: vi.fn((sessionId: string, value: string) => {
+      ensureRuntime(sessionId).statusText = value
     }),
-    setLastErrorCode: vi.fn((value: string | null) => {
-      storeState.lastErrorCode = value
+    setSessionLastErrorCode: vi.fn((sessionId: string, value: string | null) => {
+      ensureRuntime(sessionId).lastErrorCode = value
+    }),
+    setSessionPhase: vi.fn((sessionId: string, value: ChatSessionRuntime['phase']) => {
+      ensureRuntime(sessionId).phase = value
+    }),
+    clearSessionRuntime: vi.fn((sessionId: string) => {
+      delete storeState.sessionRuntimeById[sessionId]
     }),
     renameSession: vi.fn(),
   }
@@ -86,6 +105,23 @@ vi.mock('@langchain/langgraph-sdk', () => ({
 
 vi.mock('../stores/chatStore', () => ({
   useChatStore: mocks.useChatStoreMock,
+  selectSessionRuntime: (
+    state: { sessionRuntimeById: Record<string, ChatSessionRuntime> },
+    sessionId: string | null | undefined,
+  ) => {
+    const id = String(sessionId || '').trim()
+    return id
+      ? (state.sessionRuntimeById[id] ?? {
+          phase: 'idle' as const,
+          statusText: '',
+          lastErrorCode: null,
+        })
+      : {
+          phase: 'idle' as const,
+          statusText: '',
+          lastErrorCode: null,
+        }
+  },
 }))
 
 vi.mock('../chatI18n', () => ({
@@ -96,6 +132,7 @@ vi.mock('../chatI18n', () => ({
       if (key === 'status.capture.region') return '截图中'
       if (key === 'status.capture.fullscreen') return '截图中'
       if (key === 'status.attach.processing') return '处理中'
+      if (key === 'session.running') return '后台运行中'
       return key
     },
   }),
@@ -158,6 +195,8 @@ describe('useChatStream', () => {
     mocks.streamMock.submit.mockReset()
     mocks.streamMock.stop.mockReset()
     mocks.streamMock.switchThread.mockReset()
+    mocks.streamMock.tryReconnect.mockReset()
+    mocks.streamMock.tryReconnect.mockReturnValue(false)
     mocks.useStreamMock.mockClear()
     mocks.ensureThreadExistsMock.mockClear()
     mocks.findAssistantIdMock.mockClear()
@@ -167,12 +206,13 @@ describe('useChatStream', () => {
       { id: 'session-1', title: 'Session 1', createdAt: 1, workspace: 'research' },
     ]
     mocks.storeState.activeSessionId = 'session-1'
-    mocks.storeState.statusText = ''
-    mocks.storeState.lastErrorCode = null
+    mocks.storeState.sessionRuntimeById = {}
     mocks.storeState.createSession.mockClear()
     mocks.storeState.renameSession.mockClear()
-    mocks.storeState.setStatusText.mockClear()
-    mocks.storeState.setLastErrorCode.mockClear()
+    mocks.storeState.setSessionStatusText.mockClear()
+    mocks.storeState.setSessionLastErrorCode.mockClear()
+    mocks.storeState.setSessionPhase.mockClear()
+    mocks.storeState.clearSessionRuntime.mockClear()
   })
 
   it('configures official useStream as the runtime source', () => {
@@ -182,6 +222,7 @@ describe('useChatStream', () => {
       expect.objectContaining({
         assistantId: '__aelin_agent_pending__',
         threadId: null,
+        reconnectOnMount: true,
         messagesKey: 'messages',
         filterSubagentMessages: true,
         initialValues: {
@@ -279,6 +320,8 @@ describe('useChatStream', () => {
 
     expect(mocks.ensureThreadExistsMock).toHaveBeenCalledWith(mocks.clientStub, 'session-1')
     expect(mocks.findAssistantIdMock).toHaveBeenCalledWith(mocks.clientStub)
+    expect(mocks.streamMock.switchThread).toHaveBeenCalledWith('session-1')
+    expect(mocks.streamMock.tryReconnect).toHaveBeenCalledTimes(1)
     expect(mocks.streamMock.submit).toHaveBeenCalledTimes(1)
 
     const [payload, options] = mocks.streamMock.submit.mock.calls[0]
@@ -296,7 +339,8 @@ describe('useChatStream', () => {
       attachment_ids: [7, 9],
     })
     expect(options.streamSubgraphs).toBe(true)
-    expect(options.onDisconnect).toBe('cancel')
+    expect(options.onDisconnect).toBe('continue')
+    expect(options.streamResumable).toBe(true)
     expect(options.optimisticValues({ messages: [{ id: 'persisted-1', type: 'ai', content: 'persisted answer' }] }))
       .toEqual({
         messages: [
@@ -307,6 +351,7 @@ describe('useChatStream', () => {
 
     hook.stop()
     expect(mocks.streamMock.stop).toHaveBeenCalledTimes(1)
-    expect(mocks.storeState.setStatusText).toHaveBeenCalledWith('已取消')
+    expect(mocks.storeState.setSessionStatusText).toHaveBeenCalledWith('session-1', '已取消')
+    expect(mocks.storeState.setSessionPhase).toHaveBeenCalledWith('session-1', 'idle')
   })
 })

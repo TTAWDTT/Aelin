@@ -9,6 +9,7 @@ from langgraph_sdk.runtime import ServerRuntime
 
 from agent_server import agent_factory, graph_cache, runtime_context
 from app.db import create_session
+from app.services.deepagents.environment_contract import validate_deepagents_environment
 from app.services.deepagents.deepagents_graph import build_chat_agent
 from app.services.deepagents.run_context import DeepAgentsRunContext
 from app.services.deepagents.runtime_resolver import (
@@ -20,6 +21,7 @@ from app.services.deepagents.tool_runtime import build_tool_runtime_context
 
 _LOG = logging.getLogger(__name__)
 _reset_graph_agent_cache_for_tests = graph_cache.reset_graph_agent_cache_for_tests
+validate_deepagents_environment()
 
 
 def _get_placeholder_agent() -> Any:

@@ -54,6 +54,7 @@ type ChatKeys =
   | 'session.new'
   | 'session.switch'
   | 'session.delete'
+  | 'session.running'
   | 'session.nav.prev'
   | 'session.nav.next'
 
@@ -109,6 +110,7 @@ const ZH: Record<ChatKeys, string> = {
   'session.new': '新对话',
   'session.switch': '切换会话：{title}',
   'session.delete': '删除会话：{title}',
+  'session.running': '该会话仍在后台运行',
   'session.nav.prev': '向左查看会话',
   'session.nav.next': '向右查看会话',
 }
@@ -167,6 +169,7 @@ const EN: Record<ChatKeys, string> = {
   'session.new': 'New chat',
   'session.switch': 'Switch conversation: {title}',
   'session.delete': 'Delete conversation: {title}',
+  'session.running': 'This conversation is still running in the background',
   'session.nav.prev': 'View previous conversations',
   'session.nav.next': 'View next conversations',
 }

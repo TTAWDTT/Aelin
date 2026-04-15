@@ -9,7 +9,7 @@ import { useChatI18n } from '../chatI18n'
 import { getSessionMessages, setSessionMessages } from '../chatHistoryStorage'
 import type { ChatMessage } from '../chatTypes'
 import type { ChatRuntimeStream, ChatStreamState } from '../executionStreamUtils'
-import { useChatStore } from '../stores/chatStore'
+import { selectSessionRuntime, useChatStore } from '../stores/chatStore'
 import {
   buildHumanStreamMessage,
   buildSessionHistoryMessages,
@@ -280,13 +280,17 @@ function revisionsMatch(left: string[], right: string[]): boolean {
   return true
 }
 
+function resolveErrorCode(error: unknown): string | null {
+  const code = String((error as any)?.code || (error as any)?.status || '').trim()
+  return code || null
+}
+
 export function useChatStream() {
   const sessions = useChatStore((state) => state.sessions)
   const activeSessionId = useChatStore((state) => state.activeSessionId)
-  const statusText = useChatStore((state) => state.statusText)
+  const activeSessionRuntime = useChatStore((state) => selectSessionRuntime(state, state.activeSessionId))
   const createSession = useChatStore((state) => state.createSession)
-  const setStatusText = useChatStore((state) => state.setStatusText)
-  const setLastErrorCode = useChatStore((state) => state.setLastErrorCode)
+  const statusText = activeSessionRuntime.statusText
   const { t } = useChatI18n()
   const session = sessions.find((item) => item.id === activeSessionId)
   const sessionMessages = useMemo(() => getSessionMessages(activeSessionId), [activeSessionId])
@@ -294,10 +298,47 @@ export function useChatStream() {
   const [assistantId, setAssistantId] = useState<string>('')
   const [assistantGraph, setAssistantGraph] = useState<AssistantGraph | null>(null)
   const [streamThreadId, setStreamThreadId] = useState<string | null>(null)
+  const activeSessionIdRef = useRef(activeSessionId)
   const assistantIdRef = useRef(assistantId)
   const assistantReadyWaitersRef = useRef<Array<{ id: string; resolve: () => void }>>([])
   const persistedRevisionsRef = useRef<string[]>([])
   const streamThreadIdRef = useRef<string | null>(null)
+
+  const setSessionStatusText = useCallback((sessionId: string | null | undefined, value: string) => {
+    const id = String(sessionId || '').trim()
+    if (!id) return
+    useChatStore.getState().setSessionStatusText(id, value)
+  }, [])
+
+  const setSessionLastErrorCode = useCallback((sessionId: string | null | undefined, code: string | null) => {
+    const id = String(sessionId || '').trim()
+    if (!id) return
+    useChatStore.getState().setSessionLastErrorCode(id, code)
+  }, [])
+
+  const setSessionPhase = useCallback((sessionId: string | null | undefined, phase: 'idle' | 'streaming' | 'background') => {
+    const id = String(sessionId || '').trim()
+    if (!id) return
+    useChatStore.getState().setSessionPhase(id, phase)
+  }, [])
+
+  const setCurrentStreamStatusText = useCallback((value: string) => {
+    const sessionId = streamThreadIdRef.current || activeSessionIdRef.current
+    if (!sessionId) return
+    setSessionStatusText(sessionId, value)
+  }, [setSessionStatusText])
+
+  const setCurrentStreamPhase = useCallback((phase: 'idle' | 'streaming' | 'background') => {
+    const sessionId = streamThreadIdRef.current || activeSessionIdRef.current
+    if (!sessionId) return
+    setSessionPhase(sessionId, phase)
+  }, [setSessionPhase])
+
+  const setCurrentStreamLastErrorCode = useCallback((code: string | null) => {
+    const sessionId = streamThreadIdRef.current || activeSessionIdRef.current
+    if (!sessionId) return
+    setSessionLastErrorCode(sessionId, code)
+  }, [setSessionLastErrorCode])
 
   const client = useMemo(() => new Client({
     apiUrl: resolveAgentServerUrl(),
@@ -317,24 +358,40 @@ export function useChatStream() {
     assistantId: assistantId || '__aelin_agent_pending__',
     client,
     threadId: streamThreadId,
+    reconnectOnMount: true,
     filterSubagentMessages: true,
     messagesKey: 'messages',
     initialValues: {
       messages: buildSessionHistoryMessages(sessionMessages) as Array<Record<string, unknown>>,
     },
     onError: (error: unknown) => {
-      setStatusText(String((error as Error)?.message || 'Stream error'))
+      setCurrentStreamStatusText(String((error as Error)?.message || 'Stream error'))
+      setCurrentStreamLastErrorCode(resolveErrorCode(error))
+      setCurrentStreamPhase('idle')
     },
     onFinish: () => {
-      if (useChatStore.getState().statusText === thinkingLabel) {
-        setStatusText('')
+      const sessionId = streamThreadIdRef.current || activeSessionIdRef.current
+      if (!sessionId) return
+      const currentRuntime = selectSessionRuntime(useChatStore.getState(), sessionId)
+      if (currentRuntime.statusText === thinkingLabel) {
+        setSessionStatusText(sessionId, '')
       }
+      setSessionLastErrorCode(sessionId, null)
+      setSessionPhase(sessionId, 'idle')
     },
     onStop: () => {
-      setStatusText(t('status.cancelled'))
+      const sessionId = streamThreadIdRef.current || activeSessionIdRef.current
+      if (!sessionId) return
+      setSessionStatusText(sessionId, t('status.cancelled'))
+      setSessionLastErrorCode(sessionId, null)
+      setSessionPhase(sessionId, 'idle')
     },
   } as any)
   const streamRef = useRef(stream)
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId
+  }, [activeSessionId])
 
   useEffect(() => {
     streamRef.current = stream
@@ -364,13 +421,14 @@ export function useChatStream() {
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setStatusText(String((error as Error)?.message || 'Assistant lookup failed'))
+          setCurrentStreamStatusText(String((error as Error)?.message || 'Assistant lookup failed'))
+          setCurrentStreamLastErrorCode(resolveErrorCode(error))
         }
       })
     return () => {
       cancelled = true
     }
-  }, [assistantId, client, setStatusText])
+  }, [assistantId, client, setCurrentStreamLastErrorCode, setCurrentStreamStatusText])
 
   useEffect(() => {
     if (!assistantId) {
@@ -385,13 +443,14 @@ export function useChatStream() {
       .catch((error: unknown) => {
         if (!cancelled) {
           setAssistantGraph(null)
-          setStatusText(String((error as Error)?.message || 'Assistant graph lookup failed'))
+          setCurrentStreamStatusText(String((error as Error)?.message || 'Assistant graph lookup failed'))
+          setCurrentStreamLastErrorCode(resolveErrorCode(error))
         }
       })
     return () => {
       cancelled = true
     }
-  }, [assistantId, client, setStatusText])
+  }, [assistantId, client, setCurrentStreamLastErrorCode, setCurrentStreamStatusText])
 
   const waitForAssistantId = useCallback((expectedId: string) => {
     if (assistantIdRef.current === expectedId) return Promise.resolve()
@@ -405,11 +464,39 @@ export function useChatStream() {
     if (!nextId) return
     await ensureThreadExists(client, nextId)
     if (streamThreadIdRef.current !== nextId) {
+      const previousId = streamThreadIdRef.current
+      if (previousId && previousId !== nextId) {
+        const storeState = useChatStore.getState()
+        const previousSessionStillExists = storeState.sessions.some((item) => item.id === previousId)
+        if (previousSessionStillExists) {
+          const previousRuntime = selectSessionRuntime(storeState, previousId)
+          if (previousRuntime.phase === 'streaming') {
+            storeState.setSessionPhase(previousId, 'background')
+          }
+        }
+      }
       streamThreadIdRef.current = nextId
       setStreamThreadId(nextId)
       streamRef.current.switchThread(nextId)
+      const reconnectableStream = streamRef.current as ChatRuntimeStream & { tryReconnect?: () => boolean }
+      const didReconnect = typeof reconnectableStream.tryReconnect === 'function'
+        ? Boolean(reconnectableStream.tryReconnect())
+        : false
+      const storeState = useChatStore.getState()
+      const nextRuntime = selectSessionRuntime(storeState, nextId)
+      if (didReconnect) {
+        storeState.setSessionPhase(nextId, 'streaming')
+        if (!nextRuntime.statusText.trim()) {
+          storeState.setSessionStatusText(nextId, thinkingLabel)
+        }
+      } else if (nextRuntime.phase === 'background') {
+        storeState.setSessionPhase(nextId, 'idle')
+        if (nextRuntime.statusText === thinkingLabel) {
+          storeState.setSessionStatusText(nextId, '')
+        }
+      }
     }
-  }, [client])
+  }, [client, thinkingLabel])
 
   useEffect(() => {
     persistedRevisionsRef.current = []
@@ -426,20 +513,18 @@ export function useChatStream() {
     void ensureThreadExists(client, nextId)
       .then(() => {
         if (cancelled) return
-        if (streamThreadIdRef.current === nextId) return
-        streamThreadIdRef.current = nextId
-        setStreamThreadId(nextId)
-        streamRef.current.switchThread(nextId)
+        void ensureThreadReady(nextId)
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setStatusText(String((error as Error)?.message || 'Thread bootstrap failed'))
+          setCurrentStreamStatusText(String((error as Error)?.message || 'Thread bootstrap failed'))
+          setCurrentStreamLastErrorCode(resolveErrorCode(error))
         }
       })
     return () => {
       cancelled = true
     }
-  }, [activeSessionId, client, setStatusText])
+  }, [activeSessionId, client, ensureThreadReady, setCurrentStreamLastErrorCode, setCurrentStreamStatusText])
 
   const messages = useMemo(() => {
     const runtimeMessages = Array.isArray(stream.messages) ? stream.messages : []
@@ -463,11 +548,21 @@ export function useChatStream() {
   }, [activeSessionId, messages, stream.isLoading])
 
   useEffect(() => {
-    if (stream.isLoading) return
-    if (statusText === thinkingLabel) {
-      setStatusText('')
+    if (stream.isLoading) {
+      if (activeSessionId) {
+        setSessionPhase(activeSessionId, 'streaming')
+      }
+      return
     }
-  }, [setStatusText, statusText, stream.isLoading, thinkingLabel])
+    if (!activeSessionId) return
+    const currentRuntime = selectSessionRuntime(useChatStore.getState(), activeSessionId)
+    if (currentRuntime.phase === 'streaming') {
+      setSessionPhase(activeSessionId, 'idle')
+    }
+    if (currentRuntime.statusText === thinkingLabel) {
+      setSessionStatusText(activeSessionId, '')
+    }
+  }, [activeSessionId, setSessionPhase, setSessionStatusText, stream.isLoading, thinkingLabel])
 
   const send = useCallback(
     async (text: string, images?: PendingImage[], attachmentIds?: number[]) => {
@@ -506,8 +601,9 @@ export function useChatStream() {
 
       const humanMessage = buildHumanStreamMessage(prompt, images)
       const inputMessages = [humanMessage] as Array<Record<string, unknown>>
-      currentState.setStatusText(t('status.thinking'))
-      currentState.setLastErrorCode(null)
+      currentState.setSessionStatusText(sessionId, t('status.thinking'))
+      currentState.setSessionLastErrorCode(sessionId, null)
+      currentState.setSessionPhase(sessionId, 'streaming')
 
       try {
         await streamRef.current.submit(
@@ -519,7 +615,8 @@ export function useChatStream() {
               attachment_ids: normalizedAttachmentIds,
             } as any,
             streamSubgraphs: true,
-            onDisconnect: 'cancel',
+            onDisconnect: 'continue',
+            streamResumable: true,
             optimisticValues: (prev) => ({
               ...(prev || {}),
               messages: [
@@ -531,7 +628,9 @@ export function useChatStream() {
           },
         )
       } catch (error) {
-        currentState.setStatusText(String((error as Error)?.message || 'Stream error'))
+        currentState.setSessionStatusText(sessionId, String((error as Error)?.message || 'Stream error'))
+        currentState.setSessionLastErrorCode(sessionId, resolveErrorCode(error))
+        currentState.setSessionPhase(sessionId, 'idle')
       }
     },
     [activeSessionId, client, createSession, ensureThreadReady, t, waitForAssistantId],
@@ -539,26 +638,34 @@ export function useChatStream() {
 
   const stop = useCallback(() => {
     void stream.stop()
-    setStatusText(t('status.cancelled'))
-    setLastErrorCode(null)
-  }, [setLastErrorCode, setStatusText, stream, t])
+    const sessionId = activeSessionIdRef.current
+    if (sessionId) {
+      setSessionStatusText(sessionId, t('status.cancelled'))
+      setSessionLastErrorCode(sessionId, null)
+      setSessionPhase(sessionId, 'idle')
+    }
+  }, [setSessionLastErrorCode, setSessionPhase, setSessionStatusText, stream, t])
 
   const captureAndSend = useCallback(
     async (mode: 'fullscreen' | 'region' = 'fullscreen', textHint = '') => {
       if (stream.isLoading) return
-      setStatusText(
-        mode === 'region' ? t('status.capture.region') : t('status.capture.fullscreen'),
-      )
+      const sessionId = activeSessionIdRef.current
+      if (sessionId) {
+        setSessionStatusText(
+          sessionId,
+          mode === 'region' ? t('status.capture.region') : t('status.capture.fullscreen'),
+        )
+      }
       try {
         const capture = await aelinApi.deviceScreenCapture({ mode })
         const prompt = String(textHint || '').trim()
         await send(prompt, [{ dataUrl: capture.data_url, name: capture.name || `screen-${Date.now()}.jpg` }])
       } catch (error) {
-        setStatusText('')
+        if (sessionId) setSessionStatusText(sessionId, '')
         throw error
       }
     },
-    [send, setStatusText, stream.isLoading, t],
+    [send, setSessionStatusText, stream.isLoading, t],
   )
 
   const uploadAttachments = useCallback(
@@ -573,7 +680,9 @@ export function useChatStream() {
       const workspace =
         useChatStore.getState().sessions.find((item) => item.id === sessionId)?.workspace || 'default'
 
-      setStatusText(t('status.attach.processing'))
+      if (resolvedSessionId) {
+        setSessionStatusText(resolvedSessionId, t('status.attach.processing'))
+      }
       try {
         const settled = await Promise.allSettled(
           picked.map((file) => aelinApi.uploadAttachment(file, { workspace, session_id: resolvedSessionId })),
@@ -587,17 +696,17 @@ export function useChatStream() {
           }
           failedNames.push(picked[index]?.name || `attachment-${index + 1}`)
         })
-        setStatusText('')
+        if (resolvedSessionId) setSessionStatusText(resolvedSessionId, '')
         if (uploaded.length === 0 && failedNames.length > 0) {
           throw new Error(t('composer.attach.partialFail', { names: failedNames.join(', ') }))
         }
         return uploaded
       } catch (error) {
-        setStatusText('')
+        if (resolvedSessionId) setSessionStatusText(resolvedSessionId, '')
         throw error
       }
     },
-    [activeSessionId, createSession, setStatusText, stream.isLoading, t],
+    [activeSessionId, createSession, setSessionStatusText, stream.isLoading, t],
   )
 
   const sendWithAttachments = useCallback(

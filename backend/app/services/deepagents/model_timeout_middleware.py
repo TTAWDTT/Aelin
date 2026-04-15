@@ -8,21 +8,9 @@ from typing import Any, Callable, Awaitable
 
 import httpx
 import openai
+from deepagents.middleware._utils import append_to_system_message
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-try:
-    from deepagents.middleware._utils import append_to_system_message
-except Exception:  # pragma: no cover - fallback for test environments without deepagents
-    def append_to_system_message(system_message: SystemMessage | None, text: str) -> SystemMessage:
-        existing = ""
-        if system_message is not None:
-            content = getattr(system_message, "content", "")
-            if isinstance(content, list):
-                existing = "\n".join(str(item.get("text") or item) for item in content if item is not None)
-            else:
-                existing = str(content or "")
-        combined = f"{existing.rstrip()}\n{text}".strip() if existing else str(text or "")
-        return SystemMessage(content=combined)
 
 
 _LOG = logging.getLogger(__name__)
