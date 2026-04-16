@@ -31,6 +31,7 @@ const LANGGRAPH_AUTH_CONFIG = JSON.stringify({
 const PET_COMPACT_WINDOW_SIZE = 128;
 const PET_EXPANDED_WINDOW_WIDTH = 392;
 const PET_EXPANDED_WINDOW_MAX_HEIGHT = 420;
+const PET_CURSOR_STREAM_INTERVAL_MS = 16;
 const MAIN_ZOOM_MIN = 0.5;
 const MAIN_ZOOM_MAX = 2.0;
 const MAIN_ZOOM_STEP = 0.1;
@@ -81,6 +82,8 @@ let petClickThroughEnabled = true;
 let petStateAssets = {};
 let petStateTimer = null;
 let petHoverGuardTimer = null;
+let petCursorBroadcastTimer = null;
+let petCursorLastKey = "";
 let petStateLastKey = "";
 let petLastState = "happy";
 let petCpuSnapshot = null;
@@ -3066,6 +3069,70 @@ function pushPetState(force = false) {
   petWindow.webContents.send("pet:state", payload);
 }
 
+function stopPetCursorBroadcast() {
+  if (petCursorBroadcastTimer) {
+    clearInterval(petCursorBroadcastTimer);
+    petCursorBroadcastTimer = null;
+  }
+  petCursorLastKey = "";
+}
+
+function buildPetCursorPayload() {
+  if (!petWindow || petWindow.isDestroyed()) return null;
+  const cursor = getCursorDipPoint();
+  const windowBounds = petWindow.getBounds();
+  const display = screen.getDisplayMatching(windowBounds);
+  const workArea = display?.workArea || display?.bounds || { x: 0, y: 0, width: 0, height: 0 };
+  return {
+    cursor: {
+      x: Number(cursor.x || 0),
+      y: Number(cursor.y || 0),
+    },
+    windowBounds: {
+      x: Number(windowBounds.x || 0),
+      y: Number(windowBounds.y || 0),
+      width: Number(windowBounds.width || 0),
+      height: Number(windowBounds.height || 0),
+    },
+    workArea: {
+      x: Number(workArea.x || 0),
+      y: Number(workArea.y || 0),
+      width: Number(workArea.width || 0),
+      height: Number(workArea.height || 0),
+    },
+    ts: Date.now(),
+  };
+}
+
+function pushPetCursor(force = false) {
+  if (!petWindow || petWindow.isDestroyed() || !petWindow.isVisible()) return;
+  const payload = buildPetCursorPayload();
+  if (!payload) return;
+  const key = [
+    Number(payload.cursor?.x || 0),
+    Number(payload.cursor?.y || 0),
+    Number(payload.windowBounds?.x || 0),
+    Number(payload.windowBounds?.y || 0),
+    Number(payload.windowBounds?.width || 0),
+    Number(payload.windowBounds?.height || 0),
+  ].join("|");
+  if (!force && key === petCursorLastKey) return;
+  petCursorLastKey = key;
+  try {
+    petWindow.webContents.send("pet:cursor", payload);
+  } catch {
+    // ignore renderer sync failures during load/unload
+  }
+}
+
+function startPetCursorBroadcast() {
+  stopPetCursorBroadcast();
+  petCursorBroadcastTimer = setInterval(() => {
+    pushPetCursor(false);
+  }, PET_CURSOR_STREAM_INTERVAL_MS);
+  pushPetCursor(true);
+}
+
 function stopPetHoverGuard() {
   if (petHoverGuardTimer) {
     clearInterval(petHoverGuardTimer);
@@ -3149,6 +3216,7 @@ function stopPetStateTicker() {
     clearInterval(petStateTimer);
     petStateTimer = null;
   }
+  stopPetCursorBroadcast();
   stopPetHoverGuard();
 }
 
@@ -3162,8 +3230,10 @@ function startPetStateTicker() {
   petStateTimer = setInterval(() => {
     pushPetState(false);
   }, getStatePushIntervalMs());
+  startPetCursorBroadcast();
   startPetHoverGuard();
   pushPetState(true);
+  pushPetCursor(true);
 }
 
 function bindPetPowerEvents() {
@@ -4425,6 +4495,7 @@ function createPetWindow() {
   petWindow.webContents.on("did-finish-load", () => {
     pushPetConfig();
     pushPetState(true);
+    pushPetCursor(true);
   });
 
   let lastMenuTs = 0;
