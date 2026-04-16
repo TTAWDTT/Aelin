@@ -46,6 +46,7 @@ const backendPort = parseNumberEnv("AELIN_BACKEND_PORT", "MERCURYDESK_BACKEND_PO
 const productApiPort = parseNumberEnv("AELIN_PRODUCT_API_PORT", "MERCURYDESK_PRODUCT_API_PORT", isDev ? 18080 : backendPort);
 const frontendPort = parseNumberEnv("AELIN_DESKTOP_PORT", "MERCURYDESK_DESKTOP_PORT", isDev ? 5173 : 1420);
 const desktopZoom = parseNumberEnv("AELIN_DESKTOP_ZOOM", "MERCURYDESK_DESKTOP_ZOOM", 1.0);
+let activeProductApiPort = productApiPort;
 const LANGGRAPH_AUTH_CONFIG = JSON.stringify({
   path: "./agent_server/auth.py:aelin_auth",
 });
@@ -3472,7 +3473,10 @@ async function agentServerEndpointsHealthy() {
   const okCode = await requestStatus(`http://127.0.0.1:${backendPort}/ok`);
   if (okCode !== 200) return false;
   const healthCode = await requestStatus(`http://127.0.0.1:${backendPort}/healthz`);
-  if (healthCode !== 200) return false;
+  // `langgraph dev` can expose the Agent Server without surfacing the mounted
+  // FastAPI app's `/healthz` route, so tolerate a 404 in desktop dev mode.
+  const healthEndpointReady = healthCode === 200 || (isDev && healthCode === 404);
+  if (!healthEndpointReady) return false;
   const assistantsCode = await requestJsonStatus(
     `http://127.0.0.1:${backendPort}/assistants/search`,
     {
@@ -3499,7 +3503,7 @@ async function hasHealthyExistingBackend() {
 }
 
 async function hasHealthyExistingProductApi() {
-  const healthCode = await requestStatus(`http://127.0.0.1:${productApiPort}/healthz`);
+  const healthCode = await requestStatus(`http://127.0.0.1:${activeProductApiPort}/healthz`);
   return healthCode === 200;
 }
 
@@ -3672,10 +3676,17 @@ async function startBackend() {
   const env = buildDesktopBackendEnv({ includeLangGraphAuth: true });
 
   if (await hasHealthyExistingBackend()) {
+    activeProductApiPort = backendPort;
     safeConsoleLog(`[backend] Reusing existing backend at http://127.0.0.1:${backendPort}`);
+    if (productApiPort !== backendPort) {
+      safeConsoleLog(
+        `[backend] Routing /api traffic to the reused backend on ${backendPort} to keep chat and attachments on one runtime.`
+      );
+    }
     return;
   }
 
+  activeProductApiPort = productApiPort;
   if (app.isPackaged) {
     const runtimeRoot = backendRuntimeDir();
     const backendWorkDir = desktopBackendWorkDir();
@@ -3781,9 +3792,9 @@ async function startBackend() {
 
 async function startProductApiDev() {
   if (!isDev) return;
-  if (productApiPort === backendPort) return;
+  if (activeProductApiPort === backendPort) return;
   if (await hasHealthyExistingProductApi()) {
-    safeConsoleLog(`[product-api] Reusing existing product API at http://127.0.0.1:${productApiPort}`);
+    safeConsoleLog(`[product-api] Reusing existing product API at http://127.0.0.1:${activeProductApiPort}`);
     return;
   }
 
@@ -3817,7 +3828,7 @@ async function startProductApiDev() {
         "--host",
         "127.0.0.1",
         "--port",
-        String(productApiPort),
+        String(activeProductApiPort),
       ],
       {
         cwd: root,
@@ -3858,7 +3869,7 @@ async function startFrontendDev() {
       FORCE_COLOR: "0",
       NO_COLOR: "1",
       npm_config_color: "false",
-      VITE_PRODUCT_API_BASE: `http://127.0.0.1:${productApiPort}`,
+      VITE_PRODUCT_API_BASE: `http://127.0.0.1:${activeProductApiPort}`,
     },
   });
   pipeTaggedLog(frontendDevProc, "frontend");
@@ -3872,7 +3883,7 @@ function startFrontendServer() {
 
   const web = express();
   const proxyTimeoutMs = 10 * 60 * 1000;
-  const attachProxy = (mountPath, targetPath, targetPort = productApiPort) => {
+  const attachProxy = (mountPath, targetPath, targetPort = activeProductApiPort) => {
     web.use(
       mountPath,
       createProxyMiddleware({
@@ -3887,8 +3898,8 @@ function startFrontendServer() {
   // Express strips the mount prefix before proxying, so we rewrite the path
   // explicitly to preserve exact upstream routes for both collection roots
   // (/threads) and nested endpoints (/assistants/search).
-  attachProxy("/api", "/api", productApiPort);
-  attachProxy("/media", "/media", productApiPort);
+  attachProxy("/api", "/api", activeProductApiPort);
+  attachProxy("/media", "/media", activeProductApiPort);
   attachProxy("/assistants", "/assistants", backendPort);
   attachProxy("/threads", "/threads", backendPort);
   attachProxy("/runs", "/runs", backendPort);
@@ -3905,7 +3916,7 @@ function startFrontendServer() {
 
   frontendServer = web.listen(frontendPort, "127.0.0.1");
   safeConsoleLog(
-    `[frontend] Static server ready: http://127.0.0.1:${frontendPort} (product api -> ${productApiPort}, agent server -> ${backendPort})`
+    `[frontend] Static server ready: http://127.0.0.1:${frontendPort} (product api -> ${activeProductApiPort}, agent server -> ${backendPort})`
   );
 }
 
@@ -4739,13 +4750,13 @@ async function boot() {
   if (!backendReady) {
     throw new Error(
       app.isPackaged
-        ? "Bundled backend startup timed out before /ok, /healthz, and /assistants/search became available. Please reinstall or check logs."
-        : "Backend startup timed out before the official Agent Server endpoints became available. Check Python environment and dependencies."
+        ? "Bundled backend startup timed out before /ok and /assistants/search became available. Please reinstall or check logs."
+        : "Backend startup timed out before /ok and /assistants/search became available. LangGraph dev may return 404 for /healthz."
     );
   }
 
-  if (isDev && productApiPort !== backendPort) {
-    const productApiReady = await waitForUrl(`http://127.0.0.1:${productApiPort}/healthz`, 60000);
+  if (isDev && activeProductApiPort !== backendPort) {
+    const productApiReady = await waitForUrl(`http://127.0.0.1:${activeProductApiPort}/healthz`, 60000);
     if (!productApiReady) {
       throw new Error("Product API startup timed out. Check Python environment and dependencies.");
     }

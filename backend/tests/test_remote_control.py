@@ -43,7 +43,7 @@ def test_remote_control_execute_routes_into_deepagents_dispatch(monkeypatch):
     resp = client.post(
         "/api/v1/aelin/remote-control/execute",
         json={
-            "text": "帮我看下当前电脑状态",
+            "text": "帮我总结一下今天的工作安排",
             "workspace": "default",
             "source": "feishu_remote",
             "source_user_name": "Tester",
@@ -59,7 +59,7 @@ def test_remote_control_execute_routes_into_deepagents_dispatch(monkeypatch):
     response = data.get("response") or {}
     assert response.get("answer") == "remote ok"
     assert captured["source"] == "feishu_remote"
-    assert captured["query"] == "帮我看下当前电脑状态"
+    assert captured["query"] == "帮我总结一下今天的工作安排"
     assert captured["workspace"] == "default"
     assert (captured["source_metadata"] or {}).get("source_chat_id") == "oc_xxx"
 
@@ -144,6 +144,184 @@ def test_remote_control_status_includes_execute_when_capability_enabled(monkeypa
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data.get("supported_tools") == ["device", "screen_get", "execute"]
+
+
+def test_remote_control_execute_shortcuts_status_command(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+    captured: list[dict[str, object]] = []
+
+    def _fake_run_device_action(args):  # type: ignore[no-untyped-def]
+        captured.append(dict(args))
+        return {
+            "ok": True,
+            "platform": "windows",
+            "capabilities": {
+                "desktop_open_url": True,
+                "desktop_activate_module": True,
+                "desktop_execute_command": False,
+            },
+            "notes": ["desktop command execution disabled"],
+            "desktop_plugin_reachable": True,
+        }
+
+    monkeypatch.setattr(remote_control.device_actions, "run_device_action", _fake_run_device_action)
+
+    resp = client.post(
+        "/api/v1/aelin/remote-control/execute",
+        json={"text": "\u72b6\u6001", "workspace": "default", "source": "feishu_remote"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("ok") is True
+    assert data.get("status") == "completed"
+    assert captured == [{"action": "status"}]
+    assert "\u8bbe\u5907\u72b6\u6001" in str((data.get("response") or {}).get("answer") or "")
+
+
+def test_remote_control_execute_shortcuts_prefixed_open_aelin_command(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+    captured: list[dict[str, object]] = []
+
+    def _fake_run_device_action(args):  # type: ignore[no-untyped-def]
+        captured.append(dict(args))
+        return {
+            "ok": True,
+            "route": str(args.get("route") or "/"),
+            "opened": True,
+            "detail": "ok",
+        }
+
+    monkeypatch.setattr(remote_control.device_actions, "run_device_action", _fake_run_device_action)
+
+    resp = client.post(
+        "/api/v1/aelin/remote-control/execute",
+        json={"text": "/aelin \u6253\u5f00 Aelin", "workspace": "default", "source": "feishu_remote"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("ok") is True
+    assert data.get("status") == "completed"
+    assert captured == [{"action": "open_aelin", "route": "/"}]
+    response = data.get("response") or {}
+    assert response.get("actions") == [
+        {
+            "kind": "remote_open_aelin",
+            "title": "\u5df2\u6253\u5f00 Aelin",
+            "detail": "\u4e3b\u754c\u9762",
+            "payload": {"route": "/"},
+        }
+    ]
+
+
+def test_remote_control_execute_shortcuts_open_url_command(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+    captured: list[dict[str, object]] = []
+
+    def _fake_run_device_action(args):  # type: ignore[no-untyped-def]
+        captured.append(dict(args))
+        return {
+            "ok": True,
+            "url": str(args.get("url") or ""),
+            "opened": True,
+            "detail": "ok",
+        }
+
+    monkeypatch.setattr(remote_control.device_actions, "run_device_action", _fake_run_device_action)
+
+    resp = client.post(
+        "/api/v1/aelin/remote-control/execute",
+        json={
+            "text": "\u6253\u5f00\u7f51\u5740 https://example.com/docs",
+            "workspace": "default",
+            "source": "feishu_remote",
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("ok") is True
+    assert captured == [{"action": "open_url", "url": "https://example.com/docs"}]
+    assert "https://example.com/docs" in str((data.get("response") or {}).get("answer") or "")
+
+
+def test_remote_control_execute_shortcuts_screenshot_command(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+    captured: list[dict[str, object]] = []
+
+    def _fake_screen_get_result(args):  # type: ignore[no-untyped-def]
+        captured.append(dict(args))
+        return {
+            "ok": True,
+            "name": "screen-demo.jpg",
+            "width": 1280,
+            "height": 720,
+            "source_display": "1",
+            "captured_at": "2026-04-16T10:00:00Z",
+            "data_url": "data:image/jpeg;base64,QUJDRA==",
+        }
+
+    monkeypatch.setattr(remote_control.device_actions, "screen_get_result", _fake_screen_get_result)
+
+    resp = client.post(
+        "/api/v1/aelin/remote-control/execute",
+        json={"text": "\u622a\u56fe", "workspace": "default", "source": "feishu_remote"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("ok") is True
+    assert data.get("status") == "completed"
+    assert captured == [{}]
+    response = data.get("response") or {}
+    assert "\u622a\u56fe" in str(response.get("answer") or "")
+    assert response.get("actions") == [
+        {
+            "kind": "remote_screen_capture",
+            "title": "\u5df2\u5b8c\u6210\u622a\u56fe",
+            "detail": "1280x720",
+            "payload": {
+                "name": "screen-demo.jpg",
+                "source_display": "1",
+            },
+        }
+    ]
+
+
+def test_remote_control_execute_shortcuts_surface_direct_action_failures(monkeypatch):
+    client = _create_test_client()
+    headers = _auth_headers(client)
+
+    monkeypatch.setattr(
+        remote_control.device_actions,
+        "run_device_action",
+        lambda args: {
+            "ok": False,
+            "error": "desktop_plugin_unreachable",
+            "action": str(args.get("action") or ""),
+        },
+    )
+
+    resp = client.post(
+        "/api/v1/aelin/remote-control/execute",
+        json={"text": "\u6253\u5f00 Aelin", "workspace": "default"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("ok") is False
+    assert data.get("status") == "device_action_failed"
+    assert "desktop_plugin_unreachable" in str((data.get("response") or {}).get("answer") or "")
 
 
 def test_feishu_bot_group_prefix_gate(monkeypatch):
