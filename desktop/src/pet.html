@@ -41,39 +41,97 @@
         --entity-fill: #181614;
         --entity-line: rgba(37, 34, 30, 0.16);
         --entity-accent: #6d7d89;
-        --symbol-width: 12px;
-        --symbol-height: 58px;
-        --symbol-radius: 999px;
-        --symbol-rotate: 0deg;
-        --symbol-shift-y: 0px;
-        --symbol-opacity: 0.92;
-        --symbol-slit-width: 18px;
-        --symbol-slit-opacity: 0.28;
-        --shard-width: 14px;
-        --shard-height: 1.5px;
-        --shard-x: -10px;
-        --shard-y: -12px;
-        --shard-rotate: -28deg;
-        --shard-opacity: 0.48;
-        --shard-drift-x: 2px;
-        --shard-drift-y: -2px;
-        --shard-drift-rotate: 10deg;
-        --echo-x: 18px;
-        --echo-y: -18px;
-        --echo-width: 20px;
-        --echo-height: 1.5px;
-        --echo-dot-size: 4px;
-        --echo-rotate: -14deg;
-        --echo-opacity: 0.54;
-        --echo-drift-x: 3px;
-        --echo-drift-y: -4px;
-        --echo-drift-rotate: 8deg;
-        --glyph-duration: 8.8s;
-        --echo-duration: 6.8s;
-        --shard-duration: 9.8s;
-        --glyph-drift-x: 0.7px;
-        --glyph-drift-y: 3px;
-        --glyph-turn: 1.1deg;
+        --card-width: 60px;
+        --card-height: 84px;
+        --card-radius: 13px;
+        --card-rotate: -1.4deg;
+        --card-shift-y: 0px;
+        --card-opacity: 0.98;
+        --card-bg: rgba(251, 248, 241, 0.96);
+        --card-border: rgba(37, 34, 30, 0.16);
+        --card-inline: rgba(255, 255, 255, 0.58);
+        --card-shadow-opacity: 0.08;
+        --card-shadow-x: 0px;
+        --card-shadow-y: 16px;
+        --card-shadow-blur: 28px;
+        --card-shadow-spread: -12px;
+        --card-ambient-opacity: 0.12;
+        --card-tilt-x: 2deg;
+        --card-tilt-y: -5deg;
+        --card-glint-angle: -24deg;
+        --card-glint-opacity: 0.18;
+        --card-glint-shift-x: -6px;
+        --card-glint-shift-y: -10px;
+        --card-glint-scale: 1.04;
+        --card-rank-size: 11px;
+        --card-suit-size: 10px;
+        --card-center-size: 23px;
+        --card-suit-color: #1f1c18;
+        --card-ink: #1d1c19;
+        --card-center-rotate: 0deg;
+        --card-center-scale: 1;
+        --card-center-shadow: 0 10px 14px rgba(255, 255, 255, 0.22);
+        --card-art-width: 50px;
+        --card-art-height: 70px;
+        --card-art-shift-x: 7px;
+        --card-art-shift-y: 0px;
+        --card-art-rotate: 0deg;
+        --card-art-scale-x: 1.04;
+        --card-art-scale-y: 1;
+        --card-art-clip-x: 84%;
+        --card-art-clip-y: 49%;
+        --card-art-clip-rx: 44%;
+        --card-art-clip-ry: 57%;
+        --card-art-dot-gap: 5.8px;
+        --card-art-dot-size: 1.2px;
+        --card-art-dot-opacity: 0.72;
+        --card-art-rings-gap: 12.5px;
+        --card-art-rings-opacity: 0.56;
+        --card-art-rings-rotate: -8deg;
+        --card-art-rings-shift-x: 0px;
+        --card-art-rings-shift-y: 0px;
+        --card-art-rings-scale: 1;
+        --card-art-rings-crop-x: 83%;
+        --card-art-rings-crop-y: 83%;
+        --card-art-rings-crop-rx: 43%;
+        --card-art-rings-crop-ry: 24%;
+        --px: 0;
+        --py: 0;
+        --card-motion-x: 0px;
+        --card-motion-y: 0px;
+        --card-motion-scale: 1;
+        --card-motion-rotate: 0deg;
+        --card-motion-tilt-x: 0deg;
+        --card-motion-tilt-y: 0deg;
+        --card-motion-art-shift-x: 0px;
+        --card-motion-art-shift-y: 0px;
+        --card-motion-art-rotate: 0deg;
+        --card-motion-art-clip-x: 0%;
+        --card-motion-art-clip-y: 0%;
+        --card-motion-rings-shift-x: 0px;
+        --card-motion-rings-shift-y: 0px;
+        --card-motion-rings-rotate: 0deg;
+        --card-motion-rings-scale: 0;
+        --card-motion-rings-opacity: 0;
+        --card-motion-dots-opacity: 0;
+        --echo-x: -6px;
+        --echo-y: 5px;
+        --echo-width: 60px;
+        --echo-height: 84px;
+        --echo-rotate: 2.2deg;
+        --echo-opacity: 0.18;
+        --echo-scale: 0.96;
+        --echo-blur: 0px;
+        --echo-shadow-opacity: 0.08;
+        --echo-drift-x: 1px;
+        --echo-drift-y: 1px;
+        --echo-drift-rotate: 1.4deg;
+        --glyph-duration: 9.8s;
+        --echo-duration: 8.4s;
+        --glint-duration: 8.8s;
+        --glyph-drift-x: 0.5px;
+        --glyph-drift-y: 2px;
+        --glyph-turn: 0.8deg;
         pointer-events: auto;
       }
       #statusPanel {
@@ -164,13 +222,14 @@
         display: grid;
         place-items: center;
         pointer-events: none;
-        animation: glyphFloat var(--glyph-duration) cubic-bezier(0.37, 0, 0.2, 1) infinite;
       }
-      #petSymbol,
+      #petCard,
       #petEcho {
         position: absolute;
         transition:
           transform 240ms ease,
+          box-shadow 260ms ease,
+          filter 260ms ease,
           background 220ms ease,
           border-color 220ms ease,
           color 220ms ease,
@@ -179,63 +238,141 @@
           height 220ms ease,
           opacity 220ms ease;
       }
-      #petSymbol {
+      #petCard {
         position: relative;
-        width: var(--symbol-width);
-        height: var(--symbol-height);
-        border-radius: var(--symbol-radius);
-        background: var(--entity-fill);
-        color: var(--entity-fill);
-        opacity: var(--symbol-opacity);
-        transform-origin: center 78%;
-        transform: translate3d(0, var(--symbol-shift-y), 0) rotate(var(--symbol-rotate));
+        width: var(--card-width);
+        height: var(--card-height);
+        border-radius: var(--card-radius);
+        border: none;
+        background: rgba(255, 255, 255, 0.995);
+        box-shadow:
+          calc(var(--px) * -10px) calc(16px + (var(--py) * 8px)) 30px -14px rgba(18, 17, 16, var(--card-shadow-opacity)),
+          0 1px 0 rgba(255, 255, 255, 0.9);
+        opacity: var(--card-opacity);
+        overflow: hidden;
+        transform-origin: center center;
+        transform-style: preserve-3d;
+        backface-visibility: hidden;
+        transform:
+          perspective(960px)
+          translate3d(calc(var(--px) * 1.2px), calc(var(--card-shift-y) + (var(--py) * -1.2px)), 0)
+          rotateX(calc((var(--py) * -24deg) + var(--card-tilt-x)))
+          rotateY(calc((var(--px) * 28deg) + var(--card-tilt-y)))
+          rotate(calc(var(--card-rotate) + (var(--px) * 5.2deg)));
+        will-change: transform, box-shadow;
       }
-      #petSymbol::before {
+      #petCard::before {
         content: "";
         position: absolute;
-        left: 50%;
-        top: 34%;
-        width: var(--symbol-slit-width);
-        height: 1px;
-        background: rgba(244, 242, 236, 0.58);
-        opacity: var(--symbol-slit-opacity);
-        transform: translate3d(-34%, -50%, 0) rotate(-28deg);
+        inset: 0;
+        border-radius: inherit;
+        border: 1.35px solid rgba(30, 28, 26, 0.88);
+        opacity: 1;
       }
-      #petSymbol::after {
-        content: "";
+      #petCard::after {
+        display: none;
+      }
+      .card-corner {
+        position: absolute;
+        display: grid;
+        gap: 1px;
+        justify-items: start;
+        color: var(--card-suit-color);
+        line-height: 1;
+        letter-spacing: 0.02em;
+        font-family: "Cascadia Mono", "JetBrains Mono", "IBM Plex Mono", Consolas, monospace;
+      }
+      .card-corner.top {
+        left: 9px;
+        top: 9px;
+      }
+      .card-corner.bottom {
+        right: 9px;
+        bottom: 9px;
+        transform: rotate(180deg);
+        justify-items: end;
+      }
+      .card-rank {
+        font-size: var(--card-rank-size);
+        font-weight: 600;
+      }
+      .card-suit {
+        font-size: var(--card-suit-size);
+      }
+      #cardSuitCenter {
         position: absolute;
         left: 50%;
         top: 50%;
-        width: var(--shard-width);
-        height: var(--shard-height);
-        border-radius: 999px;
-        background: var(--entity-accent);
-        opacity: var(--shard-opacity);
-        transform: translate3d(var(--shard-x), var(--shard-y), 0) rotate(var(--shard-rotate));
+        width: var(--card-art-width);
+        height: var(--card-art-height);
+        transform: translate(calc(-50% + var(--card-art-shift-x)), calc(-50% + var(--card-art-shift-y)));
+        font-size: 0;
+        line-height: 0;
+        color: transparent;
+        opacity: 1;
+        pointer-events: none;
+        transition: transform 140ms ease-out;
+      }
+      #cardArtwork {
+        width: 100%;
+        height: 100%;
+        display: block;
+        overflow: visible;
+        shape-rendering: geometricPrecision;
+        text-rendering: geometricPrecision;
+      }
+      .art-front-dot-bg {
+        fill: var(--card-ink);
+      }
+      .art-front-dot-fg {
+        fill: rgba(255, 255, 255, 0.9);
+      }
+      .art-depth-dot-bg {
+        fill: rgba(35, 32, 29, 0.28);
+      }
+      .art-depth-dot-fg {
+        fill: rgba(26, 24, 22, 0.92);
+      }
+      #artDepthStack,
+      #artCoreGroup {
+        transform-box: fill-box;
         transform-origin: center;
-        animation: shardSweep var(--shard-duration) cubic-bezier(0.37, 0, 0.2, 1) infinite;
+      }
+      .art-depth-layer {
+        transform-box: fill-box;
+        transform-origin: center;
+        opacity: var(--layer-opacity, 0.4);
+      }
+      .art-depth-shape {
+        fill: url(#cardDotPatternDepth);
+        stroke: rgba(30, 27, 24, 0.84);
+        stroke-width: 1.34;
+        vector-effect: non-scaling-stroke;
+      }
+      #artCoreShadow {
+        fill: rgba(17, 15, 13, 0.18);
+        opacity: 0.12;
+      }
+      #artCore {
+        fill: url(#cardDotPatternFront);
+        stroke: rgba(21, 19, 17, 0.94);
+        stroke-width: 1.58;
+        vector-effect: non-scaling-stroke;
       }
       #petEcho {
-        position: relative;
+        position: absolute;
+        inset: 0;
+        margin: auto;
         width: var(--echo-width);
         height: var(--echo-height);
-        border-radius: 999px;
-        background: currentColor;
-        color: var(--entity-accent);
+        border-radius: calc(var(--card-radius) - 1px);
+        border: 1px solid var(--entity-line);
+        background: transparent;
         opacity: var(--echo-opacity);
-        transform: translate3d(var(--echo-x), var(--echo-y), 0) rotate(var(--echo-rotate));
-        animation: echoDrift var(--echo-duration) cubic-bezier(0.37, 0, 0.2, 1) infinite;
-      }
-      #petEcho::after {
-        content: "";
-        position: absolute;
-        top: 50%;
-        right: 0;
-        width: var(--echo-dot-size);
-        height: var(--echo-dot-size);
-        border-radius: 50%;
-        background: currentColor;
-        transform: translate(38%, -50%);
+        box-shadow: 0 18px 34px rgba(23, 20, 17, var(--echo-shadow-opacity));
+        filter: blur(var(--echo-blur));
+        transform-origin: center;
+        transform: translate3d(var(--echo-x), var(--echo-y), 0) rotate(var(--echo-rotate)) scale(var(--echo-scale));
       }
       #pet {
         position: absolute;
@@ -317,39 +454,46 @@
         stroke-linejoin: round;
         fill: none;
       }
-      #petWrap[data-music="1"] #petSymbol {
-        transform: translate3d(0, var(--symbol-shift-y), 0) rotate(calc(var(--symbol-rotate) + 2deg));
+      #petWrap[data-music="1"] #petCard {
+        transform:
+          perspective(980px)
+          translate3d(calc(var(--px) * 1.3px), calc(var(--card-shift-y) + (var(--py) * -1.35px)), 0)
+          rotateX(calc((var(--py) * -25deg) + var(--card-tilt-x)))
+          rotateY(calc((var(--px) * 29deg) + var(--card-tilt-y)))
+          rotate(calc(var(--card-rotate) + (var(--px) * 5.6deg)));
       }
       @keyframes glyphFloat {
         0%,
         100% {
-          transform: translate3d(0, 0, 0) rotate(-0.2deg);
+          transform: translate3d(0, 0, 0) rotate(-0.15deg);
         }
         42% {
           transform: translate3d(var(--glyph-drift-x), calc(var(--glyph-drift-y) * -1), 0) rotate(var(--glyph-turn));
         }
         76% {
-          transform: translate3d(calc(var(--glyph-drift-x) * -0.5), calc(var(--glyph-drift-y) * -0.2), 0) rotate(-0.5deg);
+          transform: translate3d(calc(var(--glyph-drift-x) * -0.45), calc(var(--glyph-drift-y) * -0.12), 0) rotate(-0.35deg);
+        }
+      }
+      @keyframes cardGlint {
+        0%,
+        100% {
+          transform: translate3d(var(--card-glint-shift-x), var(--card-glint-shift-y), 0) rotate(0.001deg) scale(var(--card-glint-scale));
+          opacity: 0.84;
+        }
+        50% {
+          transform: translate3d(calc(var(--card-glint-shift-x) * -0.55), calc(var(--card-glint-shift-y) * -0.2), 0)
+            rotate(0.001deg) scale(calc(var(--card-glint-scale) + 0.035));
+          opacity: 1;
         }
       }
       @keyframes echoDrift {
         0%,
         100% {
-          transform: translate3d(var(--echo-x), var(--echo-y), 0) rotate(var(--echo-rotate));
+          transform: translate3d(var(--echo-x), var(--echo-y), 0) rotate(var(--echo-rotate)) scale(var(--echo-scale));
         }
         50% {
           transform: translate3d(calc(var(--echo-x) + var(--echo-drift-x)), calc(var(--echo-y) + var(--echo-drift-y)), 0)
-            rotate(calc(var(--echo-rotate) + var(--echo-drift-rotate)));
-        }
-      }
-      @keyframes shardSweep {
-        0%,
-        100% {
-          transform: translate3d(var(--shard-x), var(--shard-y), 0) rotate(var(--shard-rotate));
-        }
-        50% {
-          transform: translate3d(calc(var(--shard-x) + var(--shard-drift-x)), calc(var(--shard-y) + var(--shard-drift-y)), 0)
-            rotate(calc(var(--shard-rotate) + var(--shard-drift-rotate)));
+            rotate(calc(var(--echo-rotate) + var(--echo-drift-rotate))) scale(var(--echo-scale));
         }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -357,7 +501,7 @@
         .control-btn,
         #pet,
         #petGlyph,
-        #petSymbol,
+        #petCard,
         #petEcho {
           transition-duration: 80ms !important;
           transition-delay: 0ms !important;
@@ -366,6 +510,9 @@
         #statusPanel,
         .control-btn {
           transform: none !important;
+        }
+        #petCard::after {
+          animation: none !important;
         }
       }
     </style>
@@ -387,7 +534,51 @@
       <div id="petShell">
         <div id="petFrame">
           <div id="petGlyph" aria-hidden="true">
-            <div id="petSymbol"></div>
+            <div id="petCard">
+              <div class="card-corner top">
+                <span class="card-rank" id="cardRankTop">A</span>
+                <span class="card-suit" id="cardSuitTop">♠</span>
+              </div>
+              <div id="cardSuitCenter" aria-hidden="true">
+                <svg id="cardArtwork" viewBox="0 0 112 156" preserveAspectRatio="xMidYMid meet">
+                  <defs>
+                    <pattern id="cardDotPatternFront" x="0" y="0" width="4.2" height="4.2" patternUnits="userSpaceOnUse">
+                      <rect width="4.2" height="4.2" class="art-front-dot-bg"></rect>
+                      <circle cx="2.1" cy="2.1" r="0.76" class="art-front-dot-fg"></circle>
+                    </pattern>
+                    <pattern id="cardDotPatternDepth" x="0" y="0" width="4.2" height="4.2" patternUnits="userSpaceOnUse">
+                      <rect width="4.2" height="4.2" class="art-depth-dot-bg"></rect>
+                      <circle cx="2.1" cy="2.1" r="0.72" class="art-depth-dot-fg"></circle>
+                    </pattern>
+                  </defs>
+                  <g id="artDepthStack">
+                    <g class="art-depth-layer" data-i="5" style="--i: 5; --layer-opacity: 0.46">
+                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                    </g>
+                    <g class="art-depth-layer" data-i="4" style="--i: 4; --layer-opacity: 0.58">
+                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                    </g>
+                    <g class="art-depth-layer" data-i="3" style="--i: 3; --layer-opacity: 0.72">
+                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                    </g>
+                    <g class="art-depth-layer" data-i="2" style="--i: 2; --layer-opacity: 0.84">
+                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                    </g>
+                    <g class="art-depth-layer" data-i="1" style="--i: 1; --layer-opacity: 0.94">
+                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                    </g>
+                  </g>
+                  <g id="artCoreGroup">
+                    <ellipse id="artCoreShadow" cx="99.4" cy="79.8" rx="48.4" ry="57.2"></ellipse>
+                    <ellipse id="artCore" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                  </g>
+                </svg>
+              </div>
+              <div class="card-corner bottom">
+                <span class="card-rank" id="cardRankBottom">A</span>
+                <span class="card-suit" id="cardSuitBottom">♠</span>
+              </div>
+            </div>
             <div id="petEcho"></div>
           </div>
           <img id="pet" alt="Aelin" draggable="false" />
@@ -404,6 +595,13 @@
       const wrap = document.getElementById("petWrap");
       const statusPanel = document.getElementById("statusPanel");
       const pet = document.getElementById("pet");
+      const petCard = document.getElementById("petCard");
+      const petShell = document.getElementById("petShell");
+      const artDepthStack = document.getElementById("artDepthStack");
+      const artCoreGroup = document.getElementById("artCoreGroup");
+      const artCore = document.getElementById("artCore");
+      const artCoreShadow = document.getElementById("artCoreShadow");
+      const artDepthLayers = Array.from(document.querySelectorAll(".art-depth-layer"));
       const speechLine = document.getElementById("speechLine");
       const mediaRow = document.getElementById("mediaRow");
       const mediaTitle = document.getElementById("mediaTitle");
@@ -411,6 +609,42 @@
       const btnPrev = document.getElementById("btnPrev");
       const btnPlay = document.getElementById("btnPlay");
       const btnNext = document.getElementById("btnNext");
+      const cardRankTop = document.getElementById("cardRankTop");
+      const cardRankBottom = document.getElementById("cardRankBottom");
+      const cardSuitTop = document.getElementById("cardSuitTop");
+      const cardSuitBottom = document.getElementById("cardSuitBottom");
+      const artLayerModels = artDepthLayers
+        .map((layer, index) => {
+          const shape = layer.querySelector(".art-depth-shape");
+          if (!shape) return null;
+          return {
+            layer,
+            shape,
+            index: Number(layer.dataset.i || index + 1),
+            cx: Number(shape.getAttribute("cx") || 0),
+            cy: Number(shape.getAttribute("cy") || 0),
+            rx: Number(shape.getAttribute("rx") || 0),
+            ry: Number(shape.getAttribute("ry") || 0),
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => Number(b.index || 0) - Number(a.index || 0));
+      const artCoreBase = artCore
+        ? {
+            cx: Number(artCore.getAttribute("cx") || 0),
+            cy: Number(artCore.getAttribute("cy") || 0),
+            rx: Number(artCore.getAttribute("rx") || 0),
+            ry: Number(artCore.getAttribute("ry") || 0),
+          }
+        : null;
+      const artCoreShadowBase = artCoreShadow
+        ? {
+            cx: Number(artCoreShadow.getAttribute("cx") || 0),
+            cy: Number(artCoreShadow.getAttribute("cy") || 0),
+            rx: Number(artCoreShadow.getAttribute("rx") || 0),
+            ry: Number(artCoreShadow.getAttribute("ry") || 0),
+          }
+        : null;
       const moodThemes = {
         calm: {
           fill: "#191714",
@@ -491,6 +725,11 @@
       let currentAnchorX = 64;
       let currentAnchorY = 64;
       let lastPayload = {};
+      let pointerTiltRaf = 0;
+      let pointerTiltX = 0;
+      let pointerTiltY = 0;
+      let pointerTiltTargetX = 0;
+      let pointerTiltTargetY = 0;
       const petLayoutConfig = {
         compactSize: 128,
       };
@@ -911,6 +1150,149 @@
         return Math.max(min, Math.min(max, num));
       }
 
+      function setSvgNumericAttr(node, name, value) {
+        if (!node) return;
+        node.setAttribute(name, Number(value || 0).toFixed(3));
+      }
+
+      function setSvgTranslate(node, x = 0, y = 0) {
+        if (!node) return;
+        node.setAttribute("transform", `translate(${Number(x || 0).toFixed(3)} ${Number(y || 0).toFixed(3)})`);
+      }
+
+      function updateCardArtworkDepth(px = 0, py = 0) {
+        if (!artCoreBase) return;
+        const absX = Math.abs(px);
+        const absY = Math.abs(py);
+        const depth = clampUnit((absX * 0.68) + (absY * 0.54), 0, 1);
+        const leftReveal = 4.2 + (depth * 5.6);
+        const verticalReveal = (py * (0.95 + (depth * 1.65))) + ((-px) * 0.38);
+
+        setSvgTranslate(artDepthStack, px * 0.24, py * -0.16);
+        setSvgTranslate(artCoreGroup, px * 0.08, py * -0.08);
+
+        const coreCx = artCoreBase.cx + (px * 1.45) + (absX * 0.12);
+        const coreCy = artCoreBase.cy + (py * -1.05) - (absY * 0.12);
+        const coreRx = artCoreBase.rx + (absX * 0.2) - (absY * 0.78);
+        const coreRy = artCoreBase.ry - (absY * 1.45) + (absX * 0.08);
+        setSvgNumericAttr(artCore, "cx", coreCx);
+        setSvgNumericAttr(artCore, "cy", coreCy);
+        setSvgNumericAttr(artCore, "rx", coreRx);
+        setSvgNumericAttr(artCore, "ry", coreRy);
+        artCore.style.strokeWidth = (1.62 + (depth * 0.28)).toFixed(3);
+
+        if (artCoreShadowBase) {
+          setSvgNumericAttr(artCoreShadow, "cx", coreCx - (1.8 + (depth * 2.1)));
+          setSvgNumericAttr(artCoreShadow, "cy", coreCy + (1.4 + (depth * 1.3)));
+          setSvgNumericAttr(artCoreShadow, "rx", coreRx + (depth * 0.16));
+          setSvgNumericAttr(artCoreShadow, "ry", coreRy + (depth * 0.08));
+          artCoreShadow.style.opacity = (0.12 + (depth * 0.26)).toFixed(3);
+        }
+
+        artLayerModels.forEach((model) => {
+          const nearBias = (6 - model.index) / 5;
+          const offsetX = leftReveal * model.index;
+          const offsetY = verticalReveal * model.index;
+          const layerCx = model.cx - offsetX + (px * model.index * 0.28);
+          const layerCy = model.cy + offsetY;
+          const layerRx = model.rx - (model.index * (1.1 + (absY * 0.22))) + (absX * 0.06);
+          const layerRy = model.ry - (model.index * (0.52 + (absY * 0.08))) - (absY * 0.08);
+          const revealOpacity = clampUnit((depth * 1.42) + 0.12);
+          const opacity = revealOpacity * (0.34 + (nearBias * 0.74));
+
+          setSvgNumericAttr(model.shape, "cx", layerCx);
+          setSvgNumericAttr(model.shape, "cy", layerCy);
+          setSvgNumericAttr(model.shape, "rx", layerRx);
+          setSvgNumericAttr(model.shape, "ry", layerRy);
+          model.layer.style.opacity = opacity.toFixed(3);
+          model.shape.style.fillOpacity = (0.52 + (nearBias * 0.26)).toFixed(3);
+          model.shape.style.strokeOpacity = (0.62 + (nearBias * 0.28)).toFixed(3);
+          model.shape.style.strokeWidth = (1.16 + (nearBias * 0.32)).toFixed(3);
+        });
+      }
+
+      function applyPointerTiltVars(x = 0, y = 0) {
+        const px = Number(x || 0);
+        const py = Number(y || 0);
+        wrap.style.setProperty("--px", px.toFixed(4));
+        wrap.style.setProperty("--py", py.toFixed(4));
+        updateCardArtworkDepth(px, py);
+      }
+
+      function tickPointerTilt() {
+        pointerTiltX += (pointerTiltTargetX - pointerTiltX) * 0.24;
+        pointerTiltY += (pointerTiltTargetY - pointerTiltY) * 0.24;
+        if (Math.abs(pointerTiltTargetX - pointerTiltX) < 0.001) {
+          pointerTiltX = pointerTiltTargetX;
+        }
+        if (Math.abs(pointerTiltTargetY - pointerTiltY) < 0.001) {
+          pointerTiltY = pointerTiltTargetY;
+        }
+        applyPointerTiltVars(pointerTiltX, pointerTiltY);
+        if (
+          Math.abs(pointerTiltTargetX - pointerTiltX) < 0.001 &&
+          Math.abs(pointerTiltTargetY - pointerTiltY) < 0.001 &&
+          Math.abs(pointerTiltTargetX) < 0.001 &&
+          Math.abs(pointerTiltTargetY) < 0.001
+        ) {
+          pointerTiltRaf = 0;
+          return;
+        }
+        pointerTiltRaf = window.requestAnimationFrame(tickPointerTilt);
+      }
+
+      function ensurePointerTiltLoop() {
+        if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+          pointerTiltX = 0;
+          pointerTiltY = 0;
+          pointerTiltTargetX = 0;
+          pointerTiltTargetY = 0;
+          applyPointerTiltVars(0, 0);
+          return;
+        }
+        if (pointerTiltRaf) return;
+        pointerTiltRaf = window.requestAnimationFrame(tickPointerTilt);
+      }
+
+      function relaxPointerTilt() {
+        pointerTiltTargetX = 0;
+        pointerTiltTargetY = 0;
+        ensurePointerTiltLoop();
+      }
+
+      function updatePointerTiltByPoint(clientX, clientY, options = {}) {
+        if (!petCard) return;
+        const rect = petCard.getBoundingClientRect();
+        if (!rect.width || !rect.height) {
+          relaxPointerTilt();
+          return;
+        }
+        const globalMode = Boolean(options?.allowGlobal);
+        const workArea = options?.workArea && typeof options.workArea === "object" ? options.workArea : null;
+        const pad = globalMode ? Math.max(220, Number(workArea?.width || 0) * 0.18) : 34;
+        const insideRange = globalMode || (
+          clientX >= rect.left - pad &&
+          clientX <= rect.right + pad &&
+          clientY >= rect.top - pad &&
+          clientY <= rect.bottom + pad
+        );
+        if (!insideRange) {
+          relaxPointerTilt();
+          return;
+        }
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const rangeX = globalMode
+          ? Math.max(rect.width * 3.2, Number(workArea?.width || 0) * 0.24, 180)
+          : rect.width * 0.72;
+        const rangeY = globalMode
+          ? Math.max(rect.height * 3.7, Number(workArea?.height || 0) * 0.28, 200)
+          : rect.height * 0.72;
+        pointerTiltTargetX = clampUnit(((clientX - centerX) / rangeX) * (globalMode ? 1.18 : 1), -1, 1);
+        pointerTiltTargetY = clampUnit(((clientY - centerY) / rangeY) * (globalMode ? 1.14 : 1), -1, 1);
+        ensurePointerTiltLoop();
+      }
+
       function buildPrimaryLine(payload = {}) {
         const coach = String(payload?.coachLine || "").trim();
         if (coach) return truncateText(coach, 28);
@@ -944,219 +1326,243 @@
         wrap.style.setProperty("--surface-border", theme.line);
       }
 
+      function quantizeUnit(value, steps = 6) {
+        const clamped = clampUnit(value);
+        const safeSteps = Math.max(1, Math.round(Number(steps) || 1));
+        return Math.round(clamped * safeSteps) / safeSteps;
+      }
+
+      function pickRankByScale(scale, ranks) {
+        const list = Array.isArray(ranks) && ranks.length ? ranks : ["J"];
+        const clamped = clampUnit(scale);
+        const index = Math.max(0, Math.min(list.length - 1, Math.round(clamped * (list.length - 1))));
+        return String(list[index] || "J");
+      }
+
+      function symbolForSuit(suit) {
+        if (suit === "heart") return "♡";
+        if (suit === "diamond") return "♢";
+        if (suit === "club") return "♧";
+        return "♤";
+      }
+
+      function suitToneForFace(face, state) {
+        if (face?.suit === "heart") return state === "resting" ? "#2a2324" : "#261f20";
+        if (face?.suit === "club") return "#1d221d";
+        if (face?.suit === "spade") return "#171b1f";
+        return state === "resting" ? "#282428" : "#1d1b18";
+      }
+
+      function deriveCardFace(payload = {}, state, focus, energy, valence, tension) {
+        const face = {
+          rank: "J",
+          suit: "diamond",
+          symbol: "♢",
+          red: false,
+        };
+        const workDurationMin = Math.max(0, Number(payload?.workDurationMin || 0));
+        const idleSec = Math.max(0, Number(payload?.idleSec || 0));
+        const focusBand = quantizeUnit(focus, 5);
+        const energyBand = quantizeUnit(energy, 5);
+        const valenceBand = quantizeUnit(valence, 5);
+        const tensionBand = quantizeUnit(tension, 5);
+        const workProgress = quantizeUnit(Math.min(workDurationMin / 90, 1), 6);
+        const restDepth = quantizeUnit(
+          Math.min(1, (idleSec / 1800) * 0.45 + (1 - energyBand) * 0.35 + (1 - tensionBand) * 0.2),
+          6
+        );
+
+        if (state === "working") {
+          face.suit = focusBand >= 0.6 || workProgress >= 0.5 ? "spade" : "diamond";
+          face.rank = pickRankByScale(
+            Math.max(workProgress, quantizeUnit(focusBand * 0.68 + energyBand * 0.18 + (1 - tensionBand) * 0.14, 7)),
+            ["7", "8", "9", "10", "J", "Q", "K", "A"]
+          );
+        } else if (state === "completed") {
+          face.suit = "diamond";
+          face.rank = pickRankByScale(
+            quantizeUnit(0.58 + valenceBand * 0.26 + focusBand * 0.16, 4),
+            ["10", "J", "Q", "K", "A"]
+          );
+        } else if (state === "resting") {
+          face.suit = payload?.isLateNight ? "heart" : valenceBand >= 0.45 ? "diamond" : "heart";
+          face.rank = pickRankByScale(restDepth, ["6", "5", "4", "3", "2"]);
+        } else if (payload?.hasMusic) {
+          face.suit = energyBand >= 0.55 ? "club" : "diamond";
+          face.rank = pickRankByScale(
+            quantizeUnit(energyBand * 0.72 + valenceBand * 0.18 + focusBand * 0.1, 6),
+            ["6", "7", "8", "9", "10", "J", "Q"]
+          );
+        } else {
+          if (valenceBand >= 0.5) {
+            face.suit = "diamond";
+          } else if (focusBand >= 0.55) {
+            face.suit = "spade";
+          } else if (energyBand >= 0.55) {
+            face.suit = "club";
+          } else {
+            face.suit = "heart";
+          }
+          face.rank = pickRankByScale(
+            quantizeUnit(valenceBand * 0.42 + focusBand * 0.34 + (1 - tensionBand) * 0.24, 6),
+            ["5", "6", "7", "8", "9", "10", "J"]
+          );
+        }
+
+        face.symbol = symbolForSuit(face.suit);
+        face.red = face.suit === "heart" || face.suit === "diamond";
+        return face;
+      }
+
+      function renderCardFace(payload = {}) {
+        const emotion = payload?.emotion && typeof payload.emotion === "object" ? payload.emotion : {};
+        const state = normalizeState(payload?.state || currentState);
+        const focus = clampUnit(Number(emotion.focus || 0) / 100);
+        const energy = clampUnit(Number(emotion.energy || 0) / 100);
+        const valence = clampUnit(Number(emotion.valence || 0) / 100);
+        const tension = clampUnit(Number(emotion.tension || 0) / 100);
+        const face = deriveCardFace(payload, state, focus, energy, valence, tension);
+        const suitColor = suitToneForFace(face, state);
+
+        cardRankTop.textContent = face.rank;
+        cardRankBottom.textContent = face.rank;
+        cardSuitTop.textContent = face.symbol;
+        cardSuitBottom.textContent = face.symbol;
+        wrap.style.setProperty("--card-suit-color", suitColor);
+        wrap.style.setProperty("--card-ink", suitColor);
+      }
+
       function applyEntityVisual(payload = {}) {
         const emotion = payload?.emotion && typeof payload.emotion === "object" ? payload.emotion : {};
         const state = normalizeState(payload?.state || currentState);
         const focus = clampUnit(Number(emotion.focus || 0) / 100);
         const energy = clampUnit(Number(emotion.energy || 0) / 100);
-        const tension = clampUnit(Number(emotion.tension || 0) / 100);
         const valence = clampUnit(Number(emotion.valence || 0) / 100);
-
-        let symbolWidth = 12;
-        let symbolHeight = 58;
-        let symbolRadius = "999px";
-        let rotate = 0;
-        let shiftY = 0;
-        let symbolOpacity = 0.92;
-        let symbolSlitWidth = 18;
-        let symbolSlitOpacity = 0.28;
-        let shardWidth = 14;
-        let shardHeight = 1.5;
-        let shardX = -10;
-        let shardY = -12;
-        let shardRotate = -28;
-        let shardOpacity = 0.48;
-        let shardDriftX = 2;
-        let shardDriftY = -2;
-        let shardDriftRotate = 10;
-        let echoX = 18;
-        let echoY = -18;
-        let echoWidth = 20;
-        let echoHeight = 1.5;
-        let echoDotSize = 4;
-        let echoRotate = -14;
-        let echoOpacity = 0.54;
-        let echoDriftX = 3;
-        let echoDriftY = -4;
-        let echoDriftRotate = 8;
-        let glyphDuration = 8.8;
-        let echoDuration = 6.8;
-        let shardDuration = 9.8;
-        let glyphDriftX = 0.7;
-        let glyphDriftY = 3;
-        let glyphTurn = 1.1;
+        let cardWidth = 66;
+        let cardHeight = 92;
+        let cardRadius = 10.5;
+        let cardRotate = 0;
+        let cardShiftY = 0;
+        let cardOpacity = 0.998;
+        let cardShadowOpacity = 0.1;
+        let cardTiltX = "0deg";
+        let cardTiltY = "0deg";
+        let cardRankSize = 9.5;
+        let cardSuitSize = 7.4;
+        let cardArtWidth = 54;
+        let cardArtHeight = 76;
+        let cardArtShiftX = 5.8;
+        let cardArtShiftY = 0;
+        let echoX = 0;
+        let echoY = 1.2;
+        let echoWidth = 67;
+        let echoHeight = 93;
+        let echoRotate = 0;
+        let echoOpacity = 0.018;
+        let echoScale = 1;
+        let echoBlur = 0;
+        let echoShadowOpacity = 0;
+        let echoDriftX = 0.08;
+        let echoDriftY = 0.08;
+        let echoDriftRotate = 0.05;
+        const glyphDuration = 12;
+        const echoDuration = 12;
+        const glintDuration = 14;
+        const glyphDriftX = 0.08;
+        const glyphDriftY = 0.1;
+        const glyphTurn = 0.04;
 
         if (state === "working") {
-          symbolWidth = 10.5;
-          symbolHeight = 62 + focus * 8;
-          rotate = -6 + energy * 3;
-          shiftY = 0.5;
-          symbolOpacity = 0.98;
-          symbolSlitWidth = 20;
-          symbolSlitOpacity = 0.4;
-          shardWidth = 18;
-          shardX = -9;
-          shardY = -18 - tension * 3;
-          shardRotate = -34 + energy * 8;
-          shardOpacity = 0.52;
-          shardDriftX = 3;
-          shardDriftY = -4;
-          shardDriftRotate = 12;
-          echoX = 15 + energy * 4;
-          echoY = -22 - focus * 4;
-          echoWidth = 14;
-          echoHeight = 1.25;
-          echoDotSize = 3.6;
-          echoRotate = -24;
-          echoOpacity = 0.46 + focus * 0.14;
-          echoDriftX = 4;
-          echoDriftY = -6;
-          echoDriftRotate = 12;
-          glyphDuration = 6.9 - energy * 0.4;
-          echoDuration = 5.4 - energy * 0.2;
-          shardDuration = 7.4 - energy * 0.3;
-          glyphDriftX = 1;
-          glyphDriftY = 4.4 + tension;
-          glyphTurn = 1.6;
+          cardWidth = 67;
+          cardHeight = 93;
+          cardShadowOpacity = 0.11 + focus * 0.02;
         } else if (state === "completed") {
-          symbolWidth = 16;
-          symbolHeight = 50;
-          rotate = 7;
-          symbolOpacity = 1;
-          symbolSlitWidth = 16;
-          symbolSlitOpacity = 0.22;
-          shardWidth = 12;
-          shardX = -13;
-          shardY = -6;
-          shardRotate = -16;
-          shardOpacity = 0.58;
-          echoX = 22;
-          echoY = -10;
-          echoWidth = 24;
-          echoHeight = 1.6;
-          echoDotSize = 4;
-          echoRotate = -4;
-          echoOpacity = 0.72;
-          echoDriftX = 3;
-          echoDriftY = -3;
-          echoDriftRotate = 6;
-          glyphDuration = 7.4;
-          echoDuration = 6.1;
-          shardDuration = 8.2;
-          glyphDriftX = 0.6;
-          glyphDriftY = 2.6;
-          glyphTurn = 0.8;
+          cardWidth = 66;
+          cardHeight = 92;
+          cardShadowOpacity = 0.09;
         } else if (state === "resting") {
-          symbolWidth = payload?.isLateNight ? 11 : 13;
-          symbolHeight = payload?.isLateNight ? 50 : 54;
-          rotate = payload?.isLateNight ? -10 : -4;
-          shiftY = payload?.isLateNight ? 1.5 : 0.5;
-          symbolOpacity = payload?.isLateNight ? 0.8 : 0.88;
-          symbolSlitWidth = payload?.isLateNight ? 14 : 16;
-          symbolSlitOpacity = payload?.isLateNight ? 0.18 : 0.24;
-          shardWidth = payload?.isLateNight ? 10 : 12;
-          shardX = -9;
-          shardY = payload?.isLateNight ? -8 : -10;
-          shardRotate = payload?.isLateNight ? -38 : -24;
-          shardOpacity = payload?.isLateNight ? 0.34 : 0.4;
-          shardDriftX = 2;
-          shardDriftY = -2;
-          shardDriftRotate = 8;
-          echoX = 14;
-          echoY = payload?.isLateNight ? -16 : -14;
-          echoWidth = payload?.isLateNight ? 12 : 15;
-          echoHeight = 1.2;
-          echoDotSize = payload?.isLateNight ? 3.2 : 3.6;
-          echoRotate = payload?.isLateNight ? -20 : -12;
-          echoOpacity = payload?.isLateNight ? 0.42 : 0.5;
-          echoDriftX = payload?.isLateNight ? 3 : 4;
-          echoDriftY = payload?.isLateNight ? -3 : -4;
-          echoDriftRotate = 6;
-          glyphDuration = payload?.isLateNight ? 10.4 : 9.2;
-          echoDuration = payload?.isLateNight ? 8.1 : 7.2;
-          shardDuration = payload?.isLateNight ? 11.4 : 10.2;
-          glyphDriftX = 0.5;
-          glyphDriftY = payload?.isLateNight ? 2.2 : 2.8;
-          glyphTurn = payload?.isLateNight ? 0.8 : 1;
-        } else {
-          symbolWidth = 12 + valence * 2;
-          symbolHeight = 56 + energy * 2;
-          rotate = payload?.hasMusic ? 4 : valence * 1.6 - tension * 1.2;
-          symbolOpacity = 0.9 + valence * 0.08;
-          symbolSlitWidth = payload?.hasMusic ? 20 : 18;
-          symbolSlitOpacity = payload?.hasMusic ? 0.34 : 0.28;
-          shardWidth = payload?.hasMusic ? 16 : 14;
-          shardX = payload?.hasMusic ? -7 : -10;
-          shardY = payload?.hasMusic ? -14 : -12;
-          shardRotate = payload?.hasMusic ? -18 : -28;
-          shardOpacity = 0.44 + valence * 0.08;
-          echoX = 18;
-          echoY = -18;
-          echoWidth = payload?.hasMusic ? 24 : 20;
-          echoHeight = payload?.hasMusic ? 1.6 : 1.5;
-          echoDotSize = payload?.hasMusic ? 4.2 : 4;
-          echoRotate = payload?.hasMusic ? -8 : -14;
-          echoOpacity = 0.5 + valence * 0.12;
-          echoDriftX = payload?.hasMusic ? 5 : 3;
-          echoDriftY = payload?.hasMusic ? -6 : -4;
-          echoDriftRotate = payload?.hasMusic ? 10 : 8;
-          glyphDuration = payload?.hasMusic ? 7.2 : 8.8;
-          echoDuration = payload?.hasMusic ? 5.8 : 6.8;
-          shardDuration = payload?.hasMusic ? 8.1 : 9.8;
-          glyphDriftX = payload?.hasMusic ? 1 : 0.7;
-          glyphDriftY = payload?.hasMusic ? 3.8 : 3;
-          glyphTurn = payload?.hasMusic ? 1.4 : 1.1;
-        }
-
-        if (payload?.hasMusic) {
-          echoX += 2;
-          echoWidth += 2;
-          echoDotSize += 0.2;
-          symbolOpacity = Math.min(1, symbolOpacity + 0.03);
-          echoOpacity = Math.min(0.76, echoOpacity + 0.12);
+          cardWidth = payload?.isLateNight ? 62 : 64;
+          cardHeight = payload?.isLateNight ? 88 : 90;
+          cardOpacity = payload?.isLateNight ? 0.975 : 0.99;
+          cardShadowOpacity = payload?.isLateNight ? 0.055 : 0.075;
+          echoOpacity = payload?.isLateNight ? 0.012 : 0.015;
+          cardArtWidth = payload?.isLateNight ? 50 : 52;
+          cardArtHeight = payload?.isLateNight ? 71 : 73;
+        } else if (payload?.hasMusic) {
+          cardWidth = 67;
+          cardHeight = 93;
+          cardShadowOpacity = 0.1 + energy * 0.02;
         }
 
         if (payload?.coachLine) {
-          shardOpacity = Math.min(1, shardOpacity + 0.08);
-          echoWidth += 1;
-          echoDotSize += 0.3;
-          echoY -= 2;
-          echoOpacity = Math.min(0.82, echoOpacity + 0.08);
+          cardShadowOpacity = Math.min(0.14, cardShadowOpacity + 0.01);
         }
 
-        wrap.style.setProperty("--symbol-width", `${symbolWidth.toFixed(1)}px`);
-        wrap.style.setProperty("--symbol-height", `${symbolHeight.toFixed(1)}px`);
-        wrap.style.setProperty("--symbol-radius", symbolRadius);
-        wrap.style.setProperty("--symbol-rotate", `${rotate.toFixed(1)}deg`);
-        wrap.style.setProperty("--symbol-shift-y", `${shiftY.toFixed(1)}px`);
-        wrap.style.setProperty("--symbol-opacity", symbolOpacity.toFixed(3));
-        wrap.style.setProperty("--symbol-slit-width", `${symbolSlitWidth.toFixed(1)}px`);
-        wrap.style.setProperty("--symbol-slit-opacity", symbolSlitOpacity.toFixed(3));
-        wrap.style.setProperty("--shard-width", `${shardWidth.toFixed(1)}px`);
-        wrap.style.setProperty("--shard-height", `${shardHeight.toFixed(1)}px`);
-        wrap.style.setProperty("--shard-x", `${shardX.toFixed(1)}px`);
-        wrap.style.setProperty("--shard-y", `${shardY.toFixed(1)}px`);
-        wrap.style.setProperty("--shard-rotate", `${shardRotate.toFixed(1)}deg`);
-        wrap.style.setProperty("--shard-opacity", shardOpacity.toFixed(3));
-        wrap.style.setProperty("--shard-drift-x", `${shardDriftX.toFixed(1)}px`);
-        wrap.style.setProperty("--shard-drift-y", `${shardDriftY.toFixed(1)}px`);
-        wrap.style.setProperty("--shard-drift-rotate", `${shardDriftRotate.toFixed(1)}deg`);
-        wrap.style.setProperty("--echo-x", `${echoX.toFixed(1)}px`);
-        wrap.style.setProperty("--echo-y", `${echoY.toFixed(1)}px`);
+        wrap.style.setProperty("--card-width", `${cardWidth.toFixed(1)}px`);
+        wrap.style.setProperty("--card-height", `${cardHeight.toFixed(1)}px`);
+        wrap.style.setProperty("--card-radius", `${cardRadius.toFixed(1)}px`);
+        wrap.style.setProperty("--card-rotate", `${cardRotate.toFixed(2)}deg`);
+        wrap.style.setProperty("--card-shift-y", `${cardShiftY.toFixed(2)}px`);
+        wrap.style.setProperty("--card-opacity", cardOpacity.toFixed(3));
+        wrap.style.setProperty("--card-bg", "rgba(255, 255, 255, 0.998)");
+        wrap.style.setProperty("--card-border", "rgba(29, 28, 26, 0.88)");
+        wrap.style.setProperty("--card-shadow-opacity", cardShadowOpacity.toFixed(3));
+        wrap.style.setProperty("--card-shadow-x", "0px");
+        wrap.style.setProperty("--card-shadow-y", "12px");
+        wrap.style.setProperty("--card-shadow-blur", "28px");
+        wrap.style.setProperty("--card-shadow-spread", "-14px");
+        wrap.style.setProperty("--card-ambient-opacity", "0.02");
+        wrap.style.setProperty("--card-tilt-x", `${cardTiltX}`);
+        wrap.style.setProperty("--card-tilt-y", `${cardTiltY}`);
+        wrap.style.setProperty("--card-glint-angle", "-18deg");
+        wrap.style.setProperty("--card-glint-opacity", "0.004");
+        wrap.style.setProperty("--card-glint-shift-x", "0px");
+        wrap.style.setProperty("--card-glint-shift-y", "0px");
+        wrap.style.setProperty("--card-glint-scale", "1");
+        wrap.style.setProperty("--card-rank-size", `${cardRankSize.toFixed(1)}px`);
+        wrap.style.setProperty("--card-suit-size", `${cardSuitSize.toFixed(1)}px`);
+        wrap.style.setProperty("--card-center-size", "0px");
+        wrap.style.setProperty("--card-center-rotate", "0deg");
+        wrap.style.setProperty("--card-center-scale", "1");
+        wrap.style.setProperty("--card-center-shadow", "none");
+        wrap.style.setProperty("--card-art-width", `${cardArtWidth.toFixed(1)}px`);
+        wrap.style.setProperty("--card-art-height", `${cardArtHeight.toFixed(1)}px`);
+        wrap.style.setProperty("--card-art-shift-x", `${cardArtShiftX.toFixed(2)}px`);
+        wrap.style.setProperty("--card-art-shift-y", `${cardArtShiftY.toFixed(2)}px`);
+        wrap.style.setProperty("--card-art-rotate", "0deg");
+        wrap.style.setProperty("--card-art-scale-x", "1");
+        wrap.style.setProperty("--card-art-scale-y", "1");
+        wrap.style.setProperty("--card-art-dot-gap", "4.6px");
+        wrap.style.setProperty("--card-art-dot-size", "0.72px");
+        wrap.style.setProperty("--card-art-dot-opacity", "0.92");
+        wrap.style.setProperty("--card-art-rings-gap", "0px");
+        wrap.style.setProperty("--card-art-rings-opacity", "0.36");
+        wrap.style.setProperty("--card-art-rings-rotate", "0deg");
+        wrap.style.setProperty("--card-art-rings-shift-x", "0px");
+        wrap.style.setProperty("--card-art-rings-shift-y", "0px");
+        wrap.style.setProperty("--card-art-rings-scale", "1");
+        wrap.style.setProperty("--card-art-rings-crop-x", "83%");
+        wrap.style.setProperty("--card-art-rings-crop-y", "83%");
+        wrap.style.setProperty("--card-art-rings-crop-rx", "43%");
+        wrap.style.setProperty("--card-art-rings-crop-ry", "24%");
+        wrap.style.setProperty("--echo-x", `${echoX.toFixed(2)}px`);
+        wrap.style.setProperty("--echo-y", `${echoY.toFixed(2)}px`);
         wrap.style.setProperty("--echo-width", `${echoWidth.toFixed(1)}px`);
         wrap.style.setProperty("--echo-height", `${echoHeight.toFixed(1)}px`);
-        wrap.style.setProperty("--echo-dot-size", `${echoDotSize.toFixed(1)}px`);
-        wrap.style.setProperty("--echo-rotate", `${echoRotate.toFixed(1)}deg`);
+        wrap.style.setProperty("--echo-rotate", `${echoRotate.toFixed(2)}deg`);
         wrap.style.setProperty("--echo-opacity", echoOpacity.toFixed(3));
-        wrap.style.setProperty("--echo-drift-x", `${echoDriftX.toFixed(1)}px`);
-        wrap.style.setProperty("--echo-drift-y", `${echoDriftY.toFixed(1)}px`);
-        wrap.style.setProperty("--echo-drift-rotate", `${echoDriftRotate.toFixed(1)}deg`);
+        wrap.style.setProperty("--echo-scale", `${echoScale.toFixed(3)}`);
+        wrap.style.setProperty("--echo-blur", `${echoBlur.toFixed(2)}px`);
+        wrap.style.setProperty("--echo-shadow-opacity", `${echoShadowOpacity.toFixed(3)}`);
+        wrap.style.setProperty("--echo-drift-x", `${echoDriftX.toFixed(2)}px`);
+        wrap.style.setProperty("--echo-drift-y", `${echoDriftY.toFixed(2)}px`);
+        wrap.style.setProperty("--echo-drift-rotate", `${echoDriftRotate.toFixed(2)}deg`);
         wrap.style.setProperty("--glyph-duration", `${glyphDuration.toFixed(2)}s`);
         wrap.style.setProperty("--echo-duration", `${echoDuration.toFixed(2)}s`);
-        wrap.style.setProperty("--shard-duration", `${shardDuration.toFixed(2)}s`);
-        wrap.style.setProperty("--glyph-drift-x", `${glyphDriftX.toFixed(1)}px`);
-        wrap.style.setProperty("--glyph-drift-y", `${glyphDriftY.toFixed(1)}px`);
-        wrap.style.setProperty("--glyph-turn", `${glyphTurn.toFixed(1)}deg`);
+        wrap.style.setProperty("--glint-duration", `${glintDuration.toFixed(2)}s`);
+        wrap.style.setProperty("--glyph-drift-x", `${glyphDriftX.toFixed(2)}px`);
+        wrap.style.setProperty("--glyph-drift-y", `${glyphDriftY.toFixed(2)}px`);
+        wrap.style.setProperty("--glyph-turn", `${glyphTurn.toFixed(2)}deg`);
         wrap.dataset.state = state;
         wrap.dataset.music = payload?.hasMusic ? "1" : "0";
         wrap.dataset.coach = payload?.coachLine ? "1" : "0";
@@ -1276,6 +1682,7 @@
 
         applyMoodTheme(lastPayload);
         applyEntityVisual(lastPayload);
+        renderCardFace(lastPayload);
         renderPanelContent(lastPayload);
         setMusicPanel(lastPayload);
         scheduleLayoutSync();
@@ -1426,6 +1833,8 @@
         pointerActive = active;
         if (active) {
           pointerActivatedAt = Date.now();
+        } else {
+          relaxPointerTilt();
         }
         petDebug("renderer:pointer-active", {
           prev,
@@ -1440,8 +1849,20 @@
         }
       }
 
-      function scheduleHoverSync(clientX, clientY) {
-        pendingHoverPoint = { x: clientX, y: clientY };
+      function scheduleHoverSync(clientX, clientY, options = {}) {
+        pendingHoverPoint = {
+          x: Number(clientX),
+          y: Number(clientY),
+          allowGlobal: Boolean(options?.allowGlobal),
+          workArea: options?.workArea && typeof options.workArea === "object"
+            ? {
+                x: Number(options.workArea.x || 0),
+                y: Number(options.workArea.y || 0),
+                width: Number(options.workArea.width || 0),
+                height: Number(options.workArea.height || 0),
+              }
+            : null,
+        };
         if (hoverSyncRaf) return;
         hoverSyncRaf = window.requestAnimationFrame(() => {
           hoverSyncRaf = 0;
@@ -1449,6 +1870,7 @@
           pendingHoverPoint = null;
           if (!point || dragging) return;
           syncPointerByPoint(point.x, point.y);
+          updatePointerTiltByPoint(point.x, point.y, point);
         });
       }
 
@@ -1457,6 +1879,7 @@
         controlsPlacementLock = "";
         lastInsideInteractiveAt = 0;
         clearDeactivateTimer();
+        relaxPointerTilt();
         cancelPanelsVisibleRaf();
         setPanelsVisible(false);
         petDebug("renderer:force-collapse", {
@@ -1559,6 +1982,7 @@
         if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault();
         clearDeactivateTimer();
+        relaxPointerTilt();
         setPointerActive(true);
         dragging = true;
         petDebug("renderer:drag-start", {
@@ -1674,10 +2098,12 @@
         el?.addEventListener("mouseenter", (event) => {
           if (dragging) return;
           syncPointerByPoint(event.clientX, event.clientY);
+          updatePointerTiltByPoint(event.clientX, event.clientY);
         });
       });
 
       window.addEventListener("mouseleave", () => {
+        relaxPointerTilt();
         if (!dragging) schedulePointerInactive();
       });
 
@@ -1694,6 +2120,18 @@
         });
         forceCollapsePanels(String(payload?.reason || ""));
       });
+      const offCursor = window.petBridge?.onCursor?.((payload) => {
+        const cursor = payload?.cursor && typeof payload.cursor === "object" ? payload.cursor : null;
+        const windowBounds = payload?.windowBounds && typeof payload.windowBounds === "object" ? payload.windowBounds : null;
+        if (!cursor || !windowBounds || dragging) return;
+        const localX = Number(cursor.x || 0) - Number(windowBounds.x || 0);
+        const localY = Number(cursor.y || 0) - Number(windowBounds.y || 0);
+        if (!Number.isFinite(localX) || !Number.isFinite(localY)) return;
+        scheduleHoverSync(localX, localY, {
+          allowGlobal: true,
+          workArea: payload?.workArea || null,
+        });
+      });
 
       window.petBridge?.getConfig?.().then((config) => {
         applyConfig(config || {}, true);
@@ -1705,15 +2143,19 @@
         pet.src = fallbackIcon;
       }
 
+      applyPointerTiltVars(0, 0);
+
       window.addEventListener("beforeunload", () => {
         clearDeactivateTimer();
         clearCompactCommitTimer();
         cancelPanelsVisibleRaf();
         if (hoverSyncRaf) window.cancelAnimationFrame(hoverSyncRaf);
         if (layoutSyncRaf) window.cancelAnimationFrame(layoutSyncRaf);
+        if (pointerTiltRaf) window.cancelAnimationFrame(pointerTiltRaf);
         if (typeof offState === "function") offState();
         if (typeof offConfig === "function") offConfig();
         if (typeof offForceCollapse === "function") offForceCollapse();
+        if (typeof offCursor === "function") offCursor();
       });
     </script>
   </body>
