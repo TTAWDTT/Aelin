@@ -198,6 +198,37 @@ function safeConsoleLog(message) {
 
 installStdioErrorGuards();
 
+function packagedStartupLogPath() {
+  const override = String(process.env.AELIN_PACKAGED_STARTUP_LOG || "").trim();
+  if (override) return path.resolve(override);
+  try {
+    return path.join(app.getPath("userData"), "startup.log");
+  } catch {
+    return path.join(os.tmpdir(), "aelin-packaged-startup.log");
+  }
+}
+
+function appendPackagedStartupLog(label, detail = "") {
+  if (!app.isPackaged) return;
+  const line = `[${new Date().toISOString()}] ${String(label || "event")}${detail ? ` ${String(detail)}` : ""}\n`;
+  try {
+    fs.mkdirSync(path.dirname(packagedStartupLogPath()), { recursive: true });
+    fs.appendFileSync(packagedStartupLogPath(), line, "utf8");
+  } catch {
+    // ignore packaged startup log failures
+  }
+}
+
+process.on("uncaughtException", (error) => {
+  const detail = error instanceof Error ? `${error.message}\n${error.stack || ""}` : String(error || "unknown");
+  appendPackagedStartupLog("uncaughtException", detail);
+});
+
+process.on("unhandledRejection", (reason) => {
+  const detail = reason instanceof Error ? `${reason.message}\n${reason.stack || ""}` : String(reason || "unknown");
+  appendPackagedStartupLog("unhandledRejection", detail);
+});
+
 function petDebugLog(tag, payload = {}) {
   if (!PET_DEBUG_LOG_ENABLED) return;
   const stamp = new Date().toISOString();
@@ -4837,14 +4868,19 @@ app.on("before-quit", () => {
 
 app.whenReady().then(async () => {
   try {
+    appendPackagedStartupLog("whenReady", "entered");
     await boot();
+    appendPackagedStartupLog("boot", "completed");
     petStateAssets = buildPetStateAssets();
     bindPetPowerEvents();
     createMainWindow("/", false);
     createPetWindow();
     createTray();
+    appendPackagedStartupLog("windows", "created");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const detail = error instanceof Error ? `${error.message}\n${error.stack || ""}` : String(error || "unknown");
+    appendPackagedStartupLog("startup_failed", detail);
     dialog.showErrorBox("Aelin Desktop startup failed", message);
     cleanup();
     app.quit();
