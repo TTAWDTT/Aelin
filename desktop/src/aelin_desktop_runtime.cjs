@@ -111,12 +111,12 @@ let petLastState = "happy";
 let petCpuSnapshot = null;
 let petPowerEventsBound = false;
 let mainWindowPinned = false;
-let mainWindowStartupRoute = "/";
-let mainWindowShowingStartup = false;
-let mainWindowStartupStatus = {
+let desktopStartupStatus = {
   stage: "正在启动 Aelin",
   detail: "正在准备本地工作区...",
 };
+let desktopBootFailedMessage = "";
+let desktopStartupNoticeShownAt = 0;
 let petWorkingPhase = false;
 let petCompletionUntil = 0;
 let petWorkStartedAt = 0;
@@ -990,11 +990,11 @@ function normalizeRemoteModuleRoute(raw) {
 
 async function activateDesktopApp(payload = {}) {
   const route = normalizeRemoteModuleRoute(payload?.route);
-  openModule(route);
+  const opened = openModule(route);
   return {
-    activated: true,
+    activated: opened,
     route,
-    detail: "ok",
+    detail: opened ? "ok" : "startup_pending",
   };
 }
 
@@ -1797,47 +1797,62 @@ function buildAppUrl(route = "/") {
   return `http://127.0.0.1:${frontendPort}${normalizeRoute(route)}?desktop=1&compact=1`;
 }
 
-function buildStartupScreenUrl(route = "/") {
-  const startupUrl = pathToFileURL(path.join(__dirname, "startup.html"));
-  startupUrl.searchParams.set("route", normalizeRoute(route));
-  return startupUrl.toString();
-}
-
-function isMainWindowShowingStartupScreen() {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  try {
-    const currentUrl = String(mainWindow.webContents.getURL() || "");
-    return currentUrl.startsWith("file:") && currentUrl.includes("/startup.html");
-  } catch {
-    return false;
-  }
-}
-
-function pushMainWindowStartupStage() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (!mainWindowShowingStartup && !isMainWindowShowingStartupScreen()) return;
-  const payload = {
-    ...mainWindowStartupStatus,
-    route: mainWindowStartupRoute,
-  };
-  const script = `window.__AELIN_STARTUP__?.setStage(${JSON.stringify(payload)});`;
-  const maybePromise = mainWindow.webContents.executeJavaScript(script, true);
-  if (maybePromise && typeof maybePromise.catch === "function") {
-    maybePromise.catch(() => {});
-  }
-}
-
-function setMainWindowStartupStage(stage, detail = "") {
+function setDesktopStartupStage(stage, detail = "") {
   const nextStage = String(stage || "").trim() || "正在启动 Aelin";
   const nextDetail = String(detail || "").trim();
-  mainWindowStartupStatus = {
+  desktopStartupStatus = {
     stage: nextStage,
     detail: nextDetail,
   };
   appendDesktopMainLogLine(
     `[startup-stage] ${nextStage}${nextDetail ? ` | ${nextDetail}` : ""}`
   );
-  pushMainWindowStartupStage();
+}
+
+function buildDesktopStartupNotice(route = "/") {
+  const targetRoute = normalizeRoute(route);
+  const failedMessage = String(desktopBootFailedMessage || "").trim();
+  const stage = String(desktopStartupStatus.stage || "").trim() || "正在启动 Aelin";
+  const detail = String(desktopStartupStatus.detail || "").trim()
+    || "前后端仍在热启动中，请稍后再试。";
+  if (failedMessage) {
+    return {
+      title: "启动失败",
+      stage: "Aelin 启动失败",
+      detail: failedMessage,
+      route: targetRoute,
+      tone: "error",
+    };
+  }
+  const combinedDetail = detail && detail !== stage ? `${stage}：${detail}` : stage;
+  return {
+    title: "正在启动",
+    stage,
+    detail: combinedDetail,
+    route: targetRoute,
+    tone: "loading",
+  };
+}
+
+function showDesktopStartupNotice(route = "/") {
+  const now = Date.now();
+  if (now - desktopStartupNoticeShownAt < 900) {
+    return false;
+  }
+  desktopStartupNoticeShownAt = now;
+  const payload = buildDesktopStartupNotice(route);
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.webContents.send("pet:startup-notice", payload);
+    return true;
+  }
+  dialog.showMessageBox({
+    type: payload.tone === "error" ? "error" : "info",
+    title: payload.title,
+    message: payload.stage,
+    detail: payload.detail,
+    buttons: ["知道了"],
+  }).catch(() => {});
+  return true;
 }
 
 function getReferenceDisplayArea() {
@@ -1916,8 +1931,6 @@ function loadMainWindowAppRoute(route = "/", options = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const focus = options.focus !== false;
   const targetRoute = normalizeRoute(route);
-  mainWindowStartupRoute = targetRoute;
-  mainWindowShowingStartup = false;
   applyMainWindowPreset(targetRoute);
   const maybePromise = mainWindow.loadURL(buildAppUrl(targetRoute));
   if (maybePromise && typeof maybePromise.catch === "function") {
@@ -4027,9 +4040,8 @@ function startFrontendServer() {
   );
 }
 
-function createMainWindow(initialRoute = "/", showWhenReady = false, options = {}) {
+function createMainWindow(initialRoute = "/", showWhenReady = false) {
   const preset = resolveWindowPreset(initialRoute);
-  const startupScreen = options.startupScreen === true;
   mainWindow = new BrowserWindow({
     width: preset.width,
     height: preset.height,
@@ -4042,7 +4054,7 @@ function createMainWindow(initialRoute = "/", showWhenReady = false, options = {
     fullscreenable: false,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: "#120f0d",
+    backgroundColor: "#111111",
     title: "Aelin",
     icon: resolveTrayIconPath(),
     webPreferences: {
@@ -4055,10 +4067,7 @@ function createMainWindow(initialRoute = "/", showWhenReady = false, options = {
   setMainZoomFactor(getDefaultMainZoom());
   bindMainZoomShortcuts();
 
-  mainWindowStartupRoute = normalizeRoute(initialRoute);
-  mainWindowShowingStartup = startupScreen;
-  const initialUrl = startupScreen ? buildStartupScreenUrl(initialRoute) : buildAppUrl(initialRoute);
-  const initialLoad = mainWindow.loadURL(initialUrl);
+  const initialLoad = mainWindow.loadURL(buildAppUrl(initialRoute));
   if (initialLoad && typeof initialLoad.catch === "function") {
     initialLoad.catch((error) => {
       appendDesktopMainLogLine(
@@ -4069,11 +4078,6 @@ function createMainWindow(initialRoute = "/", showWhenReady = false, options = {
   mainWindow.once("ready-to-show", () => {
     if (showWhenReady) {
       mainWindow.show();
-    }
-  });
-  mainWindow.webContents.on("did-finish-load", () => {
-    if (mainWindowShowingStartup || isMainWindowShowingStartupScreen()) {
-      pushMainWindowStartupStage();
     }
   });
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -4091,33 +4095,39 @@ function createMainWindow(initialRoute = "/", showWhenReady = false, options = {
   });
   mainWindow.on("minimize", () => {
     if (closing) return;
-    if (!desktopBootCompleted) return;
     setTimeout(() => ensurePetVisible(), 30);
   });
   mainWindow.on("hide", () => {
     if (closing) return;
-    if (!desktopBootCompleted) return;
     setTimeout(() => ensurePetVisible(), 30);
   });
   mainWindow.on("closed", () => {
     mainWindowPinned = false;
-    mainWindowShowingStartup = false;
     mainWindow = null;
     if (!closing) {
-      if (!desktopBootCompleted) return;
       setTimeout(() => ensurePetVisible(), 30);
     }
   });
 }
 
-function openModule(route = "/") {
+function openModuleNow(route = "/") {
   if (!mainWindow) {
     createMainWindow(route, true);
-    return;
+    return true;
   }
   loadMainWindowAppRoute(route);
   syncWindowZOrder();
   pushPetState(true);
+  return true;
+}
+
+function openModule(route = "/") {
+  const targetRoute = normalizeRoute(route);
+  if (!desktopBootCompleted) {
+    showDesktopStartupNotice(targetRoute);
+    return false;
+  }
+  return openModuleNow(targetRoute);
 }
 
 function createPetMenu() {
@@ -4868,15 +4878,15 @@ function createPetWindow() {
 async function boot() {
   reloadPetBehaviorConfig();
   if (!isVerifyMode) {
-    setMainWindowStartupStage("正在准备桌面壳层", "初始化本地桌宠与插件桥。");
+    setDesktopStartupStage("正在准备桌面壳层", "初始化本地桌宠与插件桥。");
     await startPetPluginApiServer();
   }
-  setMainWindowStartupStage(
+  setDesktopStartupStage(
     "正在启动后端",
     app.isPackaged ? "拉起内置 Agent Server 与产品接口。" : "连接本地 LangGraph 与产品接口。"
   );
   await startBackend();
-  setMainWindowStartupStage("正在预热后端", "等待 /ok、/healthz 与 /assistants/search 就绪。");
+  setDesktopStartupStage("正在预热后端", "等待 /ok、/healthz 与 /assistants/search 就绪。");
   await startProductApiDev();
   const backendReady = await waitForAgentServerReady(60000);
   if (!backendReady) {
@@ -4888,7 +4898,7 @@ async function boot() {
   }
 
   if (isDev && productApiPort !== backendPort) {
-    setMainWindowStartupStage("正在连接产品接口", "等待本地产品 API 响应健康检查。");
+    setDesktopStartupStage("正在连接产品接口", "等待本地产品 API 响应健康检查。");
     const productApiReady = await waitForUrl(`http://127.0.0.1:${productApiPort}/healthz`, 60000);
     if (!productApiReady) {
       throw new Error("Product API startup timed out. Check Python environment and dependencies.");
@@ -4896,14 +4906,14 @@ async function boot() {
   }
 
   if (isDev) {
-    setMainWindowStartupStage("正在启动前端", "拉起 Vite 开发服务器。");
+    setDesktopStartupStage("正在启动前端", "拉起 Vite 开发服务器。");
     await startFrontendDev();
   } else {
-    setMainWindowStartupStage("正在启动前端", "加载打包后的界面资源。");
+    setDesktopStartupStage("正在启动前端", "加载打包后的界面资源。");
     startFrontendServer();
   }
 
-  setMainWindowStartupStage("正在预热工作区", "等待桌面界面完成首次可用加载。");
+  setDesktopStartupStage("正在预热工作区", "等待桌面界面完成首次可用加载。");
   const frontendReady = await waitForUrl(`http://127.0.0.1:${frontendPort}`, 60000);
   if (!frontendReady) {
     throw new Error("Frontend startup timed out.");
@@ -4912,13 +4922,14 @@ async function boot() {
   if (isVerifyMode) {
     safeConsoleLog("[desktop] Verify mode active: backend/frontend ready, skipping window and tray bootstrap.");
   } else {
-    setMainWindowStartupStage("即将进入工作区", "本地服务已就绪，正在打开 Aelin。");
+    setDesktopStartupStage("已完成启动", "桌面主界面已可打开。");
   }
 }
 
 function cleanup() {
   closing = true;
   desktopBootCompleted = false;
+  desktopBootFailedMessage = "";
   petDragState = null;
   stopPetDragLoop();
   stopPetStateTicker();
@@ -4966,9 +4977,6 @@ function cleanup() {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     if (!closing) {
-      if (!desktopBootCompleted) {
-        return;
-      }
       createTray();
       ensurePetVisible();
       return;
@@ -4983,23 +4991,35 @@ app.on("before-quit", () => {
 
 app.whenReady().then(async () => {
   try {
-    if (!isVerifyMode) {
-      createMainWindow("/", true, { startupScreen: true });
-      setMainWindowStartupStage(
-        "正在启动 Aelin",
-        app.isPackaged ? "准备本地打包环境..." : "准备本地开发环境..."
-      );
-    }
-    await boot();
     if (isVerifyMode) {
+      await boot();
       return;
     }
+    setDesktopStartupStage(
+      "正在启动 Aelin",
+      app.isPackaged ? "准备本地打包环境..." : "准备本地开发环境..."
+    );
     petStateAssets = buildPetStateAssets();
     bindPetPowerEvents();
     createPetWindow();
     createTray();
-    desktopBootCompleted = true;
-    openModule("/");
+    void boot().then(() => {
+      desktopBootCompleted = true;
+      desktopBootFailedMessage = "";
+      pushPetState(true);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      desktopBootFailedMessage = message;
+      appendDesktopMainLogLine(
+        `[startup-failed] ${error instanceof Error ? error.stack || error.message : String(error)}`
+      );
+      if (petWindow && !petWindow.isDestroyed()) {
+        petWindow.webContents.send("pet:startup-notice", buildDesktopStartupNotice("/"));
+      }
+      dialog.showErrorBox("Aelin Desktop startup failed", message);
+      cleanup();
+      app.quit();
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     appendDesktopMainLogLine(

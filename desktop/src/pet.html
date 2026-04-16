@@ -145,6 +145,49 @@
         display: grid;
         place-items: center;
       }
+      #startupToast {
+        position: absolute;
+        left: 50%;
+        top: 4px;
+        width: min(118px, calc(100% - 10px));
+        padding: 7px 8px 8px;
+        border-radius: 12px;
+        background: rgba(28, 24, 21, 0.94);
+        color: rgba(249, 243, 234, 0.98);
+        border: 1px solid rgba(255, 244, 229, 0.12);
+        box-shadow: 0 10px 26px rgba(16, 12, 9, 0.24);
+        transform: translate3d(-50%, -8px, 0) scale(0.96);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 160ms ease, transform 180ms ease;
+        z-index: 4;
+      }
+      #startupToast.visible {
+        opacity: 1;
+        transform: translate3d(-50%, 0, 0) scale(1);
+      }
+      #startupToast[data-tone="error"] {
+        background: rgba(63, 24, 24, 0.94);
+        border-color: rgba(255, 196, 196, 0.18);
+      }
+      #startupToastTitle {
+        font-size: 11px;
+        line-height: 1.2;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+      }
+      #startupToastDetail {
+        margin-top: 4px;
+        font-size: 10px;
+        line-height: 1.38;
+        color: rgba(245, 236, 225, 0.78);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        word-break: break-word;
+      }
       #petFrame {
         position: absolute;
         inset: 0;
@@ -409,6 +452,10 @@
   </head>
   <body>
     <div id="petWrap">
+      <div id="startupToast" aria-live="polite" data-tone="loading">
+        <div id="startupToastTitle">正在启动</div>
+        <div id="startupToastDetail">前后端仍在热启动中，请稍后再试。</div>
+      </div>
       <div id="petShell">
         <div id="petFrame">
           <div id="petGlyph" aria-hidden="true">
@@ -474,6 +521,9 @@
       const pet = document.getElementById("pet");
       const petCard = document.getElementById("petCard");
       const petShell = document.getElementById("petShell");
+      const startupToast = document.getElementById("startupToast");
+      const startupToastTitle = document.getElementById("startupToastTitle");
+      const startupToastDetail = document.getElementById("startupToastDetail");
       const artDepthStack = document.getElementById("artDepthStack");
       const artCoreGroup = document.getElementById("artCoreGroup");
       const artCore = document.getElementById("artCore");
@@ -589,6 +639,7 @@
       let lastAppliedBounds = null;
       let currentAnchorX = 64;
       let currentAnchorY = 64;
+      let startupToastTimer = 0;
       let lastPayload = {};
       let pointerTiltRaf = 0;
       let pointerTiltX = 0;
@@ -618,6 +669,29 @@
         } catch {
           // ignore debug bridge failures
         }
+      }
+
+      function clearStartupToastTimer() {
+        if (!startupToastTimer) return;
+        window.clearTimeout(startupToastTimer);
+        startupToastTimer = 0;
+      }
+
+      function showStartupToast(payload = {}) {
+        if (!startupToast || !startupToastTitle || !startupToastDetail) return;
+        const title = String(payload?.title || payload?.stage || "正在启动").trim() || "正在启动";
+        const detail = String(payload?.detail || "前后端仍在热启动中，请稍后再试。").trim()
+          || "前后端仍在热启动中，请稍后再试。";
+        const tone = String(payload?.tone || "loading").trim() || "loading";
+        startupToast.dataset.tone = tone === "error" ? "error" : "loading";
+        startupToastTitle.textContent = title;
+        startupToastDetail.textContent = detail;
+        startupToast.classList.add("visible");
+        clearStartupToastTimer();
+        startupToastTimer = window.setTimeout(() => {
+          startupToast.classList.remove("visible");
+          startupToastTimer = 0;
+        }, tone === "error" ? 4200 : 2600);
       }
 
       function getCurrentWindowBounds() {
@@ -1642,6 +1716,9 @@
           workArea: payload?.workArea || null,
         });
       });
+      const offStartupNotice = window.petBridge?.onStartupNotice?.((payload) => {
+        showStartupToast(payload || {});
+      });
 
       window.petBridge?.getConfig?.().then((config) => {
         applyConfig(config || {}, true);
@@ -1666,6 +1743,7 @@
       window.addEventListener("beforeunload", () => {
         clearDeactivateTimer();
         clearCompactCommitTimer();
+        clearStartupToastTimer();
         cancelPanelsVisibleRaf();
         if (hoverSyncRaf) window.cancelAnimationFrame(hoverSyncRaf);
         if (layoutSyncRaf) window.cancelAnimationFrame(layoutSyncRaf);
@@ -1674,6 +1752,7 @@
         if (typeof offConfig === "function") offConfig();
         if (typeof offForceCollapse === "function") offForceCollapse();
         if (typeof offCursor === "function") offCursor();
+        if (typeof offStartupNotice === "function") offStartupNotice();
       });
     </script>
   </body>

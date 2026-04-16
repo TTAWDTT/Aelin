@@ -61,4 +61,10 @@ contextBridge.exposeInMainWorld("petBridge", {
     ipcRenderer.on("pet:cursor", handler);
     return () => ipcRenderer.removeListener("pet:cursor", handler);
   },
+  onStartupNotice(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload || {});
+    ipcRenderer.on("pet:startup-notice", handler);
+    return () => ipcRenderer.removeListener("pet:startup-notice", handler);
+  },
 });
