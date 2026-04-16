@@ -6,13 +6,14 @@ from typing import Any, Callable
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.state import StateBackend
 
+from app.runtime_paths import backend_asset_root
 from app.services.deepagents.delivery_paths import get_delivery_paths
 from app.services.deepagents.managed_backend import ManagedCompositeBackend
 from app.settings import settings
 
 
 def _backend_root() -> Path:
-    return Path(__file__).parent.parent.parent.parent.parent
+    return backend_asset_root()
 
 
 def build_agent_backend_factory(

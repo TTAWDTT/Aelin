@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version as package_version
 
@@ -22,6 +23,14 @@ def _load_version(name: str) -> Version:
     try:
         return Version(package_version(name))
     except PackageNotFoundError as exc:  # pragma: no cover - depends on host environment
+        module_name = str(name or "").replace("-", "_")
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            module = None
+        raw_version = str(getattr(module, "__version__", "") or "").strip() if module is not None else ""
+        if raw_version:
+            return Version(raw_version)
         raise RuntimeError(
             f"Aelin requires `{name}` to be installed. Run `cd backend && python -m pip install -r requirements.txt`."
         ) from exc

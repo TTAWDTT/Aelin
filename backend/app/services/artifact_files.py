@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import mimetypes
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.runtime_paths import backend_root, memory_root, output_root, repo_root
 from app.settings import settings
 
 
-_BACKEND_DIR = Path(__file__).resolve().parents[2]
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_BACKEND_DIR = backend_root()
+_REPO_ROOT = repo_root()
 
 
 class LocalArtifactAccessError(RuntimeError):
@@ -31,8 +33,24 @@ def _resolve_setting_path(raw_value: str, *, base_dir: Path) -> Path:
     return path
 
 
+def _output_root() -> Path:
+    if str(os.getenv("AELIN_OUTPUT_ROOT", "") or "").strip():
+        return output_root().resolve()
+    return (_REPO_ROOT / "output").resolve()
+
+
+def _memory_root() -> Path:
+    if str(os.getenv("AELIN_MEMORY_ROOT", "") or "").strip():
+        return memory_root().resolve()
+    return (_REPO_ROOT / "data" / "aelin_memory").resolve()
+
+
 def _allowed_artifact_roots() -> list[Path]:
-    roots: list[Path] = [_REPO_ROOT.resolve()]
+    roots: list[Path] = []
+    for candidate in (_output_root(), _memory_root(), _REPO_ROOT):
+        resolved = candidate.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
     for raw_value in (
         getattr(settings, "media_dir", ""),
         getattr(settings, "aelin_attachment_storage_dir", ""),
@@ -58,7 +76,12 @@ def resolve_local_artifact_path(path_value: str) -> Path:
 
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        path = (_REPO_ROOT / path).resolve()
+        candidate_paths = [
+            (root / path).resolve()
+            for root in _allowed_artifact_roots()
+        ]
+        existing_candidate = next((candidate for candidate in candidate_paths if candidate.exists()), None)
+        path = existing_candidate or (_output_root() / path).resolve()
     else:
         path = path.resolve()
 
@@ -131,6 +154,8 @@ def _infer_preview_kind(*, path: Path | None, mime_type: str) -> str:
 def _artifact_relative_path(path: Path) -> str:
     for root in _allowed_artifact_roots():
         if _is_relative_to(path, root):
+            if root == _output_root() or root == _memory_root():
+                return path.relative_to(root.parent).as_posix()
             return path.relative_to(root).as_posix()
     return path.name
 

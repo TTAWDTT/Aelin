@@ -40,6 +40,14 @@
     ],
     "extraResources": [
       {
+        "from": "build",
+        "to": "build",
+        "filter": [
+          "icon.ico",
+          "icon.png"
+        ]
+      },
+      {
         "from": "../frontend/dist",
         "to": "frontend-dist"
       },

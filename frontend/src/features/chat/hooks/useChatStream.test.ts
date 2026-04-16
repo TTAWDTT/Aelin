@@ -156,7 +156,7 @@ vi.mock('@/shared/api/aelin', () => ({
   },
 }))
 
-import { useChatStream } from './useChatStream'
+import { resolveAgentServerUrl, useChatStream } from './useChatStream'
 
 function renderHook(): ReturnType<typeof useChatStream> {
   let captured: ReturnType<typeof useChatStream> | null = null
@@ -230,6 +230,42 @@ describe('useChatStream', () => {
         },
       }),
     )
+  })
+
+  it('resolves production agent server URLs from same-origin runtime hosts', () => {
+    expect(
+      resolveAgentServerUrl({
+        envBase: '',
+        isProduction: true,
+        location: {
+          protocol: 'http:',
+          host: '127.0.0.1:53887',
+          hostname: '127.0.0.1',
+          port: '53887',
+        },
+      }),
+    ).toEqual({
+      url: 'http://127.0.0.1:53887',
+      source: 'same-origin-production',
+    })
+  })
+
+  it('keeps dev-time port inference when no explicit agent server base is configured', () => {
+    expect(
+      resolveAgentServerUrl({
+        envBase: '',
+        isProduction: false,
+        location: {
+          protocol: 'http:',
+          host: '127.0.0.1:5173',
+          hostname: '127.0.0.1',
+          port: '5173',
+        },
+      }),
+    ).toEqual({
+      url: 'http://127.0.0.1:8000',
+      source: 'inferred-dev-port',
+    })
   })
 
   it('projects runtime messages from useStream instead of persisted history', () => {

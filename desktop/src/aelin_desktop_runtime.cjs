@@ -20,11 +20,32 @@ const {
 const { DEFAULT_BEHAVIOR, loadPetBehaviorConfig } = require("./pet-behavior.cjs");
 const { computePetEmotion } = require("./pet-emotion-engine.cjs");
 
-const isDev = process.env.AELIN_DESKTOP_DEV === "1" || !app.isPackaged;
-const backendPort = Number(process.env.AELIN_BACKEND_PORT || (isDev ? 8000 : 18080));
-const productApiPort = Number(process.env.AELIN_PRODUCT_API_PORT || (isDev ? 18080 : backendPort));
-const frontendPort = Number(process.env.AELIN_DESKTOP_PORT || (isDev ? 5173 : 1420));
-const desktopZoom = Number(process.env.AELIN_DESKTOP_ZOOM || "1.0");
+function readEnvWithLegacy(primaryKey, legacyKey = "", fallback = "") {
+  const primaryValue = String(process.env[primaryKey] || "").trim();
+  if (primaryValue) return primaryValue;
+  const legacyValue = legacyKey ? String(process.env[legacyKey] || "").trim() : "";
+  if (legacyValue) return legacyValue;
+  return String(fallback || "");
+}
+
+function parseNumberEnv(primaryKey, legacyKey, fallback) {
+  const raw = readEnvWithLegacy(primaryKey, legacyKey, String(fallback));
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : Number(fallback);
+}
+
+const userDataOverride = readEnvWithLegacy("AELIN_USER_DATA_DIR", "MERCURYDESK_USER_DATA_DIR", "");
+if (userDataOverride) {
+  const resolvedUserData = path.resolve(userDataOverride);
+  fs.mkdirSync(resolvedUserData, { recursive: true });
+  app.setPath("userData", resolvedUserData);
+}
+
+const isDev = readEnvWithLegacy("AELIN_DESKTOP_DEV", "MERCURYDESK_DESKTOP_DEV", "") === "1" || !app.isPackaged;
+const backendPort = parseNumberEnv("AELIN_BACKEND_PORT", "MERCURYDESK_BACKEND_PORT", isDev ? 8000 : 18080);
+const productApiPort = parseNumberEnv("AELIN_PRODUCT_API_PORT", "MERCURYDESK_PRODUCT_API_PORT", isDev ? 18080 : backendPort);
+const frontendPort = parseNumberEnv("AELIN_DESKTOP_PORT", "MERCURYDESK_DESKTOP_PORT", isDev ? 5173 : 1420);
+const desktopZoom = parseNumberEnv("AELIN_DESKTOP_ZOOM", "MERCURYDESK_DESKTOP_ZOOM", 1.0);
 const LANGGRAPH_AUTH_CONFIG = JSON.stringify({
   path: "./agent_server/auth.py:aelin_auth",
 });
@@ -1217,6 +1238,34 @@ function frontendDir() {
 
 function frontendDistDir() {
   return app.isPackaged ? path.join(process.resourcesPath, "frontend-dist") : path.join(frontendDir(), "dist");
+}
+
+function desktopUserDataDir() {
+  return app.getPath("userData");
+}
+
+function desktopAppDataDir() {
+  return path.join(desktopUserDataDir(), "data");
+}
+
+function desktopOutputRoot() {
+  return path.join(desktopUserDataDir(), "output");
+}
+
+function desktopMemoryRoot() {
+  return path.join(desktopAppDataDir(), "aelin_memory");
+}
+
+function desktopAttachmentStorageDir() {
+  return path.join(desktopAppDataDir(), "aelin_attachments");
+}
+
+function desktopGoogleWorkspaceConfigDir() {
+  return path.join(desktopAppDataDir(), "google_workspace");
+}
+
+function desktopBackendWorkDir() {
+  return path.join(desktopUserDataDir(), "backend-workdir");
 }
 
 function createPluginHttpError(detail, statusCode = 400) {
@@ -3264,22 +3313,44 @@ function sqliteUrl(absPath) {
 
 function buildDesktopBackendEnv(options = {}) {
   const { includeLangGraphAuth = false } = options;
-  const userData = app.getPath("userData");
+  const userData = desktopUserDataDir();
   const mediaDir = path.join(userData, "media");
+  const appDataDir = desktopAppDataDir();
+  const outputRoot = desktopOutputRoot();
+  const memoryRoot = desktopMemoryRoot();
+  const attachmentStorageDir = desktopAttachmentStorageDir();
+  const googleWorkspaceConfigDir = desktopGoogleWorkspaceConfigDir();
+  const backendWorkDir = desktopBackendWorkDir();
+  fs.mkdirSync(appDataDir, { recursive: true });
+  fs.mkdirSync(outputRoot, { recursive: true });
+  fs.mkdirSync(memoryRoot, { recursive: true });
   fs.mkdirSync(mediaDir, { recursive: true });
+  fs.mkdirSync(attachmentStorageDir, { recursive: true });
+  fs.mkdirSync(googleWorkspaceConfigDir, { recursive: true });
+  fs.mkdirSync(backendWorkDir, { recursive: true });
   const dbFile = path.join(userData, "aelin.db");
   const env = {
     ...process.env,
     PYTHONUTF8: "1",
     PYTHONIOENCODING: "utf-8",
     LANG: "C.UTF-8",
+    AELIN_BACKEND_HOST: "127.0.0.1",
+    AELIN_BACKEND_PORT: String(backendPort),
+    AELIN_PRODUCT_API_PORT: String(productApiPort),
+    AELIN_DESKTOP_PORT: String(frontendPort),
     AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED: process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_ENABLED || "1",
     AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS:
       process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_TIMEOUT_SECONDS || String(Math.max(5, Math.round(getProbeCommandTimeoutMs() / 1000))),
     AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS:
       process.env.AELIN_DESKTOP_PLUGIN_EXECUTE_MAX_OUTPUT_CHARS || String(PET_PLUGIN_API_EXECUTE_MAX_OUTPUT_CHARS),
     AELIN_DATABASE_URL: sqliteUrl(dbFile),
+    AELIN_APP_DATA_DIR: appDataDir,
+    AELIN_OUTPUT_ROOT: outputRoot,
+    AELIN_MEMORY_ROOT: memoryRoot,
     AELIN_MEDIA_DIR: mediaDir,
+    AELIN_AELIN_ATTACHMENT_STORAGE_DIR: attachmentStorageDir,
+    AELIN_GOOGLE_WORKSPACE_CLI_CONFIG_DIR: googleWorkspaceConfigDir,
+    AELIN_BACKEND_WORK_DIR: backendWorkDir,
     AELIN_CORS_ORIGINS: [
       `http://127.0.0.1:${frontendPort}`,
       `http://localhost:${frontendPort}`,
@@ -3318,7 +3389,7 @@ function requestOk(url) {
     const req = http.get(url, (res) => {
       const code = Number(res.statusCode || 0);
       res.resume();
-      resolve(code >= 200 && code < 500);
+      resolve(code >= 200 && code < 300);
     });
     req.on("error", () => resolve(false));
     req.setTimeout(2500, () => {
@@ -3343,22 +3414,88 @@ function requestStatus(url) {
   });
 }
 
+function requestJsonStatus(url, options = {}) {
+  const method = String(options.method || "POST").trim().toUpperCase();
+  const payload = options.payload === undefined ? undefined : JSON.stringify(options.payload);
+  return new Promise((resolve) => {
+    try {
+      const target = new URL(url);
+      const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      };
+      if (payload !== undefined) {
+        headers["Content-Length"] = Buffer.byteLength(payload, "utf8");
+      }
+      const req = http.request(
+        {
+          protocol: target.protocol,
+          hostname: target.hostname,
+          port: target.port,
+          path: `${target.pathname}${target.search}`,
+          method,
+          headers,
+        },
+        (res) => {
+          const code = Number(res.statusCode || 0);
+          res.resume();
+          resolve(code);
+        }
+      );
+      req.on("error", () => resolve(0));
+      req.setTimeout(2500, () => {
+        req.destroy();
+        resolve(0);
+      });
+      if (payload !== undefined) {
+        req.write(payload);
+      }
+      req.end();
+    } catch {
+      resolve(0);
+    }
+  });
+}
+
 async function waitForUrl(url, timeoutMs = 45000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     // eslint-disable-next-line no-await-in-loop
     if (await requestOk(url)) return true;
     // eslint-disable-next-line no-await-in-loop
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitMs(500);
+  }
+  return false;
+}
+
+async function agentServerEndpointsHealthy() {
+  const okCode = await requestStatus(`http://127.0.0.1:${backendPort}/ok`);
+  if (okCode !== 200) return false;
+  const healthCode = await requestStatus(`http://127.0.0.1:${backendPort}/healthz`);
+  if (healthCode !== 200) return false;
+  const assistantsCode = await requestJsonStatus(
+    `http://127.0.0.1:${backendPort}/assistants/search`,
+    {
+      method: "POST",
+      payload: {},
+    }
+  );
+  return assistantsCode === 200;
+}
+
+async function waitForAgentServerReady(timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await agentServerEndpointsHealthy()) return true;
+    // eslint-disable-next-line no-await-in-loop
+    await waitMs(500);
   }
   return false;
 }
 
 async function hasHealthyExistingBackend() {
-  const healthCode = await requestStatus(`http://127.0.0.1:${backendPort}/healthz`);
-  if (healthCode === 200) return true;
-  const okCode = await requestStatus(`http://127.0.0.1:${backendPort}/ok`);
-  return okCode === 200;
+  return agentServerEndpointsHealthy();
 }
 
 async function hasHealthyExistingProductApi() {
@@ -3541,14 +3678,17 @@ async function startBackend() {
 
   if (app.isPackaged) {
     const runtimeRoot = backendRuntimeDir();
-    cleanupLangGraphTempFiles(runtimeRoot);
+    const backendWorkDir = desktopBackendWorkDir();
+    fs.mkdirSync(backendWorkDir, { recursive: true });
+    cleanupLangGraphTempFiles(backendWorkDir);
     const exeName = process.platform === "win32" ? "aelin-backend.exe" : "aelin-backend";
     const exePath = path.join(runtimeRoot, exeName);
     if (!fs.existsSync(exePath)) {
       throw new Error(`Bundled backend unavailable: ${exePath}`);
     }
+    env.AELIN_BACKEND_ASSET_ROOT = runtimeRoot;
     backendProc = spawn(exePath, [], {
-      cwd: runtimeRoot,
+      cwd: backendWorkDir,
       env,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -3732,32 +3872,41 @@ function startFrontendServer() {
 
   const web = express();
   const proxyTimeoutMs = 10 * 60 * 1000;
-  // Express strips the mount prefix (/api, /media) before handing to proxy.
-  // So target must include the same prefix to avoid forwarding /v1/... by mistake.
-  web.use(
-    "/api",
-    createProxyMiddleware({
-      target: `http://127.0.0.1:${productApiPort}/api`,
-      changeOrigin: true,
-      timeout: proxyTimeoutMs,
-      proxyTimeout: proxyTimeoutMs,
-    })
-  );
-  web.use(
-    "/media",
-    createProxyMiddleware({
-      target: `http://127.0.0.1:${productApiPort}/media`,
-      changeOrigin: true,
-      timeout: proxyTimeoutMs,
-      proxyTimeout: proxyTimeoutMs,
-    })
-  );
+  const attachProxy = (mountPath, targetPath, targetPort = productApiPort) => {
+    web.use(
+      mountPath,
+      createProxyMiddleware({
+        target: `http://127.0.0.1:${targetPort}`,
+        changeOrigin: true,
+        timeout: proxyTimeoutMs,
+        proxyTimeout: proxyTimeoutMs,
+        pathRewrite: (path) => path === "/" ? targetPath : `${targetPath}${path}`,
+      })
+    );
+  };
+  // Express strips the mount prefix before proxying, so we rewrite the path
+  // explicitly to preserve exact upstream routes for both collection roots
+  // (/threads) and nested endpoints (/assistants/search).
+  attachProxy("/api", "/api", productApiPort);
+  attachProxy("/media", "/media", productApiPort);
+  attachProxy("/assistants", "/assistants", backendPort);
+  attachProxy("/threads", "/threads", backendPort);
+  attachProxy("/runs", "/runs", backendPort);
+  attachProxy("/crons", "/crons", backendPort);
+  attachProxy("/store", "/store", backendPort);
+  attachProxy("/docs", "/docs", backendPort);
+  attachProxy("/openapi.json", "/openapi.json", backendPort);
+  attachProxy("/ok", "/ok", backendPort);
+  attachProxy("/healthz", "/healthz", backendPort);
   web.use(express.static(dist));
   web.get("*", (_req, res) => {
     res.sendFile(path.join(dist, "index.html"));
   });
 
   frontendServer = web.listen(frontendPort, "127.0.0.1");
+  safeConsoleLog(
+    `[frontend] Static server ready: http://127.0.0.1:${frontendPort} (product api -> ${productApiPort}, agent server -> ${backendPort})`
+  );
 }
 
 function createMainWindow(initialRoute = "/", showWhenReady = false) {
@@ -4586,12 +4735,12 @@ async function boot() {
   await startPetPluginApiServer();
   await startBackend();
   await startProductApiDev();
-  const backendReady = await waitForUrl(`http://127.0.0.1:${backendPort}/ok`, 60000);
+  const backendReady = await waitForAgentServerReady(60000);
   if (!backendReady) {
     throw new Error(
       app.isPackaged
-        ? "Bundled backend startup timed out. Please reinstall or check logs."
-        : "Backend startup timed out. Check Python environment and dependencies."
+        ? "Bundled backend startup timed out before /ok, /healthz, and /assistants/search became available. Please reinstall or check logs."
+        : "Backend startup timed out before the official Agent Server endpoints became available. Check Python environment and dependencies."
     );
   }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,13 +13,32 @@ from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from app.runtime_paths import deepagents_skills_root, generated_posters_root, output_root, repo_root
+
 
 _LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 _POSTER_WIDTH = 1200
 _POSTER_HEIGHT = 1800
 _MARGIN_X = 92
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_FONT_ROOT = _REPO_ROOT / "backend" / "deepagents_skills" / "anthropic-canvas-design" / "canvas-fonts"
+_REPO_ROOT = repo_root()
+
+
+def _font_root() -> Path:
+    if str(os.getenv("AELIN_BACKEND_ASSET_ROOT", "") or "").strip():
+        return deepagents_skills_root() / "anthropic-canvas-design" / "canvas-fonts"
+    return (_REPO_ROOT / "backend" / "deepagents_skills" / "anthropic-canvas-design" / "canvas-fonts").resolve()
+
+
+def _render_output_root() -> Path:
+    if str(os.getenv("AELIN_OUTPUT_ROOT", "") or "").strip():
+        return generated_posters_root()
+    return (_REPO_ROOT / "output" / "generated-posters").resolve()
+
+
+def _relative_output_base() -> Path:
+    if str(os.getenv("AELIN_OUTPUT_ROOT", "") or "").strip():
+        return output_root().resolve().parent
+    return _REPO_ROOT.resolve()
 
 
 @dataclass(frozen=True)
@@ -81,7 +101,7 @@ def _chinese_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
             Path("C:/Windows/Fonts/msyh.ttc"),
             Path("C:/Windows/Fonts/simhei.ttf"),
             Path("C:/Windows/Fonts/simsun.ttc"),
-            _FONT_ROOT / "NotoSansSC-Regular.otf",
+            _font_root() / "NotoSansSC-Regular.otf",
         ],
         size,
     )
@@ -90,9 +110,9 @@ def _chinese_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 def _latin_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return _pick_font(
         [
-            _FONT_ROOT / "Gloock-Regular.ttf",
-            _FONT_ROOT / "YoungSerif-Regular.ttf",
-            _FONT_ROOT / "InstrumentSans-Regular.ttf",
+            _font_root() / "Gloock-Regular.ttf",
+            _font_root() / "YoungSerif-Regular.ttf",
+            _font_root() / "InstrumentSans-Regular.ttf",
             Path("C:/Windows/Fonts/georgia.ttf"),
             Path("C:/Windows/Fonts/arial.ttf"),
         ],
@@ -103,9 +123,9 @@ def _latin_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 def _mono_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return _pick_font(
         [
-            _FONT_ROOT / "JetBrainsMono-Regular.ttf",
-            _FONT_ROOT / "GeistMono-Regular.ttf",
-            _FONT_ROOT / "IBMplexMono-Regular.ttf",
+            _font_root() / "JetBrainsMono-Regular.ttf",
+            _font_root() / "GeistMono-Regular.ttf",
+            _font_root() / "IBMplexMono-Regular.ttf",
             Path("C:/Windows/Fonts/consola.ttf"),
         ],
         size,
@@ -464,7 +484,7 @@ def render_poster_artifact(
     seed = int(hashlib.sha256(clean_brief.encode("utf-8")).hexdigest()[:12], 16)
     poster = _draw_poster(copy, seed=seed).convert("RGB")
 
-    output_dir = _REPO_ROOT / "output" / "generated-posters" / _safe_slug(workspace or "default") / f"{timestamp}-{copy.filename_stem}"
+    output_dir = _render_output_root() / _safe_slug(workspace or "default") / f"{timestamp}-{copy.filename_stem}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     created_at = datetime.now(_LOCAL_TZ).isoformat(timespec="seconds")
@@ -475,9 +495,18 @@ def render_poster_artifact(
     poster.save(pdf_path, format="PDF", resolution=240.0)
 
     file_paths = [str(png_path.resolve()), str(pdf_path.resolve())]
+    outputs_relative_base = _relative_output_base().resolve()
+    try:
+        png_relative_path = png_path.resolve().relative_to(outputs_relative_base).as_posix()
+    except ValueError:
+        png_relative_path = png_path.name
+    try:
+        pdf_relative_path = pdf_path.resolve().relative_to(outputs_relative_base).as_posix()
+    except ValueError:
+        pdf_relative_path = pdf_path.name
     png_artifact = VisualArtifact(
         path=str(png_path.resolve()),
-        relative_path=png_path.resolve().relative_to(_REPO_ROOT.resolve()).as_posix(),
+        relative_path=png_relative_path,
         name=png_path.name,
         mime_type="image/png",
         size_bytes=int(png_path.stat().st_size),
@@ -488,7 +517,7 @@ def render_poster_artifact(
     )
     pdf_artifact = VisualArtifact(
         path=str(pdf_path.resolve()),
-        relative_path=pdf_path.resolve().relative_to(_REPO_ROOT.resolve()).as_posix(),
+        relative_path=pdf_relative_path,
         name=pdf_path.name,
         mime_type="application/pdf",
         size_bytes=int(pdf_path.stat().st_size),

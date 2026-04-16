@@ -123,3 +123,36 @@ jobs:
             echo "Checking syntax: $f"
             node --check "$f"
           done
+
+  desktop-package-windows:
+    name: desktop-package-windows
+    runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.desktop == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build and verify Windows installer
+        working-directory: desktop
+        env:
+          CI: "1"
+        run: npm run dist:full:checked

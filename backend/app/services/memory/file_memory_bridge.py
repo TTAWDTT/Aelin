@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.runtime_paths import memory_root
 from app.services.foundation.agent_config_service import normalize_workspace as _normalize_workspace
 from app.settings import settings
 
@@ -34,10 +35,7 @@ class FileMemoryBridge:
     """
 
     def __init__(self) -> None:
-        root = Path("../data/aelin_memory")
-        if not root.is_absolute():
-            backend_root = Path(__file__).resolve().parents[2]
-            root = (backend_root / root).resolve()
+        root = memory_root()
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
         self._cache_lock = threading.RLock()
@@ -241,4 +239,3 @@ class _CachedFileValue:
 
 
 file_memory_bridge = FileMemoryBridge()
-

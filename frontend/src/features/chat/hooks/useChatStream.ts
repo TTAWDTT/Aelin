@@ -26,21 +26,79 @@ import {
 export type { ChatRuntimeStream, ChatStreamState }
 
 const DEFAULT_AGENT_SERVER_URL = 'http://127.0.0.1:8000'
+let lastLoggedAgentServerResolution = ''
 
-function resolveAgentServerUrl(): string {
-  const fromEnv = String(import.meta.env.VITE_API_BASE || '').trim()
-  if (fromEnv) return fromEnv.replace(/\/$/, '')
-  if (typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol)) {
-    const protocol = window.location.protocol
-    const hostname = window.location.hostname || '127.0.0.1'
-    const currentPort = String(window.location.port || '')
-    if (currentPort === '8000' || currentPort === '18080') {
-      return `${protocol}//${window.location.host}`.replace(/\/$/, '')
+type AgentServerLocationLike = {
+  protocol?: string
+  host?: string
+  hostname?: string
+  port?: string
+}
+
+type AgentServerUrlResolution = {
+  url: string
+  source: 'env' | 'same-origin-production' | 'same-origin-agent' | 'inferred-dev-port' | 'default'
+}
+
+export function resolveAgentServerUrl(
+  options?: {
+    envBase?: string
+    location?: AgentServerLocationLike | null
+    isProduction?: boolean
+  },
+): AgentServerUrlResolution {
+  const fromEnv = String(options?.envBase ?? import.meta.env.VITE_API_BASE ?? '').trim()
+  if (fromEnv) {
+    return {
+      url: fromEnv.replace(/\/$/, ''),
+      source: 'env',
     }
-    const inferredPort = currentPort === '1420' ? '18080' : '8000'
-    return `${protocol}//${hostname}:${inferredPort}`
   }
-  return DEFAULT_AGENT_SERVER_URL
+
+  const location = options?.location ?? (typeof window !== 'undefined' ? window.location : null)
+  const isProduction = options?.isProduction ?? import.meta.env.PROD
+  if (location && /^https?:$/.test(String(location.protocol || ''))) {
+    const protocol = String(location.protocol || '')
+    const host = String(location.host || '').trim()
+    const hostname = String(location.hostname || '127.0.0.1').trim() || '127.0.0.1'
+    const currentPort = String(location.port || '').trim()
+
+    if (host) {
+      if (isProduction) {
+        return {
+          url: `${protocol}//${host}`.replace(/\/$/, ''),
+          source: 'same-origin-production',
+        }
+      }
+      if (currentPort === '8000' || currentPort === '18080') {
+        return {
+          url: `${protocol}//${host}`.replace(/\/$/, ''),
+          source: 'same-origin-agent',
+        }
+      }
+    }
+
+    const inferredPort = currentPort === '1420' ? '18080' : '8000'
+    return {
+      url: `${protocol}//${hostname}:${inferredPort}`,
+      source: 'inferred-dev-port',
+    }
+  }
+
+  return {
+    url: DEFAULT_AGENT_SERVER_URL,
+    source: 'default',
+  }
+}
+
+function logAgentServerUrlResolution(resolution: AgentServerUrlResolution): void {
+  const nextKey = `${resolution.source}:${resolution.url}`
+  if (lastLoggedAgentServerResolution === nextKey) return
+  lastLoggedAgentServerResolution = nextKey
+  console.info('[aelin-chat] Agent Server URL resolved', {
+    source: resolution.source,
+    url: resolution.url,
+  })
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -340,8 +398,11 @@ export function useChatStream() {
     setSessionLastErrorCode(sessionId, code)
   }, [setSessionLastErrorCode])
 
-  const client = useMemo(() => new Client({
-    apiUrl: resolveAgentServerUrl(),
+  const client = useMemo(() => {
+    const resolution = resolveAgentServerUrl()
+    logAgentServerUrlResolution(resolution)
+    return new Client({
+      apiUrl: resolution.url,
     apiKey: null,
     onRequest: async (_url, init) => {
       const headers = new Headers(init.headers ?? {})
@@ -352,7 +413,8 @@ export function useChatStream() {
         headers,
       }
     },
-  }), [])
+    })
+  }, [])
 
   const stream = useStream<ChatStreamState>({
     assistantId: assistantId || '__aelin_agent_pending__',

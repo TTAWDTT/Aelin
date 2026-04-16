@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "sync:brand-icon": "node -e \"const fs=require('fs');const path=require('path');const src=path.resolve(__dirname,'../desktop/build/icon.ico');const dstDir=path.resolve(__dirname,'public');const dst=path.join(dstDir,'aelin-icon.ico');if(fs.existsSync(src)){fs.mkdirSync(dstDir,{recursive:true});fs.copyFileSync(src,dst);console.log('synced',src,'->',dst);}else{console.warn('missing icon source:',src);}\"",
+    "sync:brand-icon": "node -e \"const fs=require('fs');const path=require('path');const mappings=[['icon.ico','aelin-icon.ico'],['icon.png','aelin-icon.png']];const srcDir=path.resolve(__dirname,'../desktop/build');const dstDir=path.resolve(__dirname,'public');fs.mkdirSync(dstDir,{recursive:true});for(const [srcName,dstName] of mappings){const src=path.join(srcDir,srcName);const dst=path.join(dstDir,dstName);if(fs.existsSync(src)){fs.copyFileSync(src,dst);console.log('synced',src,'->',dst);}else{console.warn('missing icon source:',src);}}\"",
     "predev": "npm run sync:brand-icon",
     "prebuild": "npm run sync:brand-icon",
     "dev": "vite",

@@ -13,6 +13,7 @@ from app.services.foundation.agent_config_service import (
     resolve_llm_service_for_user_id,
 )
 from app.services.foundation.model_catalog import get_model_catalog
+from app.services.runtime_readiness import runtime_readiness_report
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -91,3 +92,10 @@ def test_agent(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+@router.get("/runtime-readiness")
+def get_runtime_readiness(
+    _db: Session = Depends(get_session),
+    _current_user: User = Depends(get_current_user),
+):
+    return runtime_readiness_report()

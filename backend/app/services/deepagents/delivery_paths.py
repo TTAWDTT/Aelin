@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.runtime_paths import output_root, repo_root
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+_REPO_ROOT = repo_root()
 _WORKSPACE_VIRTUAL_PATH = "/workspace"
 _OUTPUTS_VIRTUAL_PATH = "/outputs"
 
@@ -36,7 +39,8 @@ class DeepAgentsDeliveryPaths:
 def get_delivery_paths(*, workspace: str, user_id: int | None = None, create: bool = True) -> DeepAgentsDeliveryPaths:
     safe_user_id = max(0, int(user_id or 0))
     safe_workspace = _workspace_slug(workspace)
-    root_dir = (_REPO_ROOT / "output" / "deepagents" / f"user-{safe_user_id}" / safe_workspace).resolve()
+    base_output_root = output_root() if str(os.getenv("AELIN_OUTPUT_ROOT", "") or "").strip() else (_REPO_ROOT / "output")
+    root_dir = (base_output_root / "deepagents" / f"user-{safe_user_id}" / safe_workspace).resolve()
     workspace_dir = (root_dir / "workspace").resolve()
     outputs_dir = (root_dir / "outputs").resolve()
     if create:

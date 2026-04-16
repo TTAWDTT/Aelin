@@ -23,6 +23,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/.env.local
+frontend/public/aelin-icon.png
 *.tsbuildinfo
 
 desktop/node_modules/
