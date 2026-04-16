@@ -134,71 +134,6 @@
         --glyph-turn: 0.8deg;
         pointer-events: auto;
       }
-      #statusPanel {
-        position: absolute;
-        left: var(--controls-left);
-        top: var(--controls-top);
-        box-sizing: border-box;
-        width: min(var(--panel-width), calc(100% - 12px));
-        min-height: var(--panel-height);
-        padding: 8px 10px 8px 14px;
-        border-radius: 0;
-        border: none;
-        background: linear-gradient(90deg, var(--surface-bg) 0%, rgba(244, 242, 236, 0.72) 62%, rgba(244, 242, 236, 0) 100%);
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        opacity: 0;
-        pointer-events: none;
-        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0);
-        transform-origin: center;
-        will-change: opacity, transform;
-        backface-visibility: hidden;
-        transition: opacity 150ms ease, transform 170ms ease, border-color 170ms ease, background 170ms ease;
-      }
-      #statusPanel::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 9px;
-        bottom: 9px;
-        width: 1px;
-        background: var(--surface-border);
-        opacity: 0.86;
-      }
-      .panels-visible #statusPanel {
-        opacity: 1;
-        transform: translate3d(0, 0, 0);
-        pointer-events: auto;
-      }
-      #petWrap.dragging-panels-hidden #statusPanel {
-        opacity: 0 !important;
-        pointer-events: none !important;
-        transform: translate3d(var(--controls-entry-x), var(--controls-entry-y), 0) !important;
-      }
-      #speechLine {
-        color: var(--ink-strong);
-        width: 100%;
-        font-size: 11.5px;
-        line-height: 1.46;
-        font-weight: 500;
-        min-height: 0;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        white-space: normal;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        letter-spacing: 0.04em;
-        word-break: break-word;
-        text-wrap: pretty;
-      }
-      #mediaRow {
-        display: none;
-      }
-      #mediaTitle {
-        display: none;
-      }
       #petShell {
         position: absolute;
         left: var(--pet-center-x);
@@ -242,6 +177,9 @@
         position: relative;
         width: var(--card-width);
         height: var(--card-height);
+        cursor: grab;
+        pointer-events: auto;
+        touch-action: none;
         border-radius: var(--card-radius);
         border: none;
         background: rgba(255, 255, 255, 0.995);
@@ -260,6 +198,13 @@
           rotateY(calc((var(--px) * 37deg) + var(--card-tilt-y)))
           rotate(calc(var(--card-rotate) + (var(--px) * 7.1deg)));
         will-change: transform, box-shadow;
+      }
+      #petCard.dragging {
+        cursor: grabbing;
+        transition: none;
+      }
+      #petCard.pressing {
+        filter: brightness(0.992);
       }
       #petCard::before {
         content: "";
@@ -328,10 +273,10 @@
         fill: rgba(255, 255, 255, 0.9);
       }
       .art-depth-dot-bg {
-        fill: rgba(18, 16, 14, 0.12);
+        fill: rgba(27, 24, 21, 0.18);
       }
       .art-depth-dot-fg {
-        fill: rgba(0, 0, 0, 0.96);
+        fill: rgba(21, 19, 17, 0.86);
       }
       #artDepthStack,
       #artCoreGroup {
@@ -344,8 +289,8 @@
         opacity: var(--layer-opacity, 0.4);
       }
       .art-depth-shape {
-        fill: rgba(0, 0, 0, 0.1);
-        stroke: rgba(0, 0, 0, 1);
+        fill: url(#cardDotPatternDepth);
+        stroke: rgba(24, 22, 19, 0.86);
         stroke-width: 1.34;
         vector-effect: non-scaling-stroke;
       }
@@ -388,6 +333,7 @@
         transition: transform 140ms ease, opacity 140ms ease;
         pointer-events: auto;
         transform: translate3d(0, 0, 0) scale(1);
+        touch-action: none;
       }
       #pet:hover {
         box-shadow: none;
@@ -403,56 +349,6 @@
       }
       #pet.pressing {
         transform: translate3d(0, 1px, 0) scale(0.99);
-      }
-      #controlRail {
-        display: flex;
-        gap: 4px;
-        pointer-events: auto;
-        align-items: center;
-        justify-content: flex-end;
-        flex-shrink: 0;
-      }
-      #controlRail.hidden {
-        display: none;
-      }
-      .control-btn {
-        border: 1px solid var(--surface-border);
-        background: transparent;
-        color: var(--ink-strong);
-        border-radius: 999px;
-        width: var(--control-size);
-        height: var(--control-size);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        cursor: pointer;
-        transition:
-          background 140ms ease,
-          border-color 140ms ease,
-          transform 120ms ease;
-      }
-      .control-btn:hover:not(:disabled) {
-        background: var(--surface-muted);
-        border-color: rgba(42, 40, 35, 0.2);
-        transform: none;
-      }
-      .control-btn:active:not(:disabled) {
-        background: var(--surface-active);
-        transform: none;
-      }
-      .control-btn:disabled {
-        opacity: 0.42;
-        cursor: not-allowed;
-      }
-      .control-btn svg {
-        width: 11px;
-        height: 11px;
-        stroke: currentColor;
-        stroke-width: 1.7;
-        stroke-linecap: round;
-        stroke-linejoin: round;
-        fill: none;
       }
       #petWrap[data-music="1"] #petCard {
         transform:
@@ -497,8 +393,6 @@
         }
       }
       @media (prefers-reduced-motion: reduce) {
-        #statusPanel,
-        .control-btn,
         #pet,
         #petGlyph,
         #petCard,
@@ -506,10 +400,6 @@
           transition-duration: 80ms !important;
           transition-delay: 0ms !important;
           animation: none !important;
-        }
-        #statusPanel,
-        .control-btn {
-          transform: none !important;
         }
         #petCard::after {
           animation: none !important;
@@ -519,18 +409,6 @@
   </head>
   <body>
     <div id="petWrap">
-      <div id="statusPanel" aria-live="polite">
-        <div id="speechLine">我在。</div>
-        <div id="mediaRow" class="hidden">
-          <div id="mediaTitle">暂无播放</div>
-          <div id="controlRail" class="hidden" aria-label="音乐控制">
-            <button class="control-btn" id="btnPrev" type="button" aria-label="上一首"></button>
-            <button class="control-btn" id="btnPlay" type="button" aria-label="播放或暂停"></button>
-            <button class="control-btn" id="btnNext" type="button" aria-label="下一首"></button>
-          </div>
-        </div>
-      </div>
-
       <div id="petShell">
         <div id="petFrame">
           <div id="petGlyph" aria-hidden="true">
@@ -593,7 +471,6 @@
       let debugSeq = 0;
 
       const wrap = document.getElementById("petWrap");
-      const statusPanel = document.getElementById("statusPanel");
       const pet = document.getElementById("pet");
       const petCard = document.getElementById("petCard");
       const petShell = document.getElementById("petShell");
@@ -602,17 +479,11 @@
       const artCore = document.getElementById("artCore");
       const artCoreShadow = document.getElementById("artCoreShadow");
       const artDepthLayers = Array.from(document.querySelectorAll(".art-depth-layer"));
-      const speechLine = document.getElementById("speechLine");
-      const mediaRow = document.getElementById("mediaRow");
-      const mediaTitle = document.getElementById("mediaTitle");
-      const controlRail = document.getElementById("controlRail");
-      const btnPrev = document.getElementById("btnPrev");
-      const btnPlay = document.getElementById("btnPlay");
-      const btnNext = document.getElementById("btnNext");
       const cardRankTop = document.getElementById("cardRankTop");
       const cardRankBottom = document.getElementById("cardRankBottom");
       const cardSuitTop = document.getElementById("cardSuitTop");
       const cardSuitBottom = document.getElementById("cardSuitBottom");
+      const interactionTargets = [petCard, pet].filter(Boolean);
       const artLayerModels = artDepthLayers
         .map((layer, index) => {
           const shape = layer.querySelector(".art-depth-shape");
@@ -704,23 +575,17 @@
       let startX = 0;
       let startY = 0;
       let activePointerId = null;
+      let activePointerCaptureEl = null;
       let pointerActive = false;
       let deactivateTimer = null;
-      let latestMedia = null;
       let hoverSyncRaf = 0;
       let pendingHoverPoint = null;
       let layoutSyncRaf = 0;
-      let panelsVisibleRaf = 0;
-      let compactCommitTimer = 0;
       let lastLayoutKey = "";
       let desiredHoverActive = false;
-      let visualLayoutMode = "compact";
       let lastInsideInteractiveAt = 0;
       let pointerActivatedAt = 0;
       let suppressExpandUntil = 0;
-      let mediaControlIntentSeq = 0;
-      let pendingPlayVisual = null;
-      let controlsPlacementLock = "";
       let lastAppliedBounds = null;
       let currentAnchorX = 64;
       let currentAnchorY = 64;
@@ -735,22 +600,9 @@
       };
       const DEACTIVATE_DELAY_MS = 180;
       const HOVER_SAFE_ZONE_PADDING = 12;
-      const PANEL_FADE_MS = 100;
       const POINTER_ACTIVE_HOLD_MS = 140;
       const DRAG_END_REOPEN_GUARD_MS = 260;
-      const PLAY_VISUAL_STALE_GUARD_MS = 1200;
       const PET_RADIUS = 50;
-      const PANEL_WIDTH = 248;
-      const PANEL_HEIGHT = 64;
-      const PANEL_GAP = 12;
-      const PANEL_MARGIN = 6;
-      const PANEL_TOP_BOTTOM_WIDTH = 252;
-      const iconMarkup = {
-        prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6l-8.5 6L18 18V6Z"></path><path d="M7 6v12"></path></svg>',
-        next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l8.5 6L6 18V6Z"></path><path d="M17 6v12"></path></svg>',
-        play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6l10 6-10 6V6Z"></path></svg>',
-        pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12"></path><path d="M15 6v12"></path></svg>',
-      };
 
       function petDebug(tag, data = {}) {
         if (!debugEnabled) return;
@@ -766,28 +618,6 @@
         } catch {
           // ignore debug bridge failures
         }
-      }
-
-      function setButtonIcon(button, name) {
-        if (!button) return;
-        button.innerHTML = iconMarkup[name] || "";
-      }
-
-      setButtonIcon(btnPrev, "prev");
-      setButtonIcon(btnPlay, "play");
-      setButtonIcon(btnNext, "next");
-
-      function getScreenWorkArea() {
-        const left = Number(window.screen?.availLeft ?? 0);
-        const top = Number(window.screen?.availTop ?? 0);
-        const width = Number(window.screen?.availWidth || window.screen?.width || 1920);
-        const height = Number(window.screen?.availHeight || window.screen?.height || 1080);
-        return {
-          left,
-          top,
-          right: left + width,
-          bottom: top + height,
-        };
       }
 
       function getCurrentWindowBounds() {
@@ -814,164 +644,32 @@
         return { x: 0, y: 0, width: petLayoutConfig.compactSize, height: petLayoutConfig.compactSize };
       }
 
-      function getPlacementNeed(placement) {
-        const value = String(placement || "").toLowerCase();
-        if (value === "top" || value === "bottom") {
-          return PANEL_HEIGHT + PANEL_GAP;
-        }
-        return PANEL_WIDTH + PANEL_GAP;
-      }
-
-      function chooseControlPlacement() {
-        const bounds = getCurrentWindowBounds();
-        const area = getScreenWorkArea();
-        const petCenterX = Number(bounds.x || 0) + Number(currentAnchorX || petLayoutConfig.compactSize / 2);
-        const petCenterY = Number(bounds.y || 0) + Number(currentAnchorY || petLayoutConfig.compactSize / 2);
-        const rightSpace = area.right - (petCenterX + PET_RADIUS);
-        const leftSpace = (petCenterX - PET_RADIUS) - area.left;
-        const topSpace = (petCenterY - PET_RADIUS) - area.top;
-        const bottomSpace = area.bottom - (petCenterY + PET_RADIUS);
-        const rightNeed = getPlacementNeed("right");
-        const leftNeed = getPlacementNeed("left");
-        const topNeed = getPlacementNeed("top");
-        const bottomNeed = getPlacementNeed("bottom");
-
-        if (rightSpace >= rightNeed) return "right";
-        if (leftSpace >= leftNeed) return "left";
-
-        const topOk = topSpace >= topNeed;
-        const bottomOk = bottomSpace >= bottomNeed;
-        if (topOk || bottomOk) {
-          return topSpace >= bottomSpace ? "top" : "bottom";
-        }
-
-        const ranked = [
-          { placement: "left", space: leftSpace - leftNeed },
-          { placement: "top", space: topSpace - topNeed },
-          { placement: "bottom", space: bottomSpace - bottomNeed },
-          { placement: "right", space: rightSpace - rightNeed },
-        ].sort((a, b) => b.space - a.space);
-        return ranked[0]?.placement || "right";
-      }
-
-      function computeExpandedLayout() {
-        const compact = Number(petLayoutConfig.compactSize || 128);
-        const placement = controlsPlacementLock || chooseControlPlacement();
-        controlsPlacementLock = placement;
-        const base = {
-          mode: "expanded",
-          placement,
-          axis: placement === "top" || placement === "bottom" ? "x" : "y",
-          width: compact,
-          height: compact,
-          petCenterX: compact / 2,
-          petCenterY: compact / 2,
-          panelWidth: PANEL_WIDTH,
-          panelHeight: PANEL_HEIGHT,
-          controlsLeft: PANEL_MARGIN,
-          controlsTop: PANEL_MARGIN,
-          controlsEntryX: placement === "left" ? -12 : placement === "right" ? 12 : 0,
-          controlsEntryY: placement === "top" ? -12 : placement === "bottom" ? 12 : 0,
-        };
-
-        if (placement === "right") {
-          base.height = Math.max(compact, PANEL_HEIGHT);
-          base.petCenterY = Math.round(base.height / 2);
-          base.width = compact + PANEL_WIDTH + PANEL_GAP;
-          base.controlsLeft = Math.round(base.petCenterX + PET_RADIUS - 4);
-          base.controlsTop = Math.round((base.height - PANEL_HEIGHT) / 2);
-          return base;
-        }
-
-        if (placement === "left") {
-          base.height = Math.max(compact, PANEL_HEIGHT);
-          base.petCenterY = Math.round(base.height / 2);
-          base.width = compact + PANEL_WIDTH + PANEL_GAP;
-          base.petCenterX = compact / 2 + PANEL_WIDTH + PANEL_GAP;
-          base.controlsLeft = 0;
-          base.controlsTop = Math.round((base.height - PANEL_HEIGHT) / 2);
-          return base;
-        }
-
-        base.width = Math.max(compact, PANEL_TOP_BOTTOM_WIDTH);
-        base.panelWidth = Math.min(base.width - PANEL_MARGIN * 2, PANEL_TOP_BOTTOM_WIDTH);
-        base.height = compact + PANEL_HEIGHT + PANEL_GAP;
-        base.controlsLeft = Math.round((base.width - base.panelWidth) / 2);
-        if (placement === "top") {
-          base.petCenterX = Math.round(base.width / 2);
-          base.petCenterY = compact / 2 + PANEL_HEIGHT + PANEL_GAP;
-          base.controlsTop = 0;
-          return base;
-        }
-
-        base.petCenterX = Math.round(base.width / 2);
-        base.controlsTop = Math.round(base.petCenterY + PET_RADIUS - 2);
-        return base;
-      }
-
       function applyLayoutVars(layout) {
-        if (!layout || layout.mode !== "expanded") {
-          wrap.dataset.controlsAxis = "y";
-          wrap.dataset.panelPlacement = "right";
-          wrap.style.setProperty("--pet-center-x", `${Math.round(petLayoutConfig.compactSize / 2)}px`);
-          wrap.style.setProperty("--pet-center-y", `${Math.round(petLayoutConfig.compactSize / 2)}px`);
-          wrap.style.setProperty("--controls-left", `${PANEL_MARGIN}px`);
-          wrap.style.setProperty("--controls-top", `${PANEL_MARGIN}px`);
-          wrap.style.setProperty("--controls-entry-x", "10px");
-          wrap.style.setProperty("--controls-entry-y", "0px");
-          wrap.style.setProperty("--panel-width", `${PANEL_WIDTH}px`);
-          wrap.style.setProperty("--panel-height", `${PANEL_HEIGHT}px`);
-          return;
-        }
-        wrap.dataset.controlsAxis = String(layout.axis || "y");
-        wrap.dataset.panelPlacement = String(layout.placement || "right");
-        wrap.style.setProperty("--pet-center-x", `${Math.round(layout.petCenterX)}px`);
-        wrap.style.setProperty("--pet-center-y", `${Math.round(layout.petCenterY)}px`);
-        wrap.style.setProperty("--controls-left", `${Math.round(layout.controlsLeft)}px`);
-        wrap.style.setProperty("--controls-top", `${Math.round(layout.controlsTop)}px`);
-        wrap.style.setProperty("--controls-entry-x", `${Math.round(layout.controlsEntryX || 0)}px`);
-        wrap.style.setProperty("--controls-entry-y", `${Math.round(layout.controlsEntryY || 0)}px`);
-        wrap.style.setProperty("--panel-width", `${Math.round(layout.panelWidth || PANEL_WIDTH)}px`);
-        wrap.style.setProperty("--panel-height", `${Math.round(layout.panelHeight || PANEL_HEIGHT)}px`);
+        const compact = Number(layout?.compactSize || petLayoutConfig.compactSize || 128);
+        wrap.style.setProperty("--pet-center-x", `${Math.round(compact / 2)}px`);
+        wrap.style.setProperty("--pet-center-y", `${Math.round(compact / 2)}px`);
       }
 
       function clearCompactCommitTimer() {
-        if (!compactCommitTimer) return;
-        clearTimeout(compactCommitTimer);
-        compactCommitTimer = 0;
-        petDebug("renderer:compact-timer-clear");
+        return;
       }
 
       function cancelPanelsVisibleRaf() {
-        if (!panelsVisibleRaf) return;
-        window.cancelAnimationFrame(panelsVisibleRaf);
-        panelsVisibleRaf = 0;
+        return;
       }
 
       function requestPanelsVisible() {
-        cancelPanelsVisibleRaf();
-        panelsVisibleRaf = window.requestAnimationFrame(() => {
-          panelsVisibleRaf = 0;
-          setPanelsVisible(true);
-        });
+        return;
       }
 
-      function sendLayoutToMainSync(layout, mode) {
-        const payload = layout && layout.mode === "expanded"
-          ? {
-              mode: "expanded",
-              width: Math.round(layout.width),
-              height: Math.round(layout.height),
-              anchorX: Math.round(layout.petCenterX),
-              anchorY: Math.round(layout.petCenterY),
-            }
-          : {
-              mode: "compact",
-              width: Math.round(petLayoutConfig.compactSize),
-              height: Math.round(petLayoutConfig.compactSize),
-              anchorX: Math.round(petLayoutConfig.compactSize / 2),
-              anchorY: Math.round(petLayoutConfig.compactSize / 2),
-            };
+      function sendLayoutToMainSync(_layout, mode) {
+        const payload = {
+          mode: "compact",
+          width: Math.round(petLayoutConfig.compactSize),
+          height: Math.round(petLayoutConfig.compactSize),
+          anchorX: Math.round(petLayoutConfig.compactSize / 2),
+          anchorY: Math.round(petLayoutConfig.compactSize / 2),
+        };
         const key = `${payload.mode}|${payload.width}|${payload.height}|${payload.anchorX}|${payload.anchorY}`;
         if (key === lastLayoutKey) {
           const live = getCurrentWindowBounds();
@@ -1046,8 +744,7 @@
         clearCompactCommitTimer();
         const applied = sendLayoutToMainSync(null, "compact");
         if (!applied) return;
-        applyLayoutVars(null);
-        visualLayoutMode = "compact";
+        applyLayoutVars({ compactSize: petLayoutConfig.compactSize });
         petDebug("renderer:compact-commit", {
           desiredHoverActive,
           dragging,
@@ -1056,61 +753,11 @@
       }
 
       function scheduleCompactLayoutCommit() {
-        if (compactCommitTimer) return;
-        petDebug("renderer:compact-timer-set", {
-          delayMs: PANEL_FADE_MS,
-          desiredHoverActive,
-          dragging,
-          pointerActive,
-        });
-        compactCommitTimer = window.setTimeout(() => {
-          compactCommitTimer = 0;
-          if (desiredHoverActive || dragging) {
-            petDebug("renderer:compact-timer-abort", {
-              desiredHoverActive,
-              dragging,
-            });
-            scheduleLayoutSync(true);
-            return;
-          }
-          petDebug("renderer:compact-timer-fire");
-          commitCompactLayout();
-        }, PANEL_FADE_MS);
+        commitCompactLayout();
       }
 
       function syncLayoutNow() {
-        const expanded = desiredHoverActive && !dragging;
-        if (expanded) {
-          clearCompactCommitTimer();
-          const layout = computeExpandedLayout();
-          const applied = sendLayoutToMainSync(layout, "expanded");
-          if (!applied) return;
-          applyLayoutVars(layout);
-          visualLayoutMode = "expanded";
-          petDebug("renderer:expanded-commit", {
-            width: layout.width,
-            height: layout.height,
-            petCenterX: layout.petCenterX,
-            petCenterY: layout.petCenterY,
-            placement: layout.placement,
-            panelWidth: layout.panelWidth,
-            panelHeight: layout.panelHeight,
-          });
-          requestPanelsVisible();
-          return;
-        }
-        cancelPanelsVisibleRaf();
-        setPanelsVisible(false);
-        if (dragging) {
-          clearCompactCommitTimer();
-          petDebug("renderer:drag-layout-hold", { visualLayoutMode });
-          return;
-        }
-        if (visualLayoutMode === "compact") {
-          commitCompactLayout();
-          return;
-        }
-        scheduleCompactLayoutCommit();
+        commitCompactLayout();
       }
 
       function scheduleLayoutSync(force = false) {
@@ -1136,12 +783,6 @@
 
       function sourceForState(state) {
         return stateAssets[state] || stateAssets.happy || fallbackIcon || "";
-      }
-
-      function truncateText(text, maxLength = 26) {
-        const raw = String(text || "").trim();
-        if (!raw) return "";
-        return raw.length > maxLength ? `${raw.slice(0, Math.max(0, maxLength - 1))}…` : raw;
       }
 
       function clampUnit(value, min = 0, max = 1) {
@@ -1216,8 +857,8 @@
           const exposureY = Math.abs(coreCy - layerCy) / 10.2;
           const revealOpacity = clampUnit((exposureX * 0.92) + (exposureY * 0.32));
           const fillReveal = clampUnit((exposureX * 0.78) + (exposureY * 0.2));
-          const fillOpacity = fillReveal * (0.06 + (nearBias * 0.05));
-          const strokeOpacity = clampUnit((((exposureX * 1.22) + (exposureY * 0.08)) - 0.035) * 3.1);
+          const fillOpacity = fillReveal * (0.1 + (nearBias * 0.07));
+          const strokeOpacity = clampUnit((((exposureX * 1.18) + (exposureY * 0.08)) - 0.03) * 2.55);
 
           setSvgNumericAttr(model.shape, "cx", layerCx);
           setSvgNumericAttr(model.shape, "cy", layerCy);
@@ -1226,7 +867,7 @@
           model.layer.style.opacity = "1";
           model.shape.style.fillOpacity = fillOpacity.toFixed(3);
           model.shape.style.strokeOpacity = strokeOpacity.toFixed(3);
-          model.shape.style.strokeWidth = (1.06 + (nearBias * 0.18) + (strokeOpacity * 0.06)).toFixed(3);
+          model.shape.style.strokeWidth = (1.08 + (nearBias * 0.2) + (strokeOpacity * 0.08)).toFixed(3);
         });
       }
 
@@ -1310,27 +951,6 @@
         pointerTiltTargetX = clampUnit(((clientX - centerX) / rangeX) * (globalMode ? 1.34 : 1), -1, 1);
         pointerTiltTargetY = clampUnit(((clientY - centerY) / rangeY) * (globalMode ? 1.3 : 1), -1, 1);
         ensurePointerTiltLoop();
-      }
-
-      function buildPrimaryLine(payload = {}) {
-        const coach = String(payload?.coachLine || "").trim();
-        if (coach) return truncateText(coach, 28);
-        const workDurationMin = Math.max(0, Number(payload?.workDurationMin || 0));
-        if (payload?.state === "working") {
-          if (workDurationMin >= 90) return "继续下潜。";
-          if (workDurationMin >= 45) return "先别切走。";
-          return "我替你守着。";
-        }
-        if (payload?.state === "completed") {
-          return "这一段稳了。";
-        }
-        if (payload?.state === "resting") {
-          return payload?.isLateNight ? "今晚慢一点。" : "先缓一口气。";
-        }
-        if (payload?.hasMusic) {
-          return "让声音先铺开。";
-        }
-        return "我在。";
       }
 
       function applyMoodTheme(payload = {}) {
@@ -1587,10 +1207,6 @@
         wrap.dataset.coach = payload?.coachLine ? "1" : "0";
       }
 
-      function renderPanelContent(payload = {}) {
-        speechLine.textContent = buildPrimaryLine(payload);
-      }
-
       function setHoverActive(active) {
         const next = Boolean(active);
         if (desiredHoverActive === next) return;
@@ -1601,83 +1217,11 @@
           dragging,
         });
         desiredHoverActive = next;
-        if (!next) {
-          controlsPlacementLock = "";
-        }
         scheduleLayoutSync();
       }
 
       function setPanelsVisible(visible) {
-        const next = Boolean(visible);
-        if (wrap.classList.contains("panels-visible") === next) return;
-        petDebug("renderer:panels-visible", { next });
-        wrap.classList.toggle("panels-visible", next);
-      }
-
-      function beginPendingPlayVisual(intentId, expectedIsPlaying) {
-        pendingPlayVisual = {
-          intentId: Number(intentId || 0),
-          expectedIsPlaying: Boolean(expectedIsPlaying),
-          expiresAt: Date.now() + PLAY_VISUAL_STALE_GUARD_MS,
-        };
-      }
-
-      function clearPendingPlayVisual(reason = "") {
-        if (!pendingPlayVisual) return;
-        petDebug("renderer:media-play-pending-clear", {
-          intentId: Number(pendingPlayVisual.intentId || 0),
-          reason: String(reason || ""),
-        });
-        pendingPlayVisual = null;
-      }
-
-      function resolvePlayVisualState(rawIsPlaying) {
-        const incoming = Boolean(rawIsPlaying);
-        if (!pendingPlayVisual) return incoming;
-        const now = Date.now();
-        if (now > Number(pendingPlayVisual.expiresAt || 0)) {
-          clearPendingPlayVisual("expired");
-          return incoming;
-        }
-        if (incoming === Boolean(pendingPlayVisual.expectedIsPlaying)) {
-          clearPendingPlayVisual("ack");
-          return incoming;
-        }
-        return Boolean(pendingPlayVisual.expectedIsPlaying);
-      }
-
-      function setMusicPanel(payload) {
-        const media = payload?.media && typeof payload.media === "object" ? payload.media : null;
-        const musicNames = Array.isArray(payload?.musicDisplayNames)
-          ? payload.musicDisplayNames.filter((item) => typeof item === "string" && item.trim())
-          : [];
-        const hasMediaDetail = !!(media && (media.title || media.artist || media.app));
-        const hasMusic = Boolean(payload?.hasMusic) || musicNames.length > 0 || hasMediaDetail;
-        controlRail.classList.add("hidden");
-        mediaRow.classList.add("hidden");
-        if (!hasMusic) {
-          latestMedia = null;
-          controlsPlacementLock = "";
-          clearPendingPlayVisual("no_music");
-          btnPrev.disabled = true;
-          btnPlay.disabled = true;
-          btnNext.disabled = true;
-          setButtonIcon(btnPlay, "play");
-          mediaTitle.textContent = "";
-          scheduleLayoutSync();
-          return;
-        }
-
-        const visualIsPlaying = resolvePlayVisualState(media?.isPlaying);
-        latestMedia = media && typeof media === "object" ? { ...media, isPlaying: visualIsPlaying } : { isPlaying: visualIsPlaying };
-
-        const mediaControllable = Boolean(media && media.available && (media.canPlay || media.canPause || media.canNext || media.canPrev));
-        btnPrev.disabled = !hasMusic || (mediaControllable && !media?.canPrev);
-        btnNext.disabled = !hasMusic || (mediaControllable && !media?.canNext);
-        btnPlay.disabled = !hasMusic || (mediaControllable && !(media?.canPlay || media?.canPause));
-        setButtonIcon(btnPlay, visualIsPlaying ? "pause" : "play");
-
-        scheduleLayoutSync();
+        return Boolean(visible);
       }
 
       function applyState(payload, force = false) {
@@ -1702,8 +1246,6 @@
         applyMoodTheme(lastPayload);
         applyEntityVisual(lastPayload);
         renderCardFace(lastPayload);
-        renderPanelContent(lastPayload);
-        setMusicPanel(lastPayload);
         scheduleLayoutSync();
       }
 
@@ -1730,18 +1272,20 @@
       }
 
       function isInsidePet(clientX, clientY) {
-        const rect = pet.getBoundingClientRect();
         const pad = 4;
-        return (
-          clientX >= rect.left - pad &&
-          clientX <= rect.right + pad &&
-          clientY >= rect.top - pad &&
-          clientY <= rect.bottom + pad
-        );
+        return interactionTargets.some((el) => {
+          const rect = el?.getBoundingClientRect?.();
+          if (!rect) return false;
+          return (
+            clientX >= rect.left - pad &&
+            clientX <= rect.right + pad &&
+            clientY >= rect.top - pad &&
+            clientY <= rect.bottom + pad
+          );
+        });
       }
 
       function isInsideRect(el, clientX, clientY, pad = 2) {
-        if (!wrap.classList.contains("panels-visible")) return false;
         if (!el || el.classList.contains("hidden")) return false;
         const rect = el.getBoundingClientRect();
         return (
@@ -1764,35 +1308,26 @@
       }
 
       function buildInteractiveRect() {
-        let rect = null;
-        const petRect = pet?.getBoundingClientRect?.();
-        if (petRect) {
-          rect = mergeRect(rect, petRect);
-        }
-        if (wrap.classList.contains("panels-visible")) {
-          if (statusPanel) {
-            rect = mergeRect(rect, statusPanel.getBoundingClientRect());
-          }
-        }
-        return rect;
+        const width = Number(window.innerWidth || document.documentElement?.clientWidth || petLayoutConfig.compactSize || 0);
+        const height = Number(window.innerHeight || document.documentElement?.clientHeight || petLayoutConfig.compactSize || 0);
+        if (width <= 0 || height <= 0) return null;
+        return {
+          left: 0,
+          top: 0,
+          right: width,
+          bottom: height,
+        };
       }
 
       function isInsideInteractive(clientX, clientY) {
-        if (isInsidePet(clientX, clientY)) return true;
-        if (isInsideRect(statusPanel, clientX, clientY, 3)) return true;
-        if (desiredHoverActive || wrap.classList.contains("panels-visible")) {
-          const rect = buildInteractiveRect();
-          if (!rect) return false;
-          if (
-            clientX >= rect.left - HOVER_SAFE_ZONE_PADDING &&
-            clientX <= rect.right + HOVER_SAFE_ZONE_PADDING &&
-            clientY >= rect.top - HOVER_SAFE_ZONE_PADDING &&
-            clientY <= rect.bottom + HOVER_SAFE_ZONE_PADDING
-          ) {
-            return true;
-          }
-        }
-        return false;
+        const rect = buildInteractiveRect();
+        if (!rect) return false;
+        return (
+          clientX >= rect.left - HOVER_SAFE_ZONE_PADDING &&
+          clientX <= rect.right + HOVER_SAFE_ZONE_PADDING &&
+          clientY >= rect.top - HOVER_SAFE_ZONE_PADDING &&
+          clientY <= rect.bottom + HOVER_SAFE_ZONE_PADDING
+        );
       }
 
       function clearDeactivateTimer() {
@@ -1895,12 +1430,9 @@
 
       function forceCollapsePanels(reason = "") {
         desiredHoverActive = false;
-        controlsPlacementLock = "";
         lastInsideInteractiveAt = 0;
         clearDeactivateTimer();
         relaxPointerTilt();
-        cancelPanelsVisibleRaf();
-        setPanelsVisible(false);
         petDebug("renderer:force-collapse", {
           reason: String(reason || ""),
           pointerActive,
@@ -1913,72 +1445,7 @@
         scheduleLayoutSync(true);
       }
 
-      async function runMediaAction(action, payload = {}) {
-        try {
-          const result = await window.petBridge?.mediaControl?.(action, payload);
-          if (result?.state) {
-            applyState(result.state, true);
-          }
-          return result || { ok: false, detail: "empty_result" };
-        } catch {
-          // ignore control errors in UI
-          return { ok: false, detail: "ui_bridge_error" };
-        }
-      }
-
-      function setOptimisticPlayVisual(isPlaying, intentId = 0) {
-        beginPendingPlayVisual(intentId, isPlaying);
-        if (!latestMedia || typeof latestMedia !== "object") {
-          latestMedia = {};
-        }
-        latestMedia = {
-          ...latestMedia,
-          isPlaying: Boolean(isPlaying),
-        };
-        setButtonIcon(btnPlay, latestMedia.isPlaying ? "pause" : "play");
-      }
-
-      btnPrev.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        runMediaAction("previous");
-      });
-      btnPlay.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const wasPlaying = Boolean(latestMedia?.isPlaying);
-        const nextPlaying = !wasPlaying;
-        const previousMedia = latestMedia && typeof latestMedia === "object" ? { ...latestMedia } : null;
-        const intentId = ++mediaControlIntentSeq;
-        const action = wasPlaying ? "pause" : "play";
-        const canDirect = wasPlaying ? latestMedia?.canPause : latestMedia?.canPlay;
-        setOptimisticPlayVisual(nextPlaying, intentId);
-        petDebug("renderer:media-play-optimistic", {
-          intentId,
-          action: canDirect ? action : "play_pause",
-          wasPlaying,
-          nextPlaying,
-        });
-        void (async () => {
-          const result = await runMediaAction(canDirect ? action : "play_pause");
-          if (intentId !== mediaControlIntentSeq) return;
-          if (result?.ok) return;
-          clearPendingPlayVisual("rollback");
-          latestMedia = previousMedia;
-          setButtonIcon(btnPlay, previousMedia?.isPlaying ? "pause" : "play");
-          petDebug("renderer:media-play-rollback", {
-            intentId,
-            detail: String(result?.detail || ""),
-          });
-        })();
-      });
-      btnNext.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        runMediaAction("next");
-      });
-
-      [pet, statusPanel].forEach((el) => {
+      interactionTargets.forEach((el) => {
         el?.addEventListener("contextmenu", (event) => {
           event.preventDefault();
           window.petBridge?.openMenu({
@@ -1986,7 +1453,9 @@
             screenY: event.screenY,
           });
         });
+      });
 
+      interactionTargets.forEach((el) => {
         el?.addEventListener("mouseup", (event) => {
           if (event.button !== 2) return;
           event.preventDefault();
@@ -1997,9 +1466,18 @@
         });
       });
 
-      pet.addEventListener("pointerdown", (event) => {
+      function applyDraggingVisual(active) {
+        interactionTargets.forEach((el) => {
+          el?.classList.toggle("dragging", active);
+          el?.classList.toggle("pressing", active);
+        });
+      }
+
+      function handlePointerDown(event) {
         if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault();
+        event.stopPropagation();
+        if (dragging) return;
         clearDeactivateTimer();
         relaxPointerTilt();
         setPointerActive(true);
@@ -2011,39 +1489,46 @@
           screenX: event.screenX,
           screenY: event.screenY,
         });
-        wrap.classList.add("dragging-panels-hidden");
         moved = false;
         setHoverActive(false);
         scheduleLayoutSync(true);
         activePointerId = event.pointerId;
+        activePointerCaptureEl = event.currentTarget instanceof Element ? event.currentTarget : pet;
         startX = event.screenX;
         startY = event.screenY;
-        if (typeof pet.setPointerCapture === "function") {
+        if (typeof activePointerCaptureEl?.setPointerCapture === "function") {
           try {
-            pet.setPointerCapture(event.pointerId);
+            activePointerCaptureEl.setPointerCapture(event.pointerId);
           } catch {
             // ignore capture failures
           }
         }
         const localX = event.clientX;
         const localY = event.clientY;
-        pet.classList.add("dragging");
-        pet.classList.add("pressing");
+        applyDraggingVisual(true);
         window.petBridge?.dragStart({
           screenX: event.screenX,
           screenY: event.screenY,
           localX,
           localY,
         });
+      }
+
+      interactionTargets.forEach((el) => {
+        el?.addEventListener("pointerdown", handlePointerDown);
       });
 
-      pet.addEventListener("pointermove", (event) => {
+      function handlePointerMove(event) {
         if (!dragging) return;
         if (!event.isPrimary || event.pointerId !== activePointerId) return;
         const dx = Math.abs(event.screenX - startX);
         const dy = Math.abs(event.screenY - startY);
         if (dx > 2 || dy > 2) moved = true;
         window.petBridge?.dragMove({ screenX: event.screenX, screenY: event.screenY });
+      }
+
+      interactionTargets.forEach((el) => {
+        el?.addEventListener("pointermove", handlePointerMove);
       });
 
       function finishPointerDrag(event, cancelled = false) {
@@ -2064,22 +1549,22 @@
           });
           setHoverActive(false);
         }
-        wrap.classList.remove("dragging-panels-hidden");
         moved = false;
         scheduleLayoutSync(true);
         const pointerId = activePointerId;
+        const pointerCaptureEl = activePointerCaptureEl;
         activePointerId = null;
-        if (pointerId !== null && typeof pet.releasePointerCapture === "function") {
+        activePointerCaptureEl = null;
+        if (pointerId !== null && typeof pointerCaptureEl?.releasePointerCapture === "function") {
           try {
-            if (typeof pet.hasPointerCapture !== "function" || pet.hasPointerCapture(pointerId)) {
-              pet.releasePointerCapture(pointerId);
+            if (typeof pointerCaptureEl.hasPointerCapture !== "function" || pointerCaptureEl.hasPointerCapture(pointerId)) {
+              pointerCaptureEl.releasePointerCapture(pointerId);
             }
           } catch {
             // ignore release capture failures
           }
         }
-        pet.classList.remove("dragging");
-        pet.classList.remove("pressing");
+        applyDraggingVisual(false);
         window.petBridge?.dragEnd();
         if (!cancelled && !wasMoved && event?.button === 0) {
           window.petBridge?.openChat();
@@ -2092,14 +1577,18 @@
         }
       }
 
-      pet.addEventListener("pointerup", (event) => {
-        if (!event.isPrimary) return;
-        finishPointerDrag(event, false);
+      interactionTargets.forEach((el) => {
+        el?.addEventListener("pointerup", (event) => {
+          if (!event.isPrimary) return;
+          finishPointerDrag(event, false);
+        });
       });
 
-      pet.addEventListener("pointercancel", (event) => {
-        if (!event.isPrimary) return;
-        finishPointerDrag(event, true);
+      interactionTargets.forEach((el) => {
+        el?.addEventListener("pointercancel", (event) => {
+          if (!event.isPrimary) return;
+          finishPointerDrag(event, true);
+        });
       });
 
       window.addEventListener("mousemove", (event) => {
@@ -2108,12 +1597,14 @@
         }
       });
 
-      pet.addEventListener("dblclick", (event) => {
-        event.preventDefault();
-        window.petBridge?.openChat();
+      interactionTargets.forEach((el) => {
+        el?.addEventListener("dblclick", (event) => {
+          event.preventDefault();
+          window.petBridge?.openChat();
+        });
       });
 
-      [pet, statusPanel].forEach((el) => {
+      interactionTargets.forEach((el) => {
         el?.addEventListener("mouseenter", (event) => {
           if (dragging) return;
           syncPointerByPoint(event.clientX, event.clientY);
@@ -2163,6 +1654,14 @@
       }
 
       applyPointerTiltVars(0, 0);
+      window.requestAnimationFrame(() => {
+        setPointerActive(true);
+        window.setTimeout(() => {
+          if (!dragging) {
+            schedulePointerInactive();
+          }
+        }, DEACTIVATE_DELAY_MS);
+      });
 
       window.addEventListener("beforeunload", () => {
         clearDeactivateTimer();

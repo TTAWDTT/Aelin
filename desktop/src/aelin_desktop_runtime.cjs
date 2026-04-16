@@ -111,6 +111,12 @@ let petLastState = "happy";
 let petCpuSnapshot = null;
 let petPowerEventsBound = false;
 let mainWindowPinned = false;
+let mainWindowStartupRoute = "/";
+let mainWindowShowingStartup = false;
+let mainWindowStartupStatus = {
+  stage: "正在启动 Aelin",
+  detail: "正在准备本地工作区...",
+};
 let petWorkingPhase = false;
 let petCompletionUntil = 0;
 let petWorkStartedAt = 0;
@@ -118,6 +124,7 @@ let petCoachLine = "";
 let petCoachReason = "";
 let petCoachLineUntil = 0;
 let petCoachCooldownUntil = 0;
+let desktopBootCompleted = false;
 let petCoachPending = false;
 let petLateNightHintDate = "";
 let petProcessProbeCache = {
@@ -1790,6 +1797,49 @@ function buildAppUrl(route = "/") {
   return `http://127.0.0.1:${frontendPort}${normalizeRoute(route)}?desktop=1&compact=1`;
 }
 
+function buildStartupScreenUrl(route = "/") {
+  const startupUrl = pathToFileURL(path.join(__dirname, "startup.html"));
+  startupUrl.searchParams.set("route", normalizeRoute(route));
+  return startupUrl.toString();
+}
+
+function isMainWindowShowingStartupScreen() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  try {
+    const currentUrl = String(mainWindow.webContents.getURL() || "");
+    return currentUrl.startsWith("file:") && currentUrl.includes("/startup.html");
+  } catch {
+    return false;
+  }
+}
+
+function pushMainWindowStartupStage() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindowShowingStartup && !isMainWindowShowingStartupScreen()) return;
+  const payload = {
+    ...mainWindowStartupStatus,
+    route: mainWindowStartupRoute,
+  };
+  const script = `window.__AELIN_STARTUP__?.setStage(${JSON.stringify(payload)});`;
+  const maybePromise = mainWindow.webContents.executeJavaScript(script, true);
+  if (maybePromise && typeof maybePromise.catch === "function") {
+    maybePromise.catch(() => {});
+  }
+}
+
+function setMainWindowStartupStage(stage, detail = "") {
+  const nextStage = String(stage || "").trim() || "正在启动 Aelin";
+  const nextDetail = String(detail || "").trim();
+  mainWindowStartupStatus = {
+    stage: nextStage,
+    detail: nextDetail,
+  };
+  appendDesktopMainLogLine(
+    `[startup-stage] ${nextStage}${nextDetail ? ` | ${nextDetail}` : ""}`
+  );
+  pushMainWindowStartupStage();
+}
+
 function getReferenceDisplayArea() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     const bounds = mainWindow.getBounds();
@@ -1859,6 +1909,30 @@ function syncWindowZOrder() {
     if (!mainWindowPinned && typeof petWindow.moveTop === "function") {
       petWindow.moveTop();
     }
+  }
+}
+
+function loadMainWindowAppRoute(route = "/", options = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const focus = options.focus !== false;
+  const targetRoute = normalizeRoute(route);
+  mainWindowStartupRoute = targetRoute;
+  mainWindowShowingStartup = false;
+  applyMainWindowPreset(targetRoute);
+  const maybePromise = mainWindow.loadURL(buildAppUrl(targetRoute));
+  if (maybePromise && typeof maybePromise.catch === "function") {
+    maybePromise.catch((error) => {
+      appendDesktopMainLogLine(
+        `[main-window-app-load-failed] ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  if (focus) {
+    mainWindow.focus();
   }
 }
 
@@ -3953,8 +4027,9 @@ function startFrontendServer() {
   );
 }
 
-function createMainWindow(initialRoute = "/", showWhenReady = false) {
+function createMainWindow(initialRoute = "/", showWhenReady = false, options = {}) {
   const preset = resolveWindowPreset(initialRoute);
+  const startupScreen = options.startupScreen === true;
   mainWindow = new BrowserWindow({
     width: preset.width,
     height: preset.height,
@@ -3967,7 +4042,7 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
     fullscreenable: false,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: "#111111",
+    backgroundColor: "#120f0d",
     title: "Aelin",
     icon: resolveTrayIconPath(),
     webPreferences: {
@@ -3980,11 +4055,33 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
   setMainZoomFactor(getDefaultMainZoom());
   bindMainZoomShortcuts();
 
-  mainWindow.loadURL(buildAppUrl(initialRoute));
+  mainWindowStartupRoute = normalizeRoute(initialRoute);
+  mainWindowShowingStartup = startupScreen;
+  const initialUrl = startupScreen ? buildStartupScreenUrl(initialRoute) : buildAppUrl(initialRoute);
+  const initialLoad = mainWindow.loadURL(initialUrl);
+  if (initialLoad && typeof initialLoad.catch === "function") {
+    initialLoad.catch((error) => {
+      appendDesktopMainLogLine(
+        `[main-window-load-failed] ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+  }
   mainWindow.once("ready-to-show", () => {
     if (showWhenReady) {
       mainWindow.show();
     }
+  });
+  mainWindow.webContents.on("did-finish-load", () => {
+    if (mainWindowShowingStartup || isMainWindowShowingStartupScreen()) {
+      pushMainWindowStartupStage();
+    }
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    if (Number(errorCode) === -3) return;
+    appendDesktopMainLogLine(
+      `[main-window-load-failed] code=${errorCode} url=${validatedURL} detail=${errorDescription}`
+    );
   });
   mainWindow.on("resize", () => {
     if (mainWindowPinned && !isMainWindowAtMinimumSize()) {
@@ -3994,37 +4091,31 @@ function createMainWindow(initialRoute = "/", showWhenReady = false) {
   });
   mainWindow.on("minimize", () => {
     if (closing) return;
+    if (!desktopBootCompleted) return;
     setTimeout(() => ensurePetVisible(), 30);
   });
   mainWindow.on("hide", () => {
     if (closing) return;
+    if (!desktopBootCompleted) return;
     setTimeout(() => ensurePetVisible(), 30);
   });
   mainWindow.on("closed", () => {
     mainWindowPinned = false;
+    mainWindowShowingStartup = false;
     mainWindow = null;
     if (!closing) {
+      if (!desktopBootCompleted) return;
       setTimeout(() => ensurePetVisible(), 30);
     }
   });
 }
 
 function openModule(route = "/") {
-  const targetUrl = buildAppUrl(route);
   if (!mainWindow) {
     createMainWindow(route, true);
     return;
   }
-  applyMainWindowPreset(route);
-  const maybePromise = mainWindow.loadURL(targetUrl);
-  if (maybePromise && typeof maybePromise.catch === "function") {
-    maybePromise.catch(() => {});
-  }
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
-  }
-  mainWindow.show();
-  mainWindow.focus();
+  loadMainWindowAppRoute(route);
   syncWindowZOrder();
   pushPetState(true);
 }
@@ -4777,9 +4868,15 @@ function createPetWindow() {
 async function boot() {
   reloadPetBehaviorConfig();
   if (!isVerifyMode) {
+    setMainWindowStartupStage("正在准备桌面壳层", "初始化本地桌宠与插件桥。");
     await startPetPluginApiServer();
   }
+  setMainWindowStartupStage(
+    "正在启动后端",
+    app.isPackaged ? "拉起内置 Agent Server 与产品接口。" : "连接本地 LangGraph 与产品接口。"
+  );
   await startBackend();
+  setMainWindowStartupStage("正在预热后端", "等待 /ok、/healthz 与 /assistants/search 就绪。");
   await startProductApiDev();
   const backendReady = await waitForAgentServerReady(60000);
   if (!backendReady) {
@@ -4791,6 +4888,7 @@ async function boot() {
   }
 
   if (isDev && productApiPort !== backendPort) {
+    setMainWindowStartupStage("正在连接产品接口", "等待本地产品 API 响应健康检查。");
     const productApiReady = await waitForUrl(`http://127.0.0.1:${productApiPort}/healthz`, 60000);
     if (!productApiReady) {
       throw new Error("Product API startup timed out. Check Python environment and dependencies.");
@@ -4798,11 +4896,14 @@ async function boot() {
   }
 
   if (isDev) {
+    setMainWindowStartupStage("正在启动前端", "拉起 Vite 开发服务器。");
     await startFrontendDev();
   } else {
+    setMainWindowStartupStage("正在启动前端", "加载打包后的界面资源。");
     startFrontendServer();
   }
 
+  setMainWindowStartupStage("正在预热工作区", "等待桌面界面完成首次可用加载。");
   const frontendReady = await waitForUrl(`http://127.0.0.1:${frontendPort}`, 60000);
   if (!frontendReady) {
     throw new Error("Frontend startup timed out.");
@@ -4810,11 +4911,14 @@ async function boot() {
 
   if (isVerifyMode) {
     safeConsoleLog("[desktop] Verify mode active: backend/frontend ready, skipping window and tray bootstrap.");
+  } else {
+    setMainWindowStartupStage("即将进入工作区", "本地服务已就绪，正在打开 Aelin。");
   }
 }
 
 function cleanup() {
   closing = true;
+  desktopBootCompleted = false;
   petDragState = null;
   stopPetDragLoop();
   stopPetStateTicker();
@@ -4862,6 +4966,9 @@ function cleanup() {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     if (!closing) {
+      if (!desktopBootCompleted) {
+        return;
+      }
       createTray();
       ensurePetVisible();
       return;
@@ -4876,15 +4983,23 @@ app.on("before-quit", () => {
 
 app.whenReady().then(async () => {
   try {
+    if (!isVerifyMode) {
+      createMainWindow("/", true, { startupScreen: true });
+      setMainWindowStartupStage(
+        "正在启动 Aelin",
+        app.isPackaged ? "准备本地打包环境..." : "准备本地开发环境..."
+      );
+    }
     await boot();
     if (isVerifyMode) {
       return;
     }
     petStateAssets = buildPetStateAssets();
     bindPetPowerEvents();
-    createMainWindow("/", false);
     createPetWindow();
     createTray();
+    desktopBootCompleted = true;
+    openModule("/");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     appendDesktopMainLogLine(
