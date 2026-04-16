@@ -255,10 +255,10 @@
         backface-visibility: hidden;
         transform:
           perspective(960px)
-          translate3d(calc(var(--px) * 1.2px), calc(var(--card-shift-y) + (var(--py) * -1.2px)), 0)
-          rotateX(calc((var(--py) * -24deg) + var(--card-tilt-x)))
-          rotateY(calc((var(--px) * 28deg) + var(--card-tilt-y)))
-          rotate(calc(var(--card-rotate) + (var(--px) * 5.2deg)));
+          translate3d(calc(var(--px) * 2.2px), calc(var(--card-shift-y) + (var(--py) * -2px)), 0)
+          rotateX(calc((var(--py) * -31deg) + var(--card-tilt-x)))
+          rotateY(calc((var(--px) * 37deg) + var(--card-tilt-y)))
+          rotate(calc(var(--card-rotate) + (var(--px) * 7.1deg)));
         will-change: transform, box-shadow;
       }
       #petCard::before {
@@ -328,10 +328,10 @@
         fill: rgba(255, 255, 255, 0.9);
       }
       .art-depth-dot-bg {
-        fill: rgba(35, 32, 29, 0.28);
+        fill: rgba(18, 16, 14, 0.12);
       }
       .art-depth-dot-fg {
-        fill: rgba(26, 24, 22, 0.92);
+        fill: rgba(0, 0, 0, 0.96);
       }
       #artDepthStack,
       #artCoreGroup {
@@ -344,8 +344,8 @@
         opacity: var(--layer-opacity, 0.4);
       }
       .art-depth-shape {
-        fill: url(#cardDotPatternDepth);
-        stroke: rgba(30, 27, 24, 0.84);
+        fill: rgba(0, 0, 0, 0.1);
+        stroke: rgba(0, 0, 0, 1);
         stroke-width: 1.34;
         vector-effect: non-scaling-stroke;
       }
@@ -457,10 +457,10 @@
       #petWrap[data-music="1"] #petCard {
         transform:
           perspective(980px)
-          translate3d(calc(var(--px) * 1.3px), calc(var(--card-shift-y) + (var(--py) * -1.35px)), 0)
-          rotateX(calc((var(--py) * -25deg) + var(--card-tilt-x)))
-          rotateY(calc((var(--px) * 29deg) + var(--card-tilt-y)))
-          rotate(calc(var(--card-rotate) + (var(--px) * 5.6deg)));
+          translate3d(calc(var(--px) * 2.4px), calc(var(--card-shift-y) + (var(--py) * -2.2px)), 0)
+          rotateX(calc((var(--py) * -33deg) + var(--card-tilt-x)))
+          rotateY(calc((var(--px) * 39deg) + var(--card-tilt-y)))
+          rotate(calc(var(--card-rotate) + (var(--px) * 7.5deg)));
       }
       @keyframes glyphFloat {
         0%,
@@ -553,24 +553,24 @@
                   </defs>
                   <g id="artDepthStack">
                     <g class="art-depth-layer" data-i="5" style="--i: 5; --layer-opacity: 0.46">
-                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                      <ellipse class="art-depth-shape" cx="101.8" cy="78.2" rx="46.2" ry="55.4"></ellipse>
                     </g>
                     <g class="art-depth-layer" data-i="4" style="--i: 4; --layer-opacity: 0.58">
-                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                      <ellipse class="art-depth-shape" cx="101.8" cy="78.2" rx="46.2" ry="55.4"></ellipse>
                     </g>
                     <g class="art-depth-layer" data-i="3" style="--i: 3; --layer-opacity: 0.72">
-                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                      <ellipse class="art-depth-shape" cx="101.8" cy="78.2" rx="46.2" ry="55.4"></ellipse>
                     </g>
                     <g class="art-depth-layer" data-i="2" style="--i: 2; --layer-opacity: 0.84">
-                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                      <ellipse class="art-depth-shape" cx="101.8" cy="78.2" rx="46.2" ry="55.4"></ellipse>
                     </g>
                     <g class="art-depth-layer" data-i="1" style="--i: 1; --layer-opacity: 0.94">
-                      <ellipse class="art-depth-shape" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                      <ellipse class="art-depth-shape" cx="101.8" cy="78.2" rx="46.2" ry="55.4"></ellipse>
                     </g>
                   </g>
                   <g id="artCoreGroup">
-                    <ellipse id="artCoreShadow" cx="99.4" cy="79.8" rx="48.4" ry="57.2"></ellipse>
-                    <ellipse id="artCore" cx="101" cy="78" rx="49" ry="58"></ellipse>
+                    <ellipse id="artCoreShadow" cx="100.3" cy="79.8" rx="45.6" ry="54.6"></ellipse>
+                    <ellipse id="artCore" cx="101.8" cy="78.2" rx="46.2" ry="55.4"></ellipse>
                   </g>
                 </svg>
               </div>
@@ -1160,21 +1160,36 @@
         node.setAttribute("transform", `translate(${Number(x || 0).toFixed(3)} ${Number(y || 0).toFixed(3)})`);
       }
 
+      function projectCardDepthVector(px = 0, py = 0) {
+        const rotX = (-Number(py || 0) * 31) * (Math.PI / 180);
+        const rotY = (Number(px || 0) * 37) * (Math.PI / 180);
+        const dirX = -Math.cos(rotX) * Math.sin(rotY);
+        const dirY = Math.sin(rotX);
+        const strength = Math.hypot(dirX, dirY);
+        return {
+          dirX,
+          dirY,
+          strength,
+        };
+      }
+
       function updateCardArtworkDepth(px = 0, py = 0) {
         if (!artCoreBase) return;
-        const absX = Math.abs(px);
-        const absY = Math.abs(py);
-        const depth = clampUnit((absX * 0.68) + (absY * 0.54), 0, 1);
-        const leftReveal = 4.2 + (depth * 5.6);
-        const verticalReveal = (py * (0.95 + (depth * 1.65))) + ((-px) * 0.38);
+        const { dirX, dirY, strength } = projectCardDepthVector(px, py);
+        const absDirX = Math.abs(dirX);
+        const absDirY = Math.abs(dirY);
+        const depth = clampUnit(strength * 1.28, 0, 1);
+        const depthScalar = 4.8 + (strength * 2.8);
+        const sliceVectorX = dirX * depthScalar;
+        const sliceVectorY = dirY * depthScalar;
 
-        setSvgTranslate(artDepthStack, px * 0.24, py * -0.16);
-        setSvgTranslate(artCoreGroup, px * 0.08, py * -0.08);
+        setSvgTranslate(artDepthStack, px * 0.12, py * -0.08);
+        setSvgTranslate(artCoreGroup, px * 0.05, py * -0.05);
 
-        const coreCx = artCoreBase.cx + (px * 1.45) + (absX * 0.12);
-        const coreCy = artCoreBase.cy + (py * -1.05) - (absY * 0.12);
-        const coreRx = artCoreBase.rx + (absX * 0.2) - (absY * 0.78);
-        const coreRy = artCoreBase.ry - (absY * 1.45) + (absX * 0.08);
+        const coreCx = artCoreBase.cx + (px * 0.96) + (dirX * 1.02);
+        const coreCy = artCoreBase.cy + (py * -0.74) + (dirY * 0.82);
+        const coreRx = artCoreBase.rx + (absDirX * 0.24) - (absDirY * 0.62);
+        const coreRy = artCoreBase.ry - (absDirY * 1.22) + (absDirX * 0.1);
         setSvgNumericAttr(artCore, "cx", coreCx);
         setSvgNumericAttr(artCore, "cy", coreCy);
         setSvgNumericAttr(artCore, "rx", coreRx);
@@ -1182,32 +1197,36 @@
         artCore.style.strokeWidth = (1.62 + (depth * 0.28)).toFixed(3);
 
         if (artCoreShadowBase) {
-          setSvgNumericAttr(artCoreShadow, "cx", coreCx - (1.8 + (depth * 2.1)));
-          setSvgNumericAttr(artCoreShadow, "cy", coreCy + (1.4 + (depth * 1.3)));
-          setSvgNumericAttr(artCoreShadow, "rx", coreRx + (depth * 0.16));
-          setSvgNumericAttr(artCoreShadow, "ry", coreRy + (depth * 0.08));
-          artCoreShadow.style.opacity = (0.12 + (depth * 0.26)).toFixed(3);
+          setSvgNumericAttr(artCoreShadow, "cx", coreCx - (1.2 + (depth * 1.18)));
+          setSvgNumericAttr(artCoreShadow, "cy", coreCy + (0.9 + (depth * 0.8)));
+          setSvgNumericAttr(artCoreShadow, "rx", coreRx + (depth * 0.06));
+          setSvgNumericAttr(artCoreShadow, "ry", coreRy + (depth * 0.02));
+          artCoreShadow.style.opacity = (0.1 + (depth * 0.2)).toFixed(3);
         }
 
         artLayerModels.forEach((model) => {
           const nearBias = (6 - model.index) / 5;
-          const offsetX = leftReveal * model.index;
-          const offsetY = verticalReveal * model.index;
-          const layerCx = model.cx - offsetX + (px * model.index * 0.28);
+          const offsetX = sliceVectorX * model.index;
+          const offsetY = sliceVectorY * model.index;
+          const layerCx = model.cx + offsetX;
           const layerCy = model.cy + offsetY;
-          const layerRx = model.rx - (model.index * (1.1 + (absY * 0.22))) + (absX * 0.06);
-          const layerRy = model.ry - (model.index * (0.52 + (absY * 0.08))) - (absY * 0.08);
-          const revealOpacity = clampUnit((depth * 1.42) + 0.12);
-          const opacity = revealOpacity * (0.34 + (nearBias * 0.74));
+          const layerRx = model.rx - (model.index * (0.88 + (depth * 0.22))) - (absDirY * 0.34);
+          const layerRy = model.ry - (model.index * (0.4 + (depth * 0.1))) - (absDirY * 0.18);
+          const exposureX = Math.max(0, (coreCx - layerCx) / 7.2);
+          const exposureY = Math.abs(coreCy - layerCy) / 10.2;
+          const revealOpacity = clampUnit((exposureX * 0.92) + (exposureY * 0.32));
+          const fillReveal = clampUnit((exposureX * 0.78) + (exposureY * 0.2));
+          const fillOpacity = fillReveal * (0.06 + (nearBias * 0.05));
+          const strokeOpacity = clampUnit((((exposureX * 1.22) + (exposureY * 0.08)) - 0.035) * 3.1);
 
           setSvgNumericAttr(model.shape, "cx", layerCx);
           setSvgNumericAttr(model.shape, "cy", layerCy);
           setSvgNumericAttr(model.shape, "rx", layerRx);
           setSvgNumericAttr(model.shape, "ry", layerRy);
-          model.layer.style.opacity = opacity.toFixed(3);
-          model.shape.style.fillOpacity = (0.52 + (nearBias * 0.26)).toFixed(3);
-          model.shape.style.strokeOpacity = (0.62 + (nearBias * 0.28)).toFixed(3);
-          model.shape.style.strokeWidth = (1.16 + (nearBias * 0.32)).toFixed(3);
+          model.layer.style.opacity = "1";
+          model.shape.style.fillOpacity = fillOpacity.toFixed(3);
+          model.shape.style.strokeOpacity = strokeOpacity.toFixed(3);
+          model.shape.style.strokeWidth = (1.06 + (nearBias * 0.18) + (strokeOpacity * 0.06)).toFixed(3);
         });
       }
 
@@ -1220,8 +1239,8 @@
       }
 
       function tickPointerTilt() {
-        pointerTiltX += (pointerTiltTargetX - pointerTiltX) * 0.24;
-        pointerTiltY += (pointerTiltTargetY - pointerTiltY) * 0.24;
+        pointerTiltX += (pointerTiltTargetX - pointerTiltX) * 0.28;
+        pointerTiltY += (pointerTiltTargetY - pointerTiltY) * 0.28;
         if (Math.abs(pointerTiltTargetX - pointerTiltX) < 0.001) {
           pointerTiltX = pointerTiltTargetX;
         }
@@ -1283,13 +1302,13 @@
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
         const rangeX = globalMode
-          ? Math.max(rect.width * 3.2, Number(workArea?.width || 0) * 0.24, 180)
+          ? Math.max(rect.width * 2.7, Number(workArea?.width || 0) * 0.2, 150)
           : rect.width * 0.72;
         const rangeY = globalMode
-          ? Math.max(rect.height * 3.7, Number(workArea?.height || 0) * 0.28, 200)
+          ? Math.max(rect.height * 3.1, Number(workArea?.height || 0) * 0.22, 165)
           : rect.height * 0.72;
-        pointerTiltTargetX = clampUnit(((clientX - centerX) / rangeX) * (globalMode ? 1.18 : 1), -1, 1);
-        pointerTiltTargetY = clampUnit(((clientY - centerY) / rangeY) * (globalMode ? 1.14 : 1), -1, 1);
+        pointerTiltTargetX = clampUnit(((clientX - centerX) / rangeX) * (globalMode ? 1.34 : 1), -1, 1);
+        pointerTiltTargetY = clampUnit(((clientY - centerY) / rangeY) * (globalMode ? 1.3 : 1), -1, 1);
         ensurePointerTiltLoop();
       }
 
