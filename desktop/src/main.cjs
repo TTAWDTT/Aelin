@@ -10,5 +10,33 @@
 // window/tray setup on import, so requiring it here is enough to start the
 // desktop shell.
 
-require("./aelin_desktop_runtime.cjs");
+const fs = require("fs");
+const path = require("path");
+const { app, dialog } = require("electron");
 
+function appendBootstrapLog(line) {
+  const message = String(line ?? "");
+  const configuredUserData = String(process.env.AELIN_USER_DATA_DIR || "").trim();
+  const userDataDir = configuredUserData || app.getPath("userData");
+  if (!userDataDir) return;
+  try {
+    const logDir = path.join(userDataDir, "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, "desktop-bootstrap.log"), `${new Date().toISOString()} ${message}\n`, "utf8");
+  } catch {
+    // ignore bootstrap log failures
+  }
+}
+
+try {
+  require("./aelin_desktop_runtime.cjs");
+} catch (error) {
+  const detail = error instanceof Error ? error.stack || error.message : String(error);
+  appendBootstrapLog(`[bootstrap-failed] ${detail}`);
+  try {
+    dialog.showErrorBox("Aelin Desktop bootstrap failed", detail);
+  } catch {
+    // ignore dialog failures
+  }
+  throw error;
+}

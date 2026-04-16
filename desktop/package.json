@@ -10,7 +10,7 @@
     "build:frontend": "npm --prefix ../frontend run build",
     "prepare:pack": "node ./scripts/prepare-pack.cjs",
     "pack": "npm run prepare:pack && electron-builder --dir --config.directories.output=release-fast",
-    "dist": "npm run prepare:pack && electron-builder --config.directories.output=release-dist",
+    "dist": "npm run prepare:pack && node ./scripts/run-dist.cjs",
     "verify:dist": "node ./scripts/verify-installer.cjs",
     "dist:checked": "npm run dist && npm run verify:dist",
     "pack:full": "npm run build:backend && npm run build:frontend && npm run pack",
@@ -30,6 +30,14 @@
     "appId": "com.ttawdtt.aelin",
     "productName": "Aelin",
     "electronDist": "node_modules/electron/dist",
+    "compression": "store",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TTAWDTT",
+        "repo": "Aelin"
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -64,7 +72,7 @@
       "signAndEditExecutable": false,
       "target": [
         {
-          "target": "nsis",
+          "target": "nsis-web",
           "arch": [
             "x64"
           ]
@@ -72,6 +80,13 @@
       ]
     },
     "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "differentialPackage": false
+    },
+    "nsisWeb": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "build/icon.ico",

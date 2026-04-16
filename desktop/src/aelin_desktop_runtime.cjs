@@ -42,6 +42,7 @@ if (userDataOverride) {
 }
 
 const isDev = readEnvWithLegacy("AELIN_DESKTOP_DEV", "MERCURYDESK_DESKTOP_DEV", "") === "1" || !app.isPackaged;
+const isVerifyMode = readEnvWithLegacy("AELIN_DESKTOP_VERIFY_MODE", "", "") === "1";
 const backendPort = parseNumberEnv("AELIN_BACKEND_PORT", "MERCURYDESK_BACKEND_PORT", isDev ? 8000 : 18080);
 const productApiPort = parseNumberEnv("AELIN_PRODUCT_API_PORT", "MERCURYDESK_PRODUCT_API_PORT", isDev ? 18080 : backendPort);
 const frontendPort = parseNumberEnv("AELIN_DESKTOP_PORT", "MERCURYDESK_DESKTOP_PORT", isDev ? 5173 : 1420);
@@ -148,6 +149,34 @@ let petPluginApiServer = null;
 let petPluginApiPort = 0;
 let petPluginLastEvent = null;
 let stdioErrorGuardsInstalled = false;
+let desktopMainLogInitTried = false;
+let desktopMainLogFilePath = "";
+
+function resolveDesktopMainLogFilePath() {
+  if (desktopMainLogInitTried) return desktopMainLogFilePath;
+  desktopMainLogInitTried = true;
+  try {
+    const userDataDir = app.getPath("userData");
+    if (!userDataDir) return "";
+    const logDir = path.join(userDataDir, "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    desktopMainLogFilePath = path.join(logDir, "desktop-main.log");
+  } catch {
+    desktopMainLogFilePath = "";
+  }
+  return desktopMainLogFilePath;
+}
+
+function appendDesktopMainLogLine(line) {
+  const message = String(line ?? "");
+  const logFile = resolveDesktopMainLogFilePath();
+  if (!logFile) return;
+  try {
+    fs.appendFileSync(logFile, `${new Date().toISOString()} ${message}\n`, "utf8");
+  } catch {
+    // ignore file log failures
+  }
+}
 
 function installStdioErrorGuards() {
   if (stdioErrorGuardsInstalled) return;
@@ -175,6 +204,7 @@ function installStdioErrorGuards() {
 
 function safeConsoleLog(message) {
   const line = String(message ?? "");
+  appendDesktopMainLogLine(line);
   const out = process.stdout;
   if (!out) return;
   if (out.destroyed || out.writableEnded || out.writable === false) return;
@@ -196,6 +226,16 @@ function safeConsoleLog(message) {
 }
 
 installStdioErrorGuards();
+process.on("uncaughtException", (error) => {
+  appendDesktopMainLogLine(
+    `[uncaughtException] ${error instanceof Error ? error.stack || error.message : String(error)}`
+  );
+});
+process.on("unhandledRejection", (reason) => {
+  appendDesktopMainLogLine(
+    `[unhandledRejection] ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`
+  );
+});
 
 function petDebugLog(tag, payload = {}) {
   if (!PET_DEBUG_LOG_ENABLED) return;
@@ -3660,11 +3700,15 @@ function pipeTaggedLog(proc, tag) {
   const errDecoder = new StringDecoder("utf8");
   proc.stdout.on("data", (chunk) => {
     const text = normalizeLogText(outDecoder.write(Buffer.from(chunk)), tag);
-    if (text) process.stdout.write(`[${tag}] ${text}`);
+    if (!text) return;
+    appendDesktopMainLogLine(`[${tag}] ${text}`.trimEnd());
+    process.stdout.write(`[${tag}] ${text}`);
   });
   proc.stderr.on("data", (chunk) => {
     const text = normalizeLogText(errDecoder.write(Buffer.from(chunk)), tag);
-    if (text) process.stderr.write(`[${tag}] ${text}`);
+    if (!text) return;
+    appendDesktopMainLogLine(`[${tag}] ${text}`.trimEnd());
+    process.stderr.write(`[${tag}] ${text}`);
   });
 }
 
@@ -4732,7 +4776,9 @@ function createPetWindow() {
 
 async function boot() {
   reloadPetBehaviorConfig();
-  await startPetPluginApiServer();
+  if (!isVerifyMode) {
+    await startPetPluginApiServer();
+  }
   await startBackend();
   await startProductApiDev();
   const backendReady = await waitForAgentServerReady(60000);
@@ -4760,6 +4806,10 @@ async function boot() {
   const frontendReady = await waitForUrl(`http://127.0.0.1:${frontendPort}`, 60000);
   if (!frontendReady) {
     throw new Error("Frontend startup timed out.");
+  }
+
+  if (isVerifyMode) {
+    safeConsoleLog("[desktop] Verify mode active: backend/frontend ready, skipping window and tray bootstrap.");
   }
 }
 
@@ -4827,6 +4877,9 @@ app.on("before-quit", () => {
 app.whenReady().then(async () => {
   try {
     await boot();
+    if (isVerifyMode) {
+      return;
+    }
     petStateAssets = buildPetStateAssets();
     bindPetPowerEvents();
     createMainWindow("/", false);
@@ -4834,7 +4887,12 @@ app.whenReady().then(async () => {
     createTray();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    dialog.showErrorBox("Aelin Desktop startup failed", message);
+    appendDesktopMainLogLine(
+      `[startup-failed] ${error instanceof Error ? error.stack || error.message : String(error)}`
+    );
+    if (!isVerifyMode) {
+      dialog.showErrorBox("Aelin Desktop startup failed", message);
+    }
     cleanup();
     app.quit();
   }
