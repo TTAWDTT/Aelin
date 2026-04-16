@@ -102,9 +102,18 @@ class Settings(BaseSettings):
             "MERCURYDESK_AGENT_LOOP_ALLOW_WRITE_TOOLS",
         ),
     )
-    deepagents_run_timeout_seconds: float = 75.0
-    deepagents_stream_idle_timeout_seconds: float = 45.0
-    deepagents_tool_timeout_seconds: float = 25.0
+    # DeepAgents timeout model:
+    # - `deepagents_run_budget_seconds` is the total wall-clock budget for one run.
+    # - `deepagents_run_timeout_seconds` is the budget for a single model node call.
+    # - `deepagents_stream_idle_timeout_seconds` is the upstream HTTP idle/read budget.
+    # - `deepagents_tool_timeout_seconds*` are per-tool-category budgets.
+    deepagents_run_budget_seconds: float = 900.0
+    deepagents_run_timeout_seconds: float = 180.0
+    deepagents_stream_idle_timeout_seconds: float = 180.0
+    deepagents_tool_timeout_seconds: float = 30.0
+    deepagents_tool_timeout_seconds_fast: float = 30.0
+    deepagents_tool_timeout_seconds_io: float = 90.0
+    deepagents_tool_timeout_seconds_execute: float = 180.0
     deepagents_model_transient_error_retries: int = 2
     deepagents_model_transient_error_backoff_seconds: float = 1.0
     deepagents_read_tool_retry_attempts: int = 2

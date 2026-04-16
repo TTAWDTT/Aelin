@@ -12,6 +12,8 @@ from deepagents.middleware._utils import append_to_system_message
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from app.services.deepagents.timeout_policy import remaining_run_budget_seconds
+
 
 _LOG = logging.getLogger(__name__)
 
@@ -135,31 +137,65 @@ def _system_message_text(system_message: Any) -> str:
 class DeepAgentsModelTimeoutMiddleware(AgentMiddleware[Any, Any, Any]):
     """Enforce a hard wall-clock timeout around each async model node call."""
 
-    def __init__(self, *, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float,
+        run_budget_seconds: float | None = None,
+        run_started_monotonic: float | None = None,
+    ) -> None:
         super().__init__()
         self.timeout_seconds = max(0.0, float(timeout_seconds or 0.0))
+        self.run_budget_seconds = (
+            max(0.0, float(run_budget_seconds or 0.0))
+            if run_budget_seconds is not None
+            else None
+        )
+        self.run_started_monotonic = (
+            float(run_started_monotonic)
+            if run_started_monotonic is not None
+            else None
+        )
 
-    def _timeout_message(self) -> AIMessage:
+    def _timeout_message(self, *, scope: str) -> AIMessage:
         timeout_label = _format_timeout_seconds(self.timeout_seconds)
-        return AIMessage(
-            content=(
+        if scope == "run_budget":
+            budget_label = _format_timeout_seconds(self.run_budget_seconds or 0.0)
+            content = (
+                f"本轮任务已超过总运行预算（{budget_label}s）。"
+                "系统已在继续扩张之前停止本轮执行。"
+                "请缩小范围、拆分步骤，或提高运行预算后重试。"
+            )
+        else:
+            content = (
                 f"模型生成超时（{timeout_label}s）。"
                 "本次运行已在模型完成下一步输出前被终止，可能仍停留在回复生成或工具参数生成阶段。"
                 "请缩小任务范围后重试。"
             )
+        return AIMessage(content=content)
+
+    def _remaining_run_budget_seconds(self) -> float | None:
+        return remaining_run_budget_seconds(
+            run_started_monotonic=self.run_started_monotonic,
+            run_budget_seconds=self.run_budget_seconds,
         )
 
-    def _log_timeout(self, request: ModelRequest[Any], elapsed_ms: int) -> None:
+    def _log_timeout(self, request: ModelRequest[Any], elapsed_ms: int, *, scope: str) -> None:
         runtime = getattr(request, "runtime", None)
         context = getattr(runtime, "context", None)
         _LOG.warning(
             (
                 "deepagents_model_timeout "
-                "elapsed_ms=%s timeout_seconds=%s model=%s user_id=%s workspace=%s "
+                "scope=%s elapsed_ms=%s timeout_seconds=%s run_budget_seconds=%s "
+                "model=%s user_id=%s workspace=%s "
                 "message_count=%s tool_count=%s tool_names=%s last_human_chars=%s"
             ),
+            scope,
             elapsed_ms,
             _format_timeout_seconds(self.timeout_seconds),
+            _format_timeout_seconds(self.run_budget_seconds or 0.0)
+            if self.run_budget_seconds is not None
+            else "disabled",
             _model_name_from_request(request),
             _context_field(context, "user_id", 0),
             _context_field(context, "workspace", "default"),
@@ -209,19 +245,34 @@ class DeepAgentsModelTimeoutMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any] | AIMessage:
-        if self.timeout_seconds <= 0:
+        if self.timeout_seconds <= 0 and (self.run_budget_seconds or 0.0) <= 0:
             return await handler(request)
 
         self._log_request_audit(request)
         started = perf_counter()
+        remaining_budget = self._remaining_run_budget_seconds()
+        if remaining_budget is not None and remaining_budget <= 0:
+            elapsed_ms = int((perf_counter() - started) * 1000)
+            self._log_timeout(request, elapsed_ms, scope="run_budget")
+            return self._timeout_message(scope="run_budget")
+        effective_timeout = self.timeout_seconds
+        if remaining_budget is not None:
+            if effective_timeout <= 0:
+                effective_timeout = remaining_budget
+            else:
+                effective_timeout = min(effective_timeout, remaining_budget)
+        if effective_timeout <= 0:
+            return await handler(request)
         try:
-            return await asyncio.wait_for(handler(request), timeout=self.timeout_seconds)
+            return await asyncio.wait_for(handler(request), timeout=effective_timeout)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
             elapsed_ms = int((perf_counter() - started) * 1000)
-            self._log_timeout(request, elapsed_ms)
-            return self._timeout_message()
+            remaining_budget = self._remaining_run_budget_seconds()
+            scope = "run_budget" if remaining_budget is not None and remaining_budget <= 0 else "model_node"
+            self._log_timeout(request, elapsed_ms, scope=scope)
+            return self._timeout_message(scope=scope)
 
 
 class DeepAgentsModelRetryMiddleware(AgentMiddleware[Any, Any, Any]):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import httpx
@@ -37,6 +38,11 @@ from app.services.deepagents.tool_runtime import (
 from app.services.deepagents.cancel_utils import is_cancelled
 from app.services.deepagents.input_mapping import build_chat_messages
 from app.services.deepagents.output_utils import extract_answer
+from app.services.deepagents.timeout_policy import (
+    read_model_node_timeout_seconds,
+    read_run_budget_seconds,
+    read_stream_idle_timeout_seconds,
+)
 from app.services.foundation.llm import LLMService
 from app.services.tools.tools_device import tool_device, tool_screen_get
 from app.services.tools.tools_files import tool_attachment_search
@@ -104,11 +110,9 @@ def build_chat_tools(
 
 def _build_deepagents_http_timeout(service: LLMService) -> httpx.Timeout:
     request_timeout = max(5.0, float(getattr(service, "timeout_seconds", 90.0) or 90.0))
-    read_timeout = max(
-        5.0,
-        float(getattr(settings, "deepagents_stream_idle_timeout_seconds", request_timeout) or request_timeout),
+    effective_read_timeout = read_stream_idle_timeout_seconds(
+        request_timeout_seconds=request_timeout,
     )
-    effective_read_timeout = min(request_timeout, read_timeout)
     return httpx.Timeout(
         connect=request_timeout,
         read=effective_read_timeout,
@@ -117,7 +121,12 @@ def _build_deepagents_http_timeout(service: LLMService) -> httpx.Timeout:
     )
 
 
-def _build_agent_middleware(*, preserved_tools: list[Any] | None = None) -> list[Any]:
+def _build_agent_middleware(
+    *,
+    preserved_tools: list[Any] | None = None,
+    run_started_monotonic: float | None = None,
+    run_budget_seconds: float | None = None,
+) -> list[Any]:
     middleware: list[Any] = [
         DeepAgentsToolMessageSanitizerMiddleware(),
     ]
@@ -136,9 +145,15 @@ def _build_agent_middleware(*, preserved_tools: list[Any] | None = None) -> list
                 ),
             )
         )
-    timeout_seconds = float(getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 0.0)
+    timeout_seconds = read_model_node_timeout_seconds()
     if timeout_seconds > 0:
-        middleware.append(DeepAgentsModelTimeoutMiddleware(timeout_seconds=timeout_seconds))
+        middleware.append(
+            DeepAgentsModelTimeoutMiddleware(
+                timeout_seconds=timeout_seconds,
+                run_budget_seconds=run_budget_seconds,
+                run_started_monotonic=run_started_monotonic,
+            )
+        )
     return middleware
 
 
@@ -215,6 +230,11 @@ def build_chat_agent(
     chat_model = _build_chat_model(service, provider)
     if chat_model is None:
         return None, ToolPolicyUsage(), [], {}
+    run_started_monotonic = perf_counter()
+    run_budget_seconds = read_run_budget_seconds()
+    context.run_started_monotonic = run_started_monotonic
+    context.run_budget_seconds = run_budget_seconds
+    context.run_deadline_monotonic = run_started_monotonic + run_budget_seconds
 
     tools, tool_runs, usage = build_chat_tools(
         context=context,
@@ -314,7 +334,11 @@ def build_chat_agent(
         system_prompt=system_prompt,
         backend=backend_factory,
         tools=tools,
-        middleware=_build_agent_middleware(preserved_tools=preserved_tools),
+        middleware=_build_agent_middleware(
+            preserved_tools=preserved_tools,
+            run_started_monotonic=run_started_monotonic,
+            run_budget_seconds=run_budget_seconds,
+        ),
         skills=skill_snapshot.skill_sources or None,
         memory=memory_paths or None,
         context_schema=context_schema,

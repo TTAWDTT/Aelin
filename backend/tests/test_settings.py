@@ -39,3 +39,18 @@ def test_settings_keep_backward_compatible_default_database_path(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.database_url == "sqlite+pysqlite:///./mercurydesk.db"
+
+
+def test_settings_expose_deepagents_layered_timeout_defaults(monkeypatch):
+    monkeypatch.delenv("AELIN_DEEPAGENTS_RUN_BUDGET_SECONDS", raising=False)
+    monkeypatch.delenv("AELIN_DEEPAGENTS_RUN_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("AELIN_DEEPAGENTS_STREAM_IDLE_TIMEOUT_SECONDS", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.deepagents_run_budget_seconds == 900.0
+    assert settings.deepagents_run_timeout_seconds == 180.0
+    assert settings.deepagents_stream_idle_timeout_seconds == 180.0
+    assert settings.deepagents_tool_timeout_seconds_fast == 30.0
+    assert settings.deepagents_tool_timeout_seconds_io == 90.0
+    assert settings.deepagents_tool_timeout_seconds_execute == 180.0

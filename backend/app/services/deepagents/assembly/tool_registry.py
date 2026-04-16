@@ -11,6 +11,10 @@ from pydantic import BaseModel, Field
 from app.services.deepagents.assembly.output_mapping import DeepAgentsCancelled
 from app.services.deepagents.assembly.prompt import tool_description
 from app.services.deepagents.cancel_utils import is_cancelled
+from app.services.deepagents.timeout_policy import (
+    remaining_run_budget_seconds,
+    select_tool_timeout_seconds,
+)
 from app.services.deepagents.tool_runtime import (
     _acquire_tool_executor_slot,
     _submit_tool_future,
@@ -30,6 +34,13 @@ from app.settings import settings
 
 
 _log = logging.getLogger(__name__)
+
+
+def _remaining_tool_run_budget_seconds(context: ToolRuntimeContext) -> float | None:
+    return remaining_run_budget_seconds(
+        run_started_monotonic=getattr(context, "run_started_monotonic", None),
+        run_budget_seconds=getattr(context, "run_budget_seconds", None),
+    )
 
 
 class DeviceToolInput(BaseModel):
@@ -278,9 +289,37 @@ def _invoke_tool(
 
     usage.note_invocation(name, args)
     tool_key = f"{name}:{call_index}"
-    timeout_seconds = max(
-        1.0,
-        float(getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0),
+    remaining_budget_seconds = _remaining_tool_run_budget_seconds(context)
+    if remaining_budget_seconds is not None and remaining_budget_seconds <= 0:
+        latency_ms = int((perf_counter() - started) * 1000)
+        result = {
+            "ok": False,
+            "error": (
+                f"{name}_run_budget_exhausted: this run has exceeded its total wall-clock budget; "
+                "do not keep calling more tools in this run"
+            ),
+            "stop_retry": True,
+        }
+        usage.note_result(result)
+        tool_runs.append(
+            {
+                "call_index": call_index,
+                "name": name,
+                "args": args,
+                "key": tool_key,
+                "status": "failed",
+                "result": result,
+                "error": str(result["error"]),
+                "is_write": decision.is_write,
+                "latency_ms": latency_ms,
+                "summary": f"{name} run budget exhausted before start",
+            }
+        )
+        return result
+    timeout_seconds = select_tool_timeout_seconds(
+        name=name,
+        args=args,
+        remaining_budget_seconds=remaining_budget_seconds,
     )
 
     def _run_once() -> dict[str, Any]:

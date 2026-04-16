@@ -1160,16 +1160,17 @@ def test_deepagents_write_tool_does_not_retry_transient_failures(monkeypatch):
     assert calls["count"] == 1
 
 
-def test_deepagents_http_timeout_uses_stream_idle_for_read_timeout(monkeypatch):
+def test_deepagents_http_timeout_never_undercuts_model_node_budget(monkeypatch):
     from app.services.deepagents import deepagents_graph as dag
 
     service = SimpleNamespace(timeout_seconds=180.0)
     monkeypatch.setattr(dag.settings, "deepagents_stream_idle_timeout_seconds", 45.0)
+    monkeypatch.setattr(dag.settings, "deepagents_run_timeout_seconds", 120.0)
 
     timeout = dag._build_deepagents_http_timeout(service)  # type: ignore[arg-type]
 
     assert timeout.connect == 180.0
-    assert timeout.read == 45.0
+    assert timeout.read == 120.0
     assert timeout.write == 180.0
     assert timeout.pool == 180.0
 
@@ -1315,6 +1316,7 @@ def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypa
 
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     monkeypatch.setattr(dag.settings, "deepagents_run_timeout_seconds", 33.0)
+    monkeypatch.setattr(dag.settings, "deepagents_run_budget_seconds", 240.0)
     monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_retries", 2)
     monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_backoff_seconds", 0.5)
     monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", False)
@@ -1344,6 +1346,11 @@ def test_deepagents_build_chat_agent_registers_model_timeout_middleware(monkeypa
     assert middleware[2].max_retries == 2
     assert isinstance(middleware[3], DeepAgentsModelTimeoutMiddleware)
     assert middleware[3].timeout_seconds == 33.0
+    assert middleware[3].run_budget_seconds == 240.0
+    assert middleware[3].run_started_monotonic is not None
+    assert context.run_budget_seconds == 240.0
+    assert context.run_started_monotonic is not None
+    assert context.run_deadline_monotonic is not None
 
 
 def test_deepagents_build_chat_agent_preserves_custom_execute_tool(monkeypatch):
@@ -1360,6 +1367,7 @@ def test_deepagents_build_chat_agent_preserves_custom_execute_tool(monkeypatch):
 
     monkeypatch.setattr(dag, "_build_chat_model", lambda service, provider: object())
     monkeypatch.setattr(dag.settings, "deepagents_run_timeout_seconds", 33.0)
+    monkeypatch.setattr(dag.settings, "deepagents_run_budget_seconds", 240.0)
     monkeypatch.setattr(dag.settings, "deepagents_model_transient_error_retries", 1)
     monkeypatch.setattr(dag.settings, "desktop_plugin_execute_enabled", True)
 
@@ -1386,6 +1394,31 @@ def test_deepagents_build_chat_agent_preserves_custom_execute_tool(monkeypatch):
     assert isinstance(middleware[1], DeepAgentsToolAvailabilityMiddleware)
     assert isinstance(middleware[2], DeepAgentsModelRetryMiddleware)
     assert isinstance(middleware[3], DeepAgentsModelTimeoutMiddleware)
+
+
+def test_deepagents_tool_timeout_policy_uses_category_budgets(monkeypatch):
+    from app.services.deepagents.timeout_policy import select_tool_timeout_seconds
+    from app.settings import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "deepagents_tool_timeout_seconds_fast", 30.0)
+    monkeypatch.setattr(app_settings, "deepagents_tool_timeout_seconds_io", 90.0)
+    monkeypatch.setattr(app_settings, "deepagents_tool_timeout_seconds_execute", 180.0)
+
+    assert select_tool_timeout_seconds(name="memory_search") == 30.0
+    assert select_tool_timeout_seconds(name="web_search") == 90.0
+    assert select_tool_timeout_seconds(name="execute", args={"timeout_ms": 120000}) == 180.0
+
+
+def test_deepagents_tool_timeout_policy_respects_remaining_run_budget(monkeypatch):
+    from app.services.deepagents.timeout_policy import select_tool_timeout_seconds
+    from app.settings import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "deepagents_tool_timeout_seconds_io", 90.0)
+
+    assert select_tool_timeout_seconds(
+        name="web_search",
+        remaining_budget_seconds=18.0,
+    ) == 18.0
 
 
 def test_deepagents_skills_use_backend_routes_instead_of_preinjected_files(monkeypatch, tmp_path):

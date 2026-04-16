@@ -86,14 +86,26 @@ def _runtime_cache_key(
         "consecutive_no_progress_limit": int(
             getattr(limiter, "consecutive_no_progress_limit", 0) or 0
         ),
+        "deepagents_run_budget_seconds": float(
+            getattr(settings, "deepagents_run_budget_seconds", 900.0) or 900.0
+        ),
         "deepagents_run_timeout_seconds": float(
-            getattr(settings, "deepagents_run_timeout_seconds", 75.0) or 75.0
+            getattr(settings, "deepagents_run_timeout_seconds", 180.0) or 180.0
         ),
         "deepagents_stream_idle_timeout_seconds": float(
-            getattr(settings, "deepagents_stream_idle_timeout_seconds", 45.0) or 45.0
+            getattr(settings, "deepagents_stream_idle_timeout_seconds", 180.0) or 180.0
         ),
         "deepagents_tool_timeout_seconds": float(
-            getattr(settings, "deepagents_tool_timeout_seconds", 25.0) or 25.0
+            getattr(settings, "deepagents_tool_timeout_seconds", 30.0) or 30.0
+        ),
+        "deepagents_tool_timeout_seconds_fast": float(
+            getattr(settings, "deepagents_tool_timeout_seconds_fast", 30.0) or 30.0
+        ),
+        "deepagents_tool_timeout_seconds_io": float(
+            getattr(settings, "deepagents_tool_timeout_seconds_io", 90.0) or 90.0
+        ),
+        "deepagents_tool_timeout_seconds_execute": float(
+            getattr(settings, "deepagents_tool_timeout_seconds_execute", 180.0) or 180.0
         ),
         "deepagents_write_file_max_chars": int(
             getattr(settings, "deepagents_write_file_max_chars", 50000) or 50000

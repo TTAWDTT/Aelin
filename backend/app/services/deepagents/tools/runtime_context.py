@@ -29,6 +29,9 @@ class ToolRuntimeContext:
     available_attachment_ids: list[int]
     cancel_checker: Callable[[], bool] | None = None
     session_factory: Callable[[], Session] | None = None
+    run_started_monotonic: float | None = None
+    run_budget_seconds: float | None = None
+    run_deadline_monotonic: float | None = None
 
 
 def build_tool_runtime_context(
@@ -41,6 +44,9 @@ def build_tool_runtime_context(
     available_attachment_ids: list[int] | None = None,
     cancel_checker: Callable[[], bool] | None = None,
     session_factory: Callable[[], Session] | None = None,
+    run_started_monotonic: float | None = None,
+    run_budget_seconds: float | None = None,
+    run_deadline_monotonic: float | None = None,
 ) -> ToolRuntimeContext:
     return ToolRuntimeContext(
         user_id=int(user_id),
@@ -51,4 +57,7 @@ def build_tool_runtime_context(
         available_attachment_ids=normalize_positive_ints(available_attachment_ids, cap=20),
         cancel_checker=cancel_checker,
         session_factory=session_factory,
+        run_started_monotonic=run_started_monotonic,
+        run_budget_seconds=run_budget_seconds,
+        run_deadline_monotonic=run_deadline_monotonic,
     )
